@@ -31,7 +31,7 @@ export const testConfig: AppConfig = {
   openrouterApiKey: '',
   llmModel: 'test-model',
   sessionSecret: 'test-session-secret-at-least-32-chars-long',
-  appUrl: 'http://localhost:5173',
+  appUrl: 'http://localhost:3001',
   emailTransport: 'console',
   port: 0,
   isProduction: false,

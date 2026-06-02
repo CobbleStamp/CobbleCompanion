@@ -42,10 +42,10 @@ cp .env.example .env          # fill in OPENROUTER_API_KEY (or set LLM_PROVIDER=
 # …or run the pieces individually
 docker compose up -d postgres
 pnpm db:migrate
-pnpm dev                      # API on :3000, web on :5173
+pnpm dev                      # API on :3000, web on :3001
 ```
 
-Then open <http://localhost:5173>, request a sign-in link (printed in the API server log when
+Then open <http://localhost:3001>, request a sign-in link (printed in the API server log when
 `EMAIL_TRANSPORT=console`), create your companion, and start chatting.
 
 ### Verify

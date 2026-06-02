@@ -11,7 +11,7 @@ describe('loadConfig', () => {
     const config = loadConfig({ ...base, LLM_PROVIDER: 'fake' });
     expect(config.llmProvider).toBe('fake');
     expect(config.port).toBe(3000);
-    expect(config.appUrl).toBe('http://localhost:5173');
+    expect(config.appUrl).toBe('http://localhost:3001');
     expect(config.isProduction).toBe(false);
   });
 

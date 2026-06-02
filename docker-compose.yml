@@ -26,7 +26,7 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-anthropic/claude-3.5-sonnet}
       AUTH_SESSION_SECRET: ${AUTH_SESSION_SECRET:-local-dev-session-secret-do-not-use-in-prod}
-      APP_URL: http://localhost:5173
+      APP_URL: http://localhost:3001
       EMAIL_TRANSPORT: console
       PORT: '3000'
       NODE_ENV: development
@@ -44,7 +44,7 @@ services:
       args:
         VITE_API_URL: http://localhost:3000
     ports:
-      - '5173:80'
+      - '3001:80'
     depends_on:
       - api
 

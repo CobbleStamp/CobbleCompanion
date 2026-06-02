@@ -23,7 +23,7 @@ const envSchema = z
     OPENROUTER_API_KEY: z.string().default(''),
     LLM_MODEL: z.string().default('anthropic/claude-3.5-sonnet'),
     AUTH_SESSION_SECRET: z.string().min(32, 'AUTH_SESSION_SECRET must be >=32 chars'),
-    APP_URL: z.string().url().default('http://localhost:5173'),
+    APP_URL: z.string().url().default('http://localhost:3001'),
     EMAIL_TRANSPORT: z.enum(['console', 'smtp']).default('console'),
     PORT: z.coerce.number().int().positive().default(3000),
     NODE_ENV: z.string().default('development'),
