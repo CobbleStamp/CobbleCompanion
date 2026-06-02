@@ -45,4 +45,21 @@ describe('TranscriptMemoryStore', () => {
   it('returns null for a missing conversation', async () => {
     expect(await memory.getConversation('00000000-0000-0000-0000-000000000000')).toBeNull();
   });
+
+  it('lists only the given companion conversations', async () => {
+    const first = await memory.createConversation(companionId);
+    const second = await memory.createConversation(companionId);
+
+    const listed = await memory.listConversations(companionId);
+    expect(listed).toHaveLength(2);
+    expect(new Set(listed.map((c) => c.id))).toEqual(new Set([first.id, second.id]));
+  });
+
+  it('counts the messages in a conversation', async () => {
+    const conversation = await memory.createConversation(companionId);
+    expect(await memory.countMessages(conversation.id)).toBe(0);
+    await memory.appendMessage(conversation.id, 'user', 'one');
+    await memory.appendMessage(conversation.id, 'assistant', 'two');
+    expect(await memory.countMessages(conversation.id)).toBe(2);
+  });
 });

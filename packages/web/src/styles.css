@@ -94,3 +94,44 @@ button:disabled {
   padding: 0.5rem 0.75rem;
   white-space: pre-wrap;
 }
+
+.header-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.memory-sections {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.memory-section {
+  background: #fff;
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  margin: 0.75rem 0;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
+}
+
+.memory-section h2 {
+  font-size: 1rem;
+  margin: 0 0 0.5rem;
+}
+
+.memory-section.planned {
+  opacity: 0.65;
+}
+
+.memory-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 0;
+}
+
+.memory-row {
+  width: 100%;
+  text-align: left;
+  background: #f4f4fb;
+  color: #1a1a2e;
+  border: 1px solid #e0e0ee;
+}

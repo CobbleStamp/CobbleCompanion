@@ -11,6 +11,7 @@ import type { AppConfig } from './config.js';
 import { registerAuthRoutes } from './routes/auth.routes.js';
 import { registerCompanionRoutes } from './routes/companion.routes.js';
 import { registerConversationRoutes } from './routes/conversation.routes.js';
+import { registerMemoryRoutes } from './routes/memory.routes.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -49,24 +50,20 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   // application/json` on a bodyless POST (e.g. starting a conversation) is
   // rejected before auth even runs. Treat an empty body as "no body"; routes
   // that require a payload validate it themselves and return a clear 400.
-  app.addContentTypeParser(
-    'application/json',
-    { parseAs: 'string' },
-    (_request, body, done) => {
-      const text = (body as string).trim();
-      if (text.length === 0) {
-        done(null, undefined);
-        return;
-      }
-      try {
-        done(null, JSON.parse(text));
-      } catch (error) {
-        const err = error as Error & { statusCode?: number };
-        err.statusCode = 400;
-        done(err, undefined);
-      }
-    },
-  );
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (_request, body, done) => {
+    const text = (body as string).trim();
+    if (text.length === 0) {
+      done(null, undefined);
+      return;
+    }
+    try {
+      done(null, JSON.parse(text));
+    } catch (error) {
+      const err = error as Error & { statusCode?: number };
+      err.statusCode = 400;
+      done(err, undefined);
+    }
+  });
 
   // Central error logging (common/logging.md: never swallow an error). Fastify's
   // own logger is off, so without this 5xx failures would vanish silently. Log
@@ -98,6 +95,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerAuthRoutes(app, deps, requireAuth);
   registerCompanionRoutes(app, deps, requireAuth);
   registerConversationRoutes(app, deps, requireAuth);
+  registerMemoryRoutes(app, deps, requireAuth);
 
   registerSpa(app);
 

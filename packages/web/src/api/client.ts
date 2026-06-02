@@ -3,6 +3,7 @@ import type {
   CompanionDto,
   ConversationDto,
   CreateCompanionBody,
+  MemorySnapshotDto,
   MessageDto,
 } from '@cobble/shared';
 
@@ -35,8 +36,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // Only declare a JSON content-type when there's a body — Fastify rejects an
   // empty body with content-type: application/json (FST_ERR_CTP_EMPTY_JSON_BODY),
   // which would otherwise 400 bodyless POSTs like createConversation.
-  const contentType =
-    init?.body != null ? { 'content-type': 'application/json' } : {};
+  const contentType = init?.body != null ? { 'content-type': 'application/json' } : {};
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
     headers: { ...contentType, ...auth, ...(init?.headers ?? {}) },
@@ -85,6 +85,19 @@ export async function fetchMessages(
     `/companions/${companionId}/conversations/${conversationId}/messages`,
   );
   return body.messages;
+}
+
+/** Read-only snapshot of everything the companion holds (the memory browser). */
+export async function getCompanionMemory(companionId: string): Promise<MemorySnapshotDto> {
+  const body = await request<{ memory: MemorySnapshotDto }>(`/companions/${companionId}/memory`);
+  return body.memory;
+}
+
+export async function listConversations(companionId: string): Promise<ConversationDto[]> {
+  const body = await request<{ conversations: ConversationDto[] }>(
+    `/companions/${companionId}/conversations`,
+  );
+  return body.conversations;
 }
 
 /** Send a message and yield streamed chat events (SSE). */

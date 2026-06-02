@@ -1,6 +1,6 @@
 import type { ConversationDto, MessageDto, MessageRole } from '@cobble/shared';
 import { conversations, type Database, messages } from '@cobble/db';
-import { desc, eq } from 'drizzle-orm';
+import { count, desc, eq } from 'drizzle-orm';
 
 /**
  * MemoryStore boundary (architecture.md invariant #2). The Phase 0 implementation
@@ -14,6 +14,10 @@ export interface MemoryStore {
   appendMessage(conversationId: string, role: MessageRole, content: string): Promise<MessageDto>;
   /** Most recent `limit` messages, returned oldest-first for prompt assembly. */
   getRecentMessages(conversationId: string, limit: number): Promise<readonly MessageDto[]>;
+  /** All conversations for a companion, newest-first (the memory-browser read path). */
+  listConversations(companionId: string): Promise<readonly ConversationDto[]>;
+  /** Number of transcript messages in a conversation. */
+  countMessages(conversationId: string): Promise<number>;
 }
 
 export class TranscriptMemoryStore implements MemoryStore {
@@ -73,6 +77,27 @@ export class TranscriptMemoryStore implements MemoryStore {
       .slice()
       .sort((a, b) => a.seq - b.seq)
       .map(toMessageDto);
+  }
+
+  async listConversations(companionId: string): Promise<readonly ConversationDto[]> {
+    const rows = await this.db
+      .select()
+      .from(conversations)
+      .where(eq(conversations.companionId, companionId))
+      .orderBy(desc(conversations.createdAt));
+    return rows.map((row) => ({
+      id: row.id,
+      companionId: row.companionId,
+      createdAt: row.createdAt.toISOString(),
+    }));
+  }
+
+  async countMessages(conversationId: string): Promise<number> {
+    const [row] = await this.db
+      .select({ value: count() })
+      .from(messages)
+      .where(eq(messages.conversationId, conversationId));
+    return row?.value ?? 0;
   }
 }
 

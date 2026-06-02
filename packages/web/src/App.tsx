@@ -5,6 +5,7 @@ import { fetchCurrentUser, listCompanions, setAccessTokenGetter } from './api/cl
 import type { AuthMode } from './auth/config.js';
 import { Chat } from './pages/Chat.js';
 import { CreateCompanion } from './pages/CreateCompanion.js';
+import { MemoryBrowser } from './pages/MemoryBrowser.js';
 import { SignIn } from './pages/SignIn.js';
 
 interface AppProps {
@@ -62,10 +63,13 @@ interface CompanionFlowProps {
   readonly onSignOut: () => void;
 }
 
-/** The authenticated walking skeleton: load companion, then chat. */
+type View = 'chat' | 'memory';
+
+/** The authenticated walking skeleton: load companion, then chat or browse memory. */
 function CompanionFlow({ onSignOut }: CompanionFlowProps): JSX.Element {
   const [status, setStatus] = useState<Status>('loading');
   const [companion, setCompanion] = useState<CompanionDto | null>(null);
+  const [view, setView] = useState<View>('chat');
 
   useEffect(() => {
     void (async () => {
@@ -98,7 +102,12 @@ function CompanionFlow({ onSignOut }: CompanionFlowProps): JSX.Element {
     );
   }
   if (companion) {
-    return <Chat companion={companion} onSignOut={onSignOut} />;
+    if (view === 'memory') {
+      return <MemoryBrowser companion={companion} onBack={() => setView('chat')} />;
+    }
+    return (
+      <Chat companion={companion} onSignOut={onSignOut} onOpenMemory={() => setView('memory')} />
+    );
   }
   return <main className="card">Loading…</main>;
 }

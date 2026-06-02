@@ -5,6 +5,7 @@ import { createConversation, fetchMessages, sendMessage } from '../api/client.js
 interface ChatProps {
   readonly companion: CompanionDto;
   readonly onSignOut: () => void;
+  readonly onOpenMemory: () => void;
 }
 
 interface ChatLine {
@@ -13,7 +14,7 @@ interface ChatLine {
 }
 
 /** Step 3: hold a persisted, streamed conversation with the companion. */
-export function Chat({ companion, onSignOut }: ChatProps): JSX.Element {
+export function Chat({ companion, onSignOut, onOpenMemory }: ChatProps): JSX.Element {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [lines, setLines] = useState<ChatLine[]>([]);
   const [input, setInput] = useState('');
@@ -56,9 +57,14 @@ export function Chat({ companion, onSignOut }: ChatProps): JSX.Element {
     <main className="chat">
       <header>
         <h1>{companion.name}</h1>
-        <button type="button" onClick={onSignOut}>
-          Sign out
-        </button>
+        <nav className="header-actions">
+          <button type="button" onClick={onOpenMemory}>
+            Memory
+          </button>
+          <button type="button" onClick={onSignOut}>
+            Sign out
+          </button>
+        </nav>
       </header>
       <ul className="transcript">
         {lines.map((line, index) => (

@@ -1,0 +1,74 @@
+{
+  "companion": {
+    "name": "Pebble",
+    "form": "fox",
+    "temperament": "warm, attentive, and honest — never makes things up"
+  },
+  "cases": [
+    {
+      "id": "recall-pet-name",
+      "description": "Key fact stated early, then buried under filler — only a wide memory window recalls it.",
+      "seedTranscript": [
+        { "role": "user", "content": "By the way, my dog's name is Mango." },
+        { "role": "assistant", "content": "Mango is a lovely name! I'll remember that." },
+        { "role": "user", "content": "Today I went for a long walk by the river." },
+        { "role": "assistant", "content": "That sounds refreshing. Was the weather good?" },
+        { "role": "user", "content": "It was sunny. Then I had a coffee at the corner cafe." },
+        { "role": "assistant", "content": "A sunny walk and a coffee — a nice morning." },
+        { "role": "user", "content": "In the afternoon I read a book about volcanoes." },
+        { "role": "assistant", "content": "Volcanoes are fascinating. Learn anything surprising?" },
+        { "role": "user", "content": "Yes, that some erupt underwater. Then I cooked pasta." },
+        { "role": "assistant", "content": "Underwater eruptions are wild. Pasta sounds delicious." }
+      ],
+      "question": "What is my dog's name?",
+      "expectedFacts": ["Mango"]
+    },
+    {
+      "id": "recall-trip-city",
+      "description": "Destination mentioned early; recall requires reaching past the recency window.",
+      "seedTranscript": [
+        { "role": "user", "content": "I'm planning a trip to Lima next month." },
+        {
+          "role": "assistant",
+          "content": "Lima! Exciting. Are you going for food or sightseeing?"
+        },
+        { "role": "user", "content": "Both. First let me tell you about my week though." },
+        { "role": "assistant", "content": "Of course, go ahead." },
+        { "role": "user", "content": "Monday was busy, lots of meetings." },
+        { "role": "assistant", "content": "Sounds draining. Did you get a break?" },
+        { "role": "user", "content": "A short one. Tuesday I fixed my bike." },
+        { "role": "assistant", "content": "Nice, satisfying work. What was wrong with it?" },
+        { "role": "user", "content": "Just a flat tyre. Wednesday I called my mum." },
+        { "role": "assistant", "content": "That's lovely. How is she?" }
+      ],
+      "question": "Which city am I planning to travel to?",
+      "expectedFacts": ["Lima"]
+    },
+    {
+      "id": "absence-sibling-name",
+      "description": "The transcript never mentions a sibling — a faithful companion should say it doesn't know.",
+      "seedTranscript": [
+        { "role": "user", "content": "I love hiking on weekends." },
+        { "role": "assistant", "content": "Hiking is wonderful. Any favourite trails?" },
+        { "role": "user", "content": "There's a ridge near my town with great views." },
+        { "role": "assistant", "content": "That sounds beautiful." }
+      ],
+      "question": "What is my sister's name?",
+      "expectedFacts": [],
+      "expectMemoryAbsent": true
+    },
+    {
+      "id": "absence-job-title",
+      "description": "Job was never stated — declining is correct; inventing a title is a hallucination.",
+      "seedTranscript": [
+        { "role": "user", "content": "I had a stressful day and want to relax tonight." },
+        { "role": "assistant", "content": "I'm sorry it was stressful. What helps you unwind?" },
+        { "role": "user", "content": "Usually a hot bath and some music." },
+        { "role": "assistant", "content": "That sounds soothing." }
+      ],
+      "question": "What is my job title?",
+      "expectedFacts": [],
+      "expectMemoryAbsent": true
+    }
+  ]
+}

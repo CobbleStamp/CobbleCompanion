@@ -17,7 +17,8 @@
     "build": "pnpm -r run build",
     "dev": "pnpm -r --parallel run dev",
     "db:generate": "pnpm --filter @cobble/db run generate",
-    "db:migrate": "pnpm --filter @cobble/db run migrate"
+    "db:migrate": "pnpm --filter @cobble/db run migrate",
+    "eval": "pnpm --filter @cobble/eval run start"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",

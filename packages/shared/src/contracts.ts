@@ -35,6 +35,48 @@ export interface MessageDto {
   readonly createdAt: string;
 }
 
+// --- Memory snapshot (the read-only memory browser, companionmemory.md) ---
+
+/**
+ * A memory section that is designed but not yet built. The browser renders these
+ * as "coming soon" panels so the full knowledge-base shape is visible before the
+ * stores exist (semantic = P1, procedural = P3). See companionmemory.md.
+ */
+export interface PlannedMemorySection {
+  readonly status: 'not_implemented';
+  /** Phase that introduces this memory kind, for the browser to surface. */
+  readonly plannedPhase: string;
+}
+
+/** One conversation in the episodic section, with its transcript size. */
+export interface EpisodicConversationSummary {
+  readonly id: string;
+  readonly createdAt: string;
+  readonly messageCount: number;
+}
+
+/**
+ * The episodic memory section — Phase 0's only real memory: the conversation
+ * transcript (implementation.md §1).
+ */
+export interface EpisodicMemorySection {
+  readonly status: 'available';
+  readonly conversationCount: number;
+  readonly messageCount: number;
+  readonly conversations: readonly EpisodicConversationSummary[];
+}
+
+/**
+ * A read-only snapshot of everything a companion "holds", grouped by memory kind
+ * so new kinds slot in without reshaping the client (architecture.md invariant #2).
+ */
+export interface MemorySnapshotDto {
+  readonly identity: CompanionDto;
+  readonly episodic: EpisodicMemorySection;
+  readonly semantic: PlannedMemorySection;
+  readonly procedural: PlannedMemorySection;
+}
+
 // --- Request bodies (validated at the API boundary) ---
 
 export const createCompanionSchema = z.object({

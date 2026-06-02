@@ -76,13 +76,14 @@ flowchart TB
 
 | Component | Owns | Notes |
 |---|---|---|
-| **Web Client** | Chat UI, create-a-companion, auth flows | Thin client over the API (invariant #1) |
-| **API / BFF** | Auth, sessions, routing, response streaming | The only thing surfaces talk to |
+| **Web Client** | Chat UI, create-a-companion, auth flows, read-only memory browser | Thin client over the API (invariant #1) |
+| **API / BFF** | Auth, sessions, routing, response streaming, memory-inspection routes | The only thing surfaces talk to |
 | **Harness** | The agent loop; defines memory/tool/initiation hooks | See §4 |
 | **LLM Gateway** | Provider-agnostic model access | Default OpenRouter; provider pluggable |
 | **MemoryStore** | Boundary for all companion memory | P0 impl: conversation transcript only |
 | **Identity Store** | Companion "home" record | Source of truth surfaces load from |
 | **Persistence** | Relational + vector storage | Postgres + `pgvector`; schemas → `implementation.md` |
+| **Eval Harness** | Offline memory-vs-performance evaluation (`packages/eval`) | Not on the serving path; live OpenRouter. See `companionmemory.md` §5 |
 
 **_Deferred — later phases:_** Ingestion Workers & Semantic Store (P1), Episodic Store (P2),
 Tool Registry / MCP & Approval Queue (P3), Proactivity Scheduler & Motivation Engine (P4),
@@ -295,9 +296,10 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
       llm/             provider-agnostic LLM gateway
       memory/          MemoryStore interface + P0 transcript impl
       identity/        companion "home" model + store
-    api/               BFF / surface boundary (Fastify)
-    web/               React web client (P0 surface)
+    api/               BFF / surface boundary (Fastify); incl. memory-inspection routes
+    web/               React web client (P0 surface); incl. read-only memory browser
     shared/            shared TS types / contracts
+    eval/              offline memory-vs-performance harness (→ companionmemory.md §5)
   db/                  migrations & schema (→ implementation.md)
   scripts/             dev / seed / ops scripts
 ```

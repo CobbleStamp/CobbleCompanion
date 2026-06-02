@@ -83,6 +83,7 @@ Before claiming any work is done, verify:
 | `docs/development-plan.md`     | Priorities, requirements, acceptance criteria, roadmap, open questions     | Product vision narrative, design rationale, schemas      |
 | `docs/architecture.md`         | System architecture, data flows, arch decisions, folder structure          | Implementation details                                   |
 | `docs/implementation.md`       | Data models, algorithms, internal code structure, configuration, security  | Product requirements, high-level architecture            |
+| `docs/companionmemory.md`      | Guide to the memory mechanism; how to browse & evaluate memory             | Canonical data model/schema (lives in `implementation.md`) |
 | `docs/ontology.md`             | Ontology contract & governance (fixed types + rules for the dynamic part)  | Leaf-type catalog (that's data, lives in the database)   |
 | `docs/documentation-rules.md`  | Doc taxonomy rules (types, scopes, naming)                                 | Actual doc content                                       |
 | `README.md`                    | Orientation, quick start, setup steps                                      | Architecture, cross-component concepts                   |
@@ -140,6 +141,7 @@ Before claiming any work is done, verify:
 | Priorities, requirements, roadmap | `docs/development-plan.md`     |
 | Technical architecture (incl. agent loop) | `docs/architecture.md`|
 | Internal implementation         | `docs/implementation.md`        |
+| Memory: browsing & evaluation   | `docs/companionmemory.md`       |
 | Ontology contract & governance  | `docs/ontology.md`              |
 | Documentation rules             | `docs/documentation-rules.md`   |
 | Local dev setup                 | `README.md`                     |
