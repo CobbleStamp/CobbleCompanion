@@ -1,0 +1,52 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: cobble
+    ports:
+      - '5432:5432'
+    volumes:
+      - cobble_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d cobble']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/cobble
+      LLM_PROVIDER: ${LLM_PROVIDER:-fake}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-anthropic/claude-3.5-sonnet}
+      AUTH_SESSION_SECRET: ${AUTH_SESSION_SECRET:-local-dev-session-secret-do-not-use-in-prod}
+      APP_URL: http://localhost:5173
+      EMAIL_TRANSPORT: console
+      PORT: '3000'
+      NODE_ENV: development
+    ports:
+      - '3000:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: web
+      args:
+        VITE_API_URL: http://localhost:3000
+    ports:
+      - '5173:80'
+    depends_on:
+      - api
+
+volumes:
+  cobble_pg:
