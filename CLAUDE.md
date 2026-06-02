@@ -35,11 +35,13 @@ read docs/product-overview.md
 > The implementation stack below is **not yet decided** — entries marked _TBD_ are to be defined in
 > `docs/architecture.md` and `docs/development-plan.md`. Do not infer a stack from older docs or code.
 
-- **Target platforms:** **mobile** (iOS + Android) and **web**. Mobile is essential for GPS / on-the-go presence; web is the fast-iteration surface. No desktop target.
-- **Data posture:** **cloud-synced** — the companion's long-term memory and knowledge base sync across devices for continuity (see `docs/product-overview.md` §6). Core data concerns: knowledge base, long-term memory, and the propose→approve **approval queue**.
-- **LLM:** agentic, **tool / skill / MCP**-using model loop (web-crawling is one tool among many); provider/gateway _TBD_ → `docs/architecture.md`.
+- **Surfaces (target platforms):** **mobile** (iOS + Android), **web**, and **desktop** (macOS/Windows/Linux). These are "living rooms" the one companion embodies in — **one at a time**, summoned by the user (see `docs/product-overview.md` §2). Web = portable/sandboxed; mobile = GPS/camera/health/notifications; desktop = files/local storage.
+- **The companion (intelligence):** model + harness + knowledge base. Knowledge base = three long-term memories — **semantic, episodic, procedural** (`docs/product-overview.md` §2.1).
+- **Data posture:** the companion's **canonical self lives in the cloud** (identity + long-term memory persist and sync there for continuity across rooms). **Raw on-device OS data can stay local** in the surface it came from and be reached via OS tools; *derived* knowledge syncs. Core data concerns: knowledge base, long-term memory, and the propose→approve **approval queue** (`docs/product-overview.md` §7).
+- **OS as tools:** **mobile and desktop** surfaces wrap their OS access as functions/tools for the companion (permission-gated); the companion can also act as its own cross-room/cloud sync courier.
+- **LLM:** agentic, **tool / skill / MCP**-using model loop (web-crawling and OS access are tools among many); provider/gateway _TBD_ → `docs/architecture.md`.
 - **Stack / frameworks / store engine:** _TBD_ → `docs/architecture.md`, `docs/development-plan.md`.
-- **App shell:** mobile app + web app over a cloud sync backend; concrete client/server architecture _TBD_ → `docs/architecture.md`.
+- **App shell:** mobile + web + desktop clients over a cloud "home" backend; one active embodiment at a time. Concrete client/server architecture _TBD_ → `docs/architecture.md`.
 
 ## When to Update Docs
 

@@ -20,31 +20,72 @@ It is two things fused into one relationship:
   behalf (the capability of tools like Claude Code) — but, unlike those tools, it is
   **proactive, not passive**.
 
-It runs as a **mobile app** (where location and always-with-you presence matter most) and a
-**web app** (for richer sessions and faster product iteration). Memory and knowledge sync to
-the cloud so your companion is continuous across devices.
+It appears across **mobile, web, and desktop** — but as one continuous being that embodies in
+**one surface at a time** (see §2). Its memory and identity live in the cloud, so it is the
+same Cobble wherever you summon it.
 
-## 2. Why It's Different
+## 2. What the Companion Is Made Of
+
+CobbleCompanion separates the *being* from the *bodies it appears in*.
+
+### 2.1 The Companion (its intelligence)
+The companion's intelligence is the combination of three things:
+
+- **The model** — a frontier LLM that reasons and converses.
+- **The harness** — the agent loop that gives the model goals, tools, proactivity, and
+  continuity (its "nervous system"). See `docs/architecture.md`.
+- **The knowledge base** — its long-term memory, the part that makes *this* Cobble uniquely
+  yours. It has three kinds (after the long-term-memory model for AI agents¹):
+
+  | Memory | What it holds | In CobbleCompanion |
+  |---|---|---|
+  | **Semantic** | Facts, concepts, rules, relationships | Everything it learns from your sources and the world — your Peru books become semantic memory |
+  | **Episodic** | Timestamped events & experiences (actions, outcomes, context) | Your shared history and the bond, plus where/when things happened — *"last July in Lima you loved that ceviche spot"* |
+  | **Procedural** | Learned skills & workflows it runs without re-deliberating | Its growing repertoire of abilities — *how* it books a hotel for you, your morning routine, the cross-device sync it has learned |
+
+The companion **grows by accumulating all three** — and that growth is exactly the bond
+deepening (see §5.5).
+
+### 2.2 The Living Rooms (where it appears)
+Mobile, web, and desktop apps are **not** three separate products — they are **surfaces**, like
+different living rooms the companion can be in. It embodies in **only one at a time**: when
+Cobble is on your phone, it isn't simultaneously awake in your browser. You **summon** it to
+whichever room you're in.
+
+- **The cloud is its home** — its canonical identity and long-term memory persist there between
+  summonings (its "soul"). When summoned into a room it loads in, acts, and writes back, so it
+  is continuous and consistent everywhere. (One embodiment at a time also means no split-brain
+  state to reconcile.)
+- **Each room grants different senses and hands.** A room's surface determines what the
+  companion can perceive and do (see §5.2).
+
+¹ Long-term memory model: *Beyond Short-Term Memory — The 3 Types of Long-Term Memory AI Agents Need* (machinelearningmastery.com).
+
+## 3. Why It's Different
 
 Most products sit on one side of a line. CobbleCompanion deliberately crosses it.
 
 | | Companion apps (e.g. Tolan) | Agent tools (e.g. Claude Code, OpenClaw) | **CobbleCompanion** |
 |---|---|---|---|
 | Bond & personality | ✅ | ❌ | ✅ |
-| Deep personal knowledge base | ❌ | partial / per-session | ✅ **lifelong, organized** |
+| Deep personal knowledge base | ❌ | partial / per-session | ✅ **lifelong, organized (3 memories)** |
 | Uses tools / acts in the world | ❌ | ✅ | ✅ |
+| Manages your device's OS data | ❌ | partial (desktop only) | ✅ **mobile + desktop, as tools** |
 | **Initiative** | reactive chat | **passive** (waits for you) | ✅ **proactive** (has motivations) |
 
-The two defining differentiators:
+The three defining differentiators:
 
 1. **A knowledge organism, not a chatbot.** You can hand it your books, PDFs, notes, and
    interests. It reads them, organizes them into long-term memory, and recalls the right thing
    at the right moment — including by *where you are* and *what you're doing*.
-2. **Proactivity.** When you have no question and no task, it doesn't go silent. Driven by its
+2. **A companion embodied across your devices.** It lives with you in mobile, web, or desktop —
+   one being you summon room to room — and on mobile and desktop it can reach into the device's
+   OS to organize and manage your digital life, not just talk about it (see §5.2).
+3. **Proactivity.** When you have no question and no task, it doesn't go silent. Driven by its
    own motivations, it brings you discoveries, checks in on your goals, surfaces timely
    opportunities, and asks you questions to learn more — like a curious, caring partner.
 
-## 3. The Hero Experience
+## 4. The Hero Experience
 
 Cobble is a domain-agnostic companion; it becomes good at whatever its master needs. One
 illustrative journey:
@@ -53,37 +94,55 @@ illustrative journey:
 > food, and culture and ask it to read them. It ingests and organizes that knowledge into
 > long-term memory. In the weeks before the trip it proactively shares things it found
 > fascinating and asks what you most want to experience — shaping an itinerary with you. In
-> Lima, based on your GPS location, it tells you the story of the plaza you're standing in and
-> recommends a dish nearby that matches your tastes. When you say "find us a hotel in Cusco for
-> Friday," it researches options, then **proposes** a shortlist and waits for your one-tap
-> approval before booking.
+> Lima, you summon it on your phone; based on your GPS location it tells you the story of the
+> plaza you're standing in and recommends a dish nearby that matches your tastes. Back at the
+> hotel you summon it on your laptop to plan the next leg; it brings along everything from the
+> day. When you say "find us a hotel in Cusco for Friday," it researches options, then
+> **proposes** a shortlist and waits for your one-tap approval before booking.
 
 The same companion, fed different things and connected to different tools, becomes a habit
 coach, a study partner, a research curator, or a day-to-day life assistant — **without being
 assigned a role**. It adapts to its master.
 
-## 4. Core Capabilities
+## 5. Core Capabilities
 
-### 4.1 Learning & Knowledge
-- **Ingest your sources:** PDFs, books, notes, links, conversations — read, understood, and
-  stored in durable long-term memory.
-- **Organized knowledge base:** facts and concepts are structured (not just a transcript) so
-  recall is fast, accurate, and connected across topics.
-- **Contextual recall:** surfaces the right knowledge by topic, time, and **location** (GPS).
+### 5.1 Learning & Knowledge
+- **Ingest your sources** → *semantic memory*: PDFs, books, notes, links, conversations — read,
+  understood, and stored as organized facts and concepts (not just a transcript), connected
+  across topics so recall is fast and accurate.
+- **Live your history with you** → *episodic memory*: it remembers specific interactions and
+  their context, enabling recall by topic, time, and **location** (GPS).
+- **Learn how to help** → *procedural memory*: repeated workflows become smooth, reusable
+  skills it executes for you.
 - **Self-expansion:** with permission, crawls the web to deepen domains you care about — one
   example of its broader tool use.
 
-### 4.2 Tools, Skills & Action
+### 5.2 Living Rooms & Device Integration
+- **One being, summoned room to room:** present in mobile, web, or desktop — one at a time —
+  carrying its full memory with it via its cloud home.
+- **Each surface = different senses and hands:**
+  - **Web** — portable, install-free, reachable anywhere; sandboxed (little OS access). Best for
+    rich sessions and fast iteration.
+  - **Mobile** — location/GPS, camera, notifications, health, always-with-you presence.
+  - **Desktop** — files, large workspace, heavier local storage/compute.
+- **OS as tools:** the **mobile and desktop** apps wrap their operating-system access as
+  functions/tools the companion can call (with permission), so Cobble can **organize and manage
+  your on-device digital life** — files, photos, calendar, contacts — not merely discuss it.
+- **The companion as courier:** because it has OS tools in the mobile/desktop rooms, *moving and
+  syncing data and knowledge between rooms and cloud storage is something it does* — an ability
+  (procedural memory), not just background plumbing.
+
+### 5.3 Tools, Skills & Action
 - **General tool/skill/MCP use:** like a modern coding agent, Cobble can wield tools and
   connect to external services (maps, calendar, search, booking, email, and MCP servers).
-  Web-crawling is just one such tool.
+  Web-crawling and OS access are just two such tools.
 - **Acts, doesn't just answer:** it can carry out multi-step tasks (research → plan → execute),
   e.g. find a hotel, book a ticket, set a reminder.
 - **Propose → approve trust model:** anything with cost, commitment, or external side-effects
   is **proposed** and held in an approval queue for your one-tap confirmation. Trust is earned,
   never assumed.
 
-### 4.3 Proactivity (the heart of the product)
+### 5.4 Proactivity (the heart of the product)
 Cobble has **motivations** and acts on them when you're idle or away. Its initiative is driven by:
 - **Your goals & well-being** — advances and checks in on what you care about.
 - **Its own curiosity & learning** — explores and brings back relevant discoveries.
@@ -91,42 +150,51 @@ Cobble has **motivations** and acts on them when you're idle or away. Its initia
 - **Pending work & opportunities** — unfinished tasks and time-sensitive openings (a price
   drop, a deadline).
 
-**Outreach model:** rich, conversational proactivity when you're **present** (app open); and
-**sparing, high-value push notifications** when you're away (e.g. you've arrived somewhere new,
-or an opportunity is expiring). Frequency is **tunable** so it feels alive, not annoying.
+**Outreach model:** rich, conversational proactivity when you're **present** (you've summoned it
+into a room); and **sparing, high-value push notifications** when you're away (e.g. you've
+arrived somewhere new, or an opportunity is expiring). Frequency is **tunable** so it feels
+alive, not annoying.
 
-### 4.4 The Bond & Growth
-You don't just use Cobble — you raise it. It grows visibly along four axes:
-- **Knowledge = growth:** it levels up as its knowledge base and recall expand.
+### 5.5 The Bond & Growth
+You don't just use Cobble — you raise it. Its growth *is* its accumulating memory, visible
+along four axes:
+- **Knowledge = growth:** it levels up as its **semantic & episodic** memory and recall expand.
 - **Relationship & personality:** seeded at creation (name, form, temperament), its character
-  deepens through your shared history, in-jokes, and accumulated understanding of you.
-- **Unlockable abilities:** new skills, tools, and integrations open up as you engage.
+  deepens through your shared **episodic** history, in-jokes, and accumulated understanding of you.
+- **Unlockable abilities:** new skills, tools, and routines (**procedural** memory) open up as
+  you engage.
 - **Visual / character evolution:** the character itself evolves (appearance, home,
   accessories) as a tangible sign of how far you've come together.
 
-## 5. Who It's For
+## 6. Who It's For
 Anyone who wants a single, trusted companion that *knows them and their world* and *acts for
 them* — travelers, lifelong learners, people pursuing goals and habits, and anyone who wants
 the warmth of a companion with the capability of an agent. It is **general-purpose by design**:
 it fits whatever domain its master brings to it.
 
-## 6. Privacy & Data Posture
-CobbleCompanion is **cloud-synced and convenience-first**: memory and knowledge sync across
-devices for continuity and richer processing, protected by account controls and
-encryption in transit and at rest. Because it holds deeply personal data (your sources, your
-preferences, your location history), the product treats trust as a core feature — the
-propose→approve model for actions is part of that contract, and users can manage and delete
-what their companion holds. (Detailed data model and threat model: `docs/architecture.md`.)
+## 7. Privacy & Data Posture
+The companion's **canonical self lives in the cloud** — its identity and long-term memory
+(semantic, episodic, procedural) persist and sync there, so it is continuous across every
+living room. **Raw on-device data** (files, photos, health, etc.) can **stay local in the room
+it came from** and be reached only via OS tools, so not everything must be uploaded; the
+companion typically syncs *derived* knowledge rather than raw sources.
 
-## 7. Non-Goals (for now)
+Because it holds deeply personal data, the product treats trust as a core feature: OS access is
+permission-gated per surface, the propose→approve model governs every consequential action, and
+users can inspect, manage, and delete what their companion holds. (Detailed data model and
+threat model: `docs/architecture.md`.)
+
+## 8. Non-Goals (for now)
 - **Not a role-play or character-fiction app** — Cobble is a real personal companion, not a
   scripted persona.
 - **Not a fleet of assigned job-bots** — one companion that adapts, not configured role templates.
+- **Not multiple simultaneous embodiments** — one being, one active room at a time.
 - **Not fully autonomous** — high-stakes/cost actions always route through your approval.
 
-## 8. Open Questions (to resolve in `docs/development-plan.md`)
+## 9. Open Questions (to resolve in `docs/development-plan.md`)
 - Single companion vs. allowing multiple companions per user (current design assumes one
   primary companion you bond with).
 - Monetization model (subscription, ability packs, etc.).
+- Which surfaces and OS integrations ship first (web first for iteration, then mobile for GPS?).
 - Which initial tool/skill integrations ship first (maps, calendar, search, booking).
 - How far long-term memory retains vs. summarizes over years.
