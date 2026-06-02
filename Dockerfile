@@ -24,9 +24,20 @@ FROM deps AS source
 COPY . .
 RUN pnpm db:generate
 
-# --- API service: migrate on boot, then serve via tsx ---
+# --- API service: migrate on boot, then serve via tsx (local dev / compose) ---
 FROM source AS api
 EXPOSE 3000
+CMD ["sh", "-c", "pnpm db:migrate && pnpm --filter @cobble/api run serve"]
+
+# --- Single Cloud Run service: build the SPA, then serve API + SPA on one origin ---
+# The Fastify API serves packages/web/dist via @fastify/static (see
+# packages/api/src/app.ts). VITE_API_URL is empty so the SPA calls its own
+# origin. Cloud Run injects PORT=8080 to match the listener (config.ts reads PORT).
+FROM source AS cloudrun
+ARG VITE_API_URL=
+ENV VITE_API_URL=$VITE_API_URL
+RUN pnpm --filter @cobble/web build
+EXPOSE 8080
 CMD ["sh", "-c", "pnpm db:migrate && pnpm --filter @cobble/api run serve"]
 
 # --- Web build: compile the SPA (API URL baked in at build time) ---

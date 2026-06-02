@@ -1,7 +1,6 @@
 import { createPgDatabase } from '@cobble/db';
 import {
   consoleLogger,
-  DrizzleAuthTokenStore,
   DrizzleIdentityStore,
   FakeLlmGateway,
   Harness,
@@ -10,8 +9,8 @@ import {
   type LlmGateway,
 } from '@cobble/core';
 import { buildApp } from './app.js';
+import { Auth0TokenVerifier, DevBypassVerifier, type TokenVerifier } from './auth/jwt-verifier.js';
 import { loadConfig, type AppConfig } from './config.js';
-import { ConsoleEmailSender } from './email.js';
 
 function createGateway(config: AppConfig): LlmGateway {
   if (config.llmProvider === 'fake') {
@@ -20,12 +19,18 @@ function createGateway(config: AppConfig): LlmGateway {
   return new OpenRouterGateway({ apiKey: config.openrouterApiKey });
 }
 
+function createTokenVerifier(config: AppConfig): TokenVerifier {
+  if (config.authMode === 'dev_bypass') {
+    return new DevBypassVerifier(config.devBypassEmail);
+  }
+  return new Auth0TokenVerifier(config.auth0Domain, config.auth0Audience);
+}
+
 async function main(): Promise<void> {
   const config = loadConfig();
   const { db } = createPgDatabase(config.databaseUrl);
 
   const identity = new DrizzleIdentityStore(db);
-  const authTokens = new DrizzleAuthTokenStore(db);
   const memory = new TranscriptMemoryStore(db);
   const harness = new Harness({
     gateway: createGateway(config),
@@ -33,14 +38,12 @@ async function main(): Promise<void> {
     model: config.llmModel,
     logger: consoleLogger,
   });
-  const email = new ConsoleEmailSender(consoleLogger);
 
   const app = await buildApp({
     identity,
-    authTokens,
     memory,
     harness,
-    email,
+    tokenVerifier: createTokenVerifier(config),
     config,
     logger: consoleLogger,
   });

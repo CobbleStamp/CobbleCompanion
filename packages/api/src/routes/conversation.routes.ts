@@ -1,7 +1,7 @@
 import { sendMessageSchema } from '@cobble/shared';
 import type { FastifyInstance } from 'fastify';
 import type { AppDeps } from '../app.js';
-import { requireAuth } from '../auth-guard.js';
+import type { RequireAuth } from '../auth-guard.js';
 import { streamSse } from '../sse.js';
 
 interface CompanionParams {
@@ -11,7 +11,11 @@ interface ConversationParams extends CompanionParams {
   readonly conversationId: string;
 }
 
-export function registerConversationRoutes(app: FastifyInstance, deps: AppDeps): void {
+export function registerConversationRoutes(
+  app: FastifyInstance,
+  deps: AppDeps,
+  requireAuth: RequireAuth,
+): void {
   const { identity, memory, harness } = deps;
 
   // Start a new conversation with an owned companion.

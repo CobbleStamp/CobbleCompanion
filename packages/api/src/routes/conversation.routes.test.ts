@@ -1,21 +1,21 @@
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { makeTestApp, signIn, type TestApp } from '../test/helpers.js';
+import { makeTestApp, type TestApp } from '../test/helpers.js';
 
 const ABSENT_UUID = '00000000-0000-0000-0000-000000000000';
 
 describe('conversation routes', () => {
   let ctx: TestApp;
-  let cookie: string;
+  let auth: { authorization: string };
   let companionId: string;
 
   beforeEach(async () => {
     ctx = await makeTestApp(['Hi', ' there']);
-    cookie = await signIn(ctx.app, ctx.email, 'owner@example.com');
+    auth = ctx.bearerFor('owner@example.com');
     const created = await ctx.app.inject({
       method: 'POST',
       url: '/companions',
-      headers: { cookie },
+      headers: auth,
       payload: { name: 'Pebble', form: 'fox', temperament: 'curious' },
     });
     companionId = created.json().companion.id;
@@ -28,7 +28,7 @@ describe('conversation routes', () => {
     const res = await ctx.app.inject({
       method: 'POST',
       url: `/companions/${companionId}/conversations`,
-      headers: { cookie },
+      headers: auth,
     });
     expect(res.statusCode).toBe(201);
     expect(res.json().conversation.companionId).toBe(companionId);
@@ -38,7 +38,7 @@ describe('conversation routes', () => {
     const res = await ctx.app.inject({
       method: 'POST',
       url: `/companions/${ABSENT_UUID}/conversations`,
-      headers: { cookie },
+      headers: auth,
     });
     expect(res.statusCode).toBe(404);
   });
@@ -47,7 +47,7 @@ describe('conversation routes', () => {
     const res = await ctx.app.inject({
       method: 'POST',
       url: `/companions/${companionId}/conversations/${ABSENT_UUID}/messages`,
-      headers: { cookie },
+      headers: auth,
       payload: { content: '   ' },
     });
     expect(res.statusCode).toBe(400);
@@ -57,7 +57,7 @@ describe('conversation routes', () => {
     const convRes = await ctx.app.inject({
       method: 'POST',
       url: `/companions/${companionId}/conversations`,
-      headers: { cookie },
+      headers: auth,
     });
     const conversationId = convRes.json().conversation.id;
 
@@ -68,7 +68,7 @@ describe('conversation routes', () => {
       `http://127.0.0.1:${port}/companions/${companionId}/conversations/${conversationId}/messages`,
       {
         method: 'POST',
-        headers: { 'content-type': 'application/json', cookie },
+        headers: { 'content-type': 'application/json', ...auth },
         body: JSON.stringify({ content: 'hello there' }),
       },
     );
@@ -82,7 +82,7 @@ describe('conversation routes', () => {
     const messages = await ctx.app.inject({
       method: 'GET',
       url: `/companions/${companionId}/conversations/${conversationId}/messages`,
-      headers: { cookie },
+      headers: auth,
     });
     const transcript = messages.json().messages as Array<{
       role: string;

@@ -21,19 +21,10 @@ migrations under `db/`.
 | `email` | text, unique | login identity |
 | `created_at` | timestamptz | |
 
-### `auth_tokens` — magic-link sign-in
-Phase 0 auth is **passwordless magic link**: a request issues a single-use token emailed as a
-link; verifying it consumes the token, ensures the user, and sets a signed session cookie. Tokens
-are email-scoped (a user need not exist yet).
-
-| Field | Type | Notes |
-|---|---|---|
-| `id` | uuid (PK) | |
-| `email` | text | indexed; recipient of the link |
-| `token` | text, unique | the opaque link secret |
-| `expires_at` | timestamptz | link TTL (15 min) |
-| `consumed_at` | timestamptz | null until used; set atomically on consumption |
-| `created_at` | timestamptz | |
+> **Auth note:** there is no local credential/token table. Sign-in is **Auth0 Universal Login +
+> Google SSO**; the API validates the bearer access token against the tenant's JWKS and
+> JIT-provisions the `users` row from the verified `email` claim (set by the Auth0 post-login
+> allowlist Action). See §5 and `infra/auth0/`.
 
 ### `companions` — the canonical "home"
 | Field | Type | Notes |
@@ -119,10 +110,11 @@ Loaded from environment / a secret manager; required values validated at startup
 | `LLM_PROVIDER` | Selects the gateway backend: `openrouter` (default) \| `fake` |
 | `OPENROUTER_API_KEY` | LLM provider credential (secret — required when provider=`openrouter`) |
 | `LLM_MODEL` | Model id passed to the provider |
-| `AUTH_SESSION_SECRET` | Signs the session cookie (≥32 chars; secret) |
-| `APP_URL` | Web client base URL; magic-link emails redirect here |
-| `EMAIL_TRANSPORT` | `console` (dev — logs the link) \| `smtp` (later) |
-| `PORT` / `MIN_INSTANCES` | Server port; scale-to-zero hot-path minimum (`architecture.md` §8) |
+| `AUTH_MODE` | `auth0` (default) \| `dev_bypass` (local/test — skips Auth0) |
+| `AUTH0_DOMAIN` / `AUTH0_CLIENT_ID` / `AUTH0_AUDIENCE` | Auth0 tenant + SPA app + API audience (required when `AUTH_MODE=auth0`) |
+| `DEV_BYPASS_EMAIL` | Identity resolved in `dev_bypass` mode |
+| `APP_URL` | Web client origin (allowed CORS origin for local cross-origin dev) |
+| `PORT` | Server port (Cloud Run injects this) |
 
 **_Deferred:_** ingestion/worker tuning, embedding model selection, proactivity cadence,
 push-notification credentials (P1+).
@@ -140,8 +132,11 @@ push-notification credentials (P1+).
 Implements the trust-model boundaries in `architecture.md` §8.
 
 - **Secrets** — never hardcoded; loaded from env / secret manager; presence validated at startup.
-- **Authentication** — passwordless magic link: single-use, 15-min-TTL tokens (`auth_tokens`,
-  consumed atomically) and a signed, `httpOnly`, `sameSite=lax` session cookie (`secure` in prod).
+- **Authentication** — **Auth0 Universal Login + Google SSO**. The SPA uses PKCE
+  (`@auth0/auth0-react`) and sends the access token as a `Bearer` header; the Fastify API validates
+  the RS256 token against the tenant's JWKS (issuer/audience/expiry, `jose`) and JIT-provisions the
+  user from the verified `email` claim. A per-stack Auth0 post-login Action gates sign-in to an
+  email allowlist. `AUTH_MODE=dev_bypass` skips all of this for local dev/tests.
 - **Transport** — HTTPS/TLS for client traffic; secure (TLS) Postgres connections.
 - **Tenancy** — every query filtered by `owner_id`/`companion_id`; authorization checked at the
   API boundary before reaching the core.

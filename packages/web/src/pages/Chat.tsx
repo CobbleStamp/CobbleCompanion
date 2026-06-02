@@ -1,10 +1,10 @@
 import type { CompanionDto, MessageRole } from '@cobble/shared';
 import { useEffect, useRef, useState } from 'react';
-import { createConversation, fetchMessages, logout, sendMessage } from '../api/client.js';
+import { createConversation, fetchMessages, sendMessage } from '../api/client.js';
 
 interface ChatProps {
   readonly companion: CompanionDto;
-  readonly onSignedOut: () => void;
+  readonly onSignOut: () => void;
 }
 
 interface ChatLine {
@@ -13,7 +13,7 @@ interface ChatLine {
 }
 
 /** Step 3: hold a persisted, streamed conversation with the companion. */
-export function Chat({ companion, onSignedOut }: ChatProps): JSX.Element {
+export function Chat({ companion, onSignOut }: ChatProps): JSX.Element {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [lines, setLines] = useState<ChatLine[]>([]);
   const [input, setInput] = useState('');
@@ -56,7 +56,7 @@ export function Chat({ companion, onSignedOut }: ChatProps): JSX.Element {
     <main className="chat">
       <header>
         <h1>{companion.name}</h1>
-        <button type="button" onClick={() => void logout().then(onSignedOut)}>
+        <button type="button" onClick={onSignOut}>
           Sign out
         </button>
       </header>

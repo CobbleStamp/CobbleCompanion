@@ -6,17 +6,33 @@ import type {
   MessageDto,
 } from '@cobble/shared';
 
-const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:3000';
+const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? '';
 
 export interface CurrentUser {
   readonly id: string;
   readonly email: string;
 }
 
+/**
+ * Returns an Auth0 access token (or null when auth is bypassed). Wired up by
+ * <AuthBridge/> once Auth0 is ready, so the client need not import the SDK.
+ */
+type AccessTokenGetter = () => Promise<string | null>;
+let getAccessToken: AccessTokenGetter = async () => null;
+
+export function setAccessTokenGetter(getter: AccessTokenGetter): void {
+  getAccessToken = getter;
+}
+
+async function authHeaders(): Promise<Record<string, string>> {
+  const token = await getAccessToken();
+  return token ? { authorization: `Bearer ${token}` } : {};
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const auth = await authHeaders();
   const response = await fetch(`${API_URL}${path}`, {
-    credentials: 'include',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...auth },
     ...init,
   });
   if (!response.ok) {
@@ -26,22 +42,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
-export async function requestMagicLink(email: string): Promise<void> {
-  await request('/auth/request-link', {
-    method: 'POST',
-    body: JSON.stringify({ email }),
-  });
-}
-
 export async function fetchCurrentUser(): Promise<CurrentUser | null> {
-  const response = await fetch(`${API_URL}/auth/me`, { credentials: 'include' });
+  const auth = await authHeaders();
+  const response = await fetch(`${API_URL}/auth/me`, { headers: auth });
   if (!response.ok) return null;
   const body = (await response.json()) as { user: CurrentUser };
   return body.user;
-}
-
-export async function logout(): Promise<void> {
-  await request('/auth/logout', { method: 'POST' });
 }
 
 export async function listCompanions(): Promise<CompanionDto[]> {
@@ -81,12 +87,12 @@ export async function* sendMessage(
   conversationId: string,
   content: string,
 ): AsyncGenerator<ChatStreamEvent> {
+  const auth = await authHeaders();
   const response = await fetch(
     `${API_URL}/companions/${companionId}/conversations/${conversationId}/messages`,
     {
       method: 'POST',
-      credentials: 'include',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...auth },
       body: JSON.stringify({ content }),
     },
   );

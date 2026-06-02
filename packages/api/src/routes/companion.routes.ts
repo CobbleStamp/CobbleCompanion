@@ -1,9 +1,13 @@
 import { createCompanionSchema } from '@cobble/shared';
 import type { FastifyInstance } from 'fastify';
 import type { AppDeps } from '../app.js';
-import { requireAuth } from '../auth-guard.js';
+import type { RequireAuth } from '../auth-guard.js';
 
-export function registerCompanionRoutes(app: FastifyInstance, deps: AppDeps): void {
+export function registerCompanionRoutes(
+  app: FastifyInstance,
+  deps: AppDeps,
+  requireAuth: RequireAuth,
+): void {
   const { identity } = deps;
 
   app.post('/companions', { preHandler: requireAuth }, async (request, reply) => {

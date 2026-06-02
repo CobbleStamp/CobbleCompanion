@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { makeTestApp, signIn, type TestApp } from '../test/helpers.js';
+import { makeTestApp, type TestApp } from '../test/helpers.js';
 
-describe('auth routes (magic link)', () => {
+describe('auth routes (Auth0)', () => {
   let ctx: TestApp;
 
   beforeEach(async () => {
@@ -11,82 +11,38 @@ describe('auth routes (magic link)', () => {
     await ctx.close();
   });
 
-  it('issues a magic link and responds 200 without revealing the user', async () => {
-    const res = await ctx.app.inject({
-      method: 'POST',
-      url: '/auth/request-link',
-      payload: { email: 'ada@example.com' },
-    });
+  it('serves the public SPA bootstrap config', async () => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/auth/config' });
     expect(res.statusCode).toBe(200);
-    expect(ctx.email.lastEmail).toBe('ada@example.com');
-    expect(ctx.email.lastLink).toContain('/auth/verify?token=');
-  });
-
-  it('rejects a malformed email', async () => {
-    const res = await ctx.app.inject({
-      method: 'POST',
-      url: '/auth/request-link',
-      payload: { email: 'nope' },
+    expect(res.json()).toEqual({
+      mode: 'auth0',
+      auth0_domain: 'test.auth0.local',
+      auth0_client_id: 'test-client-id',
+      auth0_audience: 'https://api.cobble.test',
     });
-    expect(res.statusCode).toBe(400);
   });
 
-  it('verifies a token, sets a session, and identifies the user via /auth/me', async () => {
-    const cookie = await signIn(ctx.app, ctx.email, 'ada@example.com');
-    expect(cookie).toContain('cobble_session=');
-
+  it('identifies the user via /auth/me with a valid bearer token', async () => {
     const me = await ctx.app.inject({
       method: 'GET',
       url: '/auth/me',
-      headers: { cookie },
+      headers: ctx.bearerFor('ada@example.com'),
     });
     expect(me.statusCode).toBe(200);
     expect(me.json().user.email).toBe('ada@example.com');
   });
 
-  it('redirects an invalid token back to the app with an error', async () => {
-    const res = await ctx.app.inject({
-      method: 'GET',
-      url: '/auth/verify?token=bogus',
-    });
-    expect(res.statusCode).toBe(302);
-    expect(res.headers.location).toContain('error=invalid_link');
-  });
-
-  it('rejects /auth/me without a session', async () => {
+  it('rejects /auth/me without a token', async () => {
     const res = await ctx.app.inject({ method: 'GET', url: '/auth/me' });
     expect(res.statusCode).toBe(401);
   });
 
-  it('logout clears the session', async () => {
-    const cookie = await signIn(ctx.app, ctx.email, 'ada@example.com');
-    const out = await ctx.app.inject({
-      method: 'POST',
-      url: '/auth/logout',
-      headers: { cookie },
-    });
-    expect(out.statusCode).toBe(200);
-    expect(out.headers['set-cookie']).toBeDefined();
-  });
-
-  it('a token cannot be reused', async () => {
-    await ctx.app.inject({
-      method: 'POST',
-      url: '/auth/request-link',
-      payload: { email: 'ada@example.com' },
-    });
-    const token = new URL(ctx.email.lastLink ?? '').searchParams.get('token');
-    const first = await ctx.app.inject({
+  it('rejects /auth/me with an unknown token', async () => {
+    const res = await ctx.app.inject({
       method: 'GET',
-      url: `/auth/verify?token=${token}`,
+      url: '/auth/me',
+      headers: { authorization: 'Bearer bogus' },
     });
-    expect(first.statusCode).toBe(302);
-    expect(first.headers.location).not.toContain('error');
-
-    const second = await ctx.app.inject({
-      method: 'GET',
-      url: `/auth/verify?token=${token}`,
-    });
-    expect(second.headers.location).toContain('error=invalid_link');
+    expect(res.statusCode).toBe(401);
   });
 });

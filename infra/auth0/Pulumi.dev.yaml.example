@@ -1,0 +1,25 @@
+# Template for the `dev` stack config. Create the real Pulumi.dev.yaml via the
+# `pulumi config set` commands in README.md Phase B (do NOT copy this verbatim —
+# the M2M secret must be set with `--secret` so it lands encrypted).
+#
+# Required:
+#   auth0:domain        — Auth0 tenant domain (e.g. cobblecompanion.us.auth0.com)
+#   auth0:clientId      — Pulumi M2M app client id (created manually, Phase A4)
+#   auth0:clientSecret  — Pulumi M2M app client secret (set with --secret)
+#   cobblecompanion-auth0:apiAudience  — API resource-server identifier
+#   cobblecompanion-auth0:allowedEmails — sign-in allowlist (Google emails)
+#   cobblecompanion-auth0:spaOrigins    — SPA callback/logout/web origins
+#
+# After the first Cloud Run deploy, add the *.run.app URL to spaOrigins and
+# re-run `pulumi up`.
+
+config:
+  auth0:domain: REPLACE_ME.us.auth0.com
+  auth0:clientId: REPLACE_ME_M2M_CLIENT_ID
+  # auth0:clientSecret set via: pulumi config set --secret auth0:clientSecret <secret>
+  cobblecompanion-auth0:apiAudience: https://api.cobblecompanion.local
+  cobblecompanion-auth0:allowedEmails:
+    - cobblestamp@gmail.com
+  cobblecompanion-auth0:spaOrigins:
+    - http://localhost:5173
+    - http://localhost:3001

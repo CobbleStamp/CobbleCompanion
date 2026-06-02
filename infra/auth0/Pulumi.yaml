@@ -1,0 +1,3 @@
+name: cobblecompanion-auth0
+runtime: nodejs
+description: Auth0 tenant configuration for CobbleCompanion, managed as code via Pulumi.

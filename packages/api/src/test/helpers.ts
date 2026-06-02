@@ -1,6 +1,5 @@
 import { createTestDatabase } from '@cobble/db/testing';
 import {
-  DrizzleAuthTokenStore,
   DrizzleIdentityStore,
   FakeLlmGateway,
   Harness,
@@ -9,19 +8,29 @@ import {
 } from '@cobble/core';
 import type { FastifyInstance } from 'fastify';
 import { buildApp, type AppDeps } from '../app.js';
+import type { TokenVerifier, VerifiedClaims } from '../auth/jwt-verifier.js';
 import type { AppConfig } from '../config.js';
-import type { EmailSender } from '../email.js';
 
 export const silentLogger: Logger = { error: () => {}, info: () => {} };
 
-/** Email sender that records the last magic link instead of sending it. */
-export class CapturingEmailSender implements EmailSender {
-  lastLink: string | null = null;
-  lastEmail: string | null = null;
+/**
+ * Token verifier for tests: maps a known token string to claims, throwing on
+ * anything unregistered. Lets tests exercise the auth boundary without signing
+ * real RS256 tokens or touching JWKS (fakes-over-mocks).
+ */
+export class FakeTokenVerifier implements TokenVerifier {
+  private readonly byToken = new Map<string, VerifiedClaims>();
 
-  async sendMagicLink(email: string, link: string): Promise<void> {
-    this.lastEmail = email;
-    this.lastLink = link;
+  set(token: string, claims: VerifiedClaims): void {
+    this.byToken.set(token, claims);
+  }
+
+  async verify(token: string): Promise<VerifiedClaims> {
+    const claims = this.byToken.get(token);
+    if (!claims) {
+      throw new Error('unknown test token');
+    }
+    return claims;
   }
 }
 
@@ -30,9 +39,12 @@ export const testConfig: AppConfig = {
   llmProvider: 'fake',
   openrouterApiKey: '',
   llmModel: 'test-model',
-  sessionSecret: 'test-session-secret-at-least-32-chars-long',
   appUrl: 'http://localhost:3001',
-  emailTransport: 'console',
+  authMode: 'auth0',
+  auth0Domain: 'test.auth0.local',
+  auth0ClientId: 'test-client-id',
+  auth0Audience: 'https://api.cobble.test',
+  devBypassEmail: 'dev@cobble.local',
   port: 0,
   isProduction: false,
 };
@@ -40,17 +52,18 @@ export const testConfig: AppConfig = {
 export interface TestApp {
   readonly app: FastifyInstance;
   readonly deps: AppDeps;
-  readonly email: CapturingEmailSender;
+  readonly tokenVerifier: FakeTokenVerifier;
+  /** Build the Authorization headers for `address`, registering its fake token. */
+  readonly bearerFor: (address: string) => { authorization: string };
   readonly close: () => Promise<void>;
 }
 
 export async function makeTestApp(chunks: readonly string[] = ['Hi', ' there']): Promise<TestApp> {
   const { db, close: closeDb } = await createTestDatabase();
   const memory = new TranscriptMemoryStore(db);
-  const email = new CapturingEmailSender();
+  const tokenVerifier = new FakeTokenVerifier();
   const deps: AppDeps = {
     identity: new DrizzleIdentityStore(db),
-    authTokens: new DrizzleAuthTokenStore(db),
     memory,
     harness: new Harness({
       gateway: new FakeLlmGateway(chunks),
@@ -58,40 +71,27 @@ export async function makeTestApp(chunks: readonly string[] = ['Hi', ' there']):
       model: 'test-model',
       logger: silentLogger,
     }),
-    email,
+    tokenVerifier,
     config: testConfig,
     logger: silentLogger,
   };
   const app = await buildApp(deps);
   await app.ready();
+
+  const bearerFor = (address: string): { authorization: string } => {
+    const token = `test-${address}`;
+    tokenVerifier.set(token, { sub: `auth0|${address}`, email: address });
+    return { authorization: `Bearer ${token}` };
+  };
+
   return {
     app,
     deps,
-    email,
+    tokenVerifier,
+    bearerFor,
     close: async () => {
       await app.close();
       await closeDb();
     },
   };
-}
-
-/** Run the full magic-link flow and return the session cookie (`name=value`). */
-export async function signIn(
-  app: FastifyInstance,
-  email: CapturingEmailSender,
-  address: string,
-): Promise<string> {
-  await app.inject({
-    method: 'POST',
-    url: '/auth/request-link',
-    payload: { email: address },
-  });
-  const token = new URL(email.lastLink ?? '').searchParams.get('token');
-  const verified = await app.inject({
-    method: 'GET',
-    url: `/auth/verify?token=${token}`,
-  });
-  const header = verified.headers['set-cookie'];
-  const cookie = Array.isArray(header) ? header[0] : header;
-  return (cookie ?? '').split(';')[0] ?? '';
 }

@@ -1,17 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createCompanionSchema, requestMagicLinkSchema, sendMessageSchema } from './contracts.js';
-
-describe('requestMagicLinkSchema', () => {
-  it('normalizes email to trimmed lowercase', () => {
-    const parsed = requestMagicLinkSchema.parse({ email: '  Ada@Example.COM ' });
-    expect(parsed.email).toBe('ada@example.com');
-  });
-
-  it('rejects a malformed email', () => {
-    const result = requestMagicLinkSchema.safeParse({ email: 'not-an-email' });
-    expect(result.success).toBe(false);
-  });
-});
+import { createCompanionSchema, sendMessageSchema } from './contracts.js';
 
 describe('createCompanionSchema', () => {
   it('accepts a seed companion', () => {

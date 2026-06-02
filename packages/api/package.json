@@ -16,9 +16,10 @@
     "@cobble/core": "workspace:*",
     "@cobble/db": "workspace:*",
     "@cobble/shared": "workspace:*",
-    "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^10.0.2",
+    "@fastify/static": "^8.0.3",
     "fastify": "^5.2.1",
+    "jose": "^5.9.6",
     "zod": "^3.24.1"
   },
   "devDependencies": {

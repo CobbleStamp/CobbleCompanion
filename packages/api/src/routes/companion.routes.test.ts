@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { makeTestApp, signIn, type TestApp } from '../test/helpers.js';
+import { makeTestApp, type TestApp } from '../test/helpers.js';
 
 describe('companion routes', () => {
   let ctx: TestApp;
-  let cookie: string;
+  let auth: { authorization: string };
 
   beforeEach(async () => {
     ctx = await makeTestApp();
-    cookie = await signIn(ctx.app, ctx.email, 'owner@example.com');
+    auth = ctx.bearerFor('owner@example.com');
   });
   afterEach(async () => {
     await ctx.close();
@@ -26,7 +26,7 @@ describe('companion routes', () => {
     const created = await ctx.app.inject({
       method: 'POST',
       url: '/companions',
-      headers: { cookie },
+      headers: auth,
       payload: { name: 'Pebble', form: 'fox', temperament: 'curious' },
     });
     expect(created.statusCode).toBe(201);
@@ -35,7 +35,7 @@ describe('companion routes', () => {
     const list = await ctx.app.inject({
       method: 'GET',
       url: '/companions',
-      headers: { cookie },
+      headers: auth,
     });
     expect(list.json().companions).toHaveLength(1);
   });
@@ -44,7 +44,7 @@ describe('companion routes', () => {
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/companions',
-      headers: { cookie },
+      headers: auth,
       payload: { name: '', form: 'fox', temperament: 'curious' },
     });
     expect(res.statusCode).toBe(400);
@@ -54,14 +54,14 @@ describe('companion routes', () => {
     await ctx.app.inject({
       method: 'POST',
       url: '/companions',
-      headers: { cookie },
+      headers: auth,
       payload: { name: 'Pebble', form: 'fox', temperament: 'curious' },
     });
-    const otherCookie = await signIn(ctx.app, ctx.email, 'other@example.com');
+    const otherAuth = ctx.bearerFor('other@example.com');
     const list = await ctx.app.inject({
       method: 'GET',
       url: '/companions',
-      headers: { cookie: otherCookie },
+      headers: otherAuth,
     });
     expect(list.json().companions).toHaveLength(0);
   });

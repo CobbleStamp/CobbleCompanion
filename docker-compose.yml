@@ -25,9 +25,12 @@ services:
       LLM_PROVIDER: ${LLM_PROVIDER:-fake}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-anthropic/claude-3.5-sonnet}
-      AUTH_SESSION_SECRET: ${AUTH_SESSION_SECRET:-local-dev-session-secret-do-not-use-in-prod}
+      AUTH_MODE: ${AUTH_MODE:-dev_bypass}
+      AUTH0_DOMAIN: ${AUTH0_DOMAIN:-}
+      AUTH0_CLIENT_ID: ${AUTH0_CLIENT_ID:-}
+      AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:-}
+      DEV_BYPASS_EMAIL: ${DEV_BYPASS_EMAIL:-dev@cobble.local}
       APP_URL: http://localhost:3001
-      EMAIL_TRANSPORT: console
       PORT: '3000'
       NODE_ENV: development
     ports:

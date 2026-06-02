@@ -8,6 +8,13 @@
       "when": 1780417141126,
       "tag": "0000_tired_mandroid",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1780420670776,
+      "tag": "0001_aberrant_maverick",
+      "breakpoints": true
     }
   ]
 }

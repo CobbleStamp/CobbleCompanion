@@ -1,0 +1,29 @@
+# Copy to Pulumi.dev.yaml and fill in the placeholders before the first
+# `pulumi up`. Pulumi.dev.yaml is gitignored — never commit project-specific
+# identifiers.
+#
+# Required:
+#   gcp:project   — GCP project ID ("cobblecompanion")
+#   gcp:region    — Cloud Run region (default: us-central1)
+#   cobblecompanion-gcp:auth0Domain   — Auth0 tenant domain
+#   cobblecompanion-gcp:auth0Audience — Auth0 API audience identifier
+#   cobblecompanion-gcp:auth0Stack    — Pulumi StackReference slug for the
+#                                       sibling infra/auth0 project, e.g.
+#                                       "organization/cobblecompanion-auth0/dev".
+#                                       Supplies AUTH0_CLIENT_ID to cc-api.
+#   cobblecompanion-gcp:imageTag      — container image tag to deploy
+#                                       (default: "latest")
+#   cobblecompanion-gcp:llmModel      — OpenRouter model id
+#
+# Secrets are NOT here — Secret Manager owns DATABASE_URL and
+# OPENROUTER_API_KEY. Pulumi only reserves the names; you populate the values
+# with `gcloud secrets versions add ...` after the first apply.
+
+config:
+  gcp:project: cobblecompanion
+  gcp:region: us-central1
+  cobblecompanion-gcp:auth0Domain: REPLACE_ME.us.auth0.com
+  cobblecompanion-gcp:auth0Audience: https://api.cobblecompanion.local
+  cobblecompanion-gcp:auth0Stack: organization/cobblecompanion-auth0/dev
+  cobblecompanion-gcp:imageTag: latest
+  cobblecompanion-gcp:llmModel: anthropic/claude-3.5-sonnet

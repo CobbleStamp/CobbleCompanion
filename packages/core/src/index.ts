@@ -5,7 +5,6 @@ export {
   type IdentityStore,
   type UserRecord,
 } from './identity/store.js';
-export { DrizzleAuthTokenStore, type AuthTokenStore } from './identity/auth-store.js';
 
 // Memory
 export { TranscriptMemoryStore, type MemoryStore } from './memory/store.js';

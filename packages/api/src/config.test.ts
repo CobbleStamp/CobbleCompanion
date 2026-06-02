@@ -3,7 +3,9 @@ import { loadConfig } from './config.js';
 
 const base = {
   DATABASE_URL: 'postgres://localhost/cobble',
-  AUTH_SESSION_SECRET: 'x'.repeat(40),
+  AUTH0_DOMAIN: 'tenant.us.auth0.com',
+  AUTH0_CLIENT_ID: 'client-id',
+  AUTH0_AUDIENCE: 'https://api.cobble.test',
 };
 
 describe('loadConfig', () => {
@@ -12,13 +14,27 @@ describe('loadConfig', () => {
     expect(config.llmProvider).toBe('fake');
     expect(config.port).toBe(3000);
     expect(config.appUrl).toBe('http://localhost:3001');
+    expect(config.authMode).toBe('auth0');
     expect(config.isProduction).toBe(false);
   });
 
-  it('requires a session secret of at least 32 chars', () => {
+  it('requires the Auth0 settings when AUTH_MODE=auth0', () => {
     expect(() =>
-      loadConfig({ ...base, AUTH_SESSION_SECRET: 'short', LLM_PROVIDER: 'fake' }),
+      loadConfig({
+        DATABASE_URL: 'postgres://localhost/cobble',
+        LLM_PROVIDER: 'fake',
+      }),
     ).toThrow();
+  });
+
+  it('allows missing Auth0 settings in dev_bypass mode', () => {
+    const config = loadConfig({
+      DATABASE_URL: 'postgres://localhost/cobble',
+      LLM_PROVIDER: 'fake',
+      AUTH_MODE: 'dev_bypass',
+    });
+    expect(config.authMode).toBe('dev_bypass');
+    expect(config.devBypassEmail).toBe('dev@cobble.local');
   });
 
   it('requires an OpenRouter key when provider is openrouter', () => {

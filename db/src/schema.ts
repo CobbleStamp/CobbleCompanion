@@ -5,6 +5,9 @@ import { bigserial, index, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg
  * Phase 0 data model (implementation.md §1). Multi-tenant: every row is reachable
  * only through its owning user/companion (architecture.md invariant #5). Later
  * phases add semantic/episodic/procedural tables via new migrations.
+ *
+ * Auth is handled by Auth0 (Google SSO); users are JIT-provisioned by the email
+ * claim on a verified access token, so there is no local credential/token table.
  */
 
 export const users = pgTable('users', {
@@ -12,20 +15,6 @@ export const users = pgTable('users', {
   email: text('email').notNull().unique(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
-
-/** Single-use magic-link tokens. Email-scoped so a user need not exist yet. */
-export const authTokens = pgTable(
-  'auth_tokens',
-  {
-    id: uuid('id').defaultRandom().primaryKey(),
-    email: text('email').notNull(),
-    token: text('token').notNull().unique(),
-    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-    consumedAt: timestamp('consumed_at', { withTimezone: true }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => [index('auth_tokens_email_idx').on(table.email)],
-);
 
 /** The companion "home" — the canonical identity a surface loads from (invariant #4). */
 export const companions = pgTable(
@@ -75,7 +64,6 @@ export const messages = pgTable(
 
 export const schema = {
   users,
-  authTokens,
   companions,
   conversations,
   messages,

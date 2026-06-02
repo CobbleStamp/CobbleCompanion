@@ -37,11 +37,6 @@ export interface MessageDto {
 
 // --- Request bodies (validated at the API boundary) ---
 
-export const requestMagicLinkSchema = z.object({
-  email: z.string().trim().toLowerCase().email().max(320),
-});
-export type RequestMagicLinkBody = z.infer<typeof requestMagicLinkSchema>;
-
 export const createCompanionSchema = z.object({
   name: z.string().trim().min(1).max(80),
   form: z.string().trim().min(1).max(80),
