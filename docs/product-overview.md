@@ -1,7 +1,8 @@
 # CobbleCompanion — Product Overview
 
-> Canonical product description. Priorities/roadmap live in `docs/development-plan.md`;
-> technical architecture in `docs/architecture.md`. Each fact lives in exactly one place.
+> Canonical product description — the **what & why**. Scope, priorities & open questions live in
+> `development-plan.md`; technical architecture in `architecture.md`; internal mechanisms in
+> `implementation.md`. Full map in the Documentation Index (§10). Each fact lives in exactly one place.
 
 ## 1. What CobbleCompanion Is
 
@@ -33,7 +34,7 @@ The companion's intelligence is the combination of three things:
 
 - **The model** — a frontier LLM that reasons and converses.
 - **The harness** — the agent loop that gives the model goals, tools, proactivity, and
-  continuity (its "nervous system"). See `docs/architecture.md`.
+  continuity (its "nervous system"). See `architecture.md`.
 - **The knowledge base** — its long-term memory, the part that makes *this* Cobble uniquely
   yours. It has three kinds (after the long-term-memory model for AI agents¹):
 
@@ -182,7 +183,7 @@ companion typically syncs *derived* knowledge rather than raw sources.
 Because it holds deeply personal data, the product treats trust as a core feature: OS access is
 permission-gated per surface, the propose→approve model governs every consequential action, and
 users can inspect, manage, and delete what their companion holds. (Detailed data model and
-threat model: `docs/architecture.md`.)
+threat model: `architecture.md` / `implementation.md`.)
 
 ## 8. Non-Goals (for now)
 - **Not a role-play or character-fiction app** — Cobble is a real personal companion, not a
@@ -191,10 +192,30 @@ threat model: `docs/architecture.md`.)
 - **Not multiple simultaneous embodiments** — one being, one active room at a time.
 - **Not fully autonomous** — high-stakes/cost actions always route through your approval.
 
-## 9. Open Questions (to resolve in `docs/development-plan.md`)
-- Single companion vs. allowing multiple companions per user (current design assumes one
-  primary companion you bond with).
-- Monetization model (subscription, ability packs, etc.).
-- Which surfaces and OS integrations ship first (web first for iteration, then mobile for GPS?).
-- Which initial tool/skill integrations ship first (maps, calendar, search, booking).
-- How far long-term memory retains vs. summarizes over years.
+> **Open questions & roadmap** are owned by [`development-plan.md`](./development-plan.md) §5 —
+> not duplicated here (single-source rule).
+
+## 9. Glossary
+
+| Term | Meaning |
+|---|---|
+| **Cobble / companion** | The AI being the user names, raises, and bonds with |
+| **Surface / living room** | A client (web, mobile, desktop) the companion embodies in — one at a time (§2.2) |
+| **Summon** | Bringing the companion into the surface you're currently using |
+| **Home** | The cloud-resident canonical identity + long-term memory — the companion's persistent "self" |
+| **Semantic / episodic / procedural memory** | The three kinds of long-term memory the companion accumulates (§2.1) |
+| **Propose → approve** | The trust model: consequential/outward actions are proposed and await the user's confirmation (§5.3) |
+| **Proactivity** | The companion initiating contact or action from its own motivations (§5.4) |
+
+## 10. Documentation Index
+
+| Document | Covers |
+|---|---|
+| [`product-overview.md`](./product-overview.md) *(this doc)* | What the product is and why — value, features, journeys |
+| [`development-plan.md`](./development-plan.md) | Scope, priorities, phases, acceptance criteria, roadmap, open questions |
+| [`architecture.md`](./architecture.md) | Components, the agent loop, data flows, design decisions |
+| [`implementation.md`](./implementation.md) | Data models, harness internals, configuration, security |
+| [`documentation-rules.md`](./documentation-rules.md) | Doc taxonomy, naming, and cross-referencing rules |
+| [`ontology.md`](./ontology.md) *(planned)* | Knowledge ontology contract & governance — created when introduced |
+| [`../README.md`](../README.md) | Orientation & setup |
+| [`../AGENTS.md`](../AGENTS.md) · [`../CLAUDE.md`](../CLAUDE.md) | Working rules · AI-agent entry point |

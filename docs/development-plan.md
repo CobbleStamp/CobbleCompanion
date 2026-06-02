@@ -1,14 +1,14 @@
 # CobbleCompanion — Development Plan
 
 > Canonical source for **priorities, requirements, and roadmap**. Product definition lives in
-> `docs/product-overview.md`; technical architecture in `docs/architecture.md`. Each fact lives
+> `product-overview.md`; technical architecture in `architecture.md`. Each fact lives
 > in exactly one place — this document sequences *what to build and in what order*, not *what
 > the product is* or *how it is built internally*.
 
 ## 1. Strategy
 
 **Prove the concept on the web first.** The web surface is install-free and the fastest to
-iterate on (`docs/product-overview.md` §5.2). We use it to validate the two hardest, most
+iterate on (`product-overview.md` §5.2). We use it to validate the two hardest, most
 differentiating claims before investing in native surfaces:
 
 1. The companion is a **knowledge organism** — feed it sources, it organizes them into
@@ -24,7 +24,7 @@ being is proven, because they add platform cost without changing whether the cor
   layer. Prove differentiators early; polish late.
 - **Web-first, surface-portable.** Build the companion (model + harness + memory) as a
   cloud-resident core with a clean surface boundary, so mobile/desktop are added later as
-  *clients*, not rewrites (`docs/product-overview.md` §2).
+  *clients*, not rewrites (`product-overview.md` §2).
 - **Trust before autonomy.** The propose→approve model and data controls land alongside the
   first action-taking capability, not after.
 - **Iron Laws apply** (`AGENTS.md`): no merge without tests (≥80% coverage), explicit types,
@@ -54,7 +54,7 @@ proving the full request→harness→model→response loop and persistence work 
 
 **Scope**
 - Resolve the `_TBD_` stack decisions (language/framework, web client, backend, store engine,
-  LLM gateway/provider) and record them in `docs/architecture.md` + `CLAUDE.md`.
+  LLM gateway/provider) and record them in `architecture.md` + `CLAUDE.md`.
 - Cloud backend skeleton + persistence; LLM gateway; minimal agent harness loop.
 - Web chat UI; account/auth; create-a-companion (name, form, temperament — seed only).
 
@@ -68,7 +68,7 @@ context. This is the heart of the PoC.
 **Scope**
 - Source ingestion: PDFs, text/notes, links → parse, chunk, embed.
 - **Semantic memory** store: organized facts/concepts + vector retrieval
-  (`docs/product-overview.md` §2.1).
+  (`product-overview.md` §2.1).
 - Grounded recall in chat: retrieval-augmented answers with provenance ("from your Peru book").
 - Ingestion status/feedback UI ("Cobble has read 3 of 5 books").
 
@@ -84,7 +84,7 @@ with a fixed eval set of source→question→expected-answer pairs.
 **Scope**
 - **Episodic memory**: timestamped record of interactions, outcomes, context; recall by
   time/topic.
-- Companion identity persisted as the cloud "home" (`docs/product-overview.md` §2.2) — the
+- Companion identity persisted as the cloud "home" (`product-overview.md` §2.2) — the
   substrate later surfaces load from.
 - Personality evolution seeded at creation, shaped by accumulated episodes.
 
@@ -99,7 +99,7 @@ its responses reflect accumulated understanding of the user.
   (read), a simple booking/research tool (stub or sandbox).
 - Multi-step task execution (research → plan → execute).
 - **Propose → approve**: approval queue + one-tap confirm for any cost/commitment/side-effecting
-  action (`docs/product-overview.md` §5.3, §7).
+  action (`product-overview.md` §5.3, §7).
 - Seed **procedural memory**: successful workflows become reusable.
 
 **Done when:** Cobble completes a multi-step task that ends in a proposed action held for user
@@ -110,7 +110,7 @@ approval; nothing consequential executes without confirmation; every tool call i
 
 **Scope**
 - Motivation model driving initiative: your goals & well-being, its own curiosity/learning,
-  maintaining the bond, pending work & opportunities (`docs/product-overview.md` §5.4).
+  maintaining the bond, pending work & opportunities (`product-overview.md` §5.4).
 - Idle/return-triggered proactive turns (in-app, since web); proposals and questions back to you.
 - Tunable frequency/intensity controls.
 
@@ -123,7 +123,7 @@ questions; users can dial it down; a holdout/measurement exists to track helpful
 **Goal:** make Cobble feel raised, not used — closing the PoC loop.
 
 **Scope**
-- Visible growth on four axes tied to memory (`docs/product-overview.md` §5.5):
+- Visible growth on four axes tied to memory (`product-overview.md` §5.5):
   knowledge (semantic/episodic), relationship/personality, unlockable abilities (procedural),
   and **visual/character evolution** (appearance/home/accessories).
 - Leveling/progression surfaced in the UI.
@@ -138,7 +138,7 @@ end-to-end. **Decision gate:** validate the concept before funding native surfac
 Native mobile app as a "living room" the companion is summoned into. Adds: GPS/location-aware
 recall, push notifications (the away-channel for proactivity), and **OS-as-tools** (files,
 photos, calendar, contacts, health — permission-gated). Implements the **one-embodiment-at-a-time
-summon** model and the companion-as-courier sync (`docs/product-overview.md` §2.2, §5.2).
+summon** model and the companion-as-courier sync (`product-overview.md` §2.2, §5.2).
 
 ### Phase 7 — Desktop Surface
 Native desktop app: file/workspace OS tools, heavier local storage/compute. Confirms the
@@ -149,7 +149,7 @@ Security & threat-model review, encryption in transit/at rest, data inspection/m
 controls, scale/cost work, and monetization. Resolve remaining open questions (§5).
 
 ## 5. Open Questions to Resolve (owned here)
-Carried from `docs/product-overview.md` §9; each is assigned a decision point:
+Owned here (single-source). Each is assigned a decision point:
 
 | Question | Decide by |
 |---|---|
@@ -162,7 +162,7 @@ Carried from `docs/product-overview.md` §9; each is assigned a decision point:
 | Push-notification cadence & away-proactivity rules | Phase 6 |
 
 ## 6. Out of Scope (this plan)
-- Internal implementation detail and data schemas → `docs/architecture.md`,
-  `docs/implementation.md`.
-- The ontology contract for structured knowledge → `docs/ontology.md`.
+- Internal implementation detail and data schemas → `architecture.md`,
+  `implementation.md`.
+- The ontology contract for structured knowledge → `ontology.md`.
 - Native surfaces before the web PoC decision gate (Phase 5).

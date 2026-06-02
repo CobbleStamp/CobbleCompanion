@@ -39,9 +39,9 @@ read docs/product-overview.md
 - **The companion (intelligence):** model + harness + knowledge base. Knowledge base = three long-term memories — **semantic, episodic, procedural** (`docs/product-overview.md` §2.1).
 - **Data posture:** the companion's **canonical self lives in the cloud** (identity + long-term memory persist and sync there for continuity across rooms). **Raw on-device OS data can stay local** in the surface it came from and be reached via OS tools; *derived* knowledge syncs. Core data concerns: knowledge base, long-term memory, and the propose→approve **approval queue** (`docs/product-overview.md` §7).
 - **OS as tools:** **mobile and desktop** surfaces wrap their OS access as functions/tools for the companion (permission-gated); the companion can also act as its own cross-room/cloud sync courier.
-- **LLM:** agentic, **tool / skill / MCP**-using model loop (web-crawling and OS access are tools among many); provider/gateway _TBD_ → `docs/architecture.md`.
-- **Stack / frameworks / store engine:** _TBD_ → `docs/architecture.md`, `docs/development-plan.md`.
-- **App shell:** mobile + web + desktop clients over a cloud "home" backend; one active embodiment at a time. Concrete client/server architecture _TBD_ → `docs/architecture.md`.
+- **LLM:** agentic, **tool / skill / MCP**-using model loop (web-crawling and OS access are tools among many); provider-agnostic gateway, default **OpenRouter** (`docs/architecture.md` §5).
+- **Stack (Phase 0):** **TypeScript end-to-end** — Node/**Fastify** API + **React/Vite** web client; **Postgres + `pgvector`** store. Canonical: `docs/architecture.md` §5. _Later phases evolve this doc incrementally._
+- **App shell:** mobile + web + desktop clients over a cloud "home" backend; one active embodiment at a time. Phase 0 builds the **web** surface only (`docs/development-plan.md` §3); core↔surface boundary is fixed (`docs/architecture.md` §2).
 
 ## When to Update Docs
 
