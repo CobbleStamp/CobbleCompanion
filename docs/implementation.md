@@ -21,6 +21,20 @@ migrations under `db/`.
 | `email` | text, unique | login identity |
 | `created_at` | timestamptz | |
 
+### `auth_tokens` — magic-link sign-in
+Phase 0 auth is **passwordless magic link**: a request issues a single-use token emailed as a
+link; verifying it consumes the token, ensures the user, and sets a signed session cookie. Tokens
+are email-scoped (a user need not exist yet).
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | uuid (PK) | |
+| `email` | text | indexed; recipient of the link |
+| `token` | text, unique | the opaque link secret |
+| `expires_at` | timestamptz | link TTL (15 min) |
+| `consumed_at` | timestamptz | null until used; set atomically on consumption |
+| `created_at` | timestamptz | |
+
 ### `companions` — the canonical "home"
 | Field | Type | Notes |
 |---|---|---|
@@ -42,10 +56,15 @@ migrations under `db/`.
 | Field | Type | Notes |
 |---|---|---|
 | `id` | uuid (PK) | |
-| `conversation_id` | uuid (FK → `conversations.id`) | |
+| `seq` | bigserial | monotonic per-row ordinal — authoritative chronological order |
+| `conversation_id` | uuid (FK → `conversations.id`) | indexed with `seq` for recency recall |
 | `role` | text | `user` \| `assistant` \| `system` |
 | `content` | text | |
-| `created_at` | timestamptz | indexed; episodic memory (P2) builds on these timestamped turns |
+| `created_at` | timestamptz | episodic memory (P2) builds on these timestamped turns |
+
+> **Ordering note:** recency recall orders by `seq`, not `created_at` — many turns can share a
+> `created_at` at sub-millisecond resolution, so a monotonic ordinal is the source of truth for
+> transcript order.
 
 **_Deferred:_** semantic-memory tables + `vector` embedding columns (P1); episodic indices (P2);
 procedural/skill records + approval-queue tables (P3). Added via new migrations.
@@ -97,9 +116,12 @@ Loaded from environment / a secret manager; required values validated at startup
 | Variable | Purpose |
 |---|---|
 | `DATABASE_URL` | Postgres connection (secure connection required) |
-| `LLM_PROVIDER` | Selects the gateway backend (default: `openrouter`) |
-| `OPENROUTER_API_KEY` | LLM provider credential (secret — never in source) |
-| `AUTH_*` | Auth/session secrets (OAuth client + session signing) |
+| `LLM_PROVIDER` | Selects the gateway backend: `openrouter` (default) \| `fake` |
+| `OPENROUTER_API_KEY` | LLM provider credential (secret — required when provider=`openrouter`) |
+| `LLM_MODEL` | Model id passed to the provider |
+| `AUTH_SESSION_SECRET` | Signs the session cookie (≥32 chars; secret) |
+| `APP_URL` | Web client base URL; magic-link emails redirect here |
+| `EMAIL_TRANSPORT` | `console` (dev — logs the link) \| `smtp` (later) |
 | `PORT` / `MIN_INSTANCES` | Server port; scale-to-zero hot-path minimum (`architecture.md` §8) |
 
 **_Deferred:_** ingestion/worker tuning, embedding model selection, proactivity cadence,
@@ -118,6 +140,8 @@ push-notification credentials (P1+).
 Implements the trust-model boundaries in `architecture.md` §8.
 
 - **Secrets** — never hardcoded; loaded from env / secret manager; presence validated at startup.
+- **Authentication** — passwordless magic link: single-use, 15-min-TTL tokens (`auth_tokens`,
+  consumed atomically) and a signed, `httpOnly`, `sameSite=lax` session cookie (`secure` in prod).
 - **Transport** — HTTPS/TLS for client traffic; secure (TLS) Postgres connections.
 - **Tenancy** — every query filtered by `owner_id`/`companion_id`; authorization checked at the
   API boundary before reaching the core.

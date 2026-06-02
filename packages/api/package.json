@@ -1,0 +1,29 @@
+{
+  "name": "@cobble/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "serve": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@cobble/core": "workspace:*",
+    "@cobble/db": "workspace:*",
+    "@cobble/shared": "workspace:*",
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/cors": "^10.0.2",
+    "fastify": "^5.2.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}

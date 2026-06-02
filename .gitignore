@@ -1,0 +1,12 @@
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+.env
+.env.local
+.DS_Store
+*.log
+.vite/
+db/migrations/meta/_journal.tmp
+pglite-data/
