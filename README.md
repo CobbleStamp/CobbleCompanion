@@ -5,9 +5,9 @@ that learns you and your world, acts on your behalf, and is **proactive** rather
 For the full product vision see [`docs/product-overview.md`](./docs/product-overview.md).
 
 > **Status: Phase 0 (walking skeleton).** The web proof-of-concept is scaffolded: sign in with
-> Google via Auth0, create a companion, and hold a persisted, streamed conversation. A TypeScript
+> Google, create a companion, and hold a persisted, streamed conversation. A TypeScript
 > monorepo (`packages/{shared,core,api,web}` + `db/`) with the agent-loop harness, a
-> provider-agnostic LLM gateway, and an ≥80%-coverage test suite. Cloud Run + Auth0 deployment
+> provider-agnostic LLM gateway, and an ≥80%-coverage test suite. Cloud Run deployment
 > lives in `infra/` (Pulumi). See `docs/development-plan.md` §3.
 
 ## Documentation
@@ -48,16 +48,16 @@ pnpm dev                      # API on :3000, web on :3001
 ```
 
 Then open <http://localhost:3001>. With `AUTH_MODE=dev_bypass` (the default in `.env.example`)
-sign-in is skipped — you go straight to creating your companion. To exercise the real Auth0 +
-Google flow locally, set `AUTH_MODE=auth0` and the three `AUTH0_*` values from the
-`infra/auth0` stack (see `infra/auth0/README.md`).
+sign-in is skipped — you go straight to creating your companion. To exercise the real Google
+Sign-In flow locally, set `AUTH_MODE=google` and `GOOGLE_CLIENT_ID` to an OAuth Web client ID
+with `http://localhost:3001` as an authorized origin (see `infra/README.md`).
 
 ## Deployment
 
-Auth0 (Google SSO) and a single GCP Cloud Run service are managed with Pulumi under `infra/`:
-`infra/auth0` (tenant, SPA app, API, allowlist) and `infra/gcp` (Cloud Run, Artifact Registry,
-Secret Manager). The Fastify API serves the built SPA from one origin. See each project's README
-and the repo-root `Makefile` (`make deploy-dev`).
+A single GCP Cloud Run service is managed with Pulumi under `infra/gcp` (Cloud Run, Artifact
+Registry, Secret Manager); auth is Google Sign-In, so there is no auth service to provision —
+just a Console-created OAuth client ID (`infra/README.md`). The Fastify API serves the built SPA
+from one origin. See `infra/gcp/README.md` and the repo-root `Makefile` (`make deploy-dev`).
 
 ### Verify
 

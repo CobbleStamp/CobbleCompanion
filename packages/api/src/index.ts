@@ -9,7 +9,11 @@ import {
   type LlmGateway,
 } from '@cobble/core';
 import { buildApp } from './app.js';
-import { Auth0TokenVerifier, DevBypassVerifier, type TokenVerifier } from './auth/jwt-verifier.js';
+import {
+  DevBypassVerifier,
+  GoogleIdTokenVerifier,
+  type TokenVerifier,
+} from './auth/jwt-verifier.js';
 import { loadConfig, type AppConfig } from './config.js';
 
 function createGateway(config: AppConfig): LlmGateway {
@@ -23,7 +27,7 @@ function createTokenVerifier(config: AppConfig): TokenVerifier {
   if (config.authMode === 'dev_bypass') {
     return new DevBypassVerifier(config.devBypassEmail);
   }
-  return new Auth0TokenVerifier(config.auth0Domain, config.auth0Audience);
+  return new GoogleIdTokenVerifier(config.googleClientId);
 }
 
 async function main(): Promise<void> {

@@ -4,7 +4,7 @@ import fastifyStatic from '@fastify/static';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 import { makeRequireAuth } from './auth-guard.js';
 import type { TokenVerifier } from './auth/jwt-verifier.js';
 import type { AppConfig } from './config.js';
@@ -35,11 +35,61 @@ const API_PREFIXES = ['/auth', '/companions', '/health'] as const;
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
 
-  // Bearer-token auth (Auth0): no cookies, so CORS credentials are unneeded.
+  // Bearer-token auth (Google ID token): no cookies, so CORS credentials are
+  // unneeded.
   // Origin still matters for local dev where Vite calls the API cross-origin.
   await app.register(cors, {
     origin: deps.config.appUrl,
     allowedHeaders: ['Content-Type', 'Authorization'],
+  });
+
+  // Tolerate an empty body on application/json requests. Fastify's default JSON
+  // parser rejects an empty body with 400 FST_ERR_CTP_EMPTY_JSON_BODY — and that
+  // happens before preHandlers, so a client that sends `content-type:
+  // application/json` on a bodyless POST (e.g. starting a conversation) is
+  // rejected before auth even runs. Treat an empty body as "no body"; routes
+  // that require a payload validate it themselves and return a clear 400.
+  app.addContentTypeParser(
+    'application/json',
+    { parseAs: 'string' },
+    (_request, body, done) => {
+      const text = (body as string).trim();
+      if (text.length === 0) {
+        done(null, undefined);
+        return;
+      }
+      try {
+        done(null, JSON.parse(text));
+      } catch (error) {
+        const err = error as Error & { statusCode?: number };
+        err.statusCode = 400;
+        done(err, undefined);
+      }
+    },
+  );
+
+  // Central error logging (common/logging.md: never swallow an error). Fastify's
+  // own logger is off, so without this 5xx failures would vanish silently. Log
+  // unexpected (5xx) errors at `error` severity with full context — including the
+  // error itself (message + stack) — and return a generic message so internals
+  // never leak. Client errors (4xx: validation, bad content-type) are logged at
+  // `info` for visibility and pass their message through.
+  app.setErrorHandler((error: FastifyError, request, reply) => {
+    const statusCode = error.statusCode ?? 500;
+    const context: Record<string, unknown> = {
+      operation: 'http.request',
+      method: request.method,
+      url: request.url,
+      statusCode,
+      code: error.code,
+      userId: request.userId,
+    };
+    if (statusCode >= 500) {
+      deps.logger.error('request failed', { ...context, error });
+      return reply.code(statusCode).send({ error: 'internal server error' });
+    }
+    deps.logger.info('request rejected', { ...context, message: error.message });
+    return reply.code(statusCode).send({ error: error.message });
   });
 
   app.get('/health', async () => ({ status: 'ok' }));

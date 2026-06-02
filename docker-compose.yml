@@ -8,7 +8,9 @@ services:
     ports:
       - '5432:5432'
     volumes:
-      - cobble_pg:/var/lib/postgresql/data
+      # Bind-mount to ./data/postgres in the repo so the database survives
+      # container/stack restarts and is visible on the host. Gitignored.
+      - ./data/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U postgres -d cobble']
       interval: 5s
@@ -20,16 +22,15 @@ services:
       context: .
       dockerfile: Dockerfile
       target: api
+    # App config (AUTH_MODE, GOOGLE_CLIENT_ID, LLM_*, DEV_BYPASS_EMAIL) is loaded
+    # straight from .env — env_file is NOT shadowed by stray host-shell exports,
+    # unlike ${VAR} interpolation, so .env is the single source of truth.
+    env_file:
+      - .env
     environment:
+      # Container-specific overrides (these win over .env): Postgres runs inside
+      # the compose network, and the listen/app settings are fixed for docker.
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/cobble
-      LLM_PROVIDER: ${LLM_PROVIDER:-fake}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      LLM_MODEL: ${LLM_MODEL:-anthropic/claude-3.5-sonnet}
-      AUTH_MODE: ${AUTH_MODE:-dev_bypass}
-      AUTH0_DOMAIN: ${AUTH0_DOMAIN:-}
-      AUTH0_CLIENT_ID: ${AUTH0_CLIENT_ID:-}
-      AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:-}
-      DEV_BYPASS_EMAIL: ${DEV_BYPASS_EMAIL:-dev@cobble.local}
       APP_URL: http://localhost:3001
       PORT: '3000'
       NODE_ENV: development
@@ -50,6 +51,3 @@ services:
       - '3001:80'
     depends_on:
       - api
-
-volumes:
-  cobble_pg:

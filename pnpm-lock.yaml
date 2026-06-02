@@ -129,12 +129,12 @@ importers:
 
   packages/web:
     dependencies:
-      '@auth0/auth0-react':
-        specifier: ^2.2.4
-        version: 2.17.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@cobble/shared':
         specifier: workspace:*
         version: link:../shared
+      '@react-oauth/google':
+        specifier: ^0.12.1
+        version: 0.12.2(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -175,18 +175,6 @@ packages:
 
   '@asamuzakjp/css-color@3.2.0':
     resolution: {integrity: sha512-K1A6z8tS3XsmCMM86xoWdn7Fkdn9m6RSVtocUrJYIwZnFVkng/PvkEoWtOWmP+Scc6saYWHWZYbndEEXxl24jw==}
-
-  '@auth0/auth0-auth-js@1.7.0':
-    resolution: {integrity: sha512-SxF5WcPehbLOPwGrM+mqqVhnwZ3ZHEfM2wI/Yc3h0Kn1MM78seegxj7PrKoEMMRIfslDyHG+UNlOuobY8YOcKg==}
-
-  '@auth0/auth0-react@2.17.0':
-    resolution: {integrity: sha512-T/VdnNc7ghjmtsooX3OXO6vHZ6fYZjlJSLtPsekY7IYDT75h+qq6B4Z47ZQF+D00HXHU9ACDVfwd4sIl8Cspww==}
-    peerDependencies:
-      react: ^16.11.0 || ^17 || ^18 || ~19.0.1 || ~19.1.2 || ^19.2.1
-      react-dom: ^16.11.0 || ^17 || ^18 || ~19.0.1 || ~19.1.2 || ^19.2.1
-
-  '@auth0/auth0-spa-js@2.21.0':
-    resolution: {integrity: sha512-pqZnuM0p6sHvt2J7NzCkkbQzmyaM7hekv3swtnS7lGNjKrShmchraeaRbklgqzE40FlqB6dX+gq6mF61cRNAMg==}
 
   '@babel/code-frame@7.29.7':
     resolution: {integrity: sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw==}
@@ -975,6 +963,12 @@ packages:
     resolution: {integrity: sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg==}
     engines: {node: '>=14'}
 
+  '@react-oauth/google@0.12.2':
+    resolution: {integrity: sha512-d1GVm2uD4E44EJft2RbKtp8Z1fp/gK8Lb6KHgs3pHlM0PxCXGLaq8LLYQYENnN4xPWO1gkL4apBtlPKzpLvZwg==}
+    peerDependencies:
+      react: '>=16.8.0'
+      react-dom: '>=16.8.0'
+
   '@rolldown/pluginutils@1.0.0-beta.27':
     resolution: {integrity: sha512-+d0F4MKMCbeVUJwG96uQ4SgAznZNSq93I3V+9NHA4OpvqG8mRCpGdKmK8l/dl02h2CCDHwW2FqilnTyDcAnqjA==}
 
@@ -1300,9 +1294,6 @@ packages:
     resolution: {integrity: sha512-kLpxurY4Z4r9sgMsyG0Z9uzsBlgiU/EFKhj/h91/8yHu0edo7XuixOIH3VcJ8kkxs6/jPzoI6U9Vj3WqbMQ94g==}
     engines: {node: 18 || 20 || >=22}
 
-  browser-tabs-lock@1.3.0:
-    resolution: {integrity: sha512-g6nHaobTiT0eMZ7jh16YpD2kcjAp+PInbiVq3M1x6KKaEIVhT4v9oURNIpZLOZ3LQbQ3XYfNhMAb/9hzNLIWrw==}
-
   browserslist@4.28.2:
     resolution: {integrity: sha512-48xSriZYYg+8qXna9kwqjIVzuQxi+KYWp2+5nCYnYKPTr0LvD89Jqk2Or5ogxz0NUMfIjhh2lIUX/LyX9B4oIg==}
     engines: {node: ^6 || ^7 || ^8 || ^9 || ^10 || ^11 || ^12 || >=13.7}
@@ -1397,9 +1388,6 @@ packages:
 
   dom-accessibility-api@0.5.16:
     resolution: {integrity: sha512-X7BJ2yElsnOJ30pZF4uIIDfBEVgF4XEBxL9Bxhy6dnrm5hkzqmsWHGTiHqRiITNhMyFLyAiWndIJP7Z1NTteDg==}
-
-  dpop@2.1.1:
-    resolution: {integrity: sha512-J0Of2JTiM4h5si0tlbPQ/lkqfZ5wAEVkKYBhkwyyANnPJfWH4VsR5uIkZ+T+OSPIwDYUg1fbd5Mmodd25HjY1w==}
 
   drizzle-kit@0.30.6:
     resolution: {integrity: sha512-U4wWit0fyZuGuP7iNmRleQyK2V8wCuv57vf5l3MnG4z4fzNTjY/U13M8owyQ5RavqvqxBifWORaR3wIUzlN64g==}
@@ -1520,9 +1508,6 @@ packages:
   env-paths@3.0.0:
     resolution: {integrity: sha512-dtJUTepzMW3Lm/NPxRf3wP4642UWhjL2sQxc+ym2YMj1m/H2zDNQOlezafzkHwn6sMstjHTwG6iQQsctDW/b1A==}
     engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
-
-  es-cookie@1.3.2:
-    resolution: {integrity: sha512-UTlYYhXGLOy05P/vKVT2Ui7WtC7NiRzGtJyAKKn32g5Gvcjn7KAClLPWlipCtxIus934dFg9o9jXiBL0nP+t9Q==}
 
   es-define-property@1.0.1:
     resolution: {integrity: sha512-e3nRfgfUZ4rNGL232gUgX06QNyyez04KdjFrF+LTRoOXmrOgFKDg4BCdsjW8EnT69eqdYGmRpJwiPVYNrCaW3g==}
@@ -1756,9 +1741,6 @@ packages:
   jose@5.10.0:
     resolution: {integrity: sha512-s+3Al/p9g32Iq+oqXxkW//7jk2Vig6FF1CFqzVXoTUXt2qz89YWbL+OwS17NFYEvxC35n0FKeGO2LGYSxeM2Gg==}
 
-  jose@6.2.3:
-    resolution: {integrity: sha512-YYVDInQKFJfR/xa3ojUTl8c2KoTwiL1R5Wg9YCydwH0x0B9grbzlg5HC7mMjCtUJjbQ/YnGEZIhI5tCgfTb4Hw==}
-
   js-tokens@10.0.0:
     resolution: {integrity: sha512-lM/UBzQmfJRo9ABXbPWemivdCW8V2G8FHaHdypQaIy523snUjog0W71ayWXTjiR+ixeMyVHN2XcpnTd/liPg/Q==}
 
@@ -1795,9 +1777,6 @@ packages:
 
   light-my-request@6.6.0:
     resolution: {integrity: sha512-CHYbu8RtboSIoVsHZ6Ye4cj4Aw/yg2oAFimlF7mNvfDV192LR7nDiKtSIfCuLT7KokPSTn/9kfVLm5OGN0A28A==}
-
-  lodash@4.18.1:
-    resolution: {integrity: sha512-dMInicTPVE8d1e5otfwmmjlxkZoUpiVLwyeTdUsi/Caj/gfzzblBcCE5sRHV/AsjuCmxWrte2TNGSYuCeCq+0Q==}
 
   loose-envify@1.4.0:
     resolution: {integrity: sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q==}
@@ -1877,18 +1856,12 @@ packages:
   nwsapi@2.2.23:
     resolution: {integrity: sha512-7wfH4sLbt4M0gCDzGE6vzQBo0bfTKjU7Sfpqy/7gs1qBfYz2vEJH6vXcBKpO3+6Yu1telwd0t9HpyOoLEQQbIQ==}
 
-  oauth4webapi@3.8.6:
-    resolution: {integrity: sha512-iwemM91xz8nryHti2yTmg5fhyEMVOkOXwHNqbvcATjyajb5oQxCQzrNOA6uElRHuMhQQTKUyFKV9y/CNyg25BQ==}
-
   obliterator@2.0.5:
     resolution: {integrity: sha512-42CPE9AhahZRsMNslczq0ctAEtqk8Eka26QofnqC346BZdHDySk3LWka23LI7ULIw11NmltpiLagIq8gBozxTw==}
 
   on-exit-leak-free@2.1.2:
     resolution: {integrity: sha512-0eJJY6hXLGf1udHwfNftBqH+g73EU4B504nZeKpz1sYRKafAghwxEJunB2O7rDZkL4PGfsMVnTXZ2EjibbqcsA==}
     engines: {node: '>=14.0.0'}
-
-  openid-client@6.8.4:
-    resolution: {integrity: sha512-QSw0BA08piujetEwfZsHoTrDpMEha7GDZDicQqVwX4u0ChCjefvjDB++TZ8BTg76UpwhzIQgdvvfgfl3HpCSAw==}
 
   package-json-from-dist@1.0.1:
     resolution: {integrity: sha512-UEZIS3/by4OC8vL3P2dTXRETpebLI2NiI5vIrjaD/5UtrkFX/tNbwjTSRAGC/+7CAo2pIcBaRgWmcBBHcsaCIw==}
@@ -2407,24 +2380,6 @@ snapshots:
       '@csstools/css-parser-algorithms': 3.0.5(@csstools/css-tokenizer@3.0.4)
       '@csstools/css-tokenizer': 3.0.4
       lru-cache: 10.4.3
-
-  '@auth0/auth0-auth-js@1.7.0':
-    dependencies:
-      jose: 6.2.3
-      openid-client: 6.8.4
-
-  '@auth0/auth0-react@2.17.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
-    dependencies:
-      '@auth0/auth0-spa-js': 2.21.0
-      react: 18.3.1
-      react-dom: 18.3.1(react@18.3.1)
-
-  '@auth0/auth0-spa-js@2.21.0':
-    dependencies:
-      '@auth0/auth0-auth-js': 1.7.0
-      browser-tabs-lock: 1.3.0
-      dpop: 2.1.1
-      es-cookie: 1.3.2
 
   '@babel/code-frame@7.29.7':
     dependencies:
@@ -2955,6 +2910,11 @@ snapshots:
   '@pkgjs/parseargs@0.11.0':
     optional: true
 
+  '@react-oauth/google@0.12.2(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
+    dependencies:
+      react: 18.3.1
+      react-dom: 18.3.1(react@18.3.1)
+
   '@rolldown/pluginutils@1.0.0-beta.27': {}
 
   '@rollup/rollup-android-arm-eabi@4.61.0':
@@ -3253,10 +3213,6 @@ snapshots:
     dependencies:
       balanced-match: 4.0.4
 
-  browser-tabs-lock@1.3.0:
-    dependencies:
-      lodash: 4.18.1
-
   browserslist@4.28.2:
     dependencies:
       baseline-browser-mapping: 2.10.33
@@ -3338,8 +3294,6 @@ snapshots:
 
   dom-accessibility-api@0.5.16: {}
 
-  dpop@2.1.1: {}
-
   drizzle-kit@0.30.6:
     dependencies:
       '@drizzle-team/brocli': 0.10.2
@@ -3375,8 +3329,6 @@ snapshots:
   entities@6.0.1: {}
 
   env-paths@3.0.0: {}
-
-  es-cookie@1.3.2: {}
 
   es-define-property@1.0.1: {}
 
@@ -3736,8 +3688,6 @@ snapshots:
 
   jose@5.10.0: {}
 
-  jose@6.2.3: {}
-
   js-tokens@10.0.0: {}
 
   js-tokens@4.0.0: {}
@@ -3787,8 +3737,6 @@ snapshots:
       cookie: 1.1.1
       process-warning: 4.0.1
       set-cookie-parser: 2.7.2
-
-  lodash@4.18.1: {}
 
   loose-envify@1.4.0:
     dependencies:
@@ -3852,16 +3800,9 @@ snapshots:
 
   nwsapi@2.2.23: {}
 
-  oauth4webapi@3.8.6: {}
-
   obliterator@2.0.5: {}
 
   on-exit-leak-free@2.1.2: {}
-
-  openid-client@6.8.4:
-    dependencies:
-      jose: 6.2.3
-      oauth4webapi: 3.8.6
 
   package-json-from-dist@1.0.1: {}
 

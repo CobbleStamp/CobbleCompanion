@@ -6,8 +6,8 @@ import { bigserial, index, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg
  * only through its owning user/companion (architecture.md invariant #5). Later
  * phases add semantic/episodic/procedural tables via new migrations.
  *
- * Auth is handled by Auth0 (Google SSO); users are JIT-provisioned by the email
- * claim on a verified access token, so there is no local credential/token table.
+ * Auth is handled by Google Sign-In; users are JIT-provisioned by the email
+ * claim on a verified Google ID token, so there is no local credential/token table.
  */
 
 export const users = pgTable('users', {

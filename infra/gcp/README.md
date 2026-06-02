@@ -11,7 +11,7 @@ no workers, no load balancer; the default `*.run.app` URL is used.)
 | | |
 |---|---|
 | Language | TypeScript |
-| State backend | AWS S3 (shared with `infra/auth0`) |
+| State backend | AWS S3 |
 | Secret encryption | Passphrase (`PULUMI_CONFIG_PASSPHRASE`) |
 | Stacks | `dev` only initially |
 | Provider | `@pulumi/gcp` (pinned, no `^`) |
@@ -32,6 +32,10 @@ aws sts get-caller-identity                       # S3 state backend creds
 gcloud auth configure-docker <region>-docker.pkg.dev
 ```
 
+Also create the Google OAuth Web client once (Console-only) and note its client
+ID — see [`../README.md`](../README.md) "Google OAuth client". You set it as
+`cobblecompanion-gcp:googleClientId` in Phase B.
+
 ---
 
 ## Phase B — First apply
@@ -39,7 +43,7 @@ gcloud auth configure-docker <region>-docker.pkg.dev
 ```bash
 cd infra/gcp
 cp Pulumi.dev.yaml.example Pulumi.dev.yaml
-$EDITOR Pulumi.dev.yaml      # project, region, auth0Domain/Audience/Stack, llmModel
+$EDITOR Pulumi.dev.yaml      # project, region, googleClientId, llmModel
 
 export PULUMI_CONFIG_PASSPHRASE='<reuse CobbleBrowse's>'
 pulumi login s3://<shared-state-bucket>
@@ -92,23 +96,23 @@ skip the rebuild and just re-apply.
 
 ---
 
-## Phase E — Wire the Cloud Run URL into Auth0
+## Phase E — Wire the Cloud Run URL into the OAuth client
 
-After the first deploy, add the `*.run.app` URL to the Auth0 SPA's allowed
-origins/callbacks so Universal Login can redirect back:
+After the first deploy, add the `*.run.app` URL to the Google OAuth client's
+**Authorized JavaScript origins** (Cloud Console → APIs & Services →
+Credentials) so Google Sign-In works from the deployed SPA. Origins are exact
+(no wildcards) and per-environment.
 
 ```bash
-APIURL=$(pulumi stack output apiUrl)
-cd ../auth0
-pulumi config set --path 'cobblecompanion-auth0:spaOrigins[2]' "$APIURL"
-pulumi up
+pulumi stack output apiUrl              # the URL to add as an authorized origin
 ```
 
 Smoke test:
 
 ```bash
+APIURL=$(pulumi stack output apiUrl)
 curl -sS "$APIURL/health"               # → {"status":"ok"}
-curl -sS "$APIURL/auth/config" | jq .   # → public Auth0 config
+curl -sS "$APIURL/auth/config" | jq .   # → { "mode": "google", "google_client_id": "..." }
 ```
 
 ---

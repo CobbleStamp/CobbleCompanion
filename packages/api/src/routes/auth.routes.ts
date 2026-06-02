@@ -16,9 +16,7 @@ export function registerAuthRoutes(
     reply.header('cache-control', 'public, max-age=300');
     return {
       mode: config.authMode,
-      auth0_domain: config.auth0Domain,
-      auth0_client_id: config.auth0ClientId,
-      auth0_audience: config.auth0Audience,
+      google_client_id: config.googleClientId,
     };
   });
 

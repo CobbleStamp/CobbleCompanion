@@ -21,10 +21,10 @@ migrations under `db/`.
 | `email` | text, unique | login identity |
 | `created_at` | timestamptz | |
 
-> **Auth note:** there is no local credential/token table. Sign-in is **Auth0 Universal Login +
-> Google SSO**; the API validates the bearer access token against the tenant's JWKS and
-> JIT-provisions the `users` row from the verified `email` claim (set by the Auth0 post-login
-> allowlist Action). See §5 and `infra/auth0/`.
+> **Auth note:** there is no local credential/token table. Sign-in is **Google Sign-In**; the
+> SPA obtains a Google ID token and the API validates it against Google's JWKS, then
+> JIT-provisions the `users` row from the verified `email` claim (Google requires
+> `email_verified === true`). See §5.
 
 ### `companions` — the canonical "home"
 | Field | Type | Notes |
@@ -110,8 +110,8 @@ Loaded from environment / a secret manager; required values validated at startup
 | `LLM_PROVIDER` | Selects the gateway backend: `openrouter` (default) \| `fake` |
 | `OPENROUTER_API_KEY` | LLM provider credential (secret — required when provider=`openrouter`) |
 | `LLM_MODEL` | Model id passed to the provider |
-| `AUTH_MODE` | `auth0` (default) \| `dev_bypass` (local/test — skips Auth0) |
-| `AUTH0_DOMAIN` / `AUTH0_CLIENT_ID` / `AUTH0_AUDIENCE` | Auth0 tenant + SPA app + API audience (required when `AUTH_MODE=auth0`) |
+| `AUTH_MODE` | `google` (default) \| `dev_bypass` (local/test — skips Google) |
+| `GOOGLE_CLIENT_ID` | OAuth Web client ID — public, served to the SPA and used as the API's ID-token audience (required when `AUTH_MODE=google`) |
 | `DEV_BYPASS_EMAIL` | Identity resolved in `dev_bypass` mode |
 | `APP_URL` | Web client origin (allowed CORS origin for local cross-origin dev) |
 | `PORT` | Server port (Cloud Run injects this) |
@@ -132,11 +132,13 @@ push-notification credentials (P1+).
 Implements the trust-model boundaries in `architecture.md` §8.
 
 - **Secrets** — never hardcoded; loaded from env / secret manager; presence validated at startup.
-- **Authentication** — **Auth0 Universal Login + Google SSO**. The SPA uses PKCE
-  (`@auth0/auth0-react`) and sends the access token as a `Bearer` header; the Fastify API validates
-  the RS256 token against the tenant's JWKS (issuer/audience/expiry, `jose`) and JIT-provisions the
-  user from the verified `email` claim. A per-stack Auth0 post-login Action gates sign-in to an
-  email allowlist. `AUTH_MODE=dev_bypass` skips all of this for local dev/tests.
+- **Authentication** — **Google Sign-In** (Google as the OIDC provider). The SPA uses Google
+  Identity Services (`@react-oauth/google`) to obtain a Google **ID token** and sends it as a
+  `Bearer` header; the Fastify API validates the RS256 token against Google's JWKS
+  (issuer `accounts.google.com`, audience = `GOOGLE_CLIENT_ID`, expiry, `jose`), requires
+  `email_verified === true`, and JIT-provisions the user from the verified `email` claim.
+  `AUTH_MODE=dev_bypass` skips all of this for local dev/tests. (ID tokens last ~1h; an app-issued
+  session JWT is a documented future upgrade.)
 - **Transport** — HTTPS/TLS for client traffic; secure (TLS) Postgres connections.
 - **Tenancy** — every query filtered by `owner_id`/`companion_id`; authorization checked at the
   API boundary before reaching the core.

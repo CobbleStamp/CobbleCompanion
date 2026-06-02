@@ -1,4 +1,4 @@
-import { Auth0Provider } from '@auth0/auth0-react';
+import { GoogleOAuthProvider } from '@react-oauth/google';
 import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App.js';
@@ -11,8 +11,8 @@ type BootstrapState =
   | { readonly kind: 'error'; readonly error: Error };
 
 /**
- * Fetch the auth config, then mount the right tree: <Auth0Provider/> for auth0
- * mode (PKCE Universal Login), or the bare app for dev_bypass.
+ * Fetch the auth config, then mount the right tree: <GoogleOAuthProvider/> for
+ * google mode (Google Identity Services), or the bare app for dev_bypass.
  */
 function Bootstrap(): JSX.Element {
   const [state, setState] = useState<BootstrapState>({ kind: 'loading' });
@@ -42,19 +42,9 @@ function Bootstrap(): JSX.Element {
   }
 
   return (
-    <Auth0Provider
-      domain={state.cfg.domain}
-      clientId={state.cfg.clientId}
-      authorizationParams={{
-        redirect_uri: window.location.origin,
-        audience: state.cfg.audience,
-        scope: 'openid profile email offline_access',
-      }}
-      cacheLocation="localstorage"
-      useRefreshTokens
-    >
-      <App authMode="auth0" />
-    </Auth0Provider>
+    <GoogleOAuthProvider clientId={state.cfg.googleClientId}>
+      <App authMode="google" />
+    </GoogleOAuthProvider>
   );
 }
 

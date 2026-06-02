@@ -4,8 +4,8 @@
 //
 // minInstances=1 keeps the API warm (architecture.md §8: the hot path must
 // avoid cold starts). Secrets are mounted via SecretManagerEnvVar so the
-// runtime reads them as ordinary env vars. The SPA client_id is sourced from
-// the sibling infra/auth0 stack so there is a single source of truth.
+// runtime reads them as ordinary env vars. The Google OAuth client_id is a
+// public value (it ships to the browser) and comes from plain stack config.
 import * as gcp from '@pulumi/gcp';
 import * as pulumi from '@pulumi/pulumi';
 import { enabledApis } from './apis';
@@ -19,15 +19,9 @@ const project = gcpCfg.require('project');
 const region = gcpCfg.get('region') ?? 'us-central1';
 const tag = cfg.get('imageTag') ?? 'latest';
 
-const auth0Domain = cfg.require('auth0Domain');
-const auth0Audience = cfg.require('auth0Audience');
-// SPA client_id served to the React app via /auth/config. Sourced from the
-// sibling infra/auth0 stack (the SPA app is owned there as
-// auth0.Client cobblecompanion-web). Set `cobblecompanion-gcp:auth0Stack` to
-// the fully-qualified slug, e.g. `organization/cobblecompanion-auth0/dev`.
-const auth0StackName = cfg.require('auth0Stack');
-const auth0Stack = new pulumi.StackReference(auth0StackName);
-const auth0ClientId = auth0Stack.requireOutput('spaClientId') as pulumi.Output<string>;
+// OAuth Web client ID served to the React app via /auth/config and used by the
+// API to verify Google ID tokens (aud). Public, not a secret — plain config.
+const googleClientId = cfg.require('googleClientId');
 
 // LLM model is non-sensitive runtime config; the provider key lives in Secret
 // Manager as OPENROUTER_API_KEY.
@@ -71,10 +65,8 @@ export const api = new gcp.cloudrunv2.Service(
           resources: { limits: { cpu: '1', memory: '512Mi' } },
           envs: [
             { name: 'NODE_ENV', value: 'production' },
-            { name: 'AUTH_MODE', value: 'auth0' },
-            { name: 'AUTH0_DOMAIN', value: auth0Domain },
-            { name: 'AUTH0_AUDIENCE', value: auth0Audience },
-            { name: 'AUTH0_CLIENT_ID', value: auth0ClientId },
+            { name: 'AUTH_MODE', value: 'google' },
+            { name: 'GOOGLE_CLIENT_ID', value: googleClientId },
             { name: 'LLM_PROVIDER', value: 'openrouter' },
             { name: 'LLM_MODEL', value: llmModel },
             secretEnv('DATABASE_URL', secrets.DATABASE_URL),
@@ -87,8 +79,8 @@ export const api = new gcp.cloudrunv2.Service(
   { dependsOn: [containerRepo, ...enabledApis] },
 );
 
-// Public invoker — anyone can hit it; the Auth0 middleware enforces auth at
-// the app layer (bearer-token JWT validation in the Fastify API).
+// Public invoker — anyone can hit it; the API enforces auth at the app layer
+// (Google ID-token JWT validation in the Fastify API).
 new gcp.cloudrunv2.ServiceIamMember('api-public-invoker', {
   name: api.name,
   location: api.location,

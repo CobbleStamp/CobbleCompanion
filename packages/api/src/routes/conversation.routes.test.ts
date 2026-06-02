@@ -34,6 +34,19 @@ describe('conversation routes', () => {
     expect(res.json().conversation.companionId).toBe(companionId);
   });
 
+  // Mirrors the browser client: a bodyless POST that still declares
+  // `content-type: application/json`. Without the empty-body tolerance Fastify
+  // 400s this with FST_ERR_CTP_EMPTY_JSON_BODY before auth runs (regression).
+  it('creates a conversation when the client sends application/json with an empty body', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/conversations`,
+      headers: { ...auth, 'content-type': 'application/json' },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().conversation.companionId).toBe(companionId);
+  });
+
   it('404s when the companion is not owned', async () => {
     const res = await ctx.app.inject({
       method: 'POST',
@@ -51,6 +64,18 @@ describe('conversation routes', () => {
       payload: { content: '   ' },
     });
     expect(res.statusCode).toBe(400);
+  });
+
+  // Empty-body tolerance must not bypass validation: a payload-required route
+  // still rejects a missing body (now parsed as undefined, not a 400 parse error).
+  it('rejects a missing message body with 400', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/conversations/${ABSENT_UUID}/messages`,
+      headers: { ...auth, 'content-type': 'application/json' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe('message content is required');
   });
 
   it('streams an assistant reply and persists the transcript (end-to-end SSE)', async () => {

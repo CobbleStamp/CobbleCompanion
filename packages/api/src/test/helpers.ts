@@ -40,10 +40,8 @@ export const testConfig: AppConfig = {
   openrouterApiKey: '',
   llmModel: 'test-model',
   appUrl: 'http://localhost:3001',
-  authMode: 'auth0',
-  auth0Domain: 'test.auth0.local',
-  auth0ClientId: 'test-client-id',
-  auth0Audience: 'https://api.cobble.test',
+  authMode: 'google',
+  googleClientId: 'test-google-client-id',
   devBypassEmail: 'dev@cobble.local',
   port: 0,
   isProduction: false,
@@ -58,7 +56,10 @@ export interface TestApp {
   readonly close: () => Promise<void>;
 }
 
-export async function makeTestApp(chunks: readonly string[] = ['Hi', ' there']): Promise<TestApp> {
+export async function makeTestApp(
+  chunks: readonly string[] = ['Hi', ' there'],
+  logger: Logger = silentLogger,
+): Promise<TestApp> {
   const { db, close: closeDb } = await createTestDatabase();
   const memory = new TranscriptMemoryStore(db);
   const tokenVerifier = new FakeTokenVerifier();
@@ -73,14 +74,14 @@ export async function makeTestApp(chunks: readonly string[] = ['Hi', ' there']):
     }),
     tokenVerifier,
     config: testConfig,
-    logger: silentLogger,
+    logger,
   };
   const app = await buildApp(deps);
   await app.ready();
 
   const bearerFor = (address: string): { authorization: string } => {
     const token = `test-${address}`;
-    tokenVerifier.set(token, { sub: `auth0|${address}`, email: address });
+    tokenVerifier.set(token, { sub: `google|${address}`, email: address });
     return { authorization: `Bearer ${token}` };
   };
 

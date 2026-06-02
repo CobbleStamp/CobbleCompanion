@@ -1,19 +1,15 @@
 const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? '';
 
-export type AuthMode = 'auth0' | 'dev_bypass';
+export type AuthMode = 'google' | 'dev_bypass';
 
 export interface AuthBootstrap {
   readonly mode: AuthMode;
-  readonly domain: string;
-  readonly clientId: string;
-  readonly audience: string;
+  readonly googleClientId: string;
 }
 
 interface RawConfig {
   readonly mode?: string;
-  readonly auth0_domain: string;
-  readonly auth0_client_id: string;
-  readonly auth0_audience: string;
+  readonly google_client_id?: string;
 }
 
 /**
@@ -27,18 +23,15 @@ export async function fetchAuthBootstrap(): Promise<AuthBootstrap> {
     throw new Error(`GET /auth/config failed: ${res.status} ${res.statusText}`);
   }
   const raw = (await res.json()) as RawConfig;
-  const mode: AuthMode = raw.mode === 'dev_bypass' ? 'dev_bypass' : 'auth0';
+  const mode: AuthMode = raw.mode === 'dev_bypass' ? 'dev_bypass' : 'google';
   const cfg: AuthBootstrap = {
     mode,
-    domain: raw.auth0_domain,
-    clientId: raw.auth0_client_id,
-    audience: raw.auth0_audience,
+    googleClientId: raw.google_client_id ?? '',
   };
-  if (mode === 'auth0' && (!cfg.domain || !cfg.clientId || !cfg.audience)) {
+  if (mode === 'google' && !cfg.googleClientId) {
     throw new Error(
-      'Auth0 not configured on the API: /auth/config returned empty domain / ' +
-        'client_id / audience. Set AUTH0_DOMAIN, AUTH0_CLIENT_ID and ' +
-        'AUTH0_AUDIENCE in the API env.',
+      'Google Sign-In not configured on the API: /auth/config returned an ' +
+        'empty google_client_id. Set GOOGLE_CLIENT_ID in the API env.',
     );
   }
   return cfg;

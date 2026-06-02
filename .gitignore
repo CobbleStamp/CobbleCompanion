@@ -5,8 +5,14 @@ coverage/
 *.tsbuildinfo
 .env
 .env.local
+# Google OAuth client download (contains client_secret; not used by the SPA flow)
+client_secret_*.json
+.envrc
+.direnv/
 .DS_Store
 *.log
 .vite/
 db/migrations/meta/_journal.tmp
 pglite-data/
+# Local Postgres data (docker bind mount)
+data/

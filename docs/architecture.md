@@ -266,7 +266,7 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
 | Store engine | **Postgres + `pgvector`** | Multi-tenant cloud home; one store for relational + vectors; scales across phases |
 | Data access | Type-safe query layer (Drizzle) | Explicit types end-to-end; no raw SQL by default |
 | LLM access | **Provider-agnostic gateway, default OpenRouter** | Swap models/providers without touching the harness |
-| Auth | **Auth0 Universal Login + Google SSO** | OIDC/PKCE in the SPA; the API validates bearer JWTs against the tenant JWKS and JIT-provisions users by email. Tenant managed as code in `infra/auth0` (Pulumi). `dev_bypass` mode for local/tests |
+| Auth | **Google Sign-In (OIDC)** | The SPA gets a Google ID token (Google Identity Services); the API verifies it against Google's JWKS (`aud=GOOGLE_CLIENT_ID`, `email_verified`) and JIT-provisions users by email. No third-party auth service, no tenant, no extra Pulumi stack. `dev_bypass` mode for local/tests |
 
 ## 6. Interactions, Boundary & State
 
@@ -313,8 +313,8 @@ ingestion, proactivity) will be async and scale to zero for cost. The workload i
 awaiting the LLM), so a single Node process holds many concurrent conversations and scales
 horizontally with replicas; CPU-heavy work (future PDF parse/embedding) moves off the request path
 to workers. Infrastructure is managed as code with **Pulumi** under `infra/` (`infra/gcp` for Cloud
-Run + Artifact Registry + Secret Manager; `infra/auth0` for the Auth0 tenant); managed Postgres is
-Supabase (pgvector). (Specific tuning params, image build → `implementation.md` and `infra/*/README.md`.)
+Run + Artifact Registry + Secret Manager); auth is Google Sign-In (no auth service to provision);
+managed Postgres is Supabase (pgvector). (Specific tuning params, image build → `implementation.md` and `infra/*/README.md`.)
 
 **Trust model (Phase 0 baseline).** Design-level boundaries; the security *implementation* and
 the full threat model live in `implementation.md` and Phase 8 respectively (`development-plan.md` §4).

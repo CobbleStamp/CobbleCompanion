@@ -1,8 +1,7 @@
-import { useAuth0 } from '@auth0/auth0-react';
+import { googleLogout } from '@react-oauth/google';
 import type { CompanionDto } from '@cobble/shared';
 import { useEffect, useState } from 'react';
 import { fetchCurrentUser, listCompanions, setAccessTokenGetter } from './api/client.js';
-import { AuthBridge } from './auth/AuthBridge.js';
 import type { AuthMode } from './auth/config.js';
 import { Chat } from './pages/Chat.js';
 import { CreateCompanion } from './pages/CreateCompanion.js';
@@ -12,35 +11,44 @@ interface AppProps {
   readonly authMode: AuthMode;
 }
 
-/** Top-level entry: Auth0 owns the signed-out gate; dev_bypass skips it. */
+/** Top-level entry: Google owns the signed-out gate; dev_bypass skips it. */
 export function App({ authMode }: AppProps): JSX.Element {
   if (authMode === 'dev_bypass') {
     return <DevBypassApp />;
   }
-  return <Auth0App />;
+  return <GoogleApp />;
 }
 
-/** auth0 mode: gate the companion flow behind Universal Login. */
-function Auth0App(): JSX.Element {
-  const { isLoading, isAuthenticated, loginWithRedirect, logout } = useAuth0();
+/**
+ * google mode: gate the companion flow behind Google Sign-In. The ID token from
+ * the <GoogleLogin> credential is held in memory and sent as the bearer on every
+ * request (stateless — the API verifies it against Google's JWKS).
+ */
+function GoogleApp(): JSX.Element {
+  const [idToken, setIdToken] = useState<string | null>(null);
 
-  if (isLoading) {
-    return <main className="card">Loading…</main>;
-  }
-  if (!isAuthenticated) {
-    return <SignIn onSignIn={() => void loginWithRedirect()} />;
+  if (!idToken) {
+    return (
+      <SignIn
+        onCredential={(token) => {
+          setAccessTokenGetter(async () => token);
+          setIdToken(token);
+        }}
+      />
+    );
   }
   return (
-    <>
-      <AuthBridge />
-      <CompanionFlow
-        onSignOut={() => void logout({ logoutParams: { returnTo: window.location.origin } })}
-      />
-    </>
+    <CompanionFlow
+      onSignOut={() => {
+        googleLogout();
+        setAccessTokenGetter(async () => null);
+        setIdToken(null);
+      }}
+    />
   );
 }
 
-/** dev_bypass mode: no Auth0 provider; send a dummy bearer the API ignores. */
+/** dev_bypass mode: no Google provider; send a dummy bearer the API ignores. */
 function DevBypassApp(): JSX.Element {
   useEffect(() => {
     setAccessTokenGetter(async () => 'dev');

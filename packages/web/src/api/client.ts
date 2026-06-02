@@ -14,8 +14,9 @@ export interface CurrentUser {
 }
 
 /**
- * Returns an Auth0 access token (or null when auth is bypassed). Wired up by
- * <AuthBridge/> once Auth0 is ready, so the client need not import the SDK.
+ * Returns the bearer token (a Google ID token, or null when auth is bypassed).
+ * Wired up by <App/> once the user signs in, so the client need not import the
+ * auth SDK.
  */
 type AccessTokenGetter = () => Promise<string | null>;
 let getAccessToken: AccessTokenGetter = async () => null;
@@ -31,9 +32,14 @@ async function authHeaders(): Promise<Record<string, string>> {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const auth = await authHeaders();
+  // Only declare a JSON content-type when there's a body — Fastify rejects an
+  // empty body with content-type: application/json (FST_ERR_CTP_EMPTY_JSON_BODY),
+  // which would otherwise 400 bodyless POSTs like createConversation.
+  const contentType =
+    init?.body != null ? { 'content-type': 'application/json' } : {};
   const response = await fetch(`${API_URL}${path}`, {
-    headers: { 'content-type': 'application/json', ...auth },
     ...init,
+    headers: { ...contentType, ...auth, ...(init?.headers ?? {}) },
   });
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as { error?: string };
