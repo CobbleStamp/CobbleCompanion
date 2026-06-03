@@ -298,6 +298,62 @@ describe('DrizzleSemanticMemoryStore', () => {
     expect(byId.get(done)).toBe('done'); // terminal — spared
   });
 
+  it('replaces a source’s prior sections and their facts on re-ingestion', async () => {
+    // A first run inserts two sections, one carrying a fact.
+    const source = await store.createSource(companionId, {
+      kind: 'note',
+      title: 'Re-read me',
+      rawText: 'first pass text',
+    });
+    const firstPass = await store.insertSections(companionId, source.id, [
+      { topicTitle: 'one', originalText: 'alpha', paraStart: 1, paraEnd: 1, ord: 0 },
+      { topicTitle: 'two', originalText: 'beta', paraStart: 2, paraEnd: 2, ord: 1 },
+    ]);
+    await store.insertFacts(companionId, [
+      { sectionId: firstPass[0]!.id, factType: 'event', subject: 'a', object: 'b' },
+    ]);
+    expect((await store.counts(companionId)).sections).toBe(2);
+    expect((await store.counts(companionId)).facts).toBe(1);
+
+    // A second run for the SAME source replaces — not appends — the prior set,
+    // and the orphaned facts cascade away with the deleted sections.
+    const secondPass = await store.insertSections(companionId, source.id, [
+      { topicTitle: 'only', originalText: 'gamma', paraStart: 1, paraEnd: 1, ord: 0 },
+    ]);
+    const remaining = await store.listSectionsBySource(companionId, source.id);
+    expect(remaining.map((s) => s.id)).toEqual([secondPass[0]!.id]);
+    expect(remaining.map((s) => s.originalText)).toEqual(['gamma']);
+    expect((await store.counts(companionId)).sections).toBe(1);
+    expect((await store.counts(companionId)).facts).toBe(0);
+  });
+
+  it('claims a deferred job exactly once', async () => {
+    const source = await store.createSource(companionId, {
+      kind: 'note',
+      title: 'Parked',
+      rawText: 'held',
+    });
+    const job = await store.createJob(companionId, source.id);
+    await store.updateJob(job.id, { status: 'deferred' });
+
+    // The first claim wins and flips the job out of `deferred`; a racing second
+    // claim sees a non-deferred job and loses, so it is never resumed twice.
+    expect(await store.claimDeferredJob(job.id)).toBe(true);
+    expect(await store.claimDeferredJob(job.id)).toBe(false);
+    const [claimed] = await store.listJobs(companionId);
+    expect(claimed?.status).toBe('queued');
+  });
+
+  it('refuses to claim a job that is not deferred', async () => {
+    const source = await store.createSource(companionId, {
+      kind: 'note',
+      title: 'Active',
+      rawText: 'x',
+    });
+    const job = await store.createJob(companionId, source.id); // status: 'queued'
+    expect(await store.claimDeferredJob(job.id)).toBe(false);
+  });
+
   it('deletes a source within its companion scope, cascading its job', async () => {
     const source = await store.createSource(companionId, {
       kind: 'note',

@@ -33,8 +33,12 @@ export async function resumeDeferredJobs(deps: DeferredSweepDeps): Promise<numbe
       if (await deps.quota.isOverCap(job.ownerId)) {
         continue; // still over cap — leave it parked for a later sweep
       }
-      // Claim before enqueue so the next sweep's `deferred` query skips it.
-      await deps.semantic.updateJob(job.jobId, { status: 'queued' });
+      // Atomically claim before enqueue: only the sweep that flips it out of
+      // `deferred` proceeds, so an overlapping sweep that read the same row
+      // can't enqueue (and re-bill) it a second time.
+      if (!(await deps.semantic.claimDeferredJob(job.jobId))) {
+        continue; // a concurrent sweep already claimed it
+      }
       try {
         deps.ingestion.enqueue({
           companionId: job.companionId,

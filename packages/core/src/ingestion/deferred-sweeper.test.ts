@@ -115,6 +115,25 @@ describe('resumeDeferredJobs', () => {
     expect(await semantic.listDeferredJobs()).toHaveLength(1);
   });
 
+  it('resumes a parked job only once when two sweeps overlap', async () => {
+    // Two sweeps racing on the same deferred job (a slow sweep overlapping the
+    // 5-min timer tick) must not both enqueue it: the atomic claim lets exactly
+    // one win, so the pipeline never runs the source — or spends its tokens —
+    // twice.
+    await seedDeferredJob('owner@example.com');
+    const quota = new SetQuota(); // nobody over cap
+    const { runner, runs } = recordingRunner();
+    const sweep = (): Promise<number> =>
+      resumeDeferredJobs({ semantic, quota, ingestion: runner, logger: silentLogger });
+
+    const [a, b] = await Promise.all([sweep(), sweep()]);
+    await runner.whenIdle();
+
+    expect(a + b).toBe(1);
+    expect(runs).toHaveLength(1);
+    expect(await semantic.listDeferredJobs()).toHaveLength(0);
+  });
+
   it('resumes only the under-cap owners when several are parked', async () => {
     const a = await seedDeferredJob('a@example.com');
     await seedDeferredJob('b@example.com');

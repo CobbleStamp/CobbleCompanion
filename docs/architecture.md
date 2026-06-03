@@ -321,6 +321,13 @@ Design rules (the "improved staged hybrid"; memory guide → `companionmemory.md
   worker with no schema or API change (§8). It also makes restart recovery clean: interrupted
   in-flight jobs are failed on startup (re-upload), while `deferred` jobs keep their parse and
   resume.
+- **Re-running a source is idempotent.** A run writes a source's whole section set in one call,
+  *replacing* (not appending to) any prior sections for that source — so a re-run never duplicates
+  sections/facts or inflates counts (orphaned facts cascade with their sections). This holds
+  however a re-run is triggered, which lets the in-process runner give way to an at-least-once
+  worker without a dedupe layer. The deferred-job sweeper reinforces this upstream: it **atomically
+  claims** each parked job (`deferred → queued`, conditional) before enqueue, so two overlapping
+  sweeps can't resume — and re-bill — the same job twice.
 - **Cost guardrail = a per-user daily token cap.** The real resource is LLM/embedding **tokens**,
   so spend is metered against a **per-user cap over a fixed daily window** (resets 00:00 UTC);
   overage carries to the next day as **debt clamped to one cap** (never a multi-day lockout). The

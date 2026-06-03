@@ -161,6 +161,12 @@ export interface SemanticMemoryStore {
   /** Jobs waiting on a cap reset (status `deferred`), with owner + parsed doc. */
   listDeferredJobs(): Promise<readonly DeferredJob[]>;
   /**
+   * Atomically claim a deferred job for resumption: flip `deferred` → `queued`
+   * only if it is still `deferred`. Returns true if this caller won the claim.
+   * Lets two overlapping sweeps never resume (and re-bill) the same job twice.
+   */
+  claimDeferredJob(jobId: string): Promise<boolean>;
+  /**
    * Recover from a restart: fail every non-terminal, non-`deferred` job (its
    * in-memory parse state is gone). Deferred jobs are resumable and left alone.
    * Returns how many were failed.
@@ -254,24 +260,38 @@ export class DrizzleSemanticMemoryStore implements SemanticMemoryStore {
     newSections: readonly NewSection[],
   ): Promise<readonly SectionRecord[]> {
     if (newSections.length === 0) return [];
-    const rows = await this.db
-      .insert(sections)
-      .values(
-        newSections.map((section) => ({
-          companionId,
-          sourceId,
-          chapterTitle: section.chapterTitle ?? null,
-          topicTitle: section.topicTitle,
-          originalText: section.originalText,
-          paraStart: section.paraStart,
-          paraEnd: section.paraEnd,
-          pageStart: section.pageStart ?? null,
-          pageEnd: section.pageEnd ?? null,
-          ord: section.ord,
-        })),
-      )
-      .returning();
-    return rows.map(toSectionRecord);
+    // Replace, not append: a single run produces a source's whole section set
+    // (one call from the pipeline), so clearing the source's prior sections
+    // first makes re-running the same source idempotent — a re-run replaces
+    // rather than duplicating, regardless of what triggered it (sweep race,
+    // future at-least-once worker). The delete + insert are one transaction so
+    // a source is never momentarily section-less. Orphaned facts cascade away
+    // with their sections (facts.sectionId → sections, ON DELETE CASCADE). If
+    // the source was deleted mid-run, the FK insert below throws and the whole
+    // transaction rolls back — the caller (pipeline.run) marks the job failed.
+    return this.db.transaction(async (tx) => {
+      await tx
+        .delete(sections)
+        .where(and(eq(sections.companionId, companionId), eq(sections.sourceId, sourceId)));
+      const rows = await tx
+        .insert(sections)
+        .values(
+          newSections.map((section) => ({
+            companionId,
+            sourceId,
+            chapterTitle: section.chapterTitle ?? null,
+            topicTitle: section.topicTitle,
+            originalText: section.originalText,
+            paraStart: section.paraStart,
+            paraEnd: section.paraEnd,
+            pageStart: section.pageStart ?? null,
+            pageEnd: section.pageEnd ?? null,
+            ord: section.ord,
+          })),
+        )
+        .returning();
+      return rows.map(toSectionRecord);
+    });
   }
 
   async listSectionsBySource(
@@ -422,6 +442,15 @@ export class DrizzleSemanticMemoryStore implements SemanticMemoryStore {
         sourceTitle: row.sourceTitle,
         parsedDoc: row.parsedDoc,
       }));
+  }
+
+  async claimDeferredJob(jobId: string): Promise<boolean> {
+    const claimed = await this.db
+      .update(ingestionJobs)
+      .set({ status: 'queued', updatedAt: new Date() })
+      .where(and(eq(ingestionJobs.id, jobId), eq(ingestionJobs.status, 'deferred')))
+      .returning({ id: ingestionJobs.id });
+    return claimed.length > 0;
   }
 
   async failInterruptedJobs(): Promise<number> {
