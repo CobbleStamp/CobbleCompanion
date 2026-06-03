@@ -54,8 +54,15 @@ export class Harness {
     try {
       await this.memory.appendMessage(companion.id, 'user', userContent);
 
-      const history = await this.retrieveContext(companion.id);
+      const history = await this.retrieveContext({ companionId: companion.id, userContent });
       const messages = assembleContext(companion, history);
+
+      // Citations are retrieval-time data: surface the grounding sources as
+      // soon as they are known, before (and independent of) the token stream.
+      const citations = history.flatMap((block) => block.provenance ?? []);
+      if (citations.length > 0) {
+        yield { type: 'citations', citations };
+      }
 
       let assistantText = '';
       for await (const delta of this.gateway.stream({
@@ -83,9 +90,9 @@ export class Harness {
     }
   }
 
-  private defaultRetrieveContext: RetrieveContext = async (
+  private defaultRetrieveContext: RetrieveContext = async ({
     companionId,
-  ): Promise<readonly ContextBlock[]> => {
+  }): Promise<readonly ContextBlock[]> => {
     const recent = await this.memory.getRecentMessages(companionId, this.recentLimit);
     return recent.map((message) => ({
       role: message.role,

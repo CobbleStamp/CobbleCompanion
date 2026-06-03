@@ -50,6 +50,10 @@ export { FakeEmbeddingGateway, hashToUnitVector } from './embedding/fake.js';
 export { Harness, type HarnessOptions, type RunTurnParams } from './harness/harness.js';
 export { assembleContext, buildPersona } from './harness/context.js';
 export {
+  createSemanticRetrieveContext,
+  type SemanticRetrieveOptions,
+} from './harness/semantic-retrieve.js';
+export {
   idleInitiator,
   isBlock,
   passthroughAfterToolCall,
@@ -61,6 +65,7 @@ export {
   type Entry,
   type Initiator,
   type RetrieveContext,
+  type RetrieveParams,
   type ToolCall,
   type ToolResult,
   type TurnCtx,

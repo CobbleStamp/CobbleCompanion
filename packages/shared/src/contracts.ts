@@ -77,12 +77,40 @@ export const sendMessageSchema = z.object({
 });
 export type SendMessageBody = z.infer<typeof sendMessageSchema>;
 
+// --- Provenance (Phase 1 grounded recall, docs/companionmemory.md) ---
+
+/**
+ * Where a retrieved passage came from — renderable ("from your Peru book,
+ * ch. 4, para 12–18") and locatable, so the user can always see the verbatim
+ * original text behind an answer.
+ */
+export interface Citation {
+  readonly sourceId: string;
+  readonly sourceTitle: string;
+  readonly chapterTitle: string | null;
+  readonly topicTitle: string;
+  readonly paraStart: number;
+  readonly paraEnd: number;
+  readonly pageStart: number | null;
+  readonly pageEnd: number | null;
+}
+
 // --- Streaming protocol (Server-Sent Events for chat, architecture.md §4.6) ---
 
 /** A single token delta streamed from the model as the assistant turn is produced. */
 export interface StreamTokenEvent {
   readonly type: 'token';
   readonly value: string;
+}
+
+/**
+ * The sources grounding this turn, emitted once (before `done`) when semantic
+ * recall contributed passages. A separate event — citations are retrieval-time
+ * data, structurally distinct from token deltas and the persisted message.
+ */
+export interface StreamCitationsEvent {
+  readonly type: 'citations';
+  readonly citations: readonly Citation[];
 }
 
 /** Terminal success event carrying the persisted assistant message. */
@@ -97,7 +125,11 @@ export interface StreamErrorEvent {
   readonly message: string;
 }
 
-export type ChatStreamEvent = StreamTokenEvent | StreamDoneEvent | StreamErrorEvent;
+export type ChatStreamEvent =
+  | StreamTokenEvent
+  | StreamCitationsEvent
+  | StreamDoneEvent
+  | StreamErrorEvent;
 
 // --- Generic API envelope (patterns.md "API Response Format") ---
 
