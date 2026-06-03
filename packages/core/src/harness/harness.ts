@@ -45,7 +45,7 @@ export class Harness {
   private readonly model: string;
   private readonly recentLimit: number;
   private readonly retrieveContext: RetrieveContext;
-  private readonly quota?: TokenQuotaStore;
+  private readonly quota: TokenQuotaStore | undefined;
   private readonly logger: Logger;
 
   constructor(options: HarnessOptions) {
