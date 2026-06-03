@@ -78,6 +78,7 @@ export { segmentParagraphs, type SectionBoundary } from './ingestion/segmenter.j
 export { enrichSection, type Enrichment, type ExtractedFact } from './ingestion/enricher.js';
 export { buildEmbeddingInput } from './ingestion/embedder.js';
 export { CORE_FACT_TYPES, isCoreFactType, type CoreFactType } from './ingestion/ontology.js';
+export { IngestionRunner, type IngestionTarget } from './ingestion/runner.js';
 export {
   IngestionPipeline,
   type IngestionPayload,
