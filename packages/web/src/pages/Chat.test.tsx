@@ -6,7 +6,7 @@
 import type { ChatStreamEvent, CompanionDto, MessageDto } from '@cobble/shared';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchMessages, sendMessage } from '../api/client.js';
+import { fetchMessages, sendMessage, uploadFileSource } from '../api/client.js';
 import { Chat } from './Chat.js';
 
 const companion: CompanionDto = {
@@ -37,6 +37,7 @@ const history: MessageDto[] = [
 vi.mock('../api/client.js', () => ({
   fetchMessages: vi.fn(),
   sendMessage: vi.fn(async function* () {}),
+  uploadFileSource: vi.fn(),
   // The usage badge polls this; reject so it stays hidden in these tests.
   getUsage: vi.fn(() => Promise.reject(new Error('no usage'))),
 }));
@@ -245,5 +246,80 @@ describe('Chat send finalization', () => {
     expect(screen.getByText('will fail')).toBeTruthy();
     expect(document.querySelectorAll('.transcript .line').length).toBe(1);
     expect(document.querySelector('.transcript .line.assistant')).toBeNull();
+  });
+});
+
+describe('Chat attach file', () => {
+  beforeEach(() => {
+    vi.mocked(fetchMessages).mockReset().mockResolvedValue([]);
+    vi.mocked(sendMessage).mockReset();
+    vi.mocked(uploadFileSource).mockReset();
+  });
+
+  async function renderReady(): Promise<HTMLInputElement> {
+    renderChat();
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText(/Message Pebble/) as HTMLInputElement).disabled).toBe(
+        false,
+      ),
+    );
+    return screen.getByLabelText('Attach file source') as HTMLInputElement;
+  }
+
+  it('uploads the file and shows the attachment chip plus an acknowledgement', async () => {
+    vi.mocked(uploadFileSource).mockResolvedValue({
+      source: {
+        id: 's1',
+        kind: 'pdf',
+        title: 'report.pdf',
+        origin: null,
+        byteSize: 1,
+        createdAt: '2026-01-03T00:00:00.000Z',
+      },
+      job: {
+        id: 'j1',
+        sourceId: 's1',
+        status: 'queued',
+        sectionsTotal: 0,
+        sectionsDone: 0,
+        error: null,
+      },
+    });
+
+    const fileInput = await renderReady();
+    const file = new File(['x'], 'report.pdf', { type: 'application/pdf' });
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    await waitFor(() => expect(uploadFileSource).toHaveBeenCalledWith(companion.id, file));
+    // The 📎 chip carries the filename...
+    await waitFor(() => expect(screen.getByText(/📎 report\.pdf/)).toBeTruthy());
+    // ...and the companion acknowledges it without an LLM round-trip.
+    expect(screen.getByText(/reading through "report\.pdf" now/)).toBeTruthy();
+  });
+
+  it('rejects an unsupported file type without uploading', async () => {
+    const fileInput = await renderReady();
+    const file = new File(['x'], 'notes.exe', { type: 'application/octet-stream' });
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    await waitFor(() => expect(screen.getByText(/Unsupported file type/)).toBeTruthy());
+    expect(uploadFileSource).not.toHaveBeenCalled();
+  });
+
+  it('surfaces the error and removes the chip when the upload fails', async () => {
+    vi.mocked(uploadFileSource).mockRejectedValue(new Error('upload failed (413)'));
+
+    const fileInput = await renderReady();
+    const file = new File(['x'], 'big.pdf', { type: 'application/pdf' });
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    // The failure is surfaced...
+    await waitFor(() => expect(screen.getByText('upload failed (413)')).toBeTruthy());
+    // ...the optimistic attachment chip is gone...
+    expect(screen.queryByText(/📎 big\.pdf/)).toBeNull();
+    // ...and the composer is usable again (attaching reset).
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
   });
 });

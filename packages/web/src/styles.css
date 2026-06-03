@@ -54,6 +54,8 @@ button:disabled {
   display: flex;
   flex-direction: column;
   height: 90vh;
+  /* Anchor for the drag-and-drop overlay. */
+  position: relative;
 }
 
 .chat header {
@@ -93,6 +95,52 @@ button:disabled {
   border-radius: 10px;
   padding: 0.5rem 0.75rem;
   white-space: pre-wrap;
+}
+
+/* An attached file reads as a pill rather than a typed bubble. */
+.line.attachment .content {
+  align-self: flex-end;
+  background: #eef2ff;
+  border: 1px solid #c7d2fe;
+  border-radius: 999px;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.9rem;
+}
+
+/* The chat composer: paperclip · text input · Send, on one row. */
+.composer {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.composer input {
+  flex: 1;
+}
+
+.attach-button {
+  background: none;
+  color: #4f46e5;
+  border: 1px solid #d0d0e0;
+  padding: 0.6rem 0.7rem;
+  line-height: 1;
+}
+
+/* Drag-and-drop target hint, shown while a file is dragged over the chat. */
+.drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(79, 70, 229, 0.08);
+  border: 2px dashed #4f46e5;
+  border-radius: 12px;
+  color: #4f46e5;
+  font-weight: 600;
+  /* Never eat the drop event — the chat element handles it. */
+  pointer-events: none;
 }
 
 .header-actions {

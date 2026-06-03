@@ -5,8 +5,9 @@
  */
 
 import type { Citation, CompanionDto, MessageDto, MessageRole } from '@cobble/shared';
+import { UPLOAD_ACCEPT_ATTR, uploadKindForFilename } from '@cobble/shared';
 import { useEffect, useRef, useState } from 'react';
-import { fetchMessages, sendMessage } from '../api/client.js';
+import { fetchMessages, sendMessage, uploadFileSource } from '../api/client.js';
 import { UsageBadge } from '../components/UsageBadge.js';
 
 interface ChatProps {
@@ -26,6 +27,13 @@ interface ChatLine {
   readonly role: MessageRole;
   readonly content: string;
   readonly citations?: readonly Citation[];
+  /**
+   * Marks a line as an attached file rather than a typed message, so it renders
+   * as a 📎 chip. Attachment + acknowledgement lines are client-side only (the
+   * upload goes through the sources endpoint, not the chat transcript), so they
+   * don't survive a reload — the source itself persists and stays searchable.
+   */
+  readonly attachment?: boolean;
 }
 
 export function Chat({
@@ -37,9 +45,16 @@ export function Chat({
   const [lines, setLines] = useState<ChatLine[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const [attaching, setAttaching] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const startedRef = useRef(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // While a send is streaming or a file is uploading, the composer is locked so
+  // the two intake paths never overlap.
+  const locked = busy || attaching;
 
   useEffect(() => {
     if (startedRef.current) return;
@@ -94,8 +109,71 @@ export function Chat({
     }
   }
 
+  /**
+   * Hand a file to the companion: upload it to the knowledge base (background
+   * ingestion via the sources endpoint), and reflect it in the transcript as a
+   * 📎 chip followed by a canned acknowledgement. The file becomes searchable
+   * once ingestion finishes; we don't block on it.
+   */
+  async function onAttach(file: File): Promise<void> {
+    if (!ready || locked) return;
+    // Validate before uploading — drag-and-drop bypasses the picker's `accept`
+    // filter, so an unsupported file can still land here.
+    if (uploadKindForFilename(file.name) === null) {
+      setError('Unsupported file type — PDF, txt, md, docx, or pptx only');
+      return;
+    }
+    setError(null);
+    setAttaching(true);
+    setLines((prev) => [...prev, { role: 'user', content: file.name, attachment: true }]);
+
+    try {
+      await uploadFileSource(companion.id, file);
+      setLines((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: `Got it — I'm reading through "${file.name}" now. I'll be able to reference it once I've finished.`,
+        },
+      ]);
+    } catch (err) {
+      // Drop the optimistic attachment chip and surface the failure.
+      console.error('chat attach failed', { companionId: companion.id, error: err });
+      setLines((prev) => dropAttachmentTail(prev));
+      setError(err instanceof Error ? err.message : 'Failed to attach file');
+    } finally {
+      setAttaching(false);
+    }
+  }
+
+  function onDragOver(event: React.DragEvent): void {
+    if (!ready || locked) return;
+    event.preventDefault();
+    setDragging(true);
+  }
+
+  function onDragLeave(event: React.DragEvent): void {
+    event.preventDefault();
+    setDragging(false);
+  }
+
+  function onDrop(event: React.DragEvent): void {
+    event.preventDefault();
+    setDragging(false);
+    if (!ready || locked) return;
+    const file = event.dataTransfer.files?.[0];
+    if (file) void onAttach(file);
+  }
+
   return (
-    <main className="chat">
+    <main
+      className="chat"
+      onDragOver={onDragOver}
+      onDragEnter={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      {dragging && <div className="drop-overlay">Drop a file to add it</div>}
       <header>
         <h1>{companion.name}</h1>
         <nav className="header-actions">
@@ -114,9 +192,12 @@ export function Chat({
       {error && <p className="error">{error}</p>}
       <ul className="transcript">
         {lines.map((line, index) => (
-          <li key={line.id ?? index} className={`line ${line.role}`}>
+          <li
+            key={line.id ?? index}
+            className={`line ${line.role}${line.attachment ? ' attachment' : ''}`}
+          >
             <span className="who">{line.role === 'user' ? 'You' : companion.name}</span>
-            <span className="content">{line.content}</span>
+            <span className="content">{line.attachment ? `📎 ${line.content}` : line.content}</span>
             {line.citations && line.citations.length > 0 && (
               <span className="citations who">
                 Grounded in:{' '}
@@ -129,15 +210,39 @@ export function Chat({
         ))}
       </ul>
       <form onSubmit={onSend}>
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder={`Message ${companion.name}…`}
-          disabled={!ready}
-        />
-        <button type="submit" disabled={busy || !ready}>
-          Send
-        </button>
+        <div className="composer">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={UPLOAD_ACCEPT_ATTR}
+            aria-label="Attach file source"
+            style={{ display: 'none' }}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) void onAttach(file);
+              event.target.value = '';
+            }}
+          />
+          <button
+            type="button"
+            className="attach-button"
+            aria-label="Attach file"
+            title="Attach a file"
+            disabled={locked || !ready}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            📎
+          </button>
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder={`Message ${companion.name}…`}
+            disabled={locked || !ready}
+          />
+          <button type="submit" disabled={locked || !ready}>
+            Send
+          </button>
+        </div>
       </form>
     </main>
   );
@@ -181,6 +286,17 @@ function dropEmptyAssistantTail(lines: ChatLine[]): ChatLine[] {
   if (last.role === 'assistant' && last.content.length === 0) {
     return lines.slice(0, -1);
   }
+  return lines;
+}
+
+/**
+ * Drop a trailing optimistic attachment chip — used when an upload throws, so the
+ * transcript isn't left with a 📎 line for a file that never made it.
+ */
+function dropAttachmentTail(lines: ChatLine[]): ChatLine[] {
+  if (lines.length === 0) return lines;
+  const last = lines[lines.length - 1]!;
+  if (last.attachment) return lines.slice(0, -1);
   return lines;
 }
 
