@@ -19,6 +19,18 @@ export {
 export { OpenRouterGateway, type OpenRouterConfig } from './llm/openrouter.js';
 export { FakeLlmGateway } from './llm/fake.js';
 
+// Embedding gateway
+export {
+  type EmbeddingGateway,
+  EmbeddingGatewayError,
+  type EmbeddingParams,
+} from './embedding/gateway.js';
+export {
+  OpenRouterEmbeddingGateway,
+  type OpenRouterEmbeddingConfig,
+} from './embedding/openrouter.js';
+export { FakeEmbeddingGateway, hashToUnitVector } from './embedding/fake.js';
+
 // Harness (the agent loop)
 export { Harness, type HarnessOptions, type RunTurnParams } from './harness/harness.js';
 export { assembleContext, buildPersona } from './harness/context.js';

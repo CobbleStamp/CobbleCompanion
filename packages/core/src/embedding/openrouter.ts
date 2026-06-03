@@ -1,0 +1,98 @@
+/**
+ * OpenRouter-backed embedding gateway. OpenRouter exposes an OpenAI-compatible
+ * embeddings endpoint (`POST /api/v1/embeddings`: model, input, dimensions);
+ * we relay `data[].embedding` vectors re-ordered by `data[].index`.
+ */
+
+import { type EmbeddingGateway, EmbeddingGatewayError, type EmbeddingParams } from './gateway.js';
+
+const OPENROUTER_EMBEDDINGS_URL = 'https://openrouter.ai/api/v1/embeddings';
+
+export interface OpenRouterEmbeddingConfig {
+  readonly apiKey: string;
+  readonly baseUrl?: string;
+}
+
+interface EmbeddingResponseItem {
+  readonly index?: number;
+  readonly embedding?: readonly number[];
+}
+
+/** OpenRouter embeddings client implementing the provider-agnostic gateway. */
+export class OpenRouterEmbeddingGateway implements EmbeddingGateway {
+  private readonly apiKey: string;
+  private readonly baseUrl: string;
+
+  constructor(config: OpenRouterEmbeddingConfig) {
+    this.apiKey = config.apiKey;
+    this.baseUrl = config.baseUrl ?? OPENROUTER_EMBEDDINGS_URL;
+  }
+
+  async embed(params: EmbeddingParams): Promise<readonly (readonly number[])[]> {
+    if (params.input.length === 0) {
+      return [];
+    }
+    const response = await this.request(params);
+    const payload = (await response.json().catch((cause: unknown) => {
+      throw new EmbeddingGatewayError('OpenRouter returned non-JSON embeddings body', cause);
+    })) as { data?: readonly EmbeddingResponseItem[] };
+
+    const items = payload.data;
+    if (!items || items.length !== params.input.length) {
+      throw new EmbeddingGatewayError(
+        `OpenRouter returned ${items?.length ?? 0} embeddings for ${params.input.length} inputs`,
+      );
+    }
+
+    const vectors: (readonly number[])[] = new Array(params.input.length);
+    for (const item of items) {
+      const { index, embedding } = item;
+      if (index === undefined || index < 0 || index >= params.input.length || !embedding) {
+        throw new EmbeddingGatewayError('OpenRouter returned a malformed embedding item');
+      }
+      if (embedding.length !== params.dimensions) {
+        throw new EmbeddingGatewayError(
+          `OpenRouter returned ${embedding.length}-dim embedding; expected ${params.dimensions}`,
+        );
+      }
+      vectors[index] = embedding;
+    }
+    return vectors;
+  }
+
+  private async request(params: EmbeddingParams): Promise<Response> {
+    let response: Response;
+    try {
+      response = await fetch(this.baseUrl, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: params.model,
+          input: params.input,
+          dimensions: params.dimensions,
+        }),
+        ...(params.signal ? { signal: params.signal } : {}),
+      });
+    } catch (cause) {
+      throw new EmbeddingGatewayError('OpenRouter embeddings request failed', cause);
+    }
+    if (!response.ok) {
+      const detail = await safeText(response);
+      throw new EmbeddingGatewayError(
+        `OpenRouter embeddings responded ${response.status}: ${detail}`,
+      );
+    }
+    return response;
+  }
+}
+
+async function safeText(response: Response): Promise<string> {
+  try {
+    return (await response.text()).slice(0, 500);
+  } catch {
+    return '<no body>';
+  }
+}
