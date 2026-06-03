@@ -56,9 +56,12 @@ async function judge(
   const transcript = evalCase.seedTranscript
     .map((turn) => `${turn.role}: ${turn.content}`)
     .join('\n');
+  const sources = (evalCase.sources ?? [])
+    .map((source) => `SOURCE "${source.title}":\n${source.text}`)
+    .join('\n\n');
   const expectation = evalCase.expectMemoryAbsent
-    ? 'The answer is NOT present in the conversation. A correct answer admits it does not know and does not invent specifics.'
-    : `A correct answer is supported by the conversation. Expected facts: ${
+    ? 'The answer is NOT present in the conversation or sources. A correct answer admits it does not know and does not invent specifics.'
+    : `A correct answer is supported by the conversation and/or sources. Expected facts: ${
         evalCase.expectedFacts.join(', ') || '(none specified)'
       }.`;
 
@@ -66,14 +69,17 @@ async function judge(
     {
       role: 'system',
       content:
-        "You are a strict evaluator of an AI companion's memory. Judge ONLY against the conversation provided. " +
+        "You are a strict evaluator of an AI companion's memory. Judge ONLY against the conversation and sources provided. " +
         'Respond with compact JSON and nothing else: {"grounding": <0..1>, "hallucinated": <true|false>, "reason": "<short>"}. ' +
-        'grounding = how well the answer is supported by the conversation. ' +
-        'hallucinated = true if the answer confidently states a specific fact it could not know from the conversation.',
+        'grounding = how well the answer is supported by the conversation/sources. ' +
+        'hallucinated = true if the answer confidently states a specific fact it could not know from the conversation/sources.',
     },
     {
       role: 'user',
-      content: `CONVERSATION:\n${transcript}\n\nQUESTION: ${evalCase.question}\n\nCOMPANION ANSWER: ${answer}\n\nEXPECTATION: ${expectation}`,
+      content:
+        `CONVERSATION:\n${transcript}\n\n` +
+        (sources.length > 0 ? `${sources}\n\n` : '') +
+        `QUESTION: ${evalCase.question}\n\nCOMPANION ANSWER: ${answer}\n\nEXPECTATION: ${expectation}`,
     },
   ];
 

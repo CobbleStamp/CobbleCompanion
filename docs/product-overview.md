@@ -227,6 +227,6 @@ threat model: `architecture.md` / `implementation.md`.)
 | [`architecture.md`](./architecture.md) | Components, the agent loop, data flows, design decisions |
 | [`implementation.md`](./implementation.md) | Data models, harness internals, configuration, security |
 | [`documentation-rules.md`](./documentation-rules.md) | Doc taxonomy, naming, and cross-referencing rules |
-| [`ontology.md`](./ontology.md) *(planned)* | Knowledge ontology contract & governance — created when introduced |
+| [`ontology.md`](./ontology.md) | Knowledge ontology contract & governance (fixed core types + rules for the dynamic part) |
 | [`../README.md`](../README.md) | Orientation & setup |
 | [`../AGENTS.md`](../AGENTS.md) · [`../CLAUDE.md`](../CLAUDE.md) | Working rules · AI-agent entry point |

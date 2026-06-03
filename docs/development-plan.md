@@ -35,7 +35,7 @@ being is proven, because they add platform cost without changing whether the cor
 | Phase | Theme | Surface | Proves / Delivers | Status |
 |---|---|---|---|---|
 | **0** | Foundations & walking skeleton | Web | You can talk to Cobble end-to-end; stack decided | ✅ **Done** (PR #1) |
-| **1** | The knowledge organism | Web | Ingest sources → semantic memory → grounded recall ⭐ | ◀ **Next** |
+| **1** | The knowledge organism | Web | Ingest sources → semantic memory → grounded recall ⭐ | 🔨 **Implemented** — eval gate pending |
 | **2** | Memory & continuity | Web | Episodic memory, companion identity, cloud "home" | Planned |
 | **3** | Tools, action & trust | Web | Tool/MCP use + propose→approve approval queue | Planned |
 | **4** | Proactivity engine | Web | Motivated, tunable initiative ⭐ | Planned |
@@ -84,6 +84,15 @@ citations; answers degrade gracefully when knowledge is absent (no confident hal
 
 **Key risks:** retrieval quality, large-document ingestion cost/latency, hallucination. Validate
 with a fixed eval set of source→question→expected-answer pairs.
+
+**Implemented** (this branch): the "improved staged hybrid" — verbatim sources/sections with
+pgvector + FTS hybrid retrieval and a typed fact overlay (`ontology.md`), built by a two-pass
+output-bounded ingestion pipeline off the request path (`architecture.md` §4.8); semantic recall
+fills the harness memory hook with citation-carrying grounding; web surface adds the Sources
+page ("read N of M"), chat citation chips, and memory search; the eval harness gained
+source-grounded cases + semantic configs with the contextual-header A/B. **Gate before marking
+done:** run the live eval (recall/grounding/hallucination across configs) and the manual e2e
+(upload PDF → grounded answer with correct citation → out-of-knowledge question declines).
 
 ### Phase 2 — Memory & Continuity
 **Goal:** Cobble remembers your shared history and is recognizably *the same being* over time.

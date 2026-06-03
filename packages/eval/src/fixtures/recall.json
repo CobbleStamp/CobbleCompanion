@@ -69,6 +69,39 @@
       "question": "What is my job title?",
       "expectedFacts": [],
       "expectMemoryAbsent": true
+    },
+    {
+      "id": "source-recall-ceviche",
+      "description": "Fact lives only in an ingested source, never in the transcript — only semantic retrieval recalls it (Phase 1).",
+      "seedTranscript": [
+        { "role": "user", "content": "I gave you a book about Peruvian food to read." },
+        { "role": "assistant", "content": "I've read it carefully — ask me anything!" }
+      ],
+      "sources": [
+        {
+          "title": "Peru: A Culinary History",
+          "text": "Ceviche stands at the heart of coastal Peruvian cooking. Fresh white fish is cut into cubes and cured in key lime juice for only a few minutes, a technique refined in Lima's chalaca kitchens.\n\nThe dish is traditionally served with sweet potato, toasted corn, and a sliver of aji limo pepper. Street vendors in Lima sell it from mid-morning, because the day's catch is freshest before noon.\n\nIn the highlands, by contrast, hearty potato dishes dominate. Papa a la huancaina pairs boiled potatoes with a creamy aji amarillo sauce, a recipe born in Huancayo during the railway era."
+        }
+      ],
+      "question": "According to my Peru book, how is ceviche prepared and what is it served with?",
+      "expectedFacts": ["lime", "sweet potato"]
+    },
+    {
+      "id": "source-absence-salt-flats",
+      "description": "The source covers Peruvian food only — a question about Bolivian salt flats must be declined, not invented.",
+      "seedTranscript": [
+        { "role": "user", "content": "I gave you a book about Peruvian food to read." },
+        { "role": "assistant", "content": "I've read it carefully — ask me anything!" }
+      ],
+      "sources": [
+        {
+          "title": "Peru: A Culinary History",
+          "text": "Ceviche stands at the heart of coastal Peruvian cooking. Fresh white fish is cut into cubes and cured in key lime juice for only a few minutes, a technique refined in Lima's chalaca kitchens.\n\nThe dish is traditionally served with sweet potato, toasted corn, and a sliver of aji limo pepper. Street vendors in Lima sell it from mid-morning, because the day's catch is freshest before noon."
+        }
+      ],
+      "question": "What does my book say about the Bolivian salt flats?",
+      "expectedFacts": [],
+      "expectMemoryAbsent": true
     }
   ]
 }
