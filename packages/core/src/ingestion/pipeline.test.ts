@@ -173,6 +173,35 @@ describe('IngestionPipeline', () => {
     expect(job?.error).not.toMatch(/pdf\.js|stack|TypeError/i);
   });
 
+  it('refuses links to private/internal addresses (SSRF guard) without fetching', async () => {
+    const fetchSpy: typeof fetch = async () => {
+      throw new Error('fetch must not be called for blocked URLs');
+    };
+    const llm = new ScriptedLlmGateway([SEGMENT_RESPONSE]);
+    const { sourceId, jobId } = await seedSourceAndJob();
+
+    await new IngestionPipeline({
+      semantic,
+      llm,
+      embeddings,
+      ingestionModel: 'cheap-model',
+      embeddingModel: 'fake-embed',
+      embeddingDimensions: EMBEDDING_DIMENSIONS,
+      useContextHeader: false,
+      logger: silentLogger,
+      fetchFn: fetchSpy,
+    }).run({
+      companionId,
+      sourceId,
+      jobId,
+      sourceTitle: 'Metadata grab',
+      payload: { kind: 'link', url: 'http://169.254.169.254/computeMetadata/v1/' },
+    });
+
+    const [job] = await semantic.listJobs(companionId);
+    expect(job?.status).toBe('failed');
+  });
+
   it('fetches link sources through the injected fetch', async () => {
     const article = `<html><body><article><h1>Ceviche</h1>
       <p>${'Ceviche is a coastal Peruvian dish cured in lime juice. '.repeat(8)}</p>

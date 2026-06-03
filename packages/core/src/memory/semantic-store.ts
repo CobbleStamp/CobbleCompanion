@@ -120,7 +120,14 @@ export interface SemanticCounts {
 /** Boundary for all Phase 1 semantic memory (sources/sections/facts/jobs). */
 export interface SemanticMemoryStore {
   createSource(companionId: string, input: CreateSourceInput): Promise<SourceRecord>;
-  /** Fill in the canonical text after off-request-path extraction (PDF/link). */
+  /**
+   * Fill in the canonical text after off-request-path extraction (PDF/link).
+   * PRECONDITION (also for the section/job mutators below): the id must come
+   * from a row created within the caller's own companion scope — these
+   * pipeline-internal writes are keyed by id alone and are never reachable
+   * from user input (tenancy invariant #5 is enforced at creation and on
+   * every read path).
+   */
   setSourceText(sourceId: string, rawText: string): Promise<void>;
   getSourceText(companionId: string, sourceId: string): Promise<string | null>;
   listSources(companionId: string): Promise<readonly SourceRecord[]>;
@@ -288,13 +295,20 @@ export class DrizzleSemanticMemoryStore implements SemanticMemoryStore {
   ): Promise<readonly SemanticSearchHit[]> {
     const filterClauses = this.buildFilters(companionId, params);
 
-    const vectorRows = await this.db
-      .select(hitColumns)
-      .from(sections)
-      .innerJoin(sources, eq(sections.sourceId, sources.id))
-      .where(and(...filterClauses, sql`${sections.embedding} IS NOT NULL`))
-      .orderBy(sql`${sections.embedding} <=> ${JSON.stringify([...params.queryEmbedding])}::vector`)
-      .limit(params.topK);
+    // An empty query embedding (e.g. the embedding provider is down and the
+    // caller degraded) skips the vector arm — lexical search still answers.
+    const vectorRows =
+      params.queryEmbedding.length === 0
+        ? []
+        : await this.db
+            .select(hitColumns)
+            .from(sections)
+            .innerJoin(sources, eq(sections.sourceId, sources.id))
+            .where(and(...filterClauses, sql`${sections.embedding} IS NOT NULL`))
+            .orderBy(
+              sql`${sections.embedding} <=> ${JSON.stringify([...params.queryEmbedding])}::vector`,
+            )
+            .limit(params.topK);
 
     const lexicalRows = await this.db
       .select(hitColumns)
@@ -367,7 +381,9 @@ export class DrizzleSemanticMemoryStore implements SemanticMemoryStore {
       clauses.push(eq(sections.sourceId, params.filters.sourceId));
     }
     if (params.filters?.entity) {
-      const pattern = `%${params.filters.entity}%`;
+      // Escape LIKE wildcards so the entity is matched literally.
+      const escaped = params.filters.entity.replace(/[\\%_]/g, '\\$&');
+      const pattern = `%${escaped}%`;
       clauses.push(
         sql`EXISTS (SELECT 1 FROM ${facts} WHERE ${facts.sectionId} = ${sections.id} AND (${facts.subject} ILIKE ${pattern} OR ${facts.object} ILIKE ${pattern}))`,
       );

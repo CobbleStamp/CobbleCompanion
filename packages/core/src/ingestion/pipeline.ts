@@ -10,11 +10,12 @@
 import type { EmbeddingGateway } from '../embedding/gateway.js';
 import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
-import type { NewSection, SemanticMemoryStore } from '../memory/semantic-store.js';
+import type { NewSection, SectionRecord, SemanticMemoryStore } from '../memory/semantic-store.js';
 import { buildEmbeddingInput } from './embedder.js';
 import { enrichSection } from './enricher.js';
 import { parseLinkHtml, parseNote, parsePdf, type ParsedDocument } from './parser.js';
-import { segmentParagraphs } from './segmenter.js';
+import { segmentParagraphs, type SectionBoundary } from './segmenter.js';
+import { assertPublicHttpUrl } from './url-guard.js';
 
 /** The raw input a queued ingestion run works on (held by the runner). */
 export type IngestionPayload =
@@ -61,78 +62,13 @@ export class IngestionPipeline {
       await semantic.setSourceText(sourceId, document.rawText);
 
       await semantic.updateJob(jobId, { status: 'segmenting' });
-      const boundaries = await segmentParagraphs(
-        this.options.llm,
-        this.options.ingestionModel,
-        document.paragraphs,
-        logger,
-      );
-      const sections = await semantic.insertSections(
-        companionId,
-        sourceId,
-        boundaries.map((boundary, ord): NewSection => {
-          const slice = document.paragraphs.slice(boundary.paraStart - 1, boundary.paraEnd);
-          return {
-            topicTitle: boundary.topicTitle,
-            // Verbatim: whole paragraphs joined, never rewritten by the model.
-            originalText: slice.map((p) => p.text).join('\n\n'),
-            paraStart: boundary.paraStart,
-            paraEnd: boundary.paraEnd,
-            ...(slice[0]?.page !== undefined ? { pageStart: slice[0].page } : {}),
-            ...(slice[slice.length - 1]?.page !== undefined
-              ? { pageEnd: slice[slice.length - 1]!.page }
-              : {}),
-            ord,
-          };
-        }),
-      );
+      const sections = await this.segmentIntoSections(params, document);
       await semantic.updateJob(jobId, { status: 'enriching', sectionsTotal: sections.length });
 
-      const headers = new Map<string, string>();
-      let done = 0;
-      for (const section of sections) {
-        const enrichment = await enrichSection(
-          this.options.llm,
-          this.options.ingestionModel,
-          {
-            sourceTitle: params.sourceTitle,
-            topicTitle: section.topicTitle,
-            originalText: section.originalText,
-          },
-          logger,
-        );
-        await semantic.setSectionContextHeader(section.id, enrichment.contextHeader);
-        headers.set(section.id, enrichment.contextHeader);
-        if (enrichment.facts.length > 0) {
-          await semantic.insertFacts(
-            companionId,
-            enrichment.facts.map((fact) => ({ ...fact, sectionId: section.id })),
-          );
-        }
-        done += 1;
-        await semantic.updateJob(jobId, { sectionsDone: done });
-      }
+      const headers = await this.enrichSections(params, sections);
 
       await semantic.updateJob(jobId, { status: 'embedding' });
-      for (let offset = 0; offset < sections.length; offset += EMBED_BATCH_SIZE) {
-        const batch = sections.slice(offset, offset + EMBED_BATCH_SIZE);
-        const vectors = await this.options.embeddings.embed({
-          input: batch.map((section) =>
-            buildEmbeddingInput(
-              {
-                originalText: section.originalText,
-                contextHeader: headers.get(section.id) ?? null,
-              },
-              this.options.useContextHeader,
-            ),
-          ),
-          model: this.options.embeddingModel,
-          dimensions: this.options.embeddingDimensions,
-        });
-        for (let i = 0; i < batch.length; i++) {
-          await semantic.setSectionEmbedding(batch[i]!.id, vectors[i]!);
-        }
-      }
+      await this.embedSections(sections, headers);
 
       await semantic.updateJob(jobId, { status: 'done' });
     } catch (error) {
@@ -157,8 +93,11 @@ export class IngestionPipeline {
       case 'pdf':
         return parsePdf(payload.bytes);
       case 'link': {
+        // SSRF guard: public http(s) targets only, and redirects are refused so
+        // a public URL cannot bounce the fetch to a private address.
+        const url = assertPublicHttpUrl(payload.url);
         const fetchFn = this.options.fetchFn ?? fetch;
-        const response = await fetchFn(payload.url);
+        const response = await fetchFn(url, { redirect: 'error' });
         if (!response.ok) {
           throw new Error(`link fetch responded ${response.status}`);
         }
@@ -166,4 +105,102 @@ export class IngestionPipeline {
       }
     }
   }
+
+  /** Pass 1: LLM boundary marking, then slice VERBATIM paragraph ranges into rows. */
+  private async segmentIntoSections(
+    params: IngestionRunParams,
+    document: ParsedDocument,
+  ): Promise<readonly SectionRecord[]> {
+    const boundaries = await segmentParagraphs(
+      this.options.llm,
+      this.options.ingestionModel,
+      document.paragraphs,
+      this.options.logger,
+    );
+    return this.options.semantic.insertSections(
+      params.companionId,
+      params.sourceId,
+      boundaries.map((boundary, ord) => toNewSection(document, boundary, ord)),
+    );
+  }
+
+  /** Pass 2: per-section context header + ontology-validated facts; returns headers. */
+  private async enrichSections(
+    params: IngestionRunParams,
+    sections: readonly SectionRecord[],
+  ): Promise<ReadonlyMap<string, string>> {
+    const { semantic, logger } = this.options;
+    const headers = new Map<string, string>();
+    let done = 0;
+    for (const section of sections) {
+      const enrichment = await enrichSection(
+        this.options.llm,
+        this.options.ingestionModel,
+        {
+          sourceTitle: params.sourceTitle,
+          topicTitle: section.topicTitle,
+          originalText: section.originalText,
+        },
+        logger,
+      );
+      await semantic.setSectionContextHeader(section.id, enrichment.contextHeader);
+      headers.set(section.id, enrichment.contextHeader);
+      if (enrichment.facts.length > 0) {
+        await semantic.insertFacts(
+          params.companionId,
+          enrichment.facts.map((fact) => ({ ...fact, sectionId: section.id })),
+        );
+      }
+      done += 1;
+      await semantic.updateJob(params.jobId, { sectionsDone: done });
+    }
+    return headers;
+  }
+
+  /** Embed each section (batched); input may be header-prefixed, stored text never is. */
+  private async embedSections(
+    sections: readonly SectionRecord[],
+    headers: ReadonlyMap<string, string>,
+  ): Promise<void> {
+    for (let offset = 0; offset < sections.length; offset += EMBED_BATCH_SIZE) {
+      const batch = sections.slice(offset, offset + EMBED_BATCH_SIZE);
+      const vectors = await this.options.embeddings.embed({
+        input: batch.map((section) =>
+          buildEmbeddingInput(
+            {
+              originalText: section.originalText,
+              contextHeader: headers.get(section.id) ?? null,
+            },
+            this.options.useContextHeader,
+          ),
+        ),
+        model: this.options.embeddingModel,
+        dimensions: this.options.embeddingDimensions,
+      });
+      for (let i = 0; i < batch.length; i++) {
+        await this.options.semantic.setSectionEmbedding(batch[i]!.id, vectors[i]!);
+      }
+    }
+  }
+}
+
+/** Map one Pass-1 boundary to a section row: whole paragraphs, joined verbatim. */
+function toNewSection(
+  document: ParsedDocument,
+  boundary: SectionBoundary,
+  ord: number,
+): NewSection {
+  const slice = document.paragraphs.slice(boundary.paraStart - 1, boundary.paraEnd);
+  return {
+    topicTitle: boundary.topicTitle,
+    // Verbatim: whole paragraphs joined, never rewritten by the model.
+    originalText: slice.map((p) => p.text).join('\n\n'),
+    paraStart: boundary.paraStart,
+    paraEnd: boundary.paraEnd,
+    ...(slice[0]?.page !== undefined ? { pageStart: slice[0].page } : {}),
+    ...(slice[slice.length - 1]?.page !== undefined
+      ? { pageEnd: slice[slice.length - 1]!.page }
+      : {}),
+    ord,
+  };
 }

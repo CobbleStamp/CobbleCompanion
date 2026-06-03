@@ -98,23 +98,31 @@ describe('source routes', () => {
     expect(res.statusCode).toBe(400);
   });
 
-  it('accepts a PDF upload via multipart and tracks its job', async () => {
+  function multipartPdf(fileBody: string): { headers: Record<string, string>; payload: string } {
     const boundary = 'test-boundary-7f3a';
-    const body = [
+    const payload = [
       `--${boundary}`,
       'Content-Disposition: form-data; name="file"; filename="peru-history.pdf"',
       'Content-Type: application/pdf',
       '',
-      'not a real pdf body',
+      fileBody,
       `--${boundary}--`,
       '',
     ].join('\r\n');
+    return {
+      headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+      payload,
+    };
+  }
 
+  it('accepts a PDF upload via multipart and tracks its job', async () => {
+    // Valid magic bytes but a corrupt body: intake succeeds, reading fails safely.
+    const upload = multipartPdf('%PDF-1.4 corrupt body with no objects');
     const res = await ctx.app.inject({
       method: 'POST',
       url: `/companions/${companionId}/sources/pdf`,
-      headers: { ...auth, 'content-type': `multipart/form-data; boundary=${boundary}` },
-      payload: body,
+      headers: { ...auth, ...upload.headers },
+      payload: upload.payload,
     });
 
     expect(res.statusCode).toBe(202);
@@ -124,7 +132,7 @@ describe('source routes', () => {
     expect(source.origin).toBe('peru-history.pdf');
     expect(job.status).toBe('queued');
 
-    // Garbage bytes: ingestion must fail safely with a user-safe error.
+    // Corrupt bytes: ingestion must fail safely with a user-safe error.
     await ctx.deps.ingestion.whenIdle();
     const progress = await ctx.app.inject({
       method: 'GET',
@@ -133,6 +141,18 @@ describe('source routes', () => {
     });
     expect(progress.json().jobs[0].status).toBe('failed');
     expect(progress.json().jobs[0].error).toMatch(/could not finish reading/);
+  });
+
+  it('rejects an upload that is not a PDF (magic-byte check)', async () => {
+    const upload = multipartPdf('definitely not a pdf');
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/sources/pdf`,
+      headers: { ...auth, ...upload.headers },
+      payload: upload.payload,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatch(/not a PDF/);
   });
 
   it('lists sources and serves the section drill-in', async () => {

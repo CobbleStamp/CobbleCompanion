@@ -32,6 +32,8 @@ export function Sources({ companionName, companionId, onBack }: SourcesProps): J
   const [jobs, setJobs] = useState<IngestionJobDto[]>([]);
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
+  // Guards state updates from refreshes still in flight at unmount.
+  const mountedRef = useRef(true);
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
@@ -39,16 +41,22 @@ export function Sources({ companionName, companionId, onBack }: SourcesProps): J
         listSources(companionId),
         listIngestionJobs(companionId),
       ]);
+      if (!mountedRef.current) return;
       setSources(nextSources);
       setJobs(nextJobs);
       setError(null);
     } catch (err) {
+      if (!mountedRef.current) return;
       setError(err instanceof Error ? err.message : 'Failed to load sources');
     }
   }, [companionId]);
 
   useEffect(() => {
+    mountedRef.current = true;
     void refresh();
+    return () => {
+      mountedRef.current = false;
+    };
   }, [refresh]);
 
   // Poll while any job is still reading; stop as soon as everything settles.

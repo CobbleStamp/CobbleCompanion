@@ -40,8 +40,13 @@ export function MemoryBrowser({ companion, onBack }: MemoryBrowserProps): JSX.El
       setTranscript([]);
       return;
     }
-    setOpen(true);
-    setTranscript(await fetchMessages(companion.id));
+    try {
+      const messages = await fetchMessages(companion.id);
+      setOpen(true);
+      setTranscript(messages);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load transcript');
+    }
   }
 
   return (
@@ -129,6 +134,7 @@ interface SemanticSearchProps {
 function SemanticSearch({ companionId }: SemanticSearchProps): JSX.Element {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SemanticSearchResultDto[] | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function onSearch(event: React.FormEvent): Promise<void> {
@@ -137,6 +143,10 @@ function SemanticSearch({ companionId }: SemanticSearchProps): JSX.Element {
     setBusy(true);
     try {
       setResults(await searchMemory(companionId, query.trim()));
+      setSearchError(null);
+    } catch (err) {
+      setResults(null);
+      setSearchError(err instanceof Error ? err.message : 'Search failed');
     } finally {
       setBusy(false);
     }
@@ -155,6 +165,7 @@ function SemanticSearch({ companionId }: SemanticSearchProps): JSX.Element {
           Search
         </button>
       </form>
+      {searchError && <p className="error">{searchError}</p>}
       {results && results.length === 0 && <p className="who">Nothing found for that.</p>}
       {results && results.length > 0 && (
         <ul className="memory-list">

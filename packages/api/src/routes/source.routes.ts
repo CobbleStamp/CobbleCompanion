@@ -75,6 +75,10 @@ export function registerSourceRoutes(
       if (bytes.length === 0) {
         return reply.code(400).send({ error: 'the uploaded file is empty' });
       }
+      // Reject obviously-wrong uploads early: a PDF starts with "%PDF-".
+      if (bytes.subarray(0, 5).toString('latin1') !== '%PDF-') {
+        return reply.code(400).send({ error: 'the uploaded file is not a PDF' });
+      }
       const title = file.filename?.replace(/\.pdf$/i, '') || 'Untitled PDF';
       const result = await enqueue(
         companion.id,

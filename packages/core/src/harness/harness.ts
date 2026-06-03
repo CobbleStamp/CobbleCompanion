@@ -1,4 +1,4 @@
-import type { ChatStreamEvent, CompanionDto } from '@cobble/shared';
+import type { ChatStreamEvent, Citation, CompanionDto } from '@cobble/shared';
 import type { LlmGateway } from '../llm/gateway.js';
 import { consoleLogger, type Logger } from '../logging.js';
 import type { MemoryStore } from '../memory/store.js';
@@ -59,7 +59,7 @@ export class Harness {
 
       // Citations are retrieval-time data: surface the grounding sources as
       // soon as they are known, before (and independent of) the token stream.
-      const citations = history.flatMap((block) => block.provenance ?? []);
+      const citations = dedupeCitations(history.flatMap((block) => block.provenance ?? []));
       if (citations.length > 0) {
         yield { type: 'citations', citations };
       }
@@ -99,4 +99,15 @@ export class Harness {
       content: message.content,
     }));
   };
+}
+
+/** Collapse repeated passages from the same source span into one citation. */
+function dedupeCitations(citations: readonly Citation[]): readonly Citation[] {
+  const seen = new Set<string>();
+  return citations.filter((citation) => {
+    const key = `${citation.sourceId}:${citation.paraStart}-${citation.paraEnd}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }

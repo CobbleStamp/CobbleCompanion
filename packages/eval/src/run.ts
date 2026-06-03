@@ -99,7 +99,9 @@ async function main(): Promise<void> {
     out(`Memory-vs-performance eval · model=${model} · ${evalSet.cases.length} cases`);
     out(
       'Config axes: transcript recency window (P0) and semantic retrieval over ingested\n' +
-        'sources with the contextual-header A/B (P1, companionmemory.md §5).\n',
+        'sources with the contextual-header A/B (P1, companionmemory.md §5).\n' +
+        'Note: window-* configs cannot reach source-grounded cases (sources are only\n' +
+        'ingested for semantic-* configs) — that unreachability IS the comparison.\n',
     );
 
     const reports: ConfigReport[] = [];
@@ -187,9 +189,10 @@ async function ingestSources(
       sourceTitle: source.title,
       payload: { kind: 'note', text: source.text },
     });
-    const [latest] = await deps.semantic.listJobs(companionId);
-    if (latest?.status !== 'done') {
-      throw new Error(`ingestion failed for case ${evalCase.id}: ${latest?.error ?? 'unknown'}`);
+    // Check the specific job just run, not list ordering.
+    const finished = (await deps.semantic.listJobs(companionId)).find((j) => j.id === job.id);
+    if (finished?.status !== 'done') {
+      throw new Error(`ingestion failed for case ${evalCase.id}: ${finished?.error ?? 'unknown'}`);
     }
   }
 }

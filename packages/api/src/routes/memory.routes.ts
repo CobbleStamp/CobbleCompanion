@@ -85,13 +85,25 @@ export function registerMemoryRoutes(
         return reply.code(404).send({ error: 'companion not found' });
       }
 
-      const [queryEmbedding] = await embeddings.embed({
-        input: [parsed.data.query],
-        model: config.embeddingModel,
-        dimensions: config.embeddingDimensions,
-      });
+      // Degrade, don't 500: if the embedding provider fails, fall back to the
+      // lexical arm (an empty embedding skips vector search in the store).
+      let queryEmbedding: readonly number[] = [];
+      try {
+        const [embedded] = await embeddings.embed({
+          input: [parsed.data.query],
+          model: config.embeddingModel,
+          dimensions: config.embeddingDimensions,
+        });
+        queryEmbedding = embedded ?? [];
+      } catch (error) {
+        deps.logger.error('memory search embedding failed; degrading to lexical-only', {
+          operation: 'memory.search',
+          companionId: companion.id,
+          error,
+        });
+      }
       const hits = await semantic.search(companion.id, {
-        queryEmbedding: queryEmbedding ?? [],
+        queryEmbedding,
         queryText: parsed.data.query,
         topK: parsed.data.topK,
       });
