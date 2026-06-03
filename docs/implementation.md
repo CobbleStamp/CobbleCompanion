@@ -165,9 +165,19 @@ type Initiator = (companionId: string) => Promise<Entry | null>;                
 
 **Phase 1 implementation** (`packages/core/src/harness/semantic-retrieve.ts`): embeds
 `userContent` via the Embedding Gateway, hybrid-searches the semantic store (§1), renders each
-hit as a system-role grounding block (locating preamble + verbatim passage) with structured
-`provenance`, then appends the recency window. Embedding-provider failure logs and degrades to
-recency-only — recall never breaks the conversation.
+hit as a system-role grounding block with structured `provenance`, then appends the recency
+window. Embedding-provider failure logs and degrades to recency-only — recall never breaks the
+conversation.
+
+Each grounding block is prompt-injection hardened: a trusted preamble (declaring everything
+below it untrusted, titles included) is followed by a sentinel-fenced region holding **all**
+document-derived strings — source/chapter/topic titles and the verbatim passage. Titles are
+attacker-influenced (source/chapter titles come from ingested documents; topic titles are
+LLM-derived from them), so they are sanitized before rendering: fence sentinels stripped
+(repeated until stable, defeating splice recombination), control characters/newlines flattened,
+length capped. Only numeric locators (paragraph/page ranges) render as trusted text. Citation
+`provenance` carries titles verbatim — sanitization is prompt-only; UI rendering escapes
+separately.
 
 ### 2.2 Context assembly (Phases 0–1)
 
