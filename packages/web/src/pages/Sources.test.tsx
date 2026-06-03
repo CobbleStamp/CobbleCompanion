@@ -11,7 +11,7 @@ import {
   createNoteSource,
   listIngestionJobs,
   listSources,
-  uploadPdfSource,
+  uploadFileSource,
 } from '../api/client.js';
 import { Sources } from './Sources.js';
 
@@ -20,7 +20,7 @@ vi.mock('../api/client.js', () => ({
   listIngestionJobs: vi.fn(),
   createNoteSource: vi.fn(),
   createLinkSource: vi.fn(),
-  uploadPdfSource: vi.fn(),
+  uploadFileSource: vi.fn(),
 }));
 
 const sources: SourceDto[] = [
@@ -60,7 +60,7 @@ describe('Sources', () => {
     vi.mocked(listIngestionJobs).mockReset().mockResolvedValue(jobs);
     vi.mocked(createNoteSource).mockReset();
     vi.mocked(createLinkSource).mockReset();
-    vi.mocked(uploadPdfSource).mockReset();
+    vi.mocked(uploadFileSource).mockReset();
   });
 
   it('shows the reading-progress headline and per-source status', async () => {

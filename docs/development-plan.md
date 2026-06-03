@@ -73,9 +73,9 @@ eval harness (`packages/eval`). CI runs Vitest at ≥80% coverage on `shared/db/
 context. This is the heart of the PoC.
 
 **Scope**
-- Source ingestion → parse, chunk, embed. **Shipped formats:** PDF upload, web links (HTML),
-  typed notes. **Planned formats:** `.txt`/`.md` and `.docx`/`.pptx` uploads. Full acceptance
-  contract (extensions, MIME, parser, out-of-scope formats) → `architecture.md` §4.8.
+- Source ingestion → parse, chunk, embed. **Formats:** file uploads (PDF, `.txt`, `.md`,
+  `.docx`, `.pptx`), web links (HTML), and typed notes. Full acceptance contract (extensions,
+  MIME, parser, out-of-scope formats) → `architecture.md` §4.8.
 - **Semantic memory** store: organized facts/concepts + vector retrieval
   (`product-overview.md` §2.1).
 - Grounded recall in chat: retrieval-augmented answers with provenance ("from your Peru book").
@@ -94,19 +94,7 @@ fills the harness memory hook with citation-carrying grounding; web surface adds
 page ("read N of M"), chat citation chips, and memory search; the eval harness gained
 source-grounded cases + semantic configs with the contextual-header A/B. **Gate before marking
 done:** run the live eval (recall/grounding/hallucination across configs) and the manual e2e
-(upload PDF → grounded answer with correct citation → out-of-knowledge question declines).
-
-**Deferred follow-ups (within the knowledge organism, post-gate):**
-- **Additional upload formats** — extend the file-upload channel beyond PDF to `.txt`/`.md`
-  (text family) and `.docx`/`.pptx` (modern Office). Acceptance contract (extensions, MIME,
-  per-format parser, out-of-scope formats) → `architecture.md` §4.8.
-  - *Dependencies:* `.txt`/`.md` reuse the existing note parser (UTF-8 read; markdown stripped
-    to text) — no new lib. `.docx` needs an XML extractor (e.g. `mammoth`); `.pptx` a per-slide
-    text extractor. Detection must sniff MIME + magic bytes, not the extension (`.docx`/`.pptx`/
-    `.xlsx` all share the zip `%PK` magic).
-  - *Schema:* grows `sources.kind` to carry the format (or adds a `format` column) + a migration;
-    none ships until the parser does (`implementation.md` §`sources`).
-  - *Tests:* per-format parse unit tests + a rejected-format (e.g. `.xlsx`) route test.
+(upload a file → grounded answer with correct citation → out-of-knowledge question declines).
 
 ### Phase 2 — Memory & Continuity
 **Goal:** Cobble remembers your shared history and is recognizably *the same being* over time.

@@ -4,14 +4,14 @@
  * background ingestion runs (polled), and drill into what was read.
  */
 
-import type { IngestionJobDto, SourceDto } from '@cobble/shared';
+import { UPLOAD_ACCEPT_ATTR, type IngestionJobDto, type SourceDto } from '@cobble/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   createLinkSource,
   createNoteSource,
   listIngestionJobs,
   listSources,
-  uploadPdfSource,
+  uploadFileSource,
 } from '../api/client.js';
 
 interface SourcesProps {
@@ -144,16 +144,17 @@ function AddSourceForms({ companionId, onAdded, onError }: AddSourceFormsProps):
   return (
     <div className="memory-sections">
       <section className="memory-section">
-        <h2>Upload a PDF</h2>
+        <h2>Upload a file</h2>
+        <p>PDF, plain text (.txt), Markdown (.md), Word (.docx), or PowerPoint (.pptx).</p>
         <input
           type="file"
-          accept="application/pdf"
-          aria-label="PDF file"
+          accept={UPLOAD_ACCEPT_ATTR}
+          aria-label="Source file"
           disabled={busy}
           onChange={(event) => {
             const file = event.target.files?.[0];
             if (file) {
-              void submit(() => uploadPdfSource(companionId, file));
+              void submit(() => uploadFileSource(companionId, file));
               event.target.value = '';
             }
           }}

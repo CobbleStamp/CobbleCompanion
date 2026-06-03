@@ -32,7 +32,53 @@ export interface MessageDto {
 // --- Sources & ingestion (Phase 1 semantic memory) ---
 
 /** How a source entered the companion's knowledge base. */
-export type SourceKind = 'pdf' | 'note' | 'link';
+export type SourceKind = 'pdf' | 'note' | 'link' | 'txt' | 'md' | 'docx' | 'pptx';
+
+/** Source kinds that arrive through the multipart file-upload channel. */
+export type UploadSourceKind = Extract<SourceKind, 'pdf' | 'txt' | 'md' | 'docx' | 'pptx'>;
+
+/** One accepted upload format (architecture.md §4.8 acceptance contract). */
+export interface UploadFormat {
+  readonly kind: UploadSourceKind;
+  readonly extensions: readonly string[];
+  readonly mimeTypes: readonly string[];
+}
+
+/**
+ * The file formats the upload channel accepts. The server is authoritative —
+ * it re-detects the kind and validates magic bytes — but the client uses this
+ * to build the file picker's `accept` attribute so the two never drift.
+ */
+export const UPLOAD_FORMATS: readonly UploadFormat[] = [
+  { kind: 'pdf', extensions: ['.pdf'], mimeTypes: ['application/pdf'] },
+  { kind: 'txt', extensions: ['.txt'], mimeTypes: ['text/plain'] },
+  { kind: 'md', extensions: ['.md', '.markdown'], mimeTypes: ['text/markdown'] },
+  {
+    kind: 'docx',
+    extensions: ['.docx'],
+    mimeTypes: ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+  },
+  {
+    kind: 'pptx',
+    extensions: ['.pptx'],
+    mimeTypes: ['application/vnd.openxmlformats-officedocument.presentationml.presentation'],
+  },
+];
+
+/** `accept` attribute value for an upload `<input type="file">`. */
+export const UPLOAD_ACCEPT_ATTR: string = UPLOAD_FORMATS.flatMap((format) => [
+  ...format.extensions,
+  ...format.mimeTypes,
+]).join(',');
+
+/** Resolve a filename's extension to its upload kind; null if unsupported. */
+export function uploadKindForFilename(filename: string): UploadSourceKind | null {
+  const lower = filename.toLowerCase();
+  const match = UPLOAD_FORMATS.find((format) =>
+    format.extensions.some((extension) => lower.endsWith(extension)),
+  );
+  return match?.kind ?? null;
+}
 
 /** Ingestion job lifecycle states, in pipeline order. */
 export type IngestionStatus =

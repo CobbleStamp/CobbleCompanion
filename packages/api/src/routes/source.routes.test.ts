@@ -1,7 +1,7 @@
 /**
- * Source route tests: note/link/PDF intake (202 + queued job), background
- * ingestion through the real pipeline, listing, drill-in, progress, and
- * owner scoping.
+ * Source route tests: note/link/file intake (202 + queued job) across the
+ * supported upload formats, background ingestion through the real pipeline,
+ * listing, drill-in, progress, and owner scoping.
  */
 
 import { IngestionQueueFullError, IngestionRunner } from '@cobble/core';
@@ -99,12 +99,16 @@ describe('source routes', () => {
     expect(res.statusCode).toBe(400);
   });
 
-  function multipartPdf(fileBody: string): { headers: Record<string, string>; payload: string } {
+  function multipartFile(
+    fileBody: string,
+    filename = 'peru-history.pdf',
+    contentType = 'application/octet-stream',
+  ): { headers: Record<string, string>; payload: string } {
     const boundary = 'test-boundary-7f3a';
     const payload = [
       `--${boundary}`,
-      'Content-Disposition: form-data; name="file"; filename="peru-history.pdf"',
-      'Content-Type: application/pdf',
+      `Content-Disposition: form-data; name="file"; filename="${filename}"`,
+      `Content-Type: ${contentType}`,
       '',
       fileBody,
       `--${boundary}--`,
@@ -118,10 +122,10 @@ describe('source routes', () => {
 
   it('accepts a PDF upload via multipart and tracks its job', async () => {
     // Valid magic bytes but a corrupt body: intake succeeds, reading fails safely.
-    const upload = multipartPdf('%PDF-1.4 corrupt body with no objects');
+    const upload = multipartFile('%PDF-1.4 corrupt body with no objects');
     const res = await ctx.app.inject({
       method: 'POST',
-      url: `/companions/${companionId}/sources/pdf`,
+      url: `/companions/${companionId}/sources/file`,
       headers: { ...auth, ...upload.headers },
       payload: upload.payload,
     });
@@ -144,16 +148,99 @@ describe('source routes', () => {
     expect(progress.json().jobs[0].error).toMatch(/could not finish reading/);
   });
 
-  it('rejects an upload that is not a PDF (magic-byte check)', async () => {
-    const upload = multipartPdf('definitely not a pdf');
+  it('accepts a .txt upload and reads it to done, deriving the title from the filename', async () => {
+    const upload = multipartFile('Ceviche is cured in lime.\n\nServed in Lima.', 'peru-notes.txt');
     const res = await ctx.app.inject({
       method: 'POST',
-      url: `/companions/${companionId}/sources/pdf`,
+      url: `/companions/${companionId}/sources/file`,
+      headers: { ...auth, ...upload.headers },
+      payload: upload.payload,
+    });
+
+    expect(res.statusCode).toBe(202);
+    expect(res.json().source.kind).toBe('txt');
+    expect(res.json().source.title).toBe('peru-notes');
+
+    await ctx.deps.ingestion.whenIdle();
+    const progress = await ctx.app.inject({
+      method: 'GET',
+      url: `/companions/${companionId}/ingestion`,
+      headers: auth,
+    });
+    expect(progress.json().jobs[0].status).toBe('done');
+  });
+
+  it('detects .md and .pptx kinds from the filename', async () => {
+    const md = multipartFile('# Heading\n\nBody.', 'trip.md');
+    const mdRes = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/sources/file`,
+      headers: { ...auth, ...md.headers },
+      payload: md.payload,
+    });
+    expect(mdRes.statusCode).toBe(202);
+    expect(mdRes.json().source.kind).toBe('md');
+
+    // PK-magic but not a real pptx: intake (kind + magic) passes, reading fails safely.
+    const pptx = multipartFile('PK not really a deck', 'deck.pptx');
+    const pptxRes = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/sources/file`,
+      headers: { ...auth, ...pptx.headers },
+      payload: pptx.payload,
+    });
+    expect(pptxRes.statusCode).toBe(202);
+    expect(pptxRes.json().source.kind).toBe('pptx');
+  });
+
+  it('rejects a .txt whose bytes look binary (NUL byte, no BOM)', async () => {
+    const upload = multipartFile('text\x00with a NUL byte', 'notes.txt');
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/sources/file`,
       headers: { ...auth, ...upload.headers },
       payload: upload.payload,
     });
     expect(res.statusCode).toBe(400);
-    expect(res.json().error).toMatch(/not a PDF/);
+    expect(res.json().error).toMatch(/does not look like text/);
+  });
+
+  it('falls back to a generic title when the filename is only an extension', async () => {
+    const upload = multipartFile('Just some prose.', '.txt');
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/sources/file`,
+      headers: { ...auth, ...upload.headers },
+      payload: upload.payload,
+    });
+    expect(res.statusCode).toBe(202);
+    expect(res.json().source.kind).toBe('txt');
+    expect(res.json().source.title).toBe('Untitled TXT');
+  });
+
+  it('rejects an unsupported file type (400)', async () => {
+    const upload = multipartFile('col1,col2\n1,2', 'data.xlsx');
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/sources/file`,
+      headers: { ...auth, ...upload.headers },
+      payload: upload.payload,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatch(/unsupported file type/);
+  });
+
+  it('rejects a file whose bytes do not match its extension (magic-byte check)', async () => {
+    // A .docx that is not a zip — extension lied; magic-byte check must catch it.
+    const upload = multipartFile('definitely not a zip', 'fake.docx');
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/sources/file`,
+      headers: { ...auth, ...upload.headers },
+      payload: upload.payload,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatch(/not a valid docx/);
   });
 
   it('lists sources and serves the section drill-in', async () => {
@@ -200,8 +287,8 @@ describe('source routes', () => {
         url: `/companions/${companionId}/sources/link`,
         payload: { url: 'https://example.com/x' },
       },
-      // PDF checks ownership before reading the file, so a bodyless POST 404s.
-      { method: 'POST' as const, url: `/companions/${companionId}/sources/pdf`, payload: {} },
+      // File upload checks ownership before reading the file, so a bodyless POST 404s.
+      { method: 'POST' as const, url: `/companions/${companionId}/sources/file`, payload: {} },
       { method: 'GET' as const, url: `/companions/${companionId}/sources` },
       { method: 'GET' as const, url: `/companions/${companionId}/sources/${ABSENT_UUID}` },
       { method: 'GET' as const, url: `/companions/${companionId}/ingestion` },

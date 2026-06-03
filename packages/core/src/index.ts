@@ -85,6 +85,26 @@ export { buildEmbeddingInput } from './ingestion/embedder.js';
 export { CORE_FACT_TYPES, isCoreFactType, type CoreFactType } from './ingestion/ontology.js';
 export { assertPublicHttpUrl } from './ingestion/url-guard.js';
 export {
+  parseContent,
+  contentTypeForUploadKind,
+  contentTypeFromMime,
+  looksBinary,
+  sniffContentType,
+  type ContentType,
+  type RawContent,
+} from './ingestion/content-parser.js';
+export {
+  createSourceParser,
+  type SourceParser,
+  type SourceParserOptions,
+} from './ingestion/source-parser.js';
+export {
+  createHttpLinkResolver,
+  detectContentType,
+  type LinkResolver,
+  type HttpLinkResolverOptions,
+} from './ingestion/link-resolver.js';
+export {
   IngestionQueueFullError,
   IngestionRunner,
   type IngestionTarget,

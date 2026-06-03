@@ -13,14 +13,21 @@ import type { Logger } from '../logging.js';
 import type { NewSection, SectionRecord, SemanticMemoryStore } from '../memory/semantic-store.js';
 import { buildEmbeddingInput } from './embedder.js';
 import { enrichSection } from './enricher.js';
-import { parseLinkHtml, parseNote, parsePdf, type ParsedDocument } from './parser.js';
-import { readTextWithLimit, safeLinkFetch } from './safe-fetch.js';
+import type { ParsedDocument } from './parser.js';
 import { segmentParagraphs, type SectionBoundary } from './segmenter.js';
-import { assertPublicHttpUrl } from './url-guard.js';
+import { createSourceParser, type SourceParser } from './source-parser.js';
 
-/** The raw input a queued ingestion run works on (held by the runner). */
+/**
+ * The raw input a queued ingestion run works on (held by the runner). Uploaded
+ * files all arrive as bytes and differ only in how they're parsed; typed notes
+ * and links carry their text/URL directly.
+ */
 export type IngestionPayload =
   | { readonly kind: 'pdf'; readonly bytes: Uint8Array }
+  | { readonly kind: 'txt'; readonly bytes: Uint8Array }
+  | { readonly kind: 'md'; readonly bytes: Uint8Array }
+  | { readonly kind: 'docx'; readonly bytes: Uint8Array }
+  | { readonly kind: 'pptx'; readonly bytes: Uint8Array }
   | { readonly kind: 'note'; readonly text: string }
   | { readonly kind: 'link'; readonly url: string };
 
@@ -35,10 +42,8 @@ export interface IngestionPipelineOptions {
   /** A/B knob: prefix the Pass-2 context header onto the embedding input. */
   readonly useContextHeader: boolean;
   readonly logger: Logger;
-  /** Injectable fetch for link sources (tests pass a fake; default is SSRF-guarded). */
-  readonly fetchFn?: typeof fetch;
-  /** Byte ceiling for fetched link bodies (default 25 MiB). */
-  readonly maxLinkBytes?: number;
+  /** How payloads become parsed documents; defaults to the standard source parser. */
+  readonly sourceParser?: SourceParser;
 }
 
 export interface IngestionRunParams {
@@ -52,14 +57,12 @@ export interface IngestionRunParams {
 /** Sections embedded per gateway call. */
 const EMBED_BATCH_SIZE = 32;
 
-/** Default byte ceiling for link bodies (mirrors the upload cap's default). */
-const DEFAULT_MAX_LINK_BYTES = 25 * 1024 * 1024;
-
-/** Content types the link parser can actually read. */
-const HTML_CONTENT_TYPE = /text\/html|application\/xhtml\+xml/i;
-
 export class IngestionPipeline {
-  constructor(private readonly options: IngestionPipelineOptions) {}
+  private readonly sourceParser: SourceParser;
+
+  constructor(private readonly options: IngestionPipelineOptions) {
+    this.sourceParser = options.sourceParser ?? createSourceParser();
+  }
 
   /** Run one source through all stages; never throws — failures land on the job. */
   async run(params: IngestionRunParams): Promise<void> {
@@ -67,7 +70,7 @@ export class IngestionPipeline {
     const { companionId, sourceId, jobId } = params;
     try {
       await semantic.updateJob(jobId, { status: 'parsing' });
-      const document = await this.parse(params.payload);
+      const document = await this.sourceParser.parse(params.payload);
       await semantic.setSourceText(sourceId, document.rawText);
 
       await semantic.updateJob(jobId, { status: 'segmenting' });
@@ -92,33 +95,6 @@ export class IngestionPipeline {
         status: 'failed',
         error: 'Cobble could not finish reading this source. Please try again.',
       });
-    }
-  }
-
-  private async parse(payload: IngestionPayload): Promise<ParsedDocument> {
-    switch (payload.kind) {
-      case 'note':
-        return parseNote(payload.text);
-      case 'pdf':
-        return parsePdf(payload.bytes);
-      case 'link': {
-        // SSRF guard, two layers: string-level URL checks here, and the
-        // default fetch resolves DNS through the guarded lookup so a public
-        // hostname cannot rebind to a private address. Redirects are refused
-        // so a public URL cannot bounce the fetch elsewhere.
-        const url = assertPublicHttpUrl(payload.url);
-        const fetchFn = this.options.fetchFn ?? safeLinkFetch;
-        const response = await fetchFn(url, { redirect: 'error' });
-        if (!response.ok) {
-          throw new Error(`link fetch responded ${response.status}`);
-        }
-        const contentType = response.headers.get('content-type') ?? '';
-        if (!HTML_CONTENT_TYPE.test(contentType)) {
-          throw new Error('the link did not return a readable web page');
-        }
-        const maxBytes = this.options.maxLinkBytes ?? DEFAULT_MAX_LINK_BYTES;
-        return parseLinkHtml(await readTextWithLimit(response, maxBytes), payload.url);
-      }
     }
   }
 

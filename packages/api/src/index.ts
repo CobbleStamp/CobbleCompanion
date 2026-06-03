@@ -7,7 +7,9 @@
 import { createPgDatabase, EMBEDDING_DIMENSIONS } from '@cobble/db';
 import {
   consoleLogger,
+  createHttpLinkResolver,
   createSemanticRetrieveContext,
+  createSourceParser,
   DrizzleIdentityStore,
   DrizzleSemanticMemoryStore,
   FakeEmbeddingGateway,
@@ -75,7 +77,9 @@ async function main(): Promise<void> {
       embeddingModel: config.embeddingModel,
       embeddingDimensions: config.embeddingDimensions,
       useContextHeader: config.useContextHeader,
-      maxLinkBytes: config.ingestionMaxBytes,
+      sourceParser: createSourceParser({
+        linkResolver: createHttpLinkResolver({ maxBytes: config.ingestionMaxBytes }),
+      }),
       logger: consoleLogger,
     }),
     consoleLogger,

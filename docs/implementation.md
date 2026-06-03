@@ -61,7 +61,7 @@ migrations under `db/`.
 |---|---|---|
 | `id` | uuid (PK) | |
 | `companion_id` | uuid (FK → `companions.id`, cascade) | tenancy scope |
-| `kind` | text | `pdf` \| `note` \| `link` — input channel today; the accepted-format/MIME contract (incl. planned `.txt`/`.md`/`.docx`/`.pptx` uploads) lives in `architecture.md` §4.8 |
+| `kind` | text | `pdf` \| `note` \| `link` \| `txt` \| `md` \| `docx` \| `pptx` — free text typed via `$type<SourceKind>()`, so new formats need no migration; accepted-format/MIME contract → `architecture.md` §4.8 |
 | `title` | text | display title ("your Peru book") |
 | `origin` | text, nullable | filename / URL; null for notes |
 | `raw_text` | text | **canonical** extracted text — everything derived is rebuildable from it |
@@ -197,7 +197,7 @@ Loaded from environment / a secret manager; required values validated at startup
 | `INGESTION_MAX_BYTES` | Source upload size cap, also the link-fetch body ceiling (default 25 MiB) |
 | `USE_CONTEXT_HEADER` | `true` (default) \| `false` — prefix the Pass-2 context header onto embedding inputs (the eval A/B knob, `companionmemory.md` §5) |
 | `RATE_LIMIT_WINDOW_MS` | Window for the per-owner rate limits on LLM/embedding-spend routes (default 60 000 ms) |
-| `INGESTION_RATE_MAX` | Max source submissions (PDF/note/link) per owner per window (default 10) |
+| `INGESTION_RATE_MAX` | Max source submissions (file/note/link) per owner per window (default 10) |
 | `SEARCH_RATE_MAX` | Max memory searches per owner per window (default 30) |
 | `INGESTION_QUEUE_MAX` | Backstop cap on queued+in-flight ingestion runs across all owners; submissions past it get 429 (default 100) |
 

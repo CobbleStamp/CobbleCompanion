@@ -98,7 +98,7 @@ export const sources = pgTable(
       .references(() => companions.id, { onDelete: 'cascade' }),
     kind: text('kind').$type<SourceKind>().notNull(),
     title: text('title').notNull(),
-    // Filename for PDFs, URL for links, null for notes.
+    // Filename for uploaded files, URL for links, null for notes.
     origin: text('origin'),
     rawText: text('raw_text').notNull(),
     byteSize: integer('byte_size'),

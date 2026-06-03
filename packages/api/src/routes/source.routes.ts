@@ -8,12 +8,15 @@
 import {
   createLinkSourceSchema,
   createNoteSourceSchema,
+  uploadKindForFilename,
   type IngestionJobDto,
   type SectionDto,
   type SourceDto,
+  type UploadSourceKind,
 } from '@cobble/shared';
 import {
   IngestionQueueFullError,
+  looksBinary,
   type IngestionPayload,
   type JobRecord,
   type SectionRecord,
@@ -28,6 +31,38 @@ function tooManyRequests(message: string): Error & { statusCode: number } {
   return Object.assign(new Error(message), { statusCode: 429 });
 }
 
+/**
+ * Confirm the bytes match the kind the extension claimed, so a renamed file
+ * (e.g. an executable called `.docx`) is rejected at the door rather than
+ * handed to a parser. Returns a user-safe message on mismatch, else null.
+ * - PDF: starts with `%PDF-`.
+ * - docx/pptx: OOXML is a zip, so it starts with the `PK` local-file signature
+ *   (the extension is the only discriminator between the zip-family formats —
+ *   the parser confirms the inner structure).
+ * - txt/md: no signature; reject only if it looks binary (NUL byte without a
+ *   recognized Unicode BOM — shared with the link channel via `looksBinary`).
+ */
+function magicByteError(kind: UploadSourceKind, bytes: Buffer): string | null {
+  const startsWith = (signature: string): boolean =>
+    bytes.subarray(0, signature.length).toString('latin1') === signature;
+  switch (kind) {
+    case 'pdf':
+      return startsWith('%PDF-') ? null : 'the uploaded file is not a valid PDF';
+    case 'docx':
+    case 'pptx':
+      return startsWith('PK') ? null : `the uploaded file is not a valid ${kind} document`;
+    case 'txt':
+    case 'md':
+      return looksBinary(bytes) ? 'the uploaded file does not look like text' : null;
+  }
+}
+
+/** Strip the matched extension to form a display title; fall back if empty. */
+function titleFromFilename(filename: string, kind: UploadSourceKind): string {
+  const base = filename.replace(/\.[^./\\]+$/, '').trim();
+  return base.length > 0 ? base : `Untitled ${kind.toUpperCase()}`;
+}
+
 interface CompanionParams {
   readonly companionId: string;
 }
@@ -38,7 +73,7 @@ interface SourceParams extends CompanionParams {
 
 /**
  * Mounts the owner-scoped HTTP surface for feeding a companion's knowledge
- * base — accepting PDF/note/link sources and exposing source listing, drill-in,
+ * base — accepting file/note/link sources and exposing source listing, drill-in,
  * and ingestion progress. Accountable for request validation, ownership checks,
  * and handing accepted uploads to the background runner; the reading itself is
  * not its concern.
@@ -93,9 +128,12 @@ export function registerSourceRoutes(
     return { source: toSourceDto(source), job: toJobDto(job) };
   }
 
-  // Upload a PDF (multipart). Returns 202: reading happens in the background.
+  // Upload a document file (PDF/txt/md/docx/pptx; multipart). Returns 202:
+  // reading happens in the background. Format is detected from the filename and
+  // confirmed against magic bytes (architecture.md §4.8) — never trusted from
+  // the client-declared content type alone.
   app.post(
-    '/companions/:companionId/sources/pdf',
+    '/companions/:companionId/sources/file',
     { preHandler: ingestPreHandlers },
     async (request, reply) => {
       const { companionId } = request.params as CompanionParams;
@@ -105,21 +143,32 @@ export function registerSourceRoutes(
       }
       const file = await request.file();
       if (!file) {
-        return reply.code(400).send({ error: 'a PDF file is required' });
+        return reply.code(400).send({ error: 'a file is required' });
+      }
+      const filename = file.filename ?? '';
+      const kind = uploadKindForFilename(filename);
+      if (!kind) {
+        return reply
+          .code(400)
+          .send({ error: 'unsupported file type — upload a PDF, .txt, .md, .docx, or .pptx' });
       }
       const bytes = await file.toBuffer();
       if (bytes.length === 0) {
         return reply.code(400).send({ error: 'the uploaded file is empty' });
       }
-      // Reject obviously-wrong uploads early: a PDF starts with "%PDF-".
-      if (bytes.subarray(0, 5).toString('latin1') !== '%PDF-') {
-        return reply.code(400).send({ error: 'the uploaded file is not a PDF' });
+      const magicError = magicByteError(kind, bytes);
+      if (magicError) {
+        return reply.code(400).send({ error: magicError });
       }
-      const title = file.filename?.replace(/\.pdf$/i, '') || 'Untitled PDF';
       const result = await enqueue(
         companion.id,
-        { kind: 'pdf', title, origin: file.filename, byteSize: bytes.length },
-        { kind: 'pdf', bytes: new Uint8Array(bytes) },
+        {
+          kind,
+          title: titleFromFilename(filename, kind),
+          origin: filename,
+          byteSize: bytes.length,
+        },
+        { kind, bytes: new Uint8Array(bytes) },
       );
       return reply.code(202).send(result);
     },

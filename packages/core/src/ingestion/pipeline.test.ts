@@ -12,7 +12,18 @@ import { DrizzleIdentityStore } from '../identity/store.js';
 import type { LlmGateway, LlmStreamParams } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import { DrizzleSemanticMemoryStore } from '../memory/semantic-store.js';
+import { createHttpLinkResolver } from './link-resolver.js';
 import { IngestionPipeline } from './pipeline.js';
+import { createSourceParser } from './source-parser.js';
+
+/** Wrap a fake fetch as the pipeline's `sourceParser` (link path) for tests. */
+function linkSourceParser(fetchFn: typeof fetch, maxBytes?: number) {
+  return createSourceParser({
+    linkResolver: createHttpLinkResolver(
+      maxBytes === undefined ? { fetchFn } : { fetchFn, maxBytes },
+    ),
+  });
+}
 
 const silentLogger: Logger = { error: () => undefined, info: () => undefined };
 
@@ -189,7 +200,7 @@ describe('IngestionPipeline', () => {
       embeddingDimensions: EMBEDDING_DIMENSIONS,
       useContextHeader: false,
       logger: silentLogger,
-      fetchFn: fetchSpy,
+      sourceParser: linkSourceParser(fetchSpy),
     }).run({
       companionId,
       sourceId,
@@ -222,8 +233,10 @@ describe('IngestionPipeline', () => {
       embeddingDimensions: EMBEDDING_DIMENSIONS,
       useContextHeader: false,
       logger: silentLogger,
-      fetchFn: async () =>
-        new Response(article, { status: 200, headers: { 'content-type': 'text/html' } }),
+      sourceParser: linkSourceParser(
+        async () =>
+          new Response(article, { status: 200, headers: { 'content-type': 'text/html' } }),
+      ),
     }).run({
       companionId,
       sourceId,
@@ -237,10 +250,12 @@ describe('IngestionPipeline', () => {
     expect(await semantic.getSourceText(companionId, sourceId)).toContain('coastal Peruvian dish');
   });
 
-  it('fails the job when a link returns a non-HTML content type', async () => {
+  it('fails the job when a link returns unidentifiable binary content', async () => {
     const llm = new ScriptedLlmGateway([SEGMENT_RESPONSE]);
     const { sourceId, jobId } = await seedSourceAndJob();
 
+    // No recognized content-type, no magic-byte match, no parseable extension,
+    // and a NUL byte rules out the plain-text fallback → the resolver rejects.
     await new IngestionPipeline({
       semantic,
       llm,
@@ -250,17 +265,19 @@ describe('IngestionPipeline', () => {
       embeddingDimensions: EMBEDDING_DIMENSIONS,
       useContextHeader: false,
       logger: silentLogger,
-      fetchFn: async () =>
-        new Response('%PDF-1.7 ...', {
-          status: 200,
-          headers: { 'content-type': 'application/octet-stream' },
-        }),
+      sourceParser: linkSourceParser(
+        async () =>
+          new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01]), {
+            status: 200,
+            headers: { 'content-type': 'image/png' },
+          }),
+      ),
     }).run({
       companionId,
       sourceId,
       jobId,
       sourceTitle: 'Binary link',
-      payload: { kind: 'link', url: 'https://example.com/file.bin' },
+      payload: { kind: 'link', url: 'https://example.com/photo.png' },
     });
 
     const [job] = await semantic.listJobs(companionId);
@@ -281,9 +298,11 @@ describe('IngestionPipeline', () => {
       embeddingDimensions: EMBEDDING_DIMENSIONS,
       useContextHeader: false,
       logger: silentLogger,
-      maxLinkBytes: 1024,
-      fetchFn: async () =>
-        new Response(oversized, { status: 200, headers: { 'content-type': 'text/html' } }),
+      sourceParser: linkSourceParser(
+        async () =>
+          new Response(oversized, { status: 200, headers: { 'content-type': 'text/html' } }),
+        1024,
+      ),
     }).run({
       companionId,
       sourceId,

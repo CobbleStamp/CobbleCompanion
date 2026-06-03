@@ -324,33 +324,45 @@ Design rules (the "improved staged hybrid"; memory guide → `companionmemory.md
 
 #### Supported source formats (acceptance contract)
 
-A source reaches the parser through one of **three input channels** — a **file upload**
-(multipart), a **typed note** (JSON `text`), or a **link** (fetched URL). The file-upload
-channel accepts a set of document formats, each dispatched to its parser by sniffed
-**MIME + magic bytes — never the filename extension alone** (a hostile client can lie about
-the extension; the PDF route already gates on the `%PDF-` magic bytes). `INGESTION_MAX_BYTES`
-caps every upload and every fetched link body. This table is the canonical list of what the
-system accepts; the phase ordering for the planned rows lives in `development-plan.md` §Phase 1.
+A source reaches a parser through one of **three input channels** — a **file upload**
+(`POST .../sources/file`, multipart), a **typed note** (JSON `text`), or a **link** (fetched
+URL). All three converge on **one content-type → parser registry**, so a format is parsed the
+same way no matter how it arrived. The channels differ only in how they *identify* content:
 
-| Format | Extension(s) | MIME / detection | Channel | Parser | Status |
+- **Upload** — content type follows from the filename extension, then **confirmed against magic
+  bytes — never the extension alone** (the route rejects a `.docx` that isn't a zip, a `.pdf`
+  without `%PDF-`, etc.).
+- **Link** — the resolver fetches the URL (SSRF-guarded, size-capped) and **detects the content
+  type**: the HTTP `Content-Type` header first, then a magic-byte sniff, then the URL extension,
+  then a plain-text fallback. So a link to a **PDF, Markdown, or plain-text** resource is read
+  with that format's parser — not assumed to be HTML.
+
+`INGESTION_MAX_BYTES` caps every upload and every fetched link body. This table is the canonical
+list of what the system accepts; **Content type** is the registry key, reachable by any channel
+whose check resolves to it.
+
+| Content type | Extension(s) | MIME / magic | Reachable via | Parser | Status |
 |---|---|---|---|---|---|
-| PDF | `.pdf` | `application/pdf`; magic `%PDF-` | file upload | `unpdf` (pdf.js), page-aware provenance | ✅ shipped |
-| Web article | — (URL) | `text/html`, `application/xhtml+xml` | link | fetch → Mozilla Readability | ✅ shipped |
-| Typed note | — | n/a (JSON `title` + `text`) | note | blank-line paragraph split | ✅ shipped |
-| Plain text | `.txt` | `text/plain` | file upload | UTF-8 → paragraph split (reuses the note parser) | 🔜 planned |
-| Markdown | `.md`, `.markdown` | `text/markdown` | file upload | markdown stripped to text → paragraph split | 🔜 planned |
-| Word | `.docx` | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` (zip+`%PK`) | file upload | XML body extract (e.g. `mammoth`) | 🔜 planned |
-| PowerPoint | `.pptx` | `application/vnd.openxmlformats-officedocument.presentationml.presentation` (zip+`%PK`) | file upload | per-slide text extract | 🔜 planned |
+| `pdf` | `.pdf` | `application/pdf`; magic `%PDF-` | upload, link | `unpdf` (pdf.js), page-aware provenance | ✅ shipped |
+| `html` | — | `text/html`, `application/xhtml+xml` | link | fetch → Mozilla Readability | ✅ shipped |
+| `text` | `.txt` | `text/plain`; rejected if it looks binary (NUL byte without a Unicode BOM) | upload, link, note | BOM-aware UTF-8/UTF-16 decode → paragraph split (the note parser) | ✅ shipped |
+| `markdown` | `.md`, `.markdown` | `text/markdown` | upload, link | markdown stripped to prose → paragraph split | ✅ shipped |
+| `docx` | `.docx` | wordprocessingml MIME; zip magic `PK` | upload, link | `mammoth` raw-text body extract | ✅ shipped |
+| `pptx` | `.pptx` | presentationml MIME; zip magic `PK` | upload, link | per-slide `<a:t>` extract, slide → page provenance | ✅ shipped |
 
-**Explicitly out of scope** (reject with a "convert to a supported format first" message):
-legacy OLE binaries (`.doc`, `.ppt`), spreadsheets/tabular data (`.xlsx`, `.csv` — the
-paragraph model doesn't fit rows), and any non-HTML body returned at a link URL (including a
-PDF served over HTTP — upload it as a file instead).
+**Explicitly out of scope** (unsupported uploads get a 400; unidentifiable link bodies are
+rejected): legacy OLE binaries (`.doc`, `.ppt`), spreadsheets/tabular data (`.xlsx`, `.csv` —
+the paragraph model doesn't fit rows), and binary link content with no recognized type (images,
+video, archives). `.docx`/`.pptx` share the zip `PK` magic, so the extension (upload) or MIME
+header (link) is the discriminator; the parser confirms the inner structure. The decoupled
+design lives in `content-parser.ts` (registry), `source-parser.ts` (payload → document facade
+the pipeline depends on), and `link-resolver.ts` (fetch + detect).
 
-> **Schema implication (planned, not yet built):** the `sources.kind` enum is today
-> `pdf | note | link` (`implementation.md` §`sources`). Adding upload formats grows this to
-> distinguish the format (or adds a `format` column alongside a generic `document` kind);
-> `origin` keeps the filename/URL either way. No migration ships until a parser does.
+> **`kind` modeling:** `sources.kind` carries the format directly —
+> `pdf | note | link | txt | md | docx | pptx` (`implementation.md` §`sources`). The column is
+> free text typed in code (`$type<SourceKind>()`), so widening the set needed **no migration**;
+> `origin` holds the filename for uploads and the URL for links. pptx records the slide number
+> as `page`; docx/txt/md carry paragraph-ordinal provenance only.
 
 ## 5. Stack & Technology Decisions
 

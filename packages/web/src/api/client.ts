@@ -114,12 +114,12 @@ export async function createLinkSource(
   });
 }
 
-/** Upload a PDF (multipart); reading happens in the background. */
-export async function uploadPdfSource(companionId: string, file: File): Promise<SourceIntake> {
+/** Upload a document file (PDF/txt/md/docx/pptx); reading happens in the background. */
+export async function uploadFileSource(companionId: string, file: File): Promise<SourceIntake> {
   const auth = await authHeaders();
   const form = new FormData();
   form.append('file', file);
-  const response = await fetch(`${API_URL}/companions/${companionId}/sources/pdf`, {
+  const response = await fetch(`${API_URL}/companions/${companionId}/sources/file`, {
     method: 'POST',
     headers: auth,
     body: form,
