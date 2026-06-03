@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Logger } from '../logging.js';
 import type { IngestionRunParams } from './pipeline.js';
-import { IngestionRunner, type IngestionTarget } from './runner.js';
+import { IngestionQueueFullError, IngestionRunner, type IngestionTarget } from './runner.js';
 
 function params(jobId: string): IngestionRunParams {
   return {
@@ -82,5 +82,33 @@ describe('IngestionRunner', () => {
     await runner.whenIdle();
 
     expect(completed).toEqual(['first', 'second']);
+  });
+
+  it('throws IngestionQueueFullError once queued + in-flight reaches the cap', async () => {
+    let release: (() => void) | undefined;
+    const blocker = new Promise<void>((resolve) => (release = resolve));
+    let calls = 0;
+    const target: IngestionTarget = {
+      // Only the first run blocks (so the queue fills); later runs resolve.
+      run: () => (calls++ === 0 ? blocker : Promise.resolve()),
+    };
+    const runner = new IngestionRunner(
+      target,
+      { error: () => undefined, info: () => undefined },
+      2, // cap: one in-flight + one queued
+    );
+
+    runner.enqueue(params('in-flight')); // drains immediately, occupies the in-flight slot
+    runner.enqueue(params('queued')); // fills the one queue slot
+    expect(runner.pending()).toBe(2);
+    expect(runner.isFull()).toBe(true);
+    expect(() => runner.enqueue(params('overflow'))).toThrow(IngestionQueueFullError);
+
+    release?.();
+    await runner.whenIdle();
+    // Capacity frees up after draining.
+    expect(runner.isFull()).toBe(false);
+    runner.enqueue(params('later'));
+    await runner.whenIdle();
   });
 });

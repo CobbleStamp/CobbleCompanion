@@ -4,8 +4,9 @@
  * owner scoping.
  */
 
+import { IngestionQueueFullError, IngestionRunner } from '@cobble/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { makeTestApp, type TestApp } from '../test/helpers.js';
+import { makeTestApp, silentLogger, type TestApp } from '../test/helpers.js';
 
 const ABSENT_UUID = '00000000-0000-0000-0000-000000000000';
 
@@ -186,19 +187,154 @@ describe('source routes', () => {
 
   it('owner-scopes every source route', async () => {
     const intruder = ctx.bearerFor('intruder@example.com');
+    // Each entry carries a payload valid enough to pass body validation, so a
+    // 404 proves the owner check fired (not an incidental 400).
     const routes = [
-      { method: 'POST' as const, url: `/companions/${companionId}/sources/note` },
+      {
+        method: 'POST' as const,
+        url: `/companions/${companionId}/sources/note`,
+        payload: { title: 'x', text: 'y' },
+      },
+      {
+        method: 'POST' as const,
+        url: `/companions/${companionId}/sources/link`,
+        payload: { url: 'https://example.com/x' },
+      },
+      // PDF checks ownership before reading the file, so a bodyless POST 404s.
+      { method: 'POST' as const, url: `/companions/${companionId}/sources/pdf`, payload: {} },
       { method: 'GET' as const, url: `/companions/${companionId}/sources` },
       { method: 'GET' as const, url: `/companions/${companionId}/sources/${ABSENT_UUID}` },
       { method: 'GET' as const, url: `/companions/${companionId}/ingestion` },
     ];
     for (const route of routes) {
       const res = await ctx.app.inject({
-        ...route,
+        method: route.method,
+        url: route.url,
         headers: intruder,
-        ...(route.method === 'POST' ? { payload: { title: 'x', text: 'y' } } : {}),
+        ...('payload' in route ? { payload: route.payload } : {}),
       });
       expect(res.statusCode).toBe(404);
+    }
+  });
+
+  it('rate-limits ingestion per owner with one cap shared across note and link', async () => {
+    const limited = await makeTestApp(undefined, undefined, { config: { ingestionRateMax: 2 } });
+    try {
+      const ownerAuth = limited.bearerFor('owner@example.com');
+      const made = await limited.app.inject({
+        method: 'POST',
+        url: '/companions',
+        headers: ownerAuth,
+        payload: { name: 'Pebble', form: 'fox', temperament: 'curious' },
+      });
+      const id = made.json().companion.id;
+      const submitNote = (): Promise<{ statusCode: number; body: string }> =>
+        limited.app
+          .inject({
+            method: 'POST',
+            url: `/companions/${id}/sources/note`,
+            headers: ownerAuth,
+            payload: { title: 'Note', text: 'Body text.' },
+          })
+          .then((r) => ({ statusCode: r.statusCode, body: r.body }));
+
+      // INGESTION_RATE_MAX is documented as the cap across PDF/note/link
+      // combined — a note and a link together exhaust a cap of 2.
+      expect((await submitNote()).statusCode).toBe(202);
+      const link = await limited.app.inject({
+        method: 'POST',
+        url: `/companions/${id}/sources/link`,
+        headers: ownerAuth,
+        payload: { url: 'https://example.com/article' },
+      });
+      expect(link.statusCode).toBe(202);
+      const third = await submitNote();
+      expect(third.statusCode).toBe(429);
+      expect(JSON.parse(third.body).error).toMatch(/too many requests/);
+    } finally {
+      await limited.close();
+    }
+  });
+
+  it('returns 429 without creating a job when the ingestion queue is full', async () => {
+    // A zero-capacity runner is always full: the route must reject up front.
+    const full = await makeTestApp(undefined, undefined, { config: { ingestionQueueMax: 0 } });
+    try {
+      const ownerAuth = full.bearerFor('owner@example.com');
+      const made = await full.app.inject({
+        method: 'POST',
+        url: '/companions',
+        headers: ownerAuth,
+        payload: { name: 'Pebble', form: 'fox', temperament: 'curious' },
+      });
+      const id = made.json().companion.id;
+
+      const res = await full.app.inject({
+        method: 'POST',
+        url: `/companions/${id}/sources/note`,
+        headers: ownerAuth,
+        payload: { title: 'Note', text: 'Body text.' },
+      });
+      expect(res.statusCode).toBe(429);
+      expect(res.json().error).toMatch(/busy reading/);
+
+      // No source/job row was created on the rejected submission.
+      const progress = await full.app.inject({
+        method: 'GET',
+        url: `/companions/${id}/ingestion`,
+        headers: ownerAuth,
+      });
+      expect(progress.json().jobs).toHaveLength(0);
+    } finally {
+      await full.close();
+    }
+  });
+
+  it('marks the job failed when the queue fills between the up-front check and enqueue', async () => {
+    // Fault-injected runner: reports capacity up front but is full by the time
+    // the route enqueues — the race the route's catch path exists for.
+    class RacingRunner extends IngestionRunner {
+      override isFull(): boolean {
+        return false;
+      }
+      override enqueue(): void {
+        throw new IngestionQueueFullError();
+      }
+    }
+    const racing = await makeTestApp(undefined, undefined, {
+      ingestion: new RacingRunner({ run: () => Promise.resolve() }, silentLogger),
+    });
+    try {
+      const ownerAuth = racing.bearerFor('owner@example.com');
+      const made = await racing.app.inject({
+        method: 'POST',
+        url: '/companions',
+        headers: ownerAuth,
+        payload: { name: 'Pebble', form: 'fox', temperament: 'curious' },
+      });
+      const id = made.json().companion.id;
+
+      const res = await racing.app.inject({
+        method: 'POST',
+        url: `/companions/${id}/sources/note`,
+        headers: ownerAuth,
+        payload: { title: 'Note', text: 'Body text.' },
+      });
+      expect(res.statusCode).toBe(429);
+      expect(res.json().error).toMatch(/busy reading/);
+
+      // The decline is recorded as data, never a stuck `queued` job.
+      const progress = await racing.app.inject({
+        method: 'GET',
+        url: `/companions/${id}/ingestion`,
+        headers: ownerAuth,
+      });
+      const { jobs } = progress.json();
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0].status).toBe('failed');
+      expect(jobs[0].error).toMatch(/busy reading/);
+    } finally {
+      await racing.close();
     }
   });
 });

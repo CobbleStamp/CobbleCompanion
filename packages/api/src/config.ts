@@ -28,6 +28,14 @@ export interface AppConfig {
   readonly ingestionMaxBytes: number;
   /** A/B knob: prefix the Pass-2 context header onto embedding inputs. */
   readonly useContextHeader: boolean;
+  /** Window (ms) for the per-owner rate limit on LLM/embedding-spend routes. */
+  readonly rateLimitWindowMs: number;
+  /** Max ingestion submissions (PDF/note/link) per owner per window. */
+  readonly ingestionRateMax: number;
+  /** Max memory searches per owner per window. */
+  readonly searchRateMax: number;
+  /** Backstop cap on queued+in-flight ingestion runs across all owners. */
+  readonly ingestionQueueMax: number;
   readonly appUrl: string;
   readonly authMode: AuthMode;
   readonly googleClientId: string;
@@ -55,6 +63,14 @@ const envSchema = z
       .enum(['true', 'false'])
       .default('true')
       .transform((value) => value === 'true'),
+    RATE_LIMIT_WINDOW_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(60 * 1000),
+    INGESTION_RATE_MAX: z.coerce.number().int().positive().default(10),
+    SEARCH_RATE_MAX: z.coerce.number().int().positive().default(30),
+    INGESTION_QUEUE_MAX: z.coerce.number().int().positive().default(100),
     APP_URL: z.string().url().default('http://localhost:3001'),
     AUTH_MODE: z.enum(['google', 'dev_bypass']).default('google'),
     // Public OAuth Web client ID — shipped to the browser, not a secret.
@@ -101,6 +117,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     ingestionModel: parsed.INGESTION_MODEL,
     ingestionMaxBytes: parsed.INGESTION_MAX_BYTES,
     useContextHeader: parsed.USE_CONTEXT_HEADER,
+    rateLimitWindowMs: parsed.RATE_LIMIT_WINDOW_MS,
+    ingestionRateMax: parsed.INGESTION_RATE_MAX,
+    searchRateMax: parsed.SEARCH_RATE_MAX,
+    ingestionQueueMax: parsed.INGESTION_QUEUE_MAX,
     appUrl: parsed.APP_URL,
     authMode: parsed.AUTH_MODE,
     googleClientId: parsed.GOOGLE_CLIENT_ID,

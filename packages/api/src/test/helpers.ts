@@ -57,6 +57,10 @@ export const testConfig: AppConfig = {
   ingestionModel: 'test-ingestion-model',
   ingestionMaxBytes: 25 * 1024 * 1024,
   useContextHeader: true,
+  rateLimitWindowMs: 60 * 1000,
+  ingestionRateMax: 10,
+  searchRateMax: 30,
+  ingestionQueueMax: 100,
   appUrl: 'http://localhost:3001',
   authMode: 'google',
   googleClientId: 'test-google-client-id',
@@ -74,29 +78,42 @@ export interface TestApp {
   readonly close: () => Promise<void>;
 }
 
+/** Overrides for tests exercising config-driven behavior (limits, queue cap). */
+export interface TestAppOptions {
+  readonly config?: Partial<AppConfig>;
+  /** Replace the runner entirely (fault injection, e.g. a queue-full race). */
+  readonly ingestion?: IngestionRunner;
+}
+
 export async function makeTestApp(
   chunks: readonly string[] = ['Hi', ' there'],
   logger: Logger = silentLogger,
+  options: TestAppOptions = {},
 ): Promise<TestApp> {
+  const config: AppConfig = { ...testConfig, ...options.config };
   const { db, close: closeDb } = await createTestDatabase();
   const memory = new TranscriptMemoryStore(db);
   const semantic = new DrizzleSemanticMemoryStore(db);
   const embeddings = new FakeEmbeddingGateway();
   const llmGateway = new FakeLlmGateway(chunks);
   const tokenVerifier = new FakeTokenVerifier();
-  const ingestion = new IngestionRunner(
-    new IngestionPipeline({
-      semantic,
-      llm: llmGateway,
-      embeddings,
-      ingestionModel: testConfig.ingestionModel,
-      embeddingModel: testConfig.embeddingModel,
-      embeddingDimensions: testConfig.embeddingDimensions,
-      useContextHeader: testConfig.useContextHeader,
-      logger: silentLogger,
-    }),
-    silentLogger,
-  );
+  // Queue cap comes from config, mirroring production wiring (index.ts).
+  const ingestion =
+    options.ingestion ??
+    new IngestionRunner(
+      new IngestionPipeline({
+        semantic,
+        llm: llmGateway,
+        embeddings,
+        ingestionModel: config.ingestionModel,
+        embeddingModel: config.embeddingModel,
+        embeddingDimensions: config.embeddingDimensions,
+        useContextHeader: config.useContextHeader,
+        logger: silentLogger,
+      }),
+      silentLogger,
+      config.ingestionQueueMax,
+    );
   const deps: AppDeps = {
     identity: new DrizzleIdentityStore(db),
     memory,
@@ -112,13 +129,13 @@ export async function makeTestApp(
         memory,
         semantic,
         embeddings,
-        embeddingModel: testConfig.embeddingModel,
-        embeddingDimensions: testConfig.embeddingDimensions,
+        embeddingModel: config.embeddingModel,
+        embeddingDimensions: config.embeddingDimensions,
         logger: silentLogger,
       }),
     }),
     tokenVerifier,
-    config: testConfig,
+    config,
     logger,
   };
   const app = await buildApp(deps);

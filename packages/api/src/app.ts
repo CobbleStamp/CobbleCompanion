@@ -9,11 +9,17 @@ import type {
 } from '@cobble/core';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
+import rateLimit, { type errorResponseBuilderContext } from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
+import Fastify, {
+  type FastifyError,
+  type FastifyInstance,
+  type FastifyRequest,
+  type preHandlerHookHandler,
+} from 'fastify';
 import { makeRequireAuth } from './auth-guard.js';
 import type { TokenVerifier } from './auth/jwt-verifier.js';
 import type { AppConfig } from './config.js';
@@ -28,6 +34,9 @@ declare module 'fastify' {
     userId?: string;
   }
 }
+
+/** A per-route rate-limit preHandler (built from `app.rateLimit(...)`). */
+export type RateLimitHook = preHandlerHookHandler;
 
 /** Everything the API needs, injected so tests can supply fakes/in-memory deps. */
 export interface AppDeps {
@@ -61,6 +70,14 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   await app.register(multipart, {
     limits: { fileSize: deps.config.ingestionMaxBytes, files: 1 },
   });
+
+  // Per-owner rate limiting on the LLM/embedding-spend routes (security.md:
+  // rate limiting on expensive endpoints). Registered opt-in (`global: false`)
+  // and applied per route as a preHandler *after* auth, so the key is the
+  // authenticated owner rather than a shared NAT IP. In-memory store: per
+  // instance, which suits the single warm Cloud Run instance (architecture.md
+  // §8); a shared store is the multi-replica follow-up.
+  await app.register(rateLimit, { global: false });
 
   // Tolerate an empty body on application/json requests. Fastify's default JSON
   // parser rejects an empty body with 400 FST_ERR_CTP_EMPTY_JSON_BODY — and that
@@ -110,11 +127,46 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.get('/health', async () => ({ status: 'ok' }));
 
   const requireAuth = makeRequireAuth(deps);
+
+  // Owner-keyed limiters. The limiter runs *after* requireAuth in the
+  // preHandler array, so userId is always set; failing loudly (a logged 500)
+  // beats silently falling back to `request.ip`, which behind the Cloud Run LB
+  // (no trustProxy) would lump every owner into one shared bucket.
+  // In hook mode the plugin THROWS the built value into the central error
+  // handler, so it must be a real Error carrying statusCode 429 — a plain
+  // object would surface as a 500.
+  const ownerKey = (request: FastifyRequest): string => {
+    if (request.userId === undefined) {
+      throw new Error('rate limiter ran before auth — preHandler ordering bug');
+    }
+    return request.userId;
+  };
+  const rateLimitError = (
+    _request: FastifyRequest,
+    context: errorResponseBuilderContext,
+  ): Error & { statusCode: number } =>
+    Object.assign(
+      new Error(`too many requests — please slow down and try again in ${context.after}`),
+      { statusCode: 429 },
+    );
+  const ingestionLimit = app.rateLimit({
+    max: deps.config.ingestionRateMax,
+    timeWindow: deps.config.rateLimitWindowMs,
+    keyGenerator: ownerKey,
+    errorResponseBuilder: rateLimitError,
+  });
+  const searchLimit = app.rateLimit({
+    max: deps.config.searchRateMax,
+    timeWindow: deps.config.rateLimitWindowMs,
+    keyGenerator: ownerKey,
+    errorResponseBuilder: rateLimitError,
+  });
+
   registerAuthRoutes(app, deps, requireAuth);
   registerCompanionRoutes(app, deps, requireAuth);
   registerMessageRoutes(app, deps, requireAuth);
-  registerMemoryRoutes(app, deps, requireAuth);
-  registerSourceRoutes(app, deps, requireAuth);
+  registerMemoryRoutes(app, deps, requireAuth, { search: searchLimit });
+  registerSourceRoutes(app, deps, requireAuth, { ingestion: ingestionLimit });
 
   registerSpa(app);
 

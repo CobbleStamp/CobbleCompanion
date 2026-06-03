@@ -12,10 +12,21 @@ import {
   type SectionDto,
   type SourceDto,
 } from '@cobble/shared';
-import type { IngestionPayload, JobRecord, SectionRecord, SourceRecord } from '@cobble/core';
+import {
+  IngestionQueueFullError,
+  type IngestionPayload,
+  type JobRecord,
+  type SectionRecord,
+  type SourceRecord,
+} from '@cobble/core';
 import type { FastifyInstance } from 'fastify';
-import type { AppDeps } from '../app.js';
+import type { AppDeps, RateLimitHook } from '../app.js';
 import type { RequireAuth } from '../auth-guard.js';
+
+/** An Error the central handler renders as a 429 (statusCode < 500 → message passes through). */
+function tooManyRequests(message: string): Error & { statusCode: number } {
+  return Object.assign(new Error(message), { statusCode: 429 });
+}
 
 interface CompanionParams {
   readonly companionId: string;
@@ -25,12 +36,22 @@ interface SourceParams extends CompanionParams {
   readonly sourceId: string;
 }
 
+/**
+ * Mounts the owner-scoped HTTP surface for feeding a companion's knowledge
+ * base — accepting PDF/note/link sources and exposing source listing, drill-in,
+ * and ingestion progress. Accountable for request validation, ownership checks,
+ * and handing accepted uploads to the background runner; the reading itself is
+ * not its concern.
+ */
 export function registerSourceRoutes(
   app: FastifyInstance,
   deps: AppDeps,
   requireAuth: RequireAuth,
+  rateLimits: { readonly ingestion: RateLimitHook },
 ): void {
   const { identity, semantic, ingestion } = deps;
+  // Auth first (sets the owner key), then the per-owner ingestion limiter.
+  const ingestPreHandlers = [requireAuth, rateLimits.ingestion];
 
   /** Create the source + job and hand the payload to the background runner. */
   async function enqueue(
@@ -38,6 +59,12 @@ export function registerSourceRoutes(
     input: { kind: SourceDto['kind']; title: string; origin?: string; byteSize?: number },
     payload: IngestionPayload,
   ): Promise<{ source: SourceDto; job: IngestionJobDto }> {
+    // Backstop against unbounded queue growth. Reject before any DB write on
+    // the common path; the runner's own cap is the hard invariant for the rare
+    // race where concurrent requests pass this check before enqueuing.
+    if (ingestion.isFull()) {
+      throw tooManyRequests(new IngestionQueueFullError().message);
+    }
     const source = await semantic.createSource(companionId, {
       kind: input.kind,
       title: input.title,
@@ -47,20 +74,29 @@ export function registerSourceRoutes(
       ...(input.byteSize !== undefined ? { byteSize: input.byteSize } : {}),
     });
     const job = await semantic.createJob(companionId, source.id);
-    ingestion.enqueue({
-      companionId,
-      sourceId: source.id,
-      jobId: job.id,
-      sourceTitle: source.title,
-      payload,
-    });
+    try {
+      ingestion.enqueue({
+        companionId,
+        sourceId: source.id,
+        jobId: job.id,
+        sourceTitle: source.title,
+        payload,
+      });
+    } catch (error) {
+      if (error instanceof IngestionQueueFullError) {
+        // Don't leave a stuck job behind: record the decline as data.
+        await semantic.updateJob(job.id, { status: 'failed', error: error.message });
+        throw tooManyRequests(error.message);
+      }
+      throw error;
+    }
     return { source: toSourceDto(source), job: toJobDto(job) };
   }
 
   // Upload a PDF (multipart). Returns 202: reading happens in the background.
   app.post(
     '/companions/:companionId/sources/pdf',
-    { preHandler: requireAuth },
+    { preHandler: ingestPreHandlers },
     async (request, reply) => {
       const { companionId } = request.params as CompanionParams;
       const companion = await identity.getCompanion(companionId, request.userId!);
@@ -92,7 +128,7 @@ export function registerSourceRoutes(
   // Add a plain-text note.
   app.post(
     '/companions/:companionId/sources/note',
-    { preHandler: requireAuth },
+    { preHandler: ingestPreHandlers },
     async (request, reply) => {
       const { companionId } = request.params as CompanionParams;
       const parsed = createNoteSourceSchema.safeParse(request.body);
@@ -115,7 +151,7 @@ export function registerSourceRoutes(
   // Add a web link; the article is fetched and read in the background.
   app.post(
     '/companions/:companionId/sources/link',
-    { preHandler: requireAuth },
+    { preHandler: ingestPreHandlers },
     async (request, reply) => {
       const { companionId } = request.params as CompanionParams;
       const parsed = createLinkSourceSchema.safeParse(request.body);

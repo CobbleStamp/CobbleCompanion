@@ -79,6 +79,7 @@ async function main(): Promise<void> {
       logger: consoleLogger,
     }),
     consoleLogger,
+    config.ingestionQueueMax,
   );
 
   const harness = new Harness({

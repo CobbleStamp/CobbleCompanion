@@ -13,7 +13,7 @@ import type {
 } from '@cobble/shared';
 import { semanticSearchSchema } from '@cobble/shared';
 import type { FastifyInstance } from 'fastify';
-import type { AppDeps } from '../app.js';
+import type { AppDeps, RateLimitHook } from '../app.js';
 import type { RequireAuth } from '../auth-guard.js';
 
 interface CompanionParams {
@@ -24,6 +24,7 @@ export function registerMemoryRoutes(
   app: FastifyInstance,
   deps: AppDeps,
   requireAuth: RequireAuth,
+  rateLimits: { readonly search: RateLimitHook },
 ): void {
   const { identity, memory, semantic, embeddings, config } = deps;
 
@@ -73,7 +74,7 @@ export function registerMemoryRoutes(
   // Search the semantic store directly (the browser's recall window).
   app.post(
     '/companions/:companionId/memory/search',
-    { preHandler: requireAuth },
+    { preHandler: [requireAuth, rateLimits.search] },
     async (request, reply) => {
       const { companionId } = request.params as CompanionParams;
       const parsed = semanticSearchSchema.safeParse(request.body);

@@ -108,4 +108,58 @@ describe('memory routes', () => {
     });
     expect(res.statusCode).toBe(404);
   });
+
+  it("does not let another owner search a companion's memory", async () => {
+    const otherAuth = ctx.bearerFor('intruder@example.com');
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/memory/search`,
+      headers: otherAuth,
+      payload: { query: 'ceviche' },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('rate-limits memory search per owner without throttling other owners', async () => {
+    const limited = await makeTestApp(['Hi'], undefined, { config: { searchRateMax: 2 } });
+    try {
+      const makeCompanion = async (ownerAuth: { authorization: string }): Promise<string> => {
+        const made = await limited.app.inject({
+          method: 'POST',
+          url: '/companions',
+          headers: ownerAuth,
+          payload: { name: 'Pebble', form: 'fox', temperament: 'curious' },
+        });
+        return made.json().companion.id as string;
+      };
+      const search = (
+        ownerAuth: { authorization: string },
+        id: string,
+      ): Promise<{ statusCode: number; body: string }> =>
+        limited.app
+          .inject({
+            method: 'POST',
+            url: `/companions/${id}/memory/search`,
+            headers: ownerAuth,
+            payload: { query: 'anything' },
+          })
+          .then((r) => ({ statusCode: r.statusCode, body: r.body }));
+
+      const ownerAuth = limited.bearerFor('owner@example.com');
+      const ownerCompanion = await makeCompanion(ownerAuth);
+      expect((await search(ownerAuth, ownerCompanion)).statusCode).toBe(200);
+      expect((await search(ownerAuth, ownerCompanion)).statusCode).toBe(200);
+      const third = await search(ownerAuth, ownerCompanion);
+      // Must be the friendly 429 from the central handler, not a masked 500.
+      expect(third.statusCode).toBe(429);
+      expect(JSON.parse(third.body).error).toMatch(/too many requests/);
+
+      // The limit is keyed per owner: another owner's budget is untouched.
+      const otherAuth = limited.bearerFor('other@example.com');
+      const otherCompanion = await makeCompanion(otherAuth);
+      expect((await search(otherAuth, otherCompanion)).statusCode).toBe(200);
+    } finally {
+      await limited.close();
+    }
+  });
 });

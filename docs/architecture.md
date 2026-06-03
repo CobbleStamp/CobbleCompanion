@@ -292,7 +292,7 @@ lever, so the model *reads everything* but *emits almost nothing* (~1% of input 
 
 ```mermaid
 flowchart LR
-    UP["upload (PDF · note · link)<br/>202 + queued job"] --> RUN["Ingestion Runner<br/>(off request path)"]
+    UP["upload (file · note · link)<br/>202 + queued job · 429 over limit"] --> RUN["Ingestion Runner<br/>(off request path)"]
     RUN --> PARSE["parse → atomic paragraphs<br/>(never split mid-paragraph)"]
     PARSE --> P1["Pass 1 — segment:<br/>LLM emits ONLY boundaries + topics"]
     P1 --> SECT["sections = verbatim paragraph slices<br/>(the model never rewrites text)"]
@@ -316,6 +316,41 @@ Design rules (the "improved staged hybrid"; memory guide → `companionmemory.md
 - **Failures are data.** A failed run lands on the job as a user-safe error; the durable
   status surface (`ingestion_jobs`) is what makes the in-process runner replaceable by a real
   worker with no schema or API change (§8).
+- **Backpressure at the door.** Submissions (and memory searches) are rate-limited per owner,
+  and the runner caps queued+in-flight runs across all owners; past either limit the request
+  gets a 429 instead of unbounded spend or queue growth (knobs → `implementation.md` §config).
+  Limit state is in-memory, which assumes the single warm instance (§8) — a shared store is
+  the multi-replica follow-up.
+
+#### Supported source formats (acceptance contract)
+
+A source reaches the parser through one of **three input channels** — a **file upload**
+(multipart), a **typed note** (JSON `text`), or a **link** (fetched URL). The file-upload
+channel accepts a set of document formats, each dispatched to its parser by sniffed
+**MIME + magic bytes — never the filename extension alone** (a hostile client can lie about
+the extension; the PDF route already gates on the `%PDF-` magic bytes). `INGESTION_MAX_BYTES`
+caps every upload and every fetched link body. This table is the canonical list of what the
+system accepts; the phase ordering for the planned rows lives in `development-plan.md` §Phase 1.
+
+| Format | Extension(s) | MIME / detection | Channel | Parser | Status |
+|---|---|---|---|---|---|
+| PDF | `.pdf` | `application/pdf`; magic `%PDF-` | file upload | `unpdf` (pdf.js), page-aware provenance | ✅ shipped |
+| Web article | — (URL) | `text/html`, `application/xhtml+xml` | link | fetch → Mozilla Readability | ✅ shipped |
+| Typed note | — | n/a (JSON `title` + `text`) | note | blank-line paragraph split | ✅ shipped |
+| Plain text | `.txt` | `text/plain` | file upload | UTF-8 → paragraph split (reuses the note parser) | 🔜 planned |
+| Markdown | `.md`, `.markdown` | `text/markdown` | file upload | markdown stripped to text → paragraph split | 🔜 planned |
+| Word | `.docx` | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` (zip+`%PK`) | file upload | XML body extract (e.g. `mammoth`) | 🔜 planned |
+| PowerPoint | `.pptx` | `application/vnd.openxmlformats-officedocument.presentationml.presentation` (zip+`%PK`) | file upload | per-slide text extract | 🔜 planned |
+
+**Explicitly out of scope** (reject with a "convert to a supported format first" message):
+legacy OLE binaries (`.doc`, `.ppt`), spreadsheets/tabular data (`.xlsx`, `.csv` — the
+paragraph model doesn't fit rows), and any non-HTML body returned at a link URL (including a
+PDF served over HTTP — upload it as a file instead).
+
+> **Schema implication (planned, not yet built):** the `sources.kind` enum is today
+> `pdf | note | link` (`implementation.md` §`sources`). Adding upload formats grows this to
+> distinguish the format (or adds a `format` column alongside a generic `document` kind);
+> `origin` keeps the filename/URL either way. No migration ships until a parser does.
 
 ## 5. Stack & Technology Decisions
 
