@@ -26,10 +26,7 @@ export class TranscriptMemoryStore implements MemoryStore {
     role: MessageRole,
     content: string,
   ): Promise<MessageDto> {
-    const [row] = await this.db
-      .insert(messages)
-      .values({ companionId, role, content })
-      .returning();
+    const [row] = await this.db.insert(messages).values({ companionId, role, content }).returning();
     if (!row) {
       throw new Error('failed to append message');
     }

@@ -64,8 +64,8 @@ describe('app error logging (common/logging.md)', () => {
 
     expect(res.statusCode).toBe(400);
     expect(errors).toHaveLength(0);
-    expect(infos.some((e) => e.message === 'request rejected' && e.context.statusCode === 400)).toBe(
-      true,
-    );
+    expect(
+      infos.some((e) => e.message === 'request rejected' && e.context.statusCode === 400),
+    ).toBe(true);
   });
 });

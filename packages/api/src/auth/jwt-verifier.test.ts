@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  DevBypassVerifier,
-  GoogleIdTokenVerifier,
-  type TokenVerifier,
-} from './jwt-verifier.js';
+import { DevBypassVerifier, GoogleIdTokenVerifier, type TokenVerifier } from './jwt-verifier.js';
 
 describe('DevBypassVerifier', () => {
   it('resolves to the configured email for any token', async () => {
