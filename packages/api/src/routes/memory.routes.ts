@@ -1,8 +1,4 @@
-import type {
-  EpisodicConversationSummary,
-  EpisodicMemorySection,
-  MemorySnapshotDto,
-} from '@cobble/shared';
+import type { EpisodicMemorySection, MemorySnapshotDto } from '@cobble/shared';
 import type { FastifyInstance } from 'fastify';
 import type { AppDeps } from '../app.js';
 import type { RequireAuth } from '../auth-guard.js';
@@ -24,21 +20,6 @@ export function registerMemoryRoutes(
 ): void {
   const { identity, memory } = deps;
 
-  // List a companion's conversations (newest-first) for the episodic browser.
-  app.get(
-    '/companions/:companionId/conversations',
-    { preHandler: requireAuth },
-    async (request, reply) => {
-      const { companionId } = request.params as CompanionParams;
-      const companion = await identity.getCompanion(companionId, request.userId!);
-      if (!companion) {
-        return reply.code(404).send({ error: 'companion not found' });
-      }
-      const conversations = await memory.listConversations(companion.id);
-      return reply.send({ conversations });
-    },
-  );
-
   // A sectioned snapshot of everything the companion holds.
   app.get(
     '/companions/:companionId/memory',
@@ -50,21 +31,9 @@ export function registerMemoryRoutes(
         return reply.code(404).send({ error: 'companion not found' });
       }
 
-      const conversations = await memory.listConversations(companion.id);
-      const summaries: EpisodicConversationSummary[] = await Promise.all(
-        conversations.map(async (conversation) => ({
-          id: conversation.id,
-          createdAt: conversation.createdAt,
-          messageCount: await memory.countMessages(conversation.id),
-        })),
-      );
-      const messageCount = summaries.reduce((total, c) => total + c.messageCount, 0);
-
       const episodic: EpisodicMemorySection = {
         status: 'available',
-        conversationCount: summaries.length,
-        messageCount,
-        conversations: summaries,
+        messageCount: await memory.countMessages(companion.id),
       };
 
       const snapshot: MemorySnapshotDto = {

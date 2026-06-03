@@ -1,15 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  createCompanion,
-  createConversation,
-  setAccessTokenGetter,
-} from './client.js';
+import { createCompanion, fetchMessages, setAccessTokenGetter } from './client.js';
 
 /**
- * Guards the content-type bug: a bodyless POST must NOT send
- * `content-type: application/json`, or Fastify rejects it with 400
- * FST_ERR_CTP_EMPTY_JSON_BODY before the route runs (createConversation).
- * A POST with a body must still send it.
+ * Guards the request helper's content-type behavior: a POST with a body must send
+ * `content-type: application/json`, while a bodyless request (e.g. a GET) must
+ * omit it. Both must carry the bearer token.
  */
 describe('api client request headers', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
@@ -18,7 +13,7 @@ describe('api client request headers', () => {
     setAccessTokenGetter(async () => 'tok');
     fetchMock = vi.fn(async () => ({
       ok: true,
-      json: async () => ({ conversation: { id: 'c1' }, companion: { id: 'k1' } }),
+      json: async () => ({ messages: [], companion: { id: 'k1' } }),
     }));
     vi.stubGlobal('fetch', fetchMock);
   });
@@ -32,8 +27,8 @@ describe('api client request headers', () => {
     return (fetchMock.mock.calls[call]?.[1]?.headers ?? {}) as Record<string, string>;
   }
 
-  it('omits content-type on a bodyless POST (createConversation)', async () => {
-    await createConversation('k1');
+  it('omits content-type on a bodyless GET (fetchMessages)', async () => {
+    await fetchMessages('k1');
     const headers = headersFor(0);
     expect(headers['content-type']).toBeUndefined();
     expect(headers.authorization).toBe('Bearer tok');

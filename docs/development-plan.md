@@ -154,7 +154,8 @@ Owned here (single-source). Each is assigned a decision point:
 | Question | Decide by |
 |---|---|
 | Final stack: framework, client, store engine, LLM provider | **Phase 0** |
-| Single companion vs. multiple per user | Phase 2 (identity model) |
+| Single companion vs. multiple per user | Phase 2 (identity model) — **MVP: one companion per user**; multiple is a deferred capability |
+| ~~One continuous conversation vs. multiple sessions per companion~~ | **Decided (Phase 0): one continuous, lifelong conversation per companion** — no session/thread entity (`architecture.md` §2, invariant #6) |
 | Initial tool/skill integrations (maps, calendar, search, booking) | Phase 3 |
 | Long-term memory retention vs. summarization over time | Phase 2, revisited Phase 8 |
 | Surface rollout confirmed (web → mobile → desktop) | Phase 5 decision gate |

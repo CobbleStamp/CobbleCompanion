@@ -47,8 +47,10 @@ with episodic recall, **without touching the loop**.
 ## 3. What exists today vs the roadmap
 
 > **Reality check.** Most of the knowledge base is designed but not yet built.
-> Today the only memory that physically exists is the **conversation transcript**
-> (the episodic substrate, `messages` table — [`implementation.md`](./implementation.md) §1).
+> Today the only memory that physically exists is the companion's single continuous
+> **conversation transcript** (the episodic substrate, `messages` table —
+> [`implementation.md`](./implementation.md) §1). A companion has exactly one
+> lifelong conversation with its user, not a list of chat sessions.
 
 | Memory / feature    | Status today       | Arrives in                                     |
 | ------------------- | ------------------ | ---------------------------------------------- |
@@ -70,19 +72,22 @@ A read-only view of everything a companion holds, grouped by memory kind.
 
 - `GET /companions/:companionId/memory` — a sectioned snapshot
   (`MemorySnapshotDto` in `packages/shared/src/contracts.ts`): `identity`,
-  `episodic` (conversation + message counts, per-conversation summaries), and
-  `semantic`/`procedural` as `not_implemented` placeholders carrying their planned
-  phase.
-- `GET /companions/:companionId/conversations` — list a companion's conversations.
-- Transcript drill-in reuses the existing
-  `GET /companions/:companionId/conversations/:conversationId/messages`.
+  `episodic` (the single transcript's `messageCount`), and `semantic`/`procedural`
+  as `not_implemented` placeholders carrying their planned phase.
+- Transcript drill-in reuses the chat read path
+  `GET /companions/:companionId/messages` (the companion's one continuous
+  conversation; there is no conversation/session entity — see
+  [`implementation.md`](./implementation.md) §1). This read path returns the
+  **most-recent N** messages (a recency window, like the harness `recentLimit`),
+  not the full lifelong transcript — so both chat resume and the browser drill-in
+  show the latest window. Full-history retrieval/paging is deferred (Phase 2+).
 
 **Web** (`packages/web/src/pages/MemoryBrowser.tsx`): reachable via the **Memory**
 button in the chat header (a `chat`/`memory` view toggle in
-`packages/web/src/App.tsx`). It renders the identity card, the episodic
-conversation list (click a conversation to expand its transcript), and
-"coming soon" panels for semantic and procedural so the full shape is visible
-before those stores exist.
+`packages/web/src/App.tsx`). It renders the identity card, the episodic section
+(the message count with a "View transcript" toggle that expands the one continuous
+conversation), and "coming soon" panels for semantic and procedural so the full
+shape is visible before those stores exist.
 
 ## 5. Evaluating memory vs performance
 
@@ -104,7 +109,8 @@ wired into CI.
 **What it does** (`src/run.ts`, fixtures in `src/fixtures/recall.json`): each case
 seeds a transcript, then asks a question whose answer either _is_ present
 (**recall** cases) or _is not_ (**absence** cases). For every `MemoryConfig` it
-seeds a fresh conversation, runs the real `Harness` over the real
+seeds a fresh companion (the isolation boundary now that a companion holds one
+lifelong transcript), runs the real `Harness` over the real
 `OpenRouterGateway` with that config's `recentLimit`, and scores the answer in two
 layers (`src/score.ts`): a deterministic expected-fact check, then an
 LLM-as-judge for grounding (0–1) and hallucination. `src/report.ts` prints the
@@ -131,7 +137,7 @@ same runner, scorer, and report unchanged.
 
 A user-facing inspect/manage/delete capability is Phase 8
 ([dev-plan](./development-plan.md) §3). The intended design, when built:
-per-item "forget" actions (forget a conversation, later a fact or skill) backed by
+per-item "forget" actions (forget a stretch of the transcript, later a fact or skill) backed by
 deletes that cascade through the existing `onDelete: 'cascade'` foreign keys
 (`db/src/schema.ts`). The browser in §4 is deliberately **read-only** until then —
 no destructive controls.

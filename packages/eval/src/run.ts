@@ -41,7 +41,6 @@ async function main(): Promise<void> {
     const identity = new DrizzleIdentityStore(db);
     const memory = new TranscriptMemoryStore(db);
     const user = await identity.ensureUserByEmail('eval@cobble.local');
-    const companion = await identity.createCompanion(user.id, evalSet.companion);
 
     out(`Memory-vs-performance eval · model=${model} · ${evalSet.cases.length} cases`);
     out(
@@ -54,11 +53,10 @@ async function main(): Promise<void> {
       out(`Running ${config.label} (recentLimit=${config.recentLimit})…`);
       const results: CaseResult[] = [];
       for (const evalCase of evalSet.cases) {
-        const conversationId = await seedConversation(
-          memory,
-          companion.id,
-          evalCase.seedTranscript,
-        );
+        // A companion holds one lifelong transcript, so isolate each case behind
+        // its own fresh companion rather than a separate conversation.
+        const companion = await identity.createCompanion(user.id, evalSet.companion);
+        await seedTranscript(memory, companion.id, evalCase.seedTranscript);
         const harness = new Harness({
           gateway,
           memory,
@@ -66,7 +64,7 @@ async function main(): Promise<void> {
           recentLimit: config.recentLimit,
           logger: silentLogger,
         });
-        const answer = await answerQuestion(harness, companion, conversationId, evalCase.question);
+        const answer = await answerQuestion(harness, companion, evalCase.question);
         results.push(await scoreCase(gateway, model, evalCase, answer));
       }
       reports.push(summarize(config.label, config.recentLimit, results));
@@ -82,28 +80,24 @@ async function main(): Promise<void> {
   }
 }
 
-async function seedConversation(
+async function seedTranscript(
   memory: TranscriptMemoryStore,
   companionId: string,
   seedTranscript: EvalSet['cases'][number]['seedTranscript'],
-): Promise<string> {
-  const conversation = await memory.createConversation(companionId);
+): Promise<void> {
   for (const turn of seedTranscript) {
-    await memory.appendMessage(conversation.id, turn.role, turn.content);
+    await memory.appendMessage(companionId, turn.role, turn.content);
   }
-  return conversation.id;
 }
 
 async function answerQuestion(
   harness: Harness,
   companion: CompanionDto,
-  conversationId: string,
   question: string,
 ): Promise<string> {
   let answer = '';
   for await (const event of harness.runTurn({
     companion,
-    conversationId,
     userContent: question,
   })) {
     if (event.type === 'token') {

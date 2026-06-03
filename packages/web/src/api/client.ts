@@ -1,7 +1,6 @@
 import type {
   ChatStreamEvent,
   CompanionDto,
-  ConversationDto,
   CreateCompanionBody,
   MemorySnapshotDto,
   MessageDto,
@@ -35,7 +34,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const auth = await authHeaders();
   // Only declare a JSON content-type when there's a body — Fastify rejects an
   // empty body with content-type: application/json (FST_ERR_CTP_EMPTY_JSON_BODY),
-  // which would otherwise 400 bodyless POSTs like createConversation.
+  // which would otherwise 400 bodyless requests (e.g. a GET, or a bodyless POST).
   const contentType = init?.body != null ? { 'content-type': 'application/json' } : {};
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
@@ -69,21 +68,9 @@ export async function createCompanion(input: CreateCompanionBody): Promise<Compa
   return body.companion;
 }
 
-export async function createConversation(companionId: string): Promise<ConversationDto> {
-  const body = await request<{ conversation: ConversationDto }>(
-    `/companions/${companionId}/conversations`,
-    { method: 'POST' },
-  );
-  return body.conversation;
-}
-
-export async function fetchMessages(
-  companionId: string,
-  conversationId: string,
-): Promise<MessageDto[]> {
-  const body = await request<{ messages: MessageDto[] }>(
-    `/companions/${companionId}/conversations/${conversationId}/messages`,
-  );
+/** The companion's single continuous transcript (oldest-first). */
+export async function fetchMessages(companionId: string): Promise<MessageDto[]> {
+  const body = await request<{ messages: MessageDto[] }>(`/companions/${companionId}/messages`);
   return body.messages;
 }
 
@@ -93,28 +80,17 @@ export async function getCompanionMemory(companionId: string): Promise<MemorySna
   return body.memory;
 }
 
-export async function listConversations(companionId: string): Promise<ConversationDto[]> {
-  const body = await request<{ conversations: ConversationDto[] }>(
-    `/companions/${companionId}/conversations`,
-  );
-  return body.conversations;
-}
-
 /** Send a message and yield streamed chat events (SSE). */
 export async function* sendMessage(
   companionId: string,
-  conversationId: string,
   content: string,
 ): AsyncGenerator<ChatStreamEvent> {
   const auth = await authHeaders();
-  const response = await fetch(
-    `${API_URL}/companions/${companionId}/conversations/${conversationId}/messages`,
-    {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...auth },
-      body: JSON.stringify({ content }),
-    },
-  );
+  const response = await fetch(`${API_URL}/companions/${companionId}/messages`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...auth },
+    body: JSON.stringify({ content }),
+  });
   if (!response.ok || !response.body) {
     throw new Error(`message failed (${response.status})`);
   }

@@ -15,7 +15,7 @@ interface MemoryBrowserProps {
 export function MemoryBrowser({ companion, onBack }: MemoryBrowserProps): JSX.Element {
   const [snapshot, setSnapshot] = useState<MemorySnapshotDto | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [openConversationId, setOpenConversationId] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
   const [transcript, setTranscript] = useState<MessageDto[]>([]);
 
   useEffect(() => {
@@ -28,14 +28,14 @@ export function MemoryBrowser({ companion, onBack }: MemoryBrowserProps): JSX.El
     })();
   }, [companion.id]);
 
-  async function openConversation(conversationId: string): Promise<void> {
-    if (openConversationId === conversationId) {
-      setOpenConversationId(null);
+  async function toggleTranscript(): Promise<void> {
+    if (open) {
+      setOpen(false);
       setTranscript([]);
       return;
     }
-    setOpenConversationId(conversationId);
-    setTranscript(await fetchMessages(companion.id, conversationId));
+    setOpen(true);
+    setTranscript(await fetchMessages(companion.id));
   }
 
   return (
@@ -62,25 +62,22 @@ export function MemoryBrowser({ companion, onBack }: MemoryBrowserProps): JSX.El
           </section>
 
           <section className="memory-section">
-            <h2>Episodic — conversations</h2>
+            <h2>Episodic — conversation</h2>
             <p className="who">
-              {snapshot.episodic.conversationCount} conversation
-              {snapshot.episodic.conversationCount === 1 ? '' : 's'} ·{' '}
               {snapshot.episodic.messageCount} message
-              {snapshot.episodic.messageCount === 1 ? '' : 's'}
+              {snapshot.episodic.messageCount === 1 ? '' : 's'} in one continuous conversation
             </p>
-            <ul className="memory-list">
-              {snapshot.episodic.conversations.map((conversation) => (
-                <li key={conversation.id}>
+            {snapshot.episodic.messageCount > 0 && (
+              <ul className="memory-list">
+                <li>
                   <button
                     type="button"
                     className="memory-row"
-                    onClick={() => void openConversation(conversation.id)}
+                    onClick={() => void toggleTranscript()}
                   >
-                    {formatDate(conversation.createdAt)} · {conversation.messageCount} message
-                    {conversation.messageCount === 1 ? '' : 's'}
+                    {open ? 'Hide transcript' : 'View transcript'}
                   </button>
-                  {openConversationId === conversation.id && (
+                  {open && (
                     <ul className="transcript">
                       {transcript.map((message) => (
                         <li key={message.id} className={`line ${message.role}`}>
@@ -93,8 +90,8 @@ export function MemoryBrowser({ companion, onBack }: MemoryBrowserProps): JSX.El
                     </ul>
                   )}
                 </li>
-              ))}
-            </ul>
+              </ul>
+            )}
           </section>
 
           <PlannedSection

@@ -15,7 +15,7 @@ CobbleCompanion is **one cloud-resident companion** (`model + harness + memory`)
 **surfaces** it embodies in, one at a time (`product-overview.md` §2). The architecture's job is
 to keep that companion *core* surface-agnostic so surfaces (web now; mobile, desktop later) plug
 in as clients. **Phase 0** delivers the smallest end-to-end slice: a user creates a Cobble on the
-**web** surface and holds a persisted conversation.
+**web** surface and holds a persisted, single continuous conversation (§2, invariant #6).
 
 **Non-goals / scope boundaries (Phase 0):** no ingestion or semantic/episodic/procedural memory
 stores (Phase 1–2), no tools/MCP or approval queue (Phase 3), no proactivity (Phase 4), no
@@ -39,6 +39,13 @@ deferred to the phase that needs it.
    truth a surface loads from; one active embodiment at a time; surfaces hold no authoritative
    state (see State Management, §6).
 5. **Multi-tenant from day one.** All state is scoped by `user` and `companion`.
+6. **One continuous conversation per companion.** A companion holds exactly one lifelong
+   conversation with its user — there is no conversation/session/thread entity. Transcript
+   messages attach directly to the companion (`messages.companion_id`); the conversation *is*
+   `messages WHERE companion_id = ? ORDER BY seq`. This is a product decision
+   (`product-overview.md` §2) enforced structurally so duplicate/empty sessions cannot exist.
+   (In the MVP a user owns a single companion; multiple companions per user is a future
+   capability and does not change this per-companion invariant.)
 
 ## 3. Component Map
 
@@ -80,7 +87,7 @@ flowchart TB
 | **API / BFF** | Auth, sessions, routing, response streaming, memory-inspection routes | The only thing surfaces talk to |
 | **Harness** | The agent loop; defines memory/tool/initiation hooks | See §4 |
 | **LLM Gateway** | Provider-agnostic model access | Default OpenRouter; provider pluggable |
-| **MemoryStore** | Boundary for all companion memory | P0 impl: conversation transcript only |
+| **MemoryStore** | Boundary for all companion memory | P0 impl: the companion's single transcript (`messages`), keyed by `companion_id` |
 | **Identity Store** | Companion "home" record | Source of truth surfaces load from |
 | **Persistence** | Relational + vector storage | Postgres + `pgvector`; schemas → `implementation.md` |
 | **Eval Harness** | Offline memory-vs-performance evaluation (`packages/eval`) | Not on the serving path; live OpenRouter. See `companionmemory.md` §5 |

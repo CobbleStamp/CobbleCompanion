@@ -33,8 +33,8 @@ describe('app error logging (common/logging.md)', () => {
     // A non-UUID companion id makes the DB driver throw (invalid uuid syntax),
     // surfacing as an unhandled 500 through the route handler.
     const res = await ctx.app.inject({
-      method: 'POST',
-      url: '/companions/not-a-uuid/conversations',
+      method: 'GET',
+      url: '/companions/not-a-uuid/messages',
       headers: ctx.bearerFor('owner@example.com'),
     });
 
@@ -46,8 +46,8 @@ describe('app error logging (common/logging.md)', () => {
     expect(entry.message).toBe('request failed');
     expect(entry.context).toMatchObject({
       operation: 'http.request',
-      method: 'POST',
-      url: '/companions/not-a-uuid/conversations',
+      method: 'GET',
+      url: '/companions/not-a-uuid/messages',
       statusCode: 500,
     });
     // The error itself is logged (message + stack), not just a string.
@@ -57,7 +57,7 @@ describe('app error logging (common/logging.md)', () => {
   it('logs a 4xx client error at info severity, not error', async () => {
     const res = await ctx.app.inject({
       method: 'POST',
-      url: '/companions/00000000-0000-0000-0000-000000000000/conversations',
+      url: '/companions/00000000-0000-0000-0000-000000000000/messages',
       headers: { ...ctx.bearerFor('owner@example.com'), 'content-type': 'application/json' },
       payload: '{ this is not json',
     });

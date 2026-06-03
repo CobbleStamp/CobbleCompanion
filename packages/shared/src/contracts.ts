@@ -21,15 +21,9 @@ export interface CompanionDto {
   readonly createdAt: string;
 }
 
-export interface ConversationDto {
-  readonly id: string;
-  readonly companionId: string;
-  readonly createdAt: string;
-}
-
 export interface MessageDto {
   readonly id: string;
-  readonly conversationId: string;
+  readonly companionId: string;
   readonly role: MessageRole;
   readonly content: string;
   readonly createdAt: string;
@@ -48,22 +42,14 @@ export interface PlannedMemorySection {
   readonly plannedPhase: string;
 }
 
-/** One conversation in the episodic section, with its transcript size. */
-export interface EpisodicConversationSummary {
-  readonly id: string;
-  readonly createdAt: string;
-  readonly messageCount: number;
-}
-
 /**
- * The episodic memory section — Phase 0's only real memory: the conversation
- * transcript (implementation.md §1).
+ * The episodic memory section — Phase 0's only real memory: the companion's
+ * single continuous transcript (implementation.md §1). One companion holds one
+ * lifelong conversation, so this is a single message stream, not a list.
  */
 export interface EpisodicMemorySection {
   readonly status: 'available';
-  readonly conversationCount: number;
   readonly messageCount: number;
-  readonly conversations: readonly EpisodicConversationSummary[];
 }
 
 /**

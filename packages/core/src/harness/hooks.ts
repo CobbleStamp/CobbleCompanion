@@ -23,7 +23,6 @@ export interface ToolResult {
 
 export interface TurnCtx {
   readonly companionId: string;
-  readonly conversationId: string;
 }
 
 /** A loop ENTRY — a human turn (P0) or a proactive trigger (P4). */
@@ -38,11 +37,9 @@ export interface Block {
   readonly reason: string;
 }
 
-// memory-retrieval hook — assembles prior context for a turn
-export type RetrieveContext = (
-  companionId: string,
-  conversationId: string,
-) => Promise<readonly ContextBlock[]>;
+// memory-retrieval hook — assembles prior context for a turn from the companion's
+// single continuous transcript
+export type RetrieveContext = (companionId: string) => Promise<readonly ContextBlock[]>;
 
 // tool hooks — gate around every tool call (P3)
 export type BeforeToolCall = (call: ToolCall, ctx: TurnCtx) => Promise<ToolCall | Block>;

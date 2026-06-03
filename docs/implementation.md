@@ -36,26 +36,25 @@ migrations under `db/`.
 | `temperament` | text | starting personality seed (`product-overview.md` §5.5) |
 | `created_at` | timestamptz | |
 
-### `conversations`
-| Field | Type | Notes |
-|---|---|---|
-| `id` | uuid (PK) | |
-| `companion_id` | uuid (FK → `companions.id`) | |
-| `created_at` | timestamptz | |
-
 ### `messages` — transcript (episodic-memory substrate)
 | Field | Type | Notes |
 |---|---|---|
 | `id` | uuid (PK) | |
 | `seq` | bigserial | monotonic per-row ordinal — authoritative chronological order |
-| `conversation_id` | uuid (FK → `conversations.id`) | indexed with `seq` for recency recall |
+| `companion_id` | uuid (FK → `companions.id`) | indexed with `seq` (`messages_companion_idx`) for recency recall |
 | `role` | text | `user` \| `assistant` \| `system` |
 | `content` | text | |
 | `created_at` | timestamptz | episodic memory (P2) builds on these timestamped turns |
 
+> **One conversation per companion.** There is deliberately **no `conversations`/session
+> table** (`architecture.md` invariant): a companion has exactly one continuous, lifelong
+> conversation with its user, so messages attach directly to the companion. The whole
+> conversation is `SELECT * FROM messages WHERE companion_id = ? ORDER BY seq`. This makes a
+> second conversation structurally impossible.
+
 > **Ordering note:** recency recall orders by `seq`, not `created_at` — many turns can share a
 > `created_at` at sub-millisecond resolution, so a monotonic ordinal is the source of truth for
-> transcript order.
+> transcript order. `seq` is a single global sequence, so it orders the whole transcript.
 
 **_Deferred:_** semantic-memory tables + `vector` embedding columns (P1); episodic indices (P2);
 procedural/skill records + approval-queue tables (P3). Added via new migrations.
@@ -70,8 +69,9 @@ The loop defines these typed hooks (invariant #3). Phase 0 registers default no-
 implementations; later phases supply real ones without changing the loop.
 
 ```ts
-// memory-retrieval hook — assembles prior context for a turn
-type RetrieveContext = (companionId: string, conversationId: string) => Promise<ContextBlock[]>;
+// memory-retrieval hook — assembles prior context for a turn from the
+// companion's single continuous transcript
+type RetrieveContext = (companionId: string) => Promise<ContextBlock[]>;
 
 // tool hooks — gate around every tool call (P3)
 type BeforeToolCall = (call: ToolCall, ctx: TurnCtx) => Promise<ToolCall | Block>; // Block → exit-to-approve
@@ -85,8 +85,8 @@ type Initiator = (companionId: string) => Promise<Entry | null>;                
 
 A turn's prompt is composed, in order, from: **(1)** the companion identity row (`name`, `form`,
 `temperament` → persona system prompt), **(2)** the base system prompt, **(3)** `RetrieveContext`
-output — in P0 the most-recent N messages of the conversation (a recency window), later semantic
-(P1) and episodic (P2) recall. The available-tools list is empty in P0.
+output — in P0 the most-recent N messages of the companion's transcript (a recency window), later
+semantic (P1) and episodic (P2) recall. The available-tools list is empty in P0.
 
 ### 2.3 Turn & loop mechanics (Phase 0)
 

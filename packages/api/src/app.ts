@@ -10,8 +10,8 @@ import type { TokenVerifier } from './auth/jwt-verifier.js';
 import type { AppConfig } from './config.js';
 import { registerAuthRoutes } from './routes/auth.routes.js';
 import { registerCompanionRoutes } from './routes/companion.routes.js';
-import { registerConversationRoutes } from './routes/conversation.routes.js';
 import { registerMemoryRoutes } from './routes/memory.routes.js';
+import { registerMessageRoutes } from './routes/message.routes.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -47,9 +47,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   // Tolerate an empty body on application/json requests. Fastify's default JSON
   // parser rejects an empty body with 400 FST_ERR_CTP_EMPTY_JSON_BODY — and that
   // happens before preHandlers, so a client that sends `content-type:
-  // application/json` on a bodyless POST (e.g. starting a conversation) is
-  // rejected before auth even runs. Treat an empty body as "no body"; routes
-  // that require a payload validate it themselves and return a clear 400.
+  // application/json` on a bodyless POST is rejected before auth even runs. Treat
+  // an empty body as "no body"; routes that require a payload validate it
+  // themselves and return a clear 400.
   app.addContentTypeParser('application/json', { parseAs: 'string' }, (_request, body, done) => {
     const text = (body as string).trim();
     if (text.length === 0) {
@@ -94,7 +94,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const requireAuth = makeRequireAuth(deps);
   registerAuthRoutes(app, deps, requireAuth);
   registerCompanionRoutes(app, deps, requireAuth);
-  registerConversationRoutes(app, deps, requireAuth);
+  registerMessageRoutes(app, deps, requireAuth);
   registerMemoryRoutes(app, deps, requireAuth);
 
   registerSpa(app);

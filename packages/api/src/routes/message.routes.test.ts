@@ -4,7 +4,7 @@ import { makeTestApp, type TestApp } from '../test/helpers.js';
 
 const ABSENT_UUID = '00000000-0000-0000-0000-000000000000';
 
-describe('conversation routes', () => {
+describe('message routes', () => {
   let ctx: TestApp;
   let auth: { authorization: string };
   let companionId: string;
@@ -24,34 +24,31 @@ describe('conversation routes', () => {
     await ctx.close();
   });
 
-  it('creates a conversation for an owned companion', async () => {
+  it('returns an empty transcript for a fresh companion', async () => {
     const res = await ctx.app.inject({
-      method: 'POST',
-      url: `/companions/${companionId}/conversations`,
+      method: 'GET',
+      url: `/companions/${companionId}/messages`,
       headers: auth,
     });
-    expect(res.statusCode).toBe(201);
-    expect(res.json().conversation.companionId).toBe(companionId);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().messages).toEqual([]);
   });
 
-  // Mirrors the browser client: a bodyless POST that still declares
-  // `content-type: application/json`. Without the empty-body tolerance Fastify
-  // 400s this with FST_ERR_CTP_EMPTY_JSON_BODY before auth runs (regression).
-  it('creates a conversation when the client sends application/json with an empty body', async () => {
+  it('404s reading messages of a companion that is not owned', async () => {
     const res = await ctx.app.inject({
-      method: 'POST',
-      url: `/companions/${companionId}/conversations`,
-      headers: { ...auth, 'content-type': 'application/json' },
-    });
-    expect(res.statusCode).toBe(201);
-    expect(res.json().conversation.companionId).toBe(companionId);
-  });
-
-  it('404s when the companion is not owned', async () => {
-    const res = await ctx.app.inject({
-      method: 'POST',
-      url: `/companions/${ABSENT_UUID}/conversations`,
+      method: 'GET',
+      url: `/companions/${ABSENT_UUID}/messages`,
       headers: auth,
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('404s sending to a companion that is not owned', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${ABSENT_UUID}/messages`,
+      headers: auth,
+      payload: { content: 'hello' },
     });
     expect(res.statusCode).toBe(404);
   });
@@ -59,7 +56,7 @@ describe('conversation routes', () => {
   it('rejects an empty message with 400', async () => {
     const res = await ctx.app.inject({
       method: 'POST',
-      url: `/companions/${companionId}/conversations/${ABSENT_UUID}/messages`,
+      url: `/companions/${companionId}/messages`,
       headers: auth,
       payload: { content: '   ' },
     });
@@ -71,7 +68,7 @@ describe('conversation routes', () => {
   it('rejects a missing message body with 400', async () => {
     const res = await ctx.app.inject({
       method: 'POST',
-      url: `/companions/${companionId}/conversations/${ABSENT_UUID}/messages`,
+      url: `/companions/${companionId}/messages`,
       headers: { ...auth, 'content-type': 'application/json' },
     });
     expect(res.statusCode).toBe(400);
@@ -79,24 +76,14 @@ describe('conversation routes', () => {
   });
 
   it('streams an assistant reply and persists the transcript (end-to-end SSE)', async () => {
-    const convRes = await ctx.app.inject({
-      method: 'POST',
-      url: `/companions/${companionId}/conversations`,
-      headers: auth,
-    });
-    const conversationId = convRes.json().conversation.id;
-
     await ctx.app.listen({ port: 0, host: '127.0.0.1' });
     const { port } = ctx.app.server.address() as AddressInfo;
 
-    const response = await fetch(
-      `http://127.0.0.1:${port}/companions/${companionId}/conversations/${conversationId}/messages`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', ...auth },
-        body: JSON.stringify({ content: 'hello there' }),
-      },
-    );
+    const response = await fetch(`http://127.0.0.1:${port}/companions/${companionId}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...auth },
+      body: JSON.stringify({ content: 'hello there' }),
+    });
     const body = await response.text();
 
     expect(response.headers.get('content-type')).toContain('text/event-stream');
@@ -106,7 +93,7 @@ describe('conversation routes', () => {
     // Transcript persisted: user turn + assistant turn.
     const messages = await ctx.app.inject({
       method: 'GET',
-      url: `/companions/${companionId}/conversations/${conversationId}/messages`,
+      url: `/companions/${companionId}/messages`,
       headers: auth,
     });
     const transcript = messages.json().messages as Array<{

@@ -1,6 +1,6 @@
 import type { CompanionDto, MessageRole } from '@cobble/shared';
 import { useEffect, useRef, useState } from 'react';
-import { createConversation, fetchMessages, sendMessage } from '../api/client.js';
+import { fetchMessages, sendMessage } from '../api/client.js';
 
 interface ChatProps {
   readonly companion: CompanionDto;
@@ -13,35 +13,43 @@ interface ChatLine {
   readonly content: string;
 }
 
-/** Step 3: hold a persisted, streamed conversation with the companion. */
+/** Step 3: hold the companion's single continuous, streamed conversation. */
 export function Chat({ companion, onSignOut, onOpenMemory }: ChatProps): JSX.Element {
-  const [conversationId, setConversationId] = useState<string | null>(null);
   const [lines, setLines] = useState<ChatLine[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const startedRef = useRef(false);
 
   useEffect(() => {
     if (startedRef.current) return;
     startedRef.current = true;
     void (async () => {
-      const conversation = await createConversation(companion.id);
-      setConversationId(conversation.id);
-      const history = await fetchMessages(companion.id, conversation.id);
-      setLines(history.map((m) => ({ role: m.role, content: m.content })));
+      try {
+        // A companion has one lifelong conversation, so resuming is just loading
+        // its transcript — no session to pick or create.
+        const history = await fetchMessages(companion.id);
+        setLines(history.map((m) => ({ role: m.role, content: m.content })));
+        setReady(true);
+      } catch (err) {
+        // Allow a retry on remount rather than getting stuck in a half-started state.
+        startedRef.current = false;
+        setError(err instanceof Error ? err.message : 'Failed to load conversation');
+      }
     })();
   }, [companion.id]);
 
   async function onSend(event: React.FormEvent): Promise<void> {
     event.preventDefault();
-    if (!conversationId || input.trim().length === 0 || busy) return;
+    if (!ready || input.trim().length === 0 || busy) return;
     const content = input.trim();
     setInput('');
     setBusy(true);
     setLines((prev) => [...prev, { role: 'user', content }, { role: 'assistant', content: '' }]);
 
     try {
-      for await (const event_ of sendMessage(companion.id, conversationId, content)) {
+      for await (const event_ of sendMessage(companion.id, content)) {
         if (event_.type === 'token') {
           setLines((prev) => appendToLast(prev, event_.value));
         } else if (event_.type === 'error') {
@@ -66,6 +74,7 @@ export function Chat({ companion, onSignOut, onOpenMemory }: ChatProps): JSX.Ele
           </button>
         </nav>
       </header>
+      {error && <p className="error">{error}</p>}
       <ul className="transcript">
         {lines.map((line, index) => (
           <li key={index} className={`line ${line.role}`}>
@@ -79,9 +88,9 @@ export function Chat({ companion, onSignOut, onOpenMemory }: ChatProps): JSX.Ele
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder={`Message ${companion.name}…`}
-          disabled={!conversationId}
+          disabled={!ready}
         />
-        <button type="submit" disabled={busy || !conversationId}>
+        <button type="submit" disabled={busy || !ready}>
           Send
         </button>
       </form>

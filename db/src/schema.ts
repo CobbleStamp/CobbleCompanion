@@ -32,19 +32,13 @@ export const companions = pgTable(
   (table) => [index('companions_owner_idx').on(table.ownerId)],
 );
 
-export const conversations = pgTable(
-  'conversations',
-  {
-    id: uuid('id').defaultRandom().primaryKey(),
-    companionId: uuid('companion_id')
-      .notNull()
-      .references(() => companions.id, { onDelete: 'cascade' }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => [index('conversations_companion_idx').on(table.companionId)],
-);
-
-/** Transcript — the episodic-memory substrate (implementation.md §1). */
+/**
+ * Transcript — the episodic-memory substrate (implementation.md §1). A companion
+ * has exactly ONE continuous, lifelong conversation with its user, so messages
+ * attach directly to the companion (architecture.md invariant: no conversation/
+ * session entity). The whole conversation is `messages WHERE companion_id = ?
+ * ORDER BY seq`.
+ */
 export const messages = pgTable(
   'messages',
   {
@@ -52,19 +46,18 @@ export const messages = pgTable(
     // Monotonic per-row ordinal — the authoritative chronological order, since
     // many turns can share a created_at timestamp at sub-millisecond resolution.
     seq: bigserial('seq', { mode: 'number' }).notNull(),
-    conversationId: uuid('conversation_id')
+    companionId: uuid('companion_id')
       .notNull()
-      .references(() => conversations.id, { onDelete: 'cascade' }),
+      .references(() => companions.id, { onDelete: 'cascade' }),
     role: text('role').$type<MessageRole>().notNull(),
     content: text('content').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index('messages_conversation_idx').on(table.conversationId, table.seq)],
+  (table) => [index('messages_companion_idx').on(table.companionId, table.seq)],
 );
 
 export const schema = {
   users,
   companions,
-  conversations,
   messages,
 };

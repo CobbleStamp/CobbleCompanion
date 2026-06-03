@@ -17,7 +17,6 @@ export interface HarnessOptions {
 
 export interface RunTurnParams {
   readonly companion: CompanionDto;
-  readonly conversationId: string;
   readonly userContent: string;
   readonly signal?: AbortSignal;
 }
@@ -51,11 +50,11 @@ export class Harness {
    * transcript is the source of truth, §4.7).
    */
   async *runTurn(params: RunTurnParams): AsyncGenerator<ChatStreamEvent> {
-    const { companion, conversationId, userContent, signal } = params;
+    const { companion, userContent, signal } = params;
     try {
-      await this.memory.appendMessage(conversationId, 'user', userContent);
+      await this.memory.appendMessage(companion.id, 'user', userContent);
 
-      const history = await this.retrieveContext(companion.id, conversationId);
+      const history = await this.retrieveContext(companion.id);
       const messages = assembleContext(companion, history);
 
       let assistantText = '';
@@ -68,14 +67,13 @@ export class Harness {
         yield { type: 'token', value: delta };
       }
 
-      const message = await this.memory.appendMessage(conversationId, 'assistant', assistantText);
+      const message = await this.memory.appendMessage(companion.id, 'assistant', assistantText);
       yield { type: 'done', message };
     } catch (error) {
       // Failures are data: log with context, then surface a terminal error event.
       this.logger.error('turn failed', {
         operation: 'harness.runTurn',
         companionId: companion.id,
-        conversationId,
         error,
       });
       yield {
@@ -86,10 +84,9 @@ export class Harness {
   }
 
   private defaultRetrieveContext: RetrieveContext = async (
-    _companionId,
-    conversationId,
+    companionId,
   ): Promise<readonly ContextBlock[]> => {
-    const recent = await this.memory.getRecentMessages(conversationId, this.recentLimit);
+    const recent = await this.memory.getRecentMessages(companionId, this.recentLimit);
     return recent.map((message) => ({
       role: message.role,
       content: message.content,

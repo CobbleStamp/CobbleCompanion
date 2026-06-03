@@ -24,14 +24,8 @@ describe('memory routes', () => {
   });
 
   it('returns a sectioned snapshot with the episodic transcript and planned sections', async () => {
-    const conv = await ctx.app.inject({
-      method: 'POST',
-      url: `/companions/${companionId}/conversations`,
-      headers: auth,
-    });
-    const conversationId = conv.json().conversation.id;
-    await ctx.deps.memory.appendMessage(conversationId, 'user', 'hello');
-    await ctx.deps.memory.appendMessage(conversationId, 'assistant', 'hi');
+    await ctx.deps.memory.appendMessage(companionId, 'user', 'hello');
+    await ctx.deps.memory.appendMessage(companionId, 'assistant', 'hi');
 
     const res = await ctx.app.inject({
       method: 'GET',
@@ -42,29 +36,9 @@ describe('memory routes', () => {
     const { memory } = res.json();
     expect(memory.identity.id).toBe(companionId);
     expect(memory.episodic.status).toBe('available');
-    expect(memory.episodic.conversationCount).toBe(1);
     expect(memory.episodic.messageCount).toBe(2);
-    expect(memory.episodic.conversations[0]).toMatchObject({
-      id: conversationId,
-      messageCount: 2,
-    });
     expect(memory.semantic.status).toBe('not_implemented');
     expect(memory.procedural.status).toBe('not_implemented');
-  });
-
-  it('lists a companion conversations', async () => {
-    await ctx.app.inject({
-      method: 'POST',
-      url: `/companions/${companionId}/conversations`,
-      headers: auth,
-    });
-    const res = await ctx.app.inject({
-      method: 'GET',
-      url: `/companions/${companionId}/conversations`,
-      headers: auth,
-    });
-    expect(res.statusCode).toBe(200);
-    expect(res.json().conversations).toHaveLength(1);
   });
 
   it('404s the snapshot when the companion is not owned', async () => {

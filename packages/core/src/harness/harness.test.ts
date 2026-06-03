@@ -14,7 +14,6 @@ describe('Harness.runTurn (Phase 0 single-pass loop)', () => {
   let close: () => Promise<void>;
   let memory: TranscriptMemoryStore;
   let companion: CompanionDto;
-  let conversationId: string;
 
   beforeEach(async () => {
     const created = await createTestDatabase();
@@ -27,8 +26,6 @@ describe('Harness.runTurn (Phase 0 single-pass loop)', () => {
       form: 'fox',
       temperament: 'curious',
     });
-    const conversation = await memory.createConversation(companion.id);
-    conversationId = conversation.id;
   });
 
   afterEach(async () => {
@@ -47,7 +44,6 @@ describe('Harness.runTurn (Phase 0 single-pass loop)', () => {
     const events = [];
     for await (const event of harness.runTurn({
       companion,
-      conversationId,
       userContent: 'hi there',
     })) {
       events.push(event);
@@ -66,7 +62,7 @@ describe('Harness.runTurn (Phase 0 single-pass loop)', () => {
       expect(done.message.content).toBe('Hello');
     }
 
-    const transcript = await memory.getRecentMessages(conversationId, 10);
+    const transcript = await memory.getRecentMessages(companion.id, 10);
     expect(transcript.map((m) => [m.role, m.content])).toEqual([
       ['user', 'hi there'],
       ['assistant', 'Hello'],
@@ -85,7 +81,6 @@ describe('Harness.runTurn (Phase 0 single-pass loop)', () => {
     // drain
     for await (const _event of harness.runTurn({
       companion,
-      conversationId,
       userContent: 'remember this',
     })) {
       void _event;
@@ -116,7 +111,6 @@ describe('Harness.runTurn (Phase 0 single-pass loop)', () => {
     const events = [];
     for await (const event of harness.runTurn({
       companion,
-      conversationId,
       userContent: 'hi',
     })) {
       events.push(event);
@@ -124,7 +118,7 @@ describe('Harness.runTurn (Phase 0 single-pass loop)', () => {
 
     expect(events.at(-1)?.type).toBe('error');
     // The user turn was still recorded; no assistant turn was persisted.
-    const transcript = await memory.getRecentMessages(conversationId, 10);
+    const transcript = await memory.getRecentMessages(companion.id, 10);
     expect(transcript).toHaveLength(1);
     expect(transcript[0]?.role).toBe('user');
   });
