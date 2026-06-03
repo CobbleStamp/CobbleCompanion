@@ -1,0 +1,27 @@
+# Copy to Pulumi.dev.yaml and fill in the placeholders before the first
+# `pulumi up`. Pulumi.dev.yaml is gitignored — never commit project-specific
+# identifiers.
+#
+# Required:
+#   gcp:project   — GCP project ID ("cobblecompanion")
+#   gcp:region    — Cloud Run region (default: us-central1)
+#   cobblecompanion-gcp:googleClientId — OAuth Web client ID (public). Created
+#                                        in the Google Cloud Console (see
+#                                        infra/README.md). Served to the SPA via
+#                                        /auth/config and used as the API's
+#                                        ID-token audience.
+#   cobblecompanion-gcp:imageTag       — container image tag to deploy
+#                                        (default: "latest")
+#   cobblecompanion-gcp:llmModel       — OpenRouter model id
+#
+# Secrets are NOT here — Secret Manager owns DATABASE_URL and
+# OPENROUTER_API_KEY. Pulumi only reserves the names; you populate the values
+# with `gcloud secrets versions add ...` after the first apply.
+
+config:
+  gcp:project: cobblecompanion
+  # Must match the GCP_REGION used by the Makefile (your ~/.zshrc sets europe-west2).
+  gcp:region: europe-west2
+  cobblecompanion-gcp:googleClientId: REPLACE_ME.apps.googleusercontent.com
+  cobblecompanion-gcp:imageTag: latest
+  cobblecompanion-gcp:llmModel: anthropic/claude-3.5-sonnet

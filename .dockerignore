@@ -1,0 +1,10 @@
+**/node_modules
+**/dist
+**/coverage
+**/.vite
+.git
+.github
+*.log
+pglite-data
+.env
+.env.local

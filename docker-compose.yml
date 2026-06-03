@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: cobble
+    ports:
+      - '5432:5432'
+    volumes:
+      # Bind-mount to ./data/postgres in the repo so the database survives
+      # container/stack restarts and is visible on the host. Gitignored.
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d cobble']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    # App config (AUTH_MODE, GOOGLE_CLIENT_ID, LLM_*, DEV_BYPASS_EMAIL) is loaded
+    # straight from .env — env_file is NOT shadowed by stray host-shell exports,
+    # unlike ${VAR} interpolation, so .env is the single source of truth.
+    env_file:
+      - .env
+    environment:
+      # Container-specific overrides (these win over .env): Postgres runs inside
+      # the compose network, and the listen/app settings are fixed for docker.
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/cobble
+      APP_URL: http://localhost:3001
+      PORT: '3000'
+      NODE_ENV: development
+    ports:
+      - '3000:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: web
+      args:
+        VITE_API_URL: http://localhost:3000
+    ports:
+      - '3001:80'
+    depends_on:
+      - api

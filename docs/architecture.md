@@ -15,7 +15,7 @@ CobbleCompanion is **one cloud-resident companion** (`model + harness + memory`)
 **surfaces** it embodies in, one at a time (`product-overview.md` §2). The architecture's job is
 to keep that companion *core* surface-agnostic so surfaces (web now; mobile, desktop later) plug
 in as clients. **Phase 0** delivers the smallest end-to-end slice: a user creates a Cobble on the
-**web** surface and holds a persisted conversation.
+**web** surface and holds a persisted, single continuous conversation (§2, invariant #6).
 
 **Non-goals / scope boundaries (Phase 0):** no ingestion or semantic/episodic/procedural memory
 stores (Phase 1–2), no tools/MCP or approval queue (Phase 3), no proactivity (Phase 4), no
@@ -39,6 +39,13 @@ deferred to the phase that needs it.
    truth a surface loads from; one active embodiment at a time; surfaces hold no authoritative
    state (see State Management, §6).
 5. **Multi-tenant from day one.** All state is scoped by `user` and `companion`.
+6. **One continuous conversation per companion.** A companion holds exactly one lifelong
+   conversation with its user — there is no conversation/session/thread entity. Transcript
+   messages attach directly to the companion (`messages.companion_id`); the conversation *is*
+   `messages WHERE companion_id = ? ORDER BY seq`. This is a product decision
+   (`product-overview.md` §2) enforced structurally so duplicate/empty sessions cannot exist.
+   (In the MVP a user owns a single companion; multiple companions per user is a future
+   capability and does not change this per-companion invariant.)
 
 ## 3. Component Map
 
@@ -76,13 +83,14 @@ flowchart TB
 
 | Component | Owns | Notes |
 |---|---|---|
-| **Web Client** | Chat UI, create-a-companion, auth flows | Thin client over the API (invariant #1) |
-| **API / BFF** | Auth, sessions, routing, response streaming | The only thing surfaces talk to |
+| **Web Client** | Chat UI, create-a-companion, auth flows, read-only memory browser | Thin client over the API (invariant #1) |
+| **API / BFF** | Auth, sessions, routing, response streaming, memory-inspection routes | The only thing surfaces talk to |
 | **Harness** | The agent loop; defines memory/tool/initiation hooks | See §4 |
 | **LLM Gateway** | Provider-agnostic model access | Default OpenRouter; provider pluggable |
-| **MemoryStore** | Boundary for all companion memory | P0 impl: conversation transcript only |
+| **MemoryStore** | Boundary for all companion memory | P0 impl: the companion's single transcript (`messages`), keyed by `companion_id` |
 | **Identity Store** | Companion "home" record | Source of truth surfaces load from |
 | **Persistence** | Relational + vector storage | Postgres + `pgvector`; schemas → `implementation.md` |
+| **Eval Harness** | Offline memory-vs-performance evaluation (`packages/eval`) | Not on the serving path; live OpenRouter. See `companionmemory.md` §5 |
 
 **_Deferred — later phases:_** Ingestion Workers & Semantic Store (P1), Episodic Store (P2),
 Tool Registry / MCP & Approval Queue (P3), Proactivity Scheduler & Motivation Engine (P4),
@@ -266,7 +274,7 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
 | Store engine | **Postgres + `pgvector`** | Multi-tenant cloud home; one store for relational + vectors; scales across phases |
 | Data access | Type-safe query layer (Drizzle) | Explicit types end-to-end; no raw SQL by default |
 | LLM access | **Provider-agnostic gateway, default OpenRouter** | Swap models/providers without touching the harness |
-| Auth | Minimal email / OAuth | Just enough to scope multi-tenant data |
+| Auth | **Google Sign-In (OIDC)** | The SPA gets a Google ID token (Google Identity Services); the API verifies it against Google's JWKS (`aud=GOOGLE_CLIENT_ID`, `email_verified`) and JIT-provisions users by email. No third-party auth service, no tenant, no extra Pulumi stack. `dev_bypass` mode for local/tests |
 
 ## 6. Interactions, Boundary & State
 
@@ -295,9 +303,10 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
       llm/             provider-agnostic LLM gateway
       memory/          MemoryStore interface + P0 transcript impl
       identity/        companion "home" model + store
-    api/               BFF / surface boundary (Fastify)
-    web/               React web client (P0 surface)
+    api/               BFF / surface boundary (Fastify); incl. memory-inspection routes
+    web/               React web client (P0 surface); incl. read-only memory browser
     shared/            shared TS types / contracts
+    eval/              offline memory-vs-performance harness (→ companionmemory.md §5)
   db/                  migrations & schema (→ implementation.md)
   scripts/             dev / seed / ops scripts
 ```
@@ -306,12 +315,15 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
 
 ## 8. Deployment & Trust Model
 
-**Deployment approach.** Containerized on a scale-to-zero-capable platform. The hot chat **API**
-stays warm (a minimum live instance) so the first message after idle isn't a cold start;
-**background workers** (later: ingestion, proactivity) are async and scale to zero for cost. The
-workload is I/O-bound (mostly awaiting the LLM), so a single Node process holds many concurrent
-conversations and scales horizontally with replicas; CPU-heavy work (future PDF parse/embedding)
-moves off the request path to workers. (Specific tuning params, image build → `implementation.md`.)
+**Deployment approach.** A single **GCP Cloud Run** service (the Fastify API, which also serves the
+built React SPA from the same origin) runs the container image; `min_instances = 1` keeps the hot
+chat **API** warm so the first message after idle isn't a cold start. **Background workers** (later:
+ingestion, proactivity) will be async and scale to zero for cost. The workload is I/O-bound (mostly
+awaiting the LLM), so a single Node process holds many concurrent conversations and scales
+horizontally with replicas; CPU-heavy work (future PDF parse/embedding) moves off the request path
+to workers. Infrastructure is managed as code with **Pulumi** under `infra/` (`infra/gcp` for Cloud
+Run + Artifact Registry + Secret Manager); auth is Google Sign-In (no auth service to provision);
+managed Postgres is Supabase (pgvector). (Specific tuning params, image build → `implementation.md` and `infra/*/README.md`.)
 
 **Trust model (Phase 0 baseline).** Design-level boundaries; the security *implementation* and
 the full threat model live in `implementation.md` and Phase 8 respectively (`development-plan.md` §4).

@@ -1,0 +1,20 @@
+{
+  "name": "@cobble/eval",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/run.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "start": "tsx src/run.ts"
+  },
+  "dependencies": {
+    "@cobble/core": "workspace:*",
+    "@cobble/db": "workspace:*",
+    "@cobble/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

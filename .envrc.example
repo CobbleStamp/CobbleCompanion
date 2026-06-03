@@ -1,0 +1,16 @@
+# direnv config for CobbleCompanion. Copy to .envrc, then run: direnv allow
+#
+# Requires direnv (`brew install direnv`) + the shell hook (see infra/README.md).
+# direnv loads this on `cd` into the repo and UNLOADS it on the way out, so
+# CobbleCompanion's values are scoped to this directory.
+
+# Project-scoped deploy vars consumed by the Makefile (cloud targets).
+export GCP_PROJECT=cobblecompanion
+export GCP_REGION=europe-west2
+
+# Load this repo's .env (app config, incl. GOOGLE_CLIENT_ID for google-mode dev).
+# .env is gitignored; .env can override the exports above if you set them there.
+dotenv_if_exists .env
+
+# PULUMI_CONFIG_PASSPHRASE + AWS creds stay global in ~/.zshrc — they're shared
+# across projects and not CobbleCompanion-specific.

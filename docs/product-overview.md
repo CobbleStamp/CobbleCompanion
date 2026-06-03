@@ -47,6 +47,14 @@ The companion's intelligence is the combination of three things:
 The companion **grows by accumulating all three** — and that growth is exactly the bond
 deepening (see §5.5).
 
+**One continuous conversation.** You and your companion share a *single, continuous, lifelong
+conversation* — not a list of separate chat sessions or threads like a chatbot. Whenever and
+wherever you summon it, you pick up the same ongoing conversation; everything said before is
+still there. This is the episodic substrate the bond is built on, and it is enforced
+structurally (`architecture.md` §2, invariant #6). *(MVP scope: a user has **one** companion;
+owning multiple companions is a future capability — each would still hold its own single
+continuous conversation.)*
+
 ### 2.2 The Living Rooms (where it appears)
 Mobile, web, and desktop apps are **not** three separate products — they are **surfaces**, like
 different living rooms the companion can be in. It embodies in **only one at a time**: when
@@ -190,6 +198,8 @@ threat model: `architecture.md` / `implementation.md`.)
   scripted persona.
 - **Not a fleet of assigned job-bots** — one companion that adapts, not configured role templates.
 - **Not multiple simultaneous embodiments** — one being, one active room at a time.
+- **Not a multi-session chatbot** — one continuous, lifelong conversation per companion, never
+  separate chat threads/sessions to manage (§2.1).
 - **Not fully autonomous** — high-stakes/cost actions always route through your approval.
 
 > **Open questions & roadmap** are owned by [`development-plan.md`](./development-plan.md) §5 —
@@ -202,6 +212,7 @@ threat model: `architecture.md` / `implementation.md`.)
 | **Cobble / companion** | The AI being the user names, raises, and bonds with |
 | **Surface / living room** | A client (web, mobile, desktop) the companion embodies in — one at a time (§2.2) |
 | **Summon** | Bringing the companion into the surface you're currently using |
+| **Conversation** | The single, continuous, lifelong exchange between a user and their companion — one per companion, never multiple sessions (§2.1) |
 | **Home** | The cloud-resident canonical identity + long-term memory — the companion's persistent "self" |
 | **Semantic / episodic / procedural memory** | The three kinds of long-term memory the companion accumulates (§2.1) |
 | **Propose → approve** | The trust model: consequential/outward actions are proposed and await the user's confirmation (§5.3) |

@@ -21,6 +21,11 @@ migrations under `db/`.
 | `email` | text, unique | login identity |
 | `created_at` | timestamptz | |
 
+> **Auth note:** there is no local credential/token table. Sign-in is **Google Sign-In**; the
+> SPA obtains a Google ID token and the API validates it against Google's JWKS, then
+> JIT-provisions the `users` row from the verified `email` claim (Google requires
+> `email_verified === true`). See §5.
+
 ### `companions` — the canonical "home"
 | Field | Type | Notes |
 |---|---|---|
@@ -31,21 +36,25 @@ migrations under `db/`.
 | `temperament` | text | starting personality seed (`product-overview.md` §5.5) |
 | `created_at` | timestamptz | |
 
-### `conversations`
-| Field | Type | Notes |
-|---|---|---|
-| `id` | uuid (PK) | |
-| `companion_id` | uuid (FK → `companions.id`) | |
-| `created_at` | timestamptz | |
-
 ### `messages` — transcript (episodic-memory substrate)
 | Field | Type | Notes |
 |---|---|---|
 | `id` | uuid (PK) | |
-| `conversation_id` | uuid (FK → `conversations.id`) | |
+| `seq` | bigserial | monotonic per-row ordinal — authoritative chronological order |
+| `companion_id` | uuid (FK → `companions.id`) | indexed with `seq` (`messages_companion_idx`) for recency recall |
 | `role` | text | `user` \| `assistant` \| `system` |
 | `content` | text | |
-| `created_at` | timestamptz | indexed; episodic memory (P2) builds on these timestamped turns |
+| `created_at` | timestamptz | episodic memory (P2) builds on these timestamped turns |
+
+> **One conversation per companion.** There is deliberately **no `conversations`/session
+> table** (`architecture.md` invariant): a companion has exactly one continuous, lifelong
+> conversation with its user, so messages attach directly to the companion. The whole
+> conversation is `SELECT * FROM messages WHERE companion_id = ? ORDER BY seq`. This makes a
+> second conversation structurally impossible.
+
+> **Ordering note:** recency recall orders by `seq`, not `created_at` — many turns can share a
+> `created_at` at sub-millisecond resolution, so a monotonic ordinal is the source of truth for
+> transcript order. `seq` is a single global sequence, so it orders the whole transcript.
 
 **_Deferred:_** semantic-memory tables + `vector` embedding columns (P1); episodic indices (P2);
 procedural/skill records + approval-queue tables (P3). Added via new migrations.
@@ -60,8 +69,9 @@ The loop defines these typed hooks (invariant #3). Phase 0 registers default no-
 implementations; later phases supply real ones without changing the loop.
 
 ```ts
-// memory-retrieval hook — assembles prior context for a turn
-type RetrieveContext = (companionId: string, conversationId: string) => Promise<ContextBlock[]>;
+// memory-retrieval hook — assembles prior context for a turn from the
+// companion's single continuous transcript
+type RetrieveContext = (companionId: string) => Promise<ContextBlock[]>;
 
 // tool hooks — gate around every tool call (P3)
 type BeforeToolCall = (call: ToolCall, ctx: TurnCtx) => Promise<ToolCall | Block>; // Block → exit-to-approve
@@ -75,8 +85,8 @@ type Initiator = (companionId: string) => Promise<Entry | null>;                
 
 A turn's prompt is composed, in order, from: **(1)** the companion identity row (`name`, `form`,
 `temperament` → persona system prompt), **(2)** the base system prompt, **(3)** `RetrieveContext`
-output — in P0 the most-recent N messages of the conversation (a recency window), later semantic
-(P1) and episodic (P2) recall. The available-tools list is empty in P0.
+output — in P0 the most-recent N messages of the companion's transcript (a recency window), later
+semantic (P1) and episodic (P2) recall. The available-tools list is empty in P0.
 
 ### 2.3 Turn & loop mechanics (Phase 0)
 
@@ -97,10 +107,14 @@ Loaded from environment / a secret manager; required values validated at startup
 | Variable | Purpose |
 |---|---|
 | `DATABASE_URL` | Postgres connection (secure connection required) |
-| `LLM_PROVIDER` | Selects the gateway backend (default: `openrouter`) |
-| `OPENROUTER_API_KEY` | LLM provider credential (secret — never in source) |
-| `AUTH_*` | Auth/session secrets (OAuth client + session signing) |
-| `PORT` / `MIN_INSTANCES` | Server port; scale-to-zero hot-path minimum (`architecture.md` §8) |
+| `LLM_PROVIDER` | Selects the gateway backend: `openrouter` (default) \| `fake` |
+| `OPENROUTER_API_KEY` | LLM provider credential (secret — required when provider=`openrouter`) |
+| `LLM_MODEL` | Model id passed to the provider |
+| `AUTH_MODE` | `google` (default) \| `dev_bypass` (local/test — skips Google) |
+| `GOOGLE_CLIENT_ID` | OAuth Web client ID — public, served to the SPA and used as the API's ID-token audience (required when `AUTH_MODE=google`) |
+| `DEV_BYPASS_EMAIL` | Identity resolved in `dev_bypass` mode |
+| `APP_URL` | Web client origin (allowed CORS origin for local cross-origin dev) |
+| `PORT` | Server port (Cloud Run injects this) |
 
 **_Deferred:_** ingestion/worker tuning, embedding model selection, proactivity cadence,
 push-notification credentials (P1+).
@@ -118,6 +132,13 @@ push-notification credentials (P1+).
 Implements the trust-model boundaries in `architecture.md` §8.
 
 - **Secrets** — never hardcoded; loaded from env / secret manager; presence validated at startup.
+- **Authentication** — **Google Sign-In** (Google as the OIDC provider). The SPA uses Google
+  Identity Services (`@react-oauth/google`) to obtain a Google **ID token** and sends it as a
+  `Bearer` header; the Fastify API validates the RS256 token against Google's JWKS
+  (issuer `accounts.google.com`, audience = `GOOGLE_CLIENT_ID`, expiry, `jose`), requires
+  `email_verified === true`, and JIT-provisions the user from the verified `email` claim.
+  `AUTH_MODE=dev_bypass` skips all of this for local dev/tests. (ID tokens last ~1h; an app-issued
+  session JWT is a documented future upgrade.)
 - **Transport** — HTTPS/TLS for client traffic; secure (TLS) Postgres connections.
 - **Tenancy** — every query filtered by `owner_id`/`companion_id`; authorization checked at the
   API boundary before reaching the core.

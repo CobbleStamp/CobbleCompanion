@@ -1,0 +1,3 @@
+name: cobblecompanion-github
+runtime: nodejs
+description: GitHub repository governance for CobbleCompanion — branch protection that blocks merging into main until the CI `verify` check passes.

@@ -1,0 +1,137 @@
+:root {
+  font-family: system-ui, sans-serif;
+  color: #1a1a2e;
+  background: #f4f4fb;
+}
+
+body {
+  margin: 0;
+}
+
+.card {
+  max-width: 28rem;
+  margin: 4rem auto;
+  padding: 2rem;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
+}
+
+.card form,
+.chat form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+input,
+button {
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid #d0d0e0;
+  font-size: 1rem;
+}
+
+button {
+  background: #4f46e5;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.error {
+  color: #c0263a;
+}
+
+.chat {
+  max-width: 42rem;
+  margin: 2rem auto;
+  display: flex;
+  flex-direction: column;
+  height: 90vh;
+}
+
+.chat header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.transcript {
+  flex: 1;
+  overflow-y: auto;
+  list-style: none;
+  padding: 0;
+}
+
+.line {
+  display: flex;
+  flex-direction: column;
+  margin: 0.75rem 0;
+}
+
+.line .who {
+  font-size: 0.75rem;
+  font-weight: 600;
+  opacity: 0.6;
+}
+
+.line.user .content {
+  align-self: flex-end;
+  background: #e0e7ff;
+  border-radius: 10px;
+  padding: 0.5rem 0.75rem;
+}
+
+.line.assistant .content {
+  background: #fff;
+  border-radius: 10px;
+  padding: 0.5rem 0.75rem;
+  white-space: pre-wrap;
+}
+
+.header-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.memory-sections {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.memory-section {
+  background: #fff;
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  margin: 0.75rem 0;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
+}
+
+.memory-section h2 {
+  font-size: 1rem;
+  margin: 0 0 0.5rem;
+}
+
+.memory-section.planned {
+  opacity: 0.65;
+}
+
+.memory-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 0;
+}
+
+.memory-row {
+  width: 100%;
+  text-align: left;
+  background: #f4f4fb;
+  color: #1a1a2e;
+  border: 1px solid #e0e0ee;
+}
