@@ -75,6 +75,7 @@ async function main(): Promise<void> {
       embeddingModel: config.embeddingModel,
       embeddingDimensions: config.embeddingDimensions,
       useContextHeader: config.useContextHeader,
+      maxLinkBytes: config.ingestionMaxBytes,
       logger: consoleLogger,
     }),
     consoleLogger,

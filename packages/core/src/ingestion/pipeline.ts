@@ -14,6 +14,7 @@ import type { NewSection, SectionRecord, SemanticMemoryStore } from '../memory/s
 import { buildEmbeddingInput } from './embedder.js';
 import { enrichSection } from './enricher.js';
 import { parseLinkHtml, parseNote, parsePdf, type ParsedDocument } from './parser.js';
+import { readTextWithLimit, safeLinkFetch } from './safe-fetch.js';
 import { segmentParagraphs, type SectionBoundary } from './segmenter.js';
 import { assertPublicHttpUrl } from './url-guard.js';
 
@@ -34,8 +35,10 @@ export interface IngestionPipelineOptions {
   /** A/B knob: prefix the Pass-2 context header onto the embedding input. */
   readonly useContextHeader: boolean;
   readonly logger: Logger;
-  /** Injectable fetch for link sources (tests pass a fake). */
+  /** Injectable fetch for link sources (tests pass a fake; default is SSRF-guarded). */
   readonly fetchFn?: typeof fetch;
+  /** Byte ceiling for fetched link bodies (default 25 MiB). */
+  readonly maxLinkBytes?: number;
 }
 
 export interface IngestionRunParams {
@@ -48,6 +51,12 @@ export interface IngestionRunParams {
 
 /** Sections embedded per gateway call. */
 const EMBED_BATCH_SIZE = 32;
+
+/** Default byte ceiling for link bodies (mirrors the upload cap's default). */
+const DEFAULT_MAX_LINK_BYTES = 25 * 1024 * 1024;
+
+/** Content types the link parser can actually read. */
+const HTML_CONTENT_TYPE = /text\/html|application\/xhtml\+xml/i;
 
 export class IngestionPipeline {
   constructor(private readonly options: IngestionPipelineOptions) {}
@@ -93,15 +102,22 @@ export class IngestionPipeline {
       case 'pdf':
         return parsePdf(payload.bytes);
       case 'link': {
-        // SSRF guard: public http(s) targets only, and redirects are refused so
-        // a public URL cannot bounce the fetch to a private address.
+        // SSRF guard, two layers: string-level URL checks here, and the
+        // default fetch resolves DNS through the guarded lookup so a public
+        // hostname cannot rebind to a private address. Redirects are refused
+        // so a public URL cannot bounce the fetch elsewhere.
         const url = assertPublicHttpUrl(payload.url);
-        const fetchFn = this.options.fetchFn ?? fetch;
+        const fetchFn = this.options.fetchFn ?? safeLinkFetch;
         const response = await fetchFn(url, { redirect: 'error' });
         if (!response.ok) {
           throw new Error(`link fetch responded ${response.status}`);
         }
-        return parseLinkHtml(await response.text(), payload.url);
+        const contentType = response.headers.get('content-type') ?? '';
+        if (!HTML_CONTENT_TYPE.test(contentType)) {
+          throw new Error('the link did not return a readable web page');
+        }
+        const maxBytes = this.options.maxLinkBytes ?? DEFAULT_MAX_LINK_BYTES;
+        return parseLinkHtml(await readTextWithLimit(response, maxBytes), payload.url);
       }
     }
   }

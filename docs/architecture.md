@@ -390,6 +390,11 @@ the full threat model live in `implementation.md` and Phase 8 respectively (`dev
   API boundary before the core is reached.
 - **Transport** — HTTPS/TLS everywhere; secure DB connections.
 - **Input validation** — all client and external (LLM) data validated at the boundary before use.
+- **Server-side fetch boundary (SSRF)** — link ingestion fetches user-supplied URLs from the
+  server, so destinations are restricted to public HTTP(S): the URL is checked for scheme and
+  blocked host/IP literals, **and the connection-layer DNS lookup re-validates every resolved
+  address** so a public hostname cannot rebind to a private/metadata IP; redirects are refused
+  and the body is read under a byte ceiling (`implementation.md`).
 - **LLM provider trust boundary** — user content sent to the provider is an explicit external
   trust boundary; provider data-handling assumptions documented in `implementation.md`.
 

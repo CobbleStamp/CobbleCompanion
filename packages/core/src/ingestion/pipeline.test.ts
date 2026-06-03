@@ -222,7 +222,8 @@ describe('IngestionPipeline', () => {
       embeddingDimensions: EMBEDDING_DIMENSIONS,
       useContextHeader: false,
       logger: silentLogger,
-      fetchFn: async () => new Response(article, { status: 200 }),
+      fetchFn: async () =>
+        new Response(article, { status: 200, headers: { 'content-type': 'text/html' } }),
     }).run({
       companionId,
       sourceId,
@@ -234,6 +235,66 @@ describe('IngestionPipeline', () => {
     const [job] = await semantic.listJobs(companionId);
     expect(job?.status).toBe('done');
     expect(await semantic.getSourceText(companionId, sourceId)).toContain('coastal Peruvian dish');
+  });
+
+  it('fails the job when a link returns a non-HTML content type', async () => {
+    const llm = new ScriptedLlmGateway([SEGMENT_RESPONSE]);
+    const { sourceId, jobId } = await seedSourceAndJob();
+
+    await new IngestionPipeline({
+      semantic,
+      llm,
+      embeddings,
+      ingestionModel: 'cheap-model',
+      embeddingModel: 'fake-embed',
+      embeddingDimensions: EMBEDDING_DIMENSIONS,
+      useContextHeader: false,
+      logger: silentLogger,
+      fetchFn: async () =>
+        new Response('%PDF-1.7 ...', {
+          status: 200,
+          headers: { 'content-type': 'application/octet-stream' },
+        }),
+    }).run({
+      companionId,
+      sourceId,
+      jobId,
+      sourceTitle: 'Binary link',
+      payload: { kind: 'link', url: 'https://example.com/file.bin' },
+    });
+
+    const [job] = await semantic.listJobs(companionId);
+    expect(job?.status).toBe('failed');
+  });
+
+  it('fails the job when a link body exceeds the byte ceiling', async () => {
+    const llm = new ScriptedLlmGateway([SEGMENT_RESPONSE]);
+    const { sourceId, jobId } = await seedSourceAndJob();
+    const oversized = `<html><body><article><p>${'x'.repeat(8192)}</p></article></body></html>`;
+
+    await new IngestionPipeline({
+      semantic,
+      llm,
+      embeddings,
+      ingestionModel: 'cheap-model',
+      embeddingModel: 'fake-embed',
+      embeddingDimensions: EMBEDDING_DIMENSIONS,
+      useContextHeader: false,
+      logger: silentLogger,
+      maxLinkBytes: 1024,
+      fetchFn: async () =>
+        new Response(oversized, { status: 200, headers: { 'content-type': 'text/html' } }),
+    }).run({
+      companionId,
+      sourceId,
+      jobId,
+      sourceTitle: 'Huge page',
+      payload: { kind: 'link', url: 'https://example.com/huge' },
+    });
+
+    const [job] = await semantic.listJobs(companionId);
+    expect(job?.status).toBe('failed');
+    expect(job?.error).toMatch(/could not finish reading/);
   });
 
   async function embedText(text: string): Promise<readonly number[]> {
