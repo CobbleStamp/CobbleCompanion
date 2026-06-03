@@ -66,5 +66,24 @@ export {
   type TurnCtx,
 } from './harness/hooks.js';
 
+// Ingestion (Phase 1: parse → segment → enrich → embed)
+export {
+  parseLinkHtml,
+  parseNote,
+  parsePdf,
+  type ParsedDocument,
+  type Paragraph,
+} from './ingestion/parser.js';
+export { segmentParagraphs, type SectionBoundary } from './ingestion/segmenter.js';
+export { enrichSection, type Enrichment, type ExtractedFact } from './ingestion/enricher.js';
+export { buildEmbeddingInput } from './ingestion/embedder.js';
+export { CORE_FACT_TYPES, isCoreFactType, type CoreFactType } from './ingestion/ontology.js';
+export {
+  IngestionPipeline,
+  type IngestionPayload,
+  type IngestionPipelineOptions,
+  type IngestionRunParams,
+} from './ingestion/pipeline.js';
+
 // Logging
 export { consoleLogger, type Logger } from './logging.js';

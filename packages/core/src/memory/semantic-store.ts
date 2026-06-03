@@ -127,6 +127,8 @@ export interface SemanticCounts {
 /** Boundary for all Phase 1 semantic memory (sources/sections/facts/jobs). */
 export interface SemanticMemoryStore {
   createSource(companionId: string, input: CreateSourceInput): Promise<SourceRecord>;
+  /** Fill in the canonical text after off-request-path extraction (PDF/link). */
+  setSourceText(sourceId: string, rawText: string): Promise<void>;
   getSourceText(companionId: string, sourceId: string): Promise<string | null>;
   listSources(companionId: string): Promise<readonly SourceRecord[]>;
   insertSections(
@@ -199,6 +201,10 @@ export class DrizzleSemanticMemoryStore implements SemanticMemoryStore {
       throw new Error('failed to create source');
     }
     return toSourceRecord(row);
+  }
+
+  async setSourceText(sourceId: string, rawText: string): Promise<void> {
+    await this.db.update(sources).set({ rawText }).where(eq(sources.id, sourceId));
   }
 
   async getSourceText(companionId: string, sourceId: string): Promise<string | null> {
