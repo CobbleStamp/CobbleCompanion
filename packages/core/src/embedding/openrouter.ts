@@ -64,6 +64,12 @@ export class OpenRouterEmbeddingGateway implements EmbeddingGateway {
           `OpenRouter returned ${embedding.length}-dim embedding; expected ${params.dimensions}`,
         );
       }
+      // A duplicate index would pass the count check yet leave another slot an
+      // array hole, persisting `undefined` downstream — reject it here. With
+      // counts equal and every index in-range and unique, all slots are filled.
+      if (vectors[index] !== undefined) {
+        throw new EmbeddingGatewayError(`OpenRouter returned a duplicate embedding index ${index}`);
+      }
       vectors[index] = embedding;
     }
     return { vectors, usage: toUsage(payload.usage, params.input) };

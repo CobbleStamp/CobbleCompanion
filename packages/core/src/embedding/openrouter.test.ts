@@ -104,6 +104,30 @@ describe('OpenRouterEmbeddingGateway', () => {
     );
   });
 
+  it('rejects duplicate indices (a hole would otherwise persist an undefined vector)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              // Right count, but index 0 twice — index 1 would stay an array hole.
+              data: [
+                { index: 0, embedding: [1, 0] },
+                { index: 0, embedding: [0, 1] },
+              ],
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+
+    const gateway = new OpenRouterEmbeddingGateway({ apiKey: 'test-key' });
+    await expect(gateway.embed({ input: ['a', 'b'], model: 'm', dimensions: 2 })).rejects.toThrow(
+      /duplicate embedding index/,
+    );
+  });
+
   it('rejects a dimension mismatch (schema/provider coupling fails fast)', async () => {
     vi.stubGlobal(
       'fetch',
