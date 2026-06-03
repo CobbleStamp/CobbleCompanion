@@ -1,8 +1,21 @@
+/**
+ * Shared API test harness: builds the real Fastify app over an in-memory
+ * PGlite database with fake gateways (fakes-over-mocks) and a fake token
+ * verifier, so route tests exercise the true auth → route → core → db path.
+ */
+
+import { EMBEDDING_DIMENSIONS } from '@cobble/db';
 import { createTestDatabase } from '@cobble/db/testing';
 import {
+  createSemanticRetrieveContext,
   DrizzleIdentityStore,
+  DrizzleSemanticMemoryStore,
+  DrizzleTokenQuotaStore,
+  FakeEmbeddingGateway,
   FakeLlmGateway,
   Harness,
+  IngestionPipeline,
+  IngestionRunner,
   TranscriptMemoryStore,
   type Logger,
 } from '@cobble/core';
@@ -39,6 +52,14 @@ export const testConfig: AppConfig = {
   llmProvider: 'fake',
   openrouterApiKey: '',
   llmModel: 'test-model',
+  embeddingProvider: 'fake',
+  embeddingModel: 'fake-embed',
+  embeddingDimensions: EMBEDDING_DIMENSIONS,
+  ingestionModel: 'test-ingestion-model',
+  ingestionMaxBytes: 25 * 1024 * 1024,
+  useContextHeader: true,
+  ingestionQueueMax: 100,
+  tokenCapPerDay: 1_000_000,
   appUrl: 'http://localhost:3001',
   authMode: 'google',
   googleClientId: 'test-google-client-id',
@@ -56,24 +77,68 @@ export interface TestApp {
   readonly close: () => Promise<void>;
 }
 
+/** Overrides for tests exercising config-driven behavior (limits, queue cap). */
+export interface TestAppOptions {
+  readonly config?: Partial<AppConfig>;
+  /** Replace the runner entirely (fault injection, e.g. a queue-full race). */
+  readonly ingestion?: IngestionRunner;
+}
+
 export async function makeTestApp(
   chunks: readonly string[] = ['Hi', ' there'],
   logger: Logger = silentLogger,
+  options: TestAppOptions = {},
 ): Promise<TestApp> {
+  const config: AppConfig = { ...testConfig, ...options.config };
   const { db, close: closeDb } = await createTestDatabase();
   const memory = new TranscriptMemoryStore(db);
+  const semantic = new DrizzleSemanticMemoryStore(db);
+  const quota = new DrizzleTokenQuotaStore(db, { defaultCapTokens: config.tokenCapPerDay });
+  const embeddings = new FakeEmbeddingGateway();
+  const llmGateway = new FakeLlmGateway(chunks);
   const tokenVerifier = new FakeTokenVerifier();
+  // Queue cap comes from config, mirroring production wiring (index.ts).
+  const ingestion =
+    options.ingestion ??
+    new IngestionRunner(
+      new IngestionPipeline({
+        semantic,
+        llm: llmGateway,
+        embeddings,
+        ingestionModel: config.ingestionModel,
+        embeddingModel: config.embeddingModel,
+        embeddingDimensions: config.embeddingDimensions,
+        useContextHeader: config.useContextHeader,
+        quota,
+        logger: silentLogger,
+      }),
+      silentLogger,
+      config.ingestionQueueMax,
+    );
   const deps: AppDeps = {
     identity: new DrizzleIdentityStore(db),
     memory,
+    semantic,
+    embeddings,
+    ingestion,
     harness: new Harness({
-      gateway: new FakeLlmGateway(chunks),
+      gateway: llmGateway,
       memory,
       model: 'test-model',
+      quota,
       logger: silentLogger,
+      retrieveContext: createSemanticRetrieveContext({
+        memory,
+        semantic,
+        embeddings,
+        embeddingModel: config.embeddingModel,
+        embeddingDimensions: config.embeddingDimensions,
+        logger: silentLogger,
+      }),
     }),
+    quota,
     tokenVerifier,
-    config: testConfig,
+    config,
     logger,
   };
   const app = await buildApp(deps);
@@ -91,6 +156,7 @@ export async function makeTestApp(
     tokenVerifier,
     bearerFor,
     close: async () => {
+      await ingestion.whenIdle();
       await app.close();
       await closeDb();
     },

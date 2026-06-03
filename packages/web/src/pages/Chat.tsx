@@ -1,20 +1,39 @@
-import type { CompanionDto, MessageRole } from '@cobble/shared';
+/**
+ * The chat surface: the companion's single continuous, streamed conversation.
+ * Grounded turns render their citations ("Grounded in: …") under the
+ * assistant's reply so the user always sees where an answer came from.
+ */
+
+import type { Citation, CompanionDto, MessageDto, MessageRole } from '@cobble/shared';
 import { useEffect, useRef, useState } from 'react';
 import { fetchMessages, sendMessage } from '../api/client.js';
+import { UsageBadge } from '../components/UsageBadge.js';
 
 interface ChatProps {
   readonly companion: CompanionDto;
   readonly onSignOut: () => void;
   readonly onOpenMemory: () => void;
+  readonly onOpenSources: () => void;
 }
 
 interface ChatLine {
+  /**
+   * The server message id once persisted (from the transcript or the `done`
+   * event). Absent on optimistic lines that have not yet been confirmed, which
+   * fall back to their array index for the React key.
+   */
+  readonly id?: string;
   readonly role: MessageRole;
   readonly content: string;
+  readonly citations?: readonly Citation[];
 }
 
-/** Step 3: hold the companion's single continuous, streamed conversation. */
-export function Chat({ companion, onSignOut, onOpenMemory }: ChatProps): JSX.Element {
+export function Chat({
+  companion,
+  onSignOut,
+  onOpenMemory,
+  onOpenSources,
+}: ChatProps): JSX.Element {
   const [lines, setLines] = useState<ChatLine[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -30,7 +49,7 @@ export function Chat({ companion, onSignOut, onOpenMemory }: ChatProps): JSX.Ele
         // A companion has one lifelong conversation, so resuming is just loading
         // its transcript — no session to pick or create.
         const history = await fetchMessages(companion.id);
-        setLines(history.map((m) => ({ role: m.role, content: m.content })));
+        setLines(history.map((m) => ({ id: m.id, role: m.role, content: m.content })));
         setReady(true);
       } catch (err) {
         // Allow a retry on remount rather than getting stuck in a half-started state.
@@ -46,16 +65,30 @@ export function Chat({ companion, onSignOut, onOpenMemory }: ChatProps): JSX.Ele
     const content = input.trim();
     setInput('');
     setBusy(true);
+    setError(null);
     setLines((prev) => [...prev, { role: 'user', content }, { role: 'assistant', content: '' }]);
 
     try {
       for await (const event_ of sendMessage(companion.id, content)) {
         if (event_.type === 'token') {
           setLines((prev) => appendToLast(prev, event_.value));
+        } else if (event_.type === 'citations') {
+          setLines((prev) => citeLast(prev, event_.citations));
+        } else if (event_.type === 'done') {
+          // The authoritative persisted reply (server id + final content) replaces
+          // whatever the token deltas built, and gives the line a stable key.
+          setLines((prev) => finalizeLast(prev, event_.message));
         } else if (event_.type === 'error') {
+          // A streamed failure is data: surface it inline on the assistant line.
           setLines((prev) => appendToLast(prev, `\n[${event_.message}]`));
         }
       }
+    } catch (err) {
+      // A thrown send (network failure, malformed SSE frame) leaves an empty
+      // optimistic assistant bubble; drop it and surface the failure.
+      console.error('chat send failed', { companionId: companion.id, error: err });
+      setLines((prev) => dropEmptyAssistantTail(prev));
+      setError(err instanceof Error ? err.message : 'Failed to send message');
     } finally {
       setBusy(false);
     }
@@ -66,6 +99,10 @@ export function Chat({ companion, onSignOut, onOpenMemory }: ChatProps): JSX.Ele
       <header>
         <h1>{companion.name}</h1>
         <nav className="header-actions">
+          <UsageBadge />
+          <button type="button" onClick={onOpenSources}>
+            Sources
+          </button>
           <button type="button" onClick={onOpenMemory}>
             Memory
           </button>
@@ -77,9 +114,17 @@ export function Chat({ companion, onSignOut, onOpenMemory }: ChatProps): JSX.Ele
       {error && <p className="error">{error}</p>}
       <ul className="transcript">
         {lines.map((line, index) => (
-          <li key={index} className={`line ${line.role}`}>
+          <li key={line.id ?? index} className={`line ${line.role}`}>
             <span className="who">{line.role === 'user' ? 'You' : companion.name}</span>
             <span className="content">{line.content}</span>
+            {line.citations && line.citations.length > 0 && (
+              <span className="citations who">
+                Grounded in:{' '}
+                {dedupeCitations(line.citations)
+                  .map((citation) => formatCitation(citation))
+                  .join(' · ')}
+              </span>
+            )}
           </li>
         ))}
       </ul>
@@ -101,5 +146,61 @@ export function Chat({ companion, onSignOut, onOpenMemory }: ChatProps): JSX.Ele
 function appendToLast(lines: ChatLine[], delta: string): ChatLine[] {
   if (lines.length === 0) return lines;
   const last = lines[lines.length - 1]!;
-  return [...lines.slice(0, -1), { role: last.role, content: last.content + delta }];
+  return [...lines.slice(0, -1), { ...last, content: last.content + delta }];
+}
+
+function citeLast(lines: ChatLine[], citations: readonly Citation[]): ChatLine[] {
+  if (lines.length === 0) return lines;
+  const last = lines[lines.length - 1]!;
+  return [...lines.slice(0, -1), { ...last, citations }];
+}
+
+/**
+ * Replace the streamed assistant line with the persisted message: the server's
+ * content is authoritative over the concatenated token deltas, and its id
+ * becomes the line's stable React key. Citations already attached during the
+ * stream are preserved.
+ */
+function finalizeLast(lines: ChatLine[], message: MessageDto): ChatLine[] {
+  if (lines.length === 0) return lines;
+  const last = lines[lines.length - 1]!;
+  return [
+    ...lines.slice(0, -1),
+    { ...last, id: message.id, role: message.role, content: message.content },
+  ];
+}
+
+/**
+ * Drop a trailing, still-empty optimistic assistant bubble — used when a send
+ * throws before any token arrived, so the transcript isn't left with a blank
+ * reply line.
+ */
+function dropEmptyAssistantTail(lines: ChatLine[]): ChatLine[] {
+  if (lines.length === 0) return lines;
+  const last = lines[lines.length - 1]!;
+  if (last.role === 'assistant' && last.content.length === 0) {
+    return lines.slice(0, -1);
+  }
+  return lines;
+}
+
+/** Collapse repeated passages from the same source span into one chip. */
+function dedupeCitations(citations: readonly Citation[]): readonly Citation[] {
+  const seen = new Set<string>();
+  return citations.filter((citation) => {
+    const key = `${citation.sourceId}:${citation.paraStart}-${citation.paraEnd}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** "Peru book (ch. 4, para 12–18)" — human-readable, locatable provenance. */
+function formatCitation(citation: Citation): string {
+  const parts = [
+    citation.chapterTitle ? `ch. ${citation.chapterTitle}` : null,
+    `para ${citation.paraStart}–${citation.paraEnd}`,
+    citation.pageStart !== null ? `p. ${citation.pageStart}` : null,
+  ].filter((part): part is string => part !== null);
+  return `${citation.sourceTitle} (${parts.join(', ')})`;
 }

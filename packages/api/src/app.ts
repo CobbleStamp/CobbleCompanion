@@ -1,5 +1,15 @@
-import type { Harness, IdentityStore, Logger, MemoryStore } from '@cobble/core';
+import type {
+  EmbeddingGateway,
+  Harness,
+  IdentityStore,
+  IngestionRunner,
+  Logger,
+  MemoryStore,
+  SemanticMemoryStore,
+  TokenQuotaStore,
+} from '@cobble/core';
 import cors from '@fastify/cors';
+import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -12,6 +22,8 @@ import { registerAuthRoutes } from './routes/auth.routes.js';
 import { registerCompanionRoutes } from './routes/companion.routes.js';
 import { registerMemoryRoutes } from './routes/memory.routes.js';
 import { registerMessageRoutes } from './routes/message.routes.js';
+import { registerSourceRoutes } from './routes/source.routes.js';
+import { registerUsageRoutes } from './routes/usage.routes.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -23,14 +35,18 @@ declare module 'fastify' {
 export interface AppDeps {
   readonly identity: IdentityStore;
   readonly memory: MemoryStore;
+  readonly semantic: SemanticMemoryStore;
+  readonly embeddings: EmbeddingGateway;
+  readonly ingestion: IngestionRunner;
   readonly harness: Harness;
+  readonly quota: TokenQuotaStore;
   readonly tokenVerifier: TokenVerifier;
   readonly config: AppConfig;
   readonly logger: Logger;
 }
 
 // API route prefixes that must 404 (not fall through to the SPA index.html).
-const API_PREFIXES = ['/auth', '/companions', '/health'] as const;
+const API_PREFIXES = ['/auth', '/companions', '/health', '/usage'] as const;
 
 /** Build the Fastify app — the only surface↔core boundary (invariant #1). */
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
@@ -42,6 +58,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   await app.register(cors, {
     origin: deps.config.appUrl,
     allowedHeaders: ['Content-Type', 'Authorization'],
+  });
+
+  // Multipart uploads (PDF sources), capped at the configured size.
+  await app.register(multipart, {
+    limits: { fileSize: deps.config.ingestionMaxBytes, files: 1 },
   });
 
   // Tolerate an empty body on application/json requests. Fastify's default JSON
@@ -92,10 +113,16 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.get('/health', async () => ({ status: 'ok' }));
 
   const requireAuth = makeRequireAuth(deps);
+
+  // The per-user daily token cap (architecture.md token budget) is the cost
+  // guardrail; routes enforce it inline (chat/search pre-flight, ingestion
+  // defer), so there are no per-route request-count limiters.
   registerAuthRoutes(app, deps, requireAuth);
   registerCompanionRoutes(app, deps, requireAuth);
   registerMessageRoutes(app, deps, requireAuth);
   registerMemoryRoutes(app, deps, requireAuth);
+  registerSourceRoutes(app, deps, requireAuth);
+  registerUsageRoutes(app, deps, requireAuth);
 
   registerSpa(app);
 

@@ -1,4 +1,5 @@
-import type { MessageRole } from '@cobble/shared';
+import type { Citation, MessageRole } from '@cobble/shared';
+import type { TokenUsage } from '../usage.js';
 
 /**
  * The harness's named extension points (architecture.md invariant #3,
@@ -9,6 +10,12 @@ import type { MessageRole } from '@cobble/shared';
 export interface ContextBlock {
   readonly role: MessageRole;
   readonly content: string;
+  /**
+   * Where this block came from, when it was retrieved from semantic memory
+   * (P1). The harness surfaces these as the turn's citations; absent on plain
+   * transcript blocks.
+   */
+  readonly provenance?: readonly Citation[];
 }
 
 export interface ToolCall {
@@ -37,9 +44,27 @@ export interface Block {
   readonly reason: string;
 }
 
-// memory-retrieval hook — assembles prior context for a turn from the companion's
-// single continuous transcript
-export type RetrieveContext = (companionId: string) => Promise<readonly ContextBlock[]>;
+/**
+ * Input to the memory-retrieval hook. `userContent` is the current ENTRY's
+ * text — query-dependent recall (P1 semantic memory embeds the question) needs
+ * it; the P0 recency window ignores it. An object, so future fields stay
+ * additive (implementation.md §2.1).
+ */
+export interface RetrieveParams {
+  readonly companionId: string;
+  readonly userContent: string;
+}
+
+/** What the retrieval hook returns: the context blocks plus any token usage it
+ * spent (e.g. the query embedding), so the harness can meter the whole turn. */
+export interface RetrieveResult {
+  readonly blocks: readonly ContextBlock[];
+  readonly usage: TokenUsage;
+}
+
+// memory-retrieval hook — assembles prior context for a turn (P0: the recency
+// window over the single continuous transcript; P1: + semantic recall)
+export type RetrieveContext = (params: RetrieveParams) => Promise<RetrieveResult>;
 
 // tool hooks — gate around every tool call (P3)
 export type BeforeToolCall = (call: ToolCall, ctx: TurnCtx) => Promise<ToolCall | Block>;

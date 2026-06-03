@@ -5,10 +5,10 @@
 > system is* (components, flows, decisions) see `architecture.md`; for *what we're building and in
 > what order* see `development-plan.md`.
 >
-> **Status: incremental.** Specifies **Phase 0** (`development-plan.md` §3); later phases are
+> **Status: incremental.** Specifies **Phases 0–1** (`development-plan.md` §3); later phases are
 > marked **_Deferred — Phase N_**.
 
-## 1. Data Model (Phase 0)
+## 1. Data Model (Phases 0–1)
 
 Postgres (with `pgvector` available for later phases). Multi-tenant: every row is scoped by owner
 (`architecture.md` §2, invariant #5). Field types are indicative; authoritative DDL lives in
@@ -56,8 +56,83 @@ migrations under `db/`.
 > `created_at` at sub-millisecond resolution, so a monotonic ordinal is the source of truth for
 > transcript order. `seq` is a single global sequence, so it orders the whole transcript.
 
-**_Deferred:_** semantic-memory tables + `vector` embedding columns (P1); episodic indices (P2);
-procedural/skill records + approval-queue tables (P3). Added via new migrations.
+### `sources` — Layer 0: verbatim originals (Phase 1)
+| Field | Type | Notes |
+|---|---|---|
+| `id` | uuid (PK) | |
+| `companion_id` | uuid (FK → `companions.id`, cascade) | tenancy scope |
+| `kind` | text | `pdf` \| `note` \| `link` \| `txt` \| `md` \| `docx` \| `pptx` — free text typed via `$type<SourceKind>()`, so new formats need no migration; accepted-format/MIME contract → `architecture.md` §4.8 |
+| `title` | text | display title ("your Peru book") |
+| `origin` | text, nullable | filename / URL; null for notes |
+| `raw_text` | text | **canonical** extracted text — everything derived is rebuildable from it |
+| `byte_size` | integer, nullable | |
+| `created_at` | timestamptz | |
+
+### `ingestion_jobs` — reading-progress surface (Phase 1)
+| Field | Type | Notes |
+|---|---|---|
+| `id` / `companion_id` / `source_id` | uuid | cascade FKs |
+| `status` | text | `queued → parsing → segmenting → enriching → embedding → done` \| `failed`; `deferred` is off-line (parsed, awaiting the daily token cap to reset — `architecture.md` §4.8) |
+| `sections_total` / `sections_done` | integer | drives "read N of M" |
+| `error` | text, nullable | user-safe failure reason; detail stays in logs |
+| `parsed_doc` | jsonb, nullable | parsed paragraphs held while `deferred`, so the AI passes resume without a re-upload; null otherwise |
+| `created_at` / `updated_at` | timestamptz | |
+
+> The durable status surface is what makes the in-process runner replaceable by a real worker
+> with no schema/API change (`architecture.md` §4.8, §8), and lets deferred jobs survive a restart.
+
+### `user_token_usage` — daily token cap state (Phase 1)
+| Field | Type | Notes |
+|---|---|---|
+| `user_id` | uuid (PK, FK → `users.id`, cascade) | one row per user |
+| `window_reset_at` | timestamptz | when the current fixed-daily (UTC) window rolls; overage carries as debt clamped to one cap |
+| `used_tokens` | bigint | tokens spent in the current window (LLM + embedding) |
+| `cap_override` | integer, nullable | per-account cap; null → the `TOKEN_CAP_PER_DAY` default |
+| `updated_at` | timestamptz | |
+
+> Postgres-backed so the cap is correct across replicas. Routes enforce it inline: chat/search
+> 429 over cap, ingestion defers (`architecture.md` §4.8). `GET /usage` exposes the standing for
+> the web client's live indicator.
+
+### `sections` — Layer 1: retrieval units (Phase 1)
+| Field | Type | Notes |
+|---|---|---|
+| `id` / `companion_id` / `source_id` | uuid | cascade FKs; companion denormalized for filtered retrieval |
+| `chapter_title` | text, nullable | structural parent label |
+| `topic_title` | text | Pass-1 segmentation output |
+| `original_text` | text | **pure verbatim** paragraph slice — never model-rewritten |
+| `context_header` | text, nullable | Pass-2 one-liner; prefixed onto the **embedding input only** |
+| `para_start` / `para_end` | integer | 1-based inclusive paragraph range (provenance) |
+| `page_start` / `page_end` | integer, nullable | PDF page range |
+| `ord` | integer | section order within its source |
+| `embedding` | `vector(1024)` | nullable until the embed pass; dimension pinned by `EMBEDDING_DIMENSIONS` (db schema) — changing it requires a migration |
+| `fts` | tsvector, generated | `to_tsvector('english', original_text)` |
+
+Indexes: HNSW (`vector_cosine_ops`) on `embedding` — chosen over IVFFlat because it needs no
+training set and fits incremental ingestion; GIN on `fts`; btree on `(companion_id)` and
+`(source_id, ord)`.
+
+### `facts` — Layer 2: typed knowledge overlay (Phase 1)
+| Field | Type | Notes |
+|---|---|---|
+| `id` / `companion_id` | uuid | cascade FK |
+| `section_id` | uuid (FK → `sections.id`, cascade) | **provenance — non-nullable by contract** (`ontology.md` §4) |
+| `fact_type` | text | closed core set, validated at ingestion (`ontology.md` §2) |
+| `subject` / `predicate` / `object` | text (predicate nullable) | entities are denormalized strings (normalization deferred, `ontology.md` §5) |
+| `confidence` | real, nullable | extraction self-reported (0–1), advisory |
+
+### Hybrid retrieval (Phase 1 mechanism)
+
+`SemanticMemoryStore.search` runs two arms over `sections` scoped by `companion_id` —
+**vector** (`embedding <=> query` cosine, top-K) and **lexical** (`fts @@ plainto_tsquery`,
+`ts_rank`-ordered, top-K) — and fuses them with **reciprocal-rank fusion**
+(score = Σ 1/(K + r), with K=60 and r the 1-based rank within each arm), which is scale-free so the two scores never need calibrating.
+Optional metadata filters: `source_id`, and `entity` (an EXISTS over the fact overlay's
+subject/object — how a section whose text only says "he" is still found by "Pizarro"). Every
+hit carries provenance (source title, chapter, topic, para/page range) + the verbatim text.
+
+**_Deferred:_** episodic indices (P2); procedural/skill records + approval-queue tables (P3).
+Added via new migrations.
 
 ## 2. Harness & Agent-Loop Internals
 
@@ -69,9 +144,21 @@ The loop defines these typed hooks (invariant #3). Phase 0 registers default no-
 implementations; later phases supply real ones without changing the loop.
 
 ```ts
-// memory-retrieval hook — assembles prior context for a turn from the
-// companion's single continuous transcript
-type RetrieveContext = (companionId: string) => Promise<ContextBlock[]>;
+// memory-retrieval hook — assembles prior context for a turn. Takes the
+// current user content because query-dependent recall (P1 semantic memory
+// embeds the question) needs it; the P0 recency window ignores it. The object
+// param keeps future fields additive. P1 changed both ends of this signature:
+// the new `userContent` param AND the return — it now yields a RetrieveResult
+// carrying the blocks plus the `usage` spent recalling them (the query
+// embedding), so the harness can meter the whole turn against the daily
+// cap (`user_token_usage`, §1).
+interface RetrieveParams { companionId: string; userContent: string }
+interface RetrieveResult { blocks: readonly ContextBlock[]; usage: TokenUsage }
+type RetrieveContext = (params: RetrieveParams) => Promise<RetrieveResult>;
+
+// a context block may carry provenance (P1 semantic recall); the harness
+// surfaces a turn's provenance as a `citations` stream event before `done`
+interface ContextBlock { role: MessageRole; content: string; provenance?: Citation[] }
 
 // tool hooks — gate around every tool call (P3)
 type BeforeToolCall = (call: ToolCall, ctx: TurnCtx) => Promise<ToolCall | Block>; // Block → exit-to-approve
@@ -81,12 +168,29 @@ type AfterToolCall  = (result: ToolResult, ctx: TurnCtx) => Promise<ToolResult>;
 type Initiator = (companionId: string) => Promise<Entry | null>;                   // null → stay idle
 ```
 
-### 2.2 Context assembly (Phase 0)
+**Phase 1 implementation** (`packages/core/src/harness/semantic-retrieve.ts`): embeds
+`userContent` via the Embedding Gateway, hybrid-searches the semantic store (§1), renders each
+hit as a system-role grounding block with structured `provenance`, then appends the recency
+window. Embedding-provider failure logs and degrades to recency-only — recall never breaks the
+conversation.
+
+Each grounding block is prompt-injection hardened: a trusted preamble (declaring everything
+below it untrusted, titles included) is followed by a sentinel-fenced region holding **all**
+document-derived strings — source/chapter/topic titles and the verbatim passage. Titles are
+attacker-influenced (source/chapter titles come from ingested documents; topic titles are
+LLM-derived from them), so they are sanitized before rendering: fence sentinels stripped
+(repeated until stable, defeating splice recombination), control characters/newlines flattened,
+length capped. Only numeric locators (paragraph/page ranges) render as trusted text. Citation
+`provenance` carries titles verbatim — sanitization is prompt-only; UI rendering escapes
+separately.
+
+### 2.2 Context assembly (Phases 0–1)
 
 A turn's prompt is composed, in order, from: **(1)** the companion identity row (`name`, `form`,
 `temperament` → persona system prompt), **(2)** the base system prompt, **(3)** `RetrieveContext`
-output — in P0 the most-recent N messages of the companion's transcript (a recency window), later
-semantic (P1) and episodic (P2) recall. The available-tools list is empty in P0.
+output — P1: top-K semantic grounding blocks (verbatim sections with source/para preambles)
+followed by the most-recent N transcript messages (the recency window); later episodic (P2)
+recall. The available-tools list is still empty.
 
 ### 2.3 Turn & loop mechanics (Phase 0)
 
@@ -115,9 +219,16 @@ Loaded from environment / a secret manager; required values validated at startup
 | `DEV_BYPASS_EMAIL` | Identity resolved in `dev_bypass` mode |
 | `APP_URL` | Web client origin (allowed CORS origin for local cross-origin dev) |
 | `PORT` | Server port (Cloud Run injects this) |
+| `EMBEDDING_PROVIDER` | `openrouter` (default) \| `fake` (tests/offline dev) |
+| `EMBEDDING_MODEL` | Embedding model id (default `perplexity/pplx-embed-v1-0.6b`) |
+| `EMBEDDING_DIM` | Requested embedding dimensionality (default 1024) — **must equal** the `sections.embedding` `vector()` column dimension; the API fails fast at startup on mismatch, and changing it requires a migration |
+| `INGESTION_MODEL` | Cheap model for the two ingestion reading passes (default `google/gemini-2.5-flash`) — input-heavy, output-bounded (`architecture.md` §4.8) |
+| `INGESTION_MAX_BYTES` | Source upload size cap, also the link-fetch body ceiling (default 25 MiB) |
+| `USE_CONTEXT_HEADER` | `true` (default) \| `false` — prefix the Pass-2 context header onto embedding inputs (the eval A/B knob, `companionmemory.md` §5) |
+| `TOKEN_CAP_PER_DAY` | Per-user daily token cap (LLM + embedding) — the cost guardrail across all routes; fixed daily UTC window, overage carries as clamped debt (default 1 000 000). Per-account override → `user_token_usage.cap_override` |
+| `INGESTION_QUEUE_MAX` | Backstop cap on queued+in-flight ingestion runs across all owners; submissions past it get 429 (default 100) |
 
-**_Deferred:_** ingestion/worker tuning, embedding model selection, proactivity cadence,
-push-notification credentials (P1+).
+**_Deferred:_** worker tuning, proactivity cadence, push-notification credentials (P2+).
 
 ## 4. Error Handling
 

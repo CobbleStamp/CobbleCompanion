@@ -4,6 +4,8 @@
  * OpenRouter (./openrouter.ts); tests use the FakeLlmGateway (./fake.ts).
  */
 
+import type { TokenUsage } from '../usage.js';
+
 export interface LlmMessage {
   readonly role: 'system' | 'user' | 'assistant';
   readonly content: string;
@@ -29,6 +31,10 @@ export class LlmGatewayError extends Error {
 }
 
 export interface LlmGateway {
-  /** Stream the assistant response as incremental text deltas. */
-  stream(params: LlmStreamParams): AsyncIterable<string>;
+  /**
+   * Stream the assistant response as incremental text deltas; the generator's
+   * **return value** is the call's {@link TokenUsage} (so text-only consumers
+   * using `for await` are unaffected, while metered callers read the return).
+   */
+  stream(params: LlmStreamParams): AsyncGenerator<string, TokenUsage, void>;
 }

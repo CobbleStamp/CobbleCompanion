@@ -1,3 +1,4 @@
+import { estimateUsage, type TokenUsage } from '../usage.js';
 import { type LlmGateway, LlmGatewayError, type LlmStreamParams } from './gateway.js';
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -20,7 +21,7 @@ export class OpenRouterGateway implements LlmGateway {
     this.baseUrl = config.baseUrl ?? OPENROUTER_URL;
   }
 
-  async *stream(params: LlmStreamParams): AsyncIterable<string> {
+  async *stream(params: LlmStreamParams): AsyncGenerator<string, TokenUsage, void> {
     const response = await this.requestStream(params);
     const body = response.body;
     if (!body) {
@@ -29,23 +30,50 @@ export class OpenRouterGateway implements LlmGateway {
 
     const decoder = new TextDecoder();
     let buffer = '';
+    let text = '';
+    let usage: TokenUsage | null = null;
+    // If the model omits usage, estimate from the prompt + streamed completion so
+    // accounting is never silently zero (architecture.md token budget).
+    const fallback = (): TokenUsage =>
+      estimateUsage(params.messages.map((message) => message.content).join('\n'), text);
     const reader = body.getReader();
+    // Tracks whether the reader drained to its natural end. A consumer that
+    // breaks out early (or a thrown error) leaves this false, so the `finally`
+    // cancels the body — `releaseLock()` alone leaks the underlying connection.
+    let drained = false;
     try {
       for (;;) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          drained = true;
+          break;
+        }
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         buffer = lines.pop() ?? '';
         for (const line of lines) {
-          const delta = parseSseLine(line);
-          if (delta === DONE) return;
-          if (delta) yield delta;
+          const frame = parseSseLine(line);
+          if (frame === DONE) {
+            drained = true;
+            return usage ?? fallback();
+          }
+          if (!frame) continue;
+          if (frame.content) {
+            text += frame.content;
+            yield frame.content;
+          }
+          if (frame.usage) {
+            usage = frame.usage;
+          }
         }
       }
     } finally {
+      if (!drained) {
+        await reader.cancel().catch(() => undefined);
+      }
       reader.releaseLock();
     }
+    return usage ?? fallback();
   }
 
   private async requestStream(params: LlmStreamParams): Promise<Response> {
@@ -61,6 +89,8 @@ export class OpenRouterGateway implements LlmGateway {
           model: params.model,
           stream: true,
           messages: params.messages,
+          // Ask OpenRouter to append a final usage frame to the stream.
+          usage: { include: true },
         }),
         ...(params.signal ? { signal: params.signal } : {}),
       });
@@ -77,8 +107,14 @@ export class OpenRouterGateway implements LlmGateway {
 
 const DONE = Symbol('done');
 
-/** Parse one SSE line into a content delta, the DONE sentinel, or null to skip. */
-function parseSseLine(line: string): string | typeof DONE | null {
+/** A parsed SSE data frame: a content delta, a usage report, or both. */
+interface SseFrame {
+  readonly content?: string;
+  readonly usage?: TokenUsage;
+}
+
+/** Parse one SSE line into a frame (content and/or usage), DONE, or null to skip. */
+function parseSseLine(line: string): SseFrame | typeof DONE | null {
   const trimmed = line.trim();
   if (!trimmed.startsWith('data:')) return null;
   const payload = trimmed.slice('data:'.length).trim();
@@ -86,8 +122,23 @@ function parseSseLine(line: string): string | typeof DONE | null {
   try {
     const parsed = JSON.parse(payload) as {
       choices?: ReadonlyArray<{ delta?: { content?: string } }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
     };
-    return parsed.choices?.[0]?.delta?.content ?? null;
+    const content = parsed.choices?.[0]?.delta?.content;
+    const frame: { content?: string; usage?: TokenUsage } = {};
+    if (typeof content === 'string' && content.length > 0) {
+      frame.content = content;
+    }
+    if (parsed.usage) {
+      const promptTokens = parsed.usage.prompt_tokens ?? 0;
+      const completionTokens = parsed.usage.completion_tokens ?? 0;
+      frame.usage = {
+        promptTokens,
+        completionTokens,
+        totalTokens: parsed.usage.total_tokens ?? promptTokens + completionTokens,
+      };
+    }
+    return frame.content === undefined && frame.usage === undefined ? null : frame;
   } catch {
     // A non-JSON keepalive/comment line; skip it.
     return null;

@@ -32,23 +32,23 @@ being is proven, because they add platform cost without changing whether the cor
 
 ## 2. Phase Overview
 
-| Phase | Theme | Surface | Proves / Delivers |
-|---|---|---|---|
-| **0** | Foundations & walking skeleton | Web | You can talk to Cobble end-to-end; stack decided |
-| **1** | The knowledge organism | Web | Ingest sources → semantic memory → grounded recall ⭐ |
-| **2** | Memory & continuity | Web | Episodic memory, companion identity, cloud "home" |
-| **3** | Tools, action & trust | Web | Tool/MCP use + propose→approve approval queue |
-| **4** | Proactivity engine | Web | Motivated, tunable initiative ⭐ |
-| **5** | Bond & growth | Web | Four-axis growth + visual character — the PoC complete |
-| **6** | Mobile surface | + Mobile | Summon model, GPS recall, push, OS-as-tools |
-| **7** | Desktop surface | + Desktop | File/workspace OS tools, heavier local storage |
-| **8** | Hardening & launch readiness | All | Security, scale, privacy controls, monetization |
+| Phase | Theme | Surface | Proves / Delivers | Status |
+|---|---|---|---|---|
+| **0** | Foundations & walking skeleton | Web | You can talk to Cobble end-to-end; stack decided | ✅ **Done** (PR #1) |
+| **1** | The knowledge organism | Web | Ingest sources → semantic memory → grounded recall ⭐ | 🔨 **Implemented** — eval gate pending |
+| **2** | Memory & continuity | Web | Episodic memory, companion identity, cloud "home" | Planned |
+| **3** | Tools, action & trust | Web | Tool/MCP use + propose→approve approval queue | Planned |
+| **4** | Proactivity engine | Web | Motivated, tunable initiative ⭐ | Planned |
+| **5** | Bond & growth | Web | Four-axis growth + visual character — the PoC complete | Planned |
+| **6** | Mobile surface | + Mobile | Summon model, GPS recall, push, OS-as-tools | Planned |
+| **7** | Desktop surface | + Desktop | File/workspace OS tools, heavier local storage | Planned |
+| **8** | Hardening & launch readiness | All | Security, scale, privacy controls, monetization | Planned |
 
 ⭐ = the differentiators the web PoC exists to prove. **Phases 0–5 are the PoC.**
 
 ## 3. Phases (Web PoC)
 
-### Phase 0 — Foundations & Walking Skeleton
+### Phase 0 — Foundations & Walking Skeleton ✅ Done
 **Goal:** a deployable web app where a user creates a Cobble and has a basic conversation —
 proving the full request→harness→model→response loop and persistence work end-to-end.
 
@@ -61,22 +61,43 @@ proving the full request→harness→model→response loop and persistence work 
 **Done when:** a new user signs in, names a companion, exchanges messages; conversation
 persists across sessions; CI runs tests at ≥80% coverage.
 
+**Delivered** (PR #1): TS monorepo (`packages/{core,api,web,shared,eval}`, `db/`, `infra/`).
+Stack resolved in `architecture.md` §5 — TS end-to-end, Fastify API, React+Vite SPA,
+Postgres+`pgvector` via Drizzle, OpenRouter gateway, Google Sign-In (+ `dev_bypass`). Single-turn
+streaming harness with the `RetrieveContext`/tool/`Initiator` hook seams stubbed (`architecture.md`
+§4); transcript-as-episodic-substrate (`messages.companion_id`); read-only memory browser; live
+eval harness (`packages/eval`). CI runs Vitest at ≥80% coverage on `shared/db/core/api`.
+
 ### Phase 1 — The Knowledge Organism ⭐
 **Goal:** prove the headline claim — feed Cobble sources and it recalls them accurately and in
 context. This is the heart of the PoC.
 
 **Scope**
-- Source ingestion: PDFs, text/notes, links → parse, chunk, embed.
+- Source ingestion → parse, chunk, embed. **Formats:** file uploads (PDF, `.txt`, `.md`,
+  `.docx`, `.pptx`), web links (HTML), and typed notes. Full acceptance contract (extensions,
+  MIME, parser, out-of-scope formats) → `architecture.md` §4.8.
 - **Semantic memory** store: organized facts/concepts + vector retrieval
   (`product-overview.md` §2.1).
 - Grounded recall in chat: retrieval-augmented answers with provenance ("from your Peru book").
 - Ingestion status/feedback UI ("Cobble has read 3 of 5 books").
+- **Cost guardrail:** a per-user **daily token cap** (the one spend control — replaces per-route
+  request limits) with a live usage indicator; over cap, chat/search 429 and ingestion **defers**
+  until reset (`architecture.md` §4.8).
 
 **Done when:** a user uploads sources and Cobble answers questions grounded in them with correct
 citations; answers degrade gracefully when knowledge is absent (no confident hallucination).
 
 **Key risks:** retrieval quality, large-document ingestion cost/latency, hallucination. Validate
 with a fixed eval set of source→question→expected-answer pairs.
+
+**Implemented** (this branch): the "improved staged hybrid" — verbatim sources/sections with
+pgvector + FTS hybrid retrieval and a typed fact overlay (`ontology.md`), built by a two-pass
+output-bounded ingestion pipeline off the request path (`architecture.md` §4.8); semantic recall
+fills the harness memory hook with citation-carrying grounding; web surface adds the Sources
+page ("read N of M"), chat citation chips, and memory search; the eval harness gained
+source-grounded cases + semantic configs with the contextual-header A/B. **Gate before marking
+done:** run the live eval (recall/grounding/hallucination across configs) and the manual e2e
+(upload a file → grounded answer with correct citation → out-of-knowledge question declines).
 
 ### Phase 2 — Memory & Continuity
 **Goal:** Cobble remembers your shared history and is recognizably *the same being* over time.
@@ -153,7 +174,7 @@ Owned here (single-source). Each is assigned a decision point:
 
 | Question | Decide by |
 |---|---|
-| Final stack: framework, client, store engine, LLM provider | **Phase 0** |
+| ~~Final stack: framework, client, store engine, LLM provider~~ | **Decided (Phase 0):** TS end-to-end, Fastify, React+Vite, Postgres+`pgvector`/Drizzle, OpenRouter, Google Sign-In (`architecture.md` §5) |
 | Single companion vs. multiple per user | Phase 2 (identity model) — **MVP: one companion per user**; multiple is a deferred capability |
 | ~~One continuous conversation vs. multiple sessions per companion~~ | **Decided (Phase 0): one continuous, lifelong conversation per companion** — no session/thread entity (`architecture.md` §2, invariant #6) |
 | Initial tool/skill integrations (maps, calendar, search, booking) | Phase 3 |

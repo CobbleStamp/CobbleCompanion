@@ -5,7 +5,7 @@
 > `product-overview.md`; for *scope & priorities* see `development-plan.md`; for *internal
 > mechanisms* (data models, schemas, config, security implementation) see `implementation.md`.
 >
-> **Status: incremental.** Built up phase by phase; currently specifies **Phase 0**
+> **Status: incremental.** Built up phase by phase; currently specifies **Phases 0–1**
 > (`development-plan.md` §3). Content for later phases is marked **_Deferred — Phase N_**. The
 > **Architectural Invariants** (§2) are the exception — load-bearing boundaries fixed now.
 
@@ -14,13 +14,14 @@
 CobbleCompanion is **one cloud-resident companion** (`model + harness + memory`) reached through
 **surfaces** it embodies in, one at a time (`product-overview.md` §2). The architecture's job is
 to keep that companion *core* surface-agnostic so surfaces (web now; mobile, desktop later) plug
-in as clients. **Phase 0** delivers the smallest end-to-end slice: a user creates a Cobble on the
+in as clients. **Phase 0** delivered the smallest end-to-end slice: a user creates a Cobble on the
 **web** surface and holds a persisted, single continuous conversation (§2, invariant #6).
+**Phase 1** adds the knowledge organism: sources are ingested into **semantic memory** (§4.8) and
+chat answers ground themselves in them with citations.
 
-**Non-goals / scope boundaries (Phase 0):** no ingestion or semantic/episodic/procedural memory
-stores (Phase 1–2), no tools/MCP or approval queue (Phase 3), no proactivity (Phase 4), no
-growth/visual system (Phase 5), no native surfaces or OS tools (Phase 6–7). See
-`development-plan.md`.
+**Non-goals / scope boundaries (Phases 0–1):** no episodic store beyond the transcript (Phase 2),
+no tools/MCP or approval queue (Phase 3), no proactivity (Phase 4), no growth/visual system
+(Phase 5), no native surfaces or OS tools (Phase 6–7). See `development-plan.md`.
 
 ## 2. Architectural Invariants (design decisions)
 
@@ -49,21 +50,24 @@ deferred to the phase that needs it.
 
 ## 3. Component Map
 
-Phase 0 components and the layers they belong to. Components introduced in later phases are
+Phase 0–1 components and the layers they belong to. Components introduced in later phases are
 listed below the diagram, not yet wired.
 
 ```mermaid
 flowchart TB
-  subgraph SURFACE["Surface — Phase 0: Web"]
+  subgraph SURFACE["Surface — Web"]
     WEB["Web Client<br/>(React + Vite)"]
   end
   subgraph BOUNDARY["Surface ↔ Core Boundary"]
-    API["API / BFF (Fastify)<br/>auth · sessions · streaming"]
+    API["API / BFF (Fastify)<br/>auth · sessions · streaming · uploads"]
   end
   subgraph CORE["Companion Core — surface-agnostic"]
     H["Harness<br/>agent loop + extension hooks"]
     GW["LLM Gateway<br/>provider-agnostic"]
-    MEM["MemoryStore (interface)<br/>P0 impl: transcript"]
+    EGW["Embedding Gateway<br/>provider-agnostic (P1)"]
+    MEM["MemoryStore (interface)<br/>transcript"]
+    SEM["Semantic Store (P1)<br/>sources · sections · facts"]
+    ING["Ingestion Pipeline + Runner (P1)<br/>parse → segment → enrich → embed"]
     ID["Identity Store<br/>companion 'home'"]
   end
   subgraph DATA["Persistence"]
@@ -73,28 +77,40 @@ flowchart TB
 
   WEB -->|HTTPS · stream| API
   API --> H
+  API --> ING
   H --> ID
   H --> MEM
+  H --> SEM
   H --> GW
+  H --> EGW
+  ING --> SEM
+  ING --> GW
+  ING --> EGW
   GW -->|HTTPS| LLM
+  EGW -->|HTTPS| LLM
   MEM --> PG
+  SEM --> PG
   ID --> PG
 ```
 
 | Component | Owns | Notes |
 |---|---|---|
-| **Web Client** | Chat UI, create-a-companion, auth flows, read-only memory browser | Thin client over the API (invariant #1) |
-| **API / BFF** | Auth, sessions, routing, response streaming, memory-inspection routes | The only thing surfaces talk to |
-| **Harness** | The agent loop; defines memory/tool/initiation hooks | See §4 |
-| **LLM Gateway** | Provider-agnostic model access | Default OpenRouter; provider pluggable |
-| **MemoryStore** | Boundary for all companion memory | P0 impl: the companion's single transcript (`messages`), keyed by `companion_id` |
+| **Web Client** | Chat UI (incl. citations), create-a-companion, auth flows, sources page, memory browser + search | Thin client over the API (invariant #1) |
+| **API / BFF** | Auth, sessions, routing, response streaming, source intake (multipart), memory routes | The only thing surfaces talk to |
+| **Harness** | The agent loop; defines memory/tool/initiation hooks | See §4; P1 fills the memory hook with semantic recall |
+| **LLM Gateway** | Provider-agnostic chat-model access | Default OpenRouter; provider pluggable |
+| **Embedding Gateway** | Provider-agnostic embedding access (P1) | OpenRouter `/embeddings`; deterministic fake for tests |
+| **MemoryStore** | Boundary for the transcript (episodic substrate) | The companion's single transcript (`messages`), keyed by `companion_id` |
+| **Semantic Store** | Sources (verbatim), sections (vector + FTS), fact overlay, ingestion jobs (P1) | Hybrid retrieval with provenance; contract → `ontology.md` |
+| **Ingestion Pipeline + Runner** | Two-pass source reading off the request path (P1, §4.8) | Durable status in `ingestion_jobs`; replaceable by a real worker |
 | **Identity Store** | Companion "home" record | Source of truth surfaces load from |
+| **Token Quota Store** | Per-user daily token-budget state — the cost cap (P1, §4.8) | Postgres-backed (`user_token_usage`); routes enforce it inline |
 | **Persistence** | Relational + vector storage | Postgres + `pgvector`; schemas → `implementation.md` |
 | **Eval Harness** | Offline memory-vs-performance evaluation (`packages/eval`) | Not on the serving path; live OpenRouter. See `companionmemory.md` §5 |
 
-**_Deferred — later phases:_** Ingestion Workers & Semantic Store (P1), Episodic Store (P2),
-Tool Registry / MCP & Approval Queue (P3), Proactivity Scheduler & Motivation Engine (P4),
-Growth/Progression service (P5), Mobile/Desktop clients, OS-tool bridges & Sync Courier (P6–7).
+**_Deferred — later phases:_** Episodic Store (P2), Tool Registry / MCP & Approval Queue (P3),
+Proactivity Scheduler & Motivation Engine (P4), Growth/Progression service (P5), Mobile/Desktop
+clients, OS-tool bridges & Sync Courier (P6–7).
 
 ## 4. The Agent Loop & Harness
 
@@ -171,10 +187,16 @@ Each turn rebuilds context from the companion's "home" + its memory. The dashed 
 flowchart LR
     ID["companion identity<br/>name · form · temperament"] --> P[["assembled prompt → LLM"]]
     SYS["system prompt / persona"] --> P
-    SEM["semantic memory<br/>(P1)"] -.-> P
+    SEM["semantic recall (P1 ✅)<br/>top-K verbatim sections + provenance"] --> P
     EPI["episodic recall<br/>(P0: recent transcript · P2: episodic)"] --> P
     TOOLS["available tools<br/>(P3)"] -.-> P
 ```
+
+> **Phase 1:** the memory-retrieval hook embeds the user's question, hybrid-searches the
+> semantic store (vector + lexical + metadata, fused), and prepends each hit as a
+> provenance-carrying grounding block; the hit's citations are streamed to the client before
+> the answer. Retrieval failure degrades to recency-only — recall never breaks the
+> conversation. (Hook signature → `implementation.md` §2.1.)
 
 ### 4.4 Human-in-the-loop & propose→approve
 
@@ -262,6 +284,111 @@ sequenceDiagram
 - **State is authoritative only at the home.** Surfaces never hold loop state (§6); a run reads from
   and writes back to the cloud home.
 
+### 4.8 Ingestion flow (Phase 1)
+
+How a source becomes semantic memory — **two output-bounded reading passes** off the request
+path. The economics are deliberate: input tokens are cheap and output tokens are the cost
+lever, so the model *reads everything* but *emits almost nothing* (~1% of input in Pass 1,
+~10% in Pass 2).
+
+```mermaid
+flowchart LR
+    UP["upload (file · note · link)<br/>202 + queued job · 429 only if queue full"] --> RUN["Ingestion Runner<br/>(off request path)"]
+    RUN --> PARSE["parse → atomic paragraphs<br/>(never split mid-paragraph)"]
+    PARSE --> GATE{"owner over<br/>daily token cap?"}
+    GATE -->|yes| DEFER["status: deferred<br/>(hold parse; sweeper resumes after reset)"]
+    GATE -->|no| P1["Pass 1 — segment:<br/>LLM emits ONLY boundaries + topics"]
+    P1 --> SECT["sections = verbatim paragraph slices<br/>(the model never rewrites text)"]
+    SECT --> P2["Pass 2 — enrich:<br/>one context line + typed facts (ontology.md)"]
+    P2 --> EMB["embed: [context header +] verbatim text<br/>→ pgvector · FTS"]
+    EMB --> DONE["job done — recallable with citations"]
+```
+
+Design rules (the "improved staged hybrid"; memory guide → `companionmemory.md`):
+
+- **Original text is canonical.** Sources are stored verbatim; sections are verbatim paragraph
+  slices; the fact overlay (`ontology.md`) is an index *into* the text, rebuildable from it.
+- **Paragraphs are atomic.** Segmentation groups whole paragraphs into cohesive sections —
+  blind fixed-size chunking is structurally impossible.
+- **Embedding input ≠ stored text.** The optional Pass-2 context header is prefixed onto the
+  *embedding input only* (it injects the entities unresolved pronouns hide from the encoder);
+  stored and displayed text is always pure original. Header on/off is an eval A/B knob.
+- **Dual retrieval.** Semantic (vector cosine) + lexical (FTS) fused by reciprocal rank, plus
+  metadata paths (source, fact-overlay entity) — every hit carries provenance (source, chapter,
+  paragraph/page range) so answers cite and can show the original passage.
+- **Failures are data.** A failed run lands on the job as a user-safe error; the durable
+  status surface (`ingestion_jobs`) is what makes the in-process runner replaceable by a real
+  worker with no schema or API change (§8). It also makes restart recovery clean: interrupted
+  in-flight jobs are failed on startup (re-upload), while `deferred` jobs keep their parse and
+  resume.
+- **Re-running a source is idempotent.** A run writes a source's whole section set in one call,
+  *replacing* (not appending to) any prior sections for that source — so a re-run never duplicates
+  sections/facts or inflates counts (orphaned facts cascade with their sections). This holds
+  however a re-run is triggered, which lets the in-process runner give way to an at-least-once
+  worker without a dedupe layer. The deferred-job sweeper reinforces this upstream: it **atomically
+  claims** each parked job (`deferred → queued`, conditional) before enqueue, so two overlapping
+  sweeps can't resume — and re-bill — the same job twice.
+- **Cost guardrail = a per-user daily token cap.** The real resource is LLM/embedding **tokens**,
+  so spend is metered against a **per-user cap over a fixed daily window** (resets 00:00 UTC);
+  overage carries to the next day as **debt clamped to one cap** (never a multi-day lockout). The
+  cap state lives in Postgres (`user_token_usage`), so it is correct across replicas — unlike a
+  per-instance request limiter. Each route enforces it inline: **chat & search** pre-flight-check
+  and return **429** when over cap; **ingestion defers** (see below). Actual token counts come from
+  the provider's `usage` (estimated only if a model omits it). Because **ingestion is serial** and
+  **chat is turn-based**, there is no in-app concurrency to outrun the post-hoc accounting — the
+  serialization *is* the burst backstop, so the cap is the whole defense (threat model:
+  legitimate-user cost control, not attacker resistance). The runner still caps queued+in-flight
+  runs (`INGESTION_QUEUE_MAX`) as a memory backstop. Knobs → `implementation.md` §config.
+
+#### Supported source formats (acceptance contract)
+
+A source reaches a parser through one of **three input channels** — a **file upload**
+(`POST .../sources/file`, multipart), a **typed note** (JSON `text`), or a **link** (fetched
+URL). All three converge on **one content-type → parser registry**, so a format is parsed the
+same way no matter how it arrived. The channels differ only in how they *identify* content:
+
+- **Upload** — content type follows from the filename extension, then **confirmed against magic
+  bytes — never the extension alone** (the route rejects a `.docx` that isn't a zip, a `.pdf`
+  without `%PDF-`, etc.).
+- **Link** — the resolver fetches the URL (SSRF-guarded, size-capped) and **detects the content
+  type**: the HTTP `Content-Type` header first, then a magic-byte sniff, then the URL extension,
+  then a plain-text fallback. So a link to a **PDF, Markdown, or plain-text** resource is read
+  with that format's parser — not assumed to be HTML.
+
+`INGESTION_MAX_BYTES` caps every upload and every fetched link body. This table is the canonical
+list of what the system accepts; **Content type** is the registry key, reachable by any channel
+whose check resolves to it.
+
+| Content type | Extension(s) | MIME / magic | Reachable via | Parser | Status |
+|---|---|---|---|---|---|
+| `pdf` | `.pdf` | `application/pdf`; magic `%PDF-` | upload, link | `unpdf` (pdf.js), page-aware provenance | ✅ shipped |
+| `html` | — | `text/html`, `application/xhtml+xml` | link | fetch → Mozilla Readability | ✅ shipped |
+| `text` | `.txt` | `text/plain`; rejected if it looks binary (NUL byte without a Unicode BOM) | upload, link, note | BOM-aware UTF-8/UTF-16 decode → paragraph split (the note parser) | ✅ shipped |
+| `markdown` | `.md`, `.markdown` | `text/markdown` | upload, link | markdown stripped to prose → paragraph split | ✅ shipped |
+| `docx` | `.docx` | wordprocessingml MIME; zip magic `PK` | upload, link | `mammoth` raw-text body extract | ✅ shipped |
+| `pptx` | `.pptx` | presentationml MIME; zip magic `PK` | upload, link | per-slide `<a:t>` extract, slide → page provenance | ✅ shipped |
+
+**Explicitly out of scope** (unsupported uploads get a 400; unidentifiable link bodies are
+rejected): legacy OLE binaries (`.doc`, `.ppt`), spreadsheets/tabular data (`.xlsx`, `.csv` —
+the paragraph model doesn't fit rows), and binary link content with no recognized type (images,
+video, archives). `.docx`/`.pptx` share the zip `PK` magic, so the extension (upload) or MIME
+header (link) is the discriminator; the parser confirms the inner structure. The decoupled
+design lives in `content-parser.ts` (registry), `source-parser.ts` (payload → document facade
+the pipeline depends on), and `link-resolver.ts` (fetch + detect).
+
+> **Daily-cap deferral.** Parsing is free (no tokens); the **AI passes** (segment/enrich/embed)
+> are the cost. When the owner is over their daily token cap, the pipeline parses the source,
+> persists the parsed paragraphs on the job (`ingestion_jobs.parsed_doc`), sets status `deferred`,
+> and stops — no re-upload needed. A periodic sweeper resumes deferred jobs (serially, re-checking
+> the cap) as allowances reset, so the queue drains incrementally. Users can delete a parked job
+> (`DELETE …/sources/:id`). This is why over-cap uploads still return **202**, not 429.
+
+> **`kind` modeling:** `sources.kind` carries the format directly —
+> `pdf | note | link | txt | md | docx | pptx` (`implementation.md` §`sources`). The column is
+> free text typed in code (`$type<SourceKind>()`), so widening the set needed **no migration**;
+> `origin` holds the filename for uploads and the URL for links. pptx records the slide number
+> as `page`; docx/txt/md carry paragraph-ordinal provenance only.
+
 ## 5. Stack & Technology Decisions
 
 Resolves the items flagged in `development-plan.md` §5. (Field-level config/env → `implementation.md`.)
@@ -274,6 +401,7 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
 | Store engine | **Postgres + `pgvector`** | Multi-tenant cloud home; one store for relational + vectors; scales across phases |
 | Data access | Type-safe query layer (Drizzle) | Explicit types end-to-end; no raw SQL by default |
 | LLM access | **Provider-agnostic gateway, default OpenRouter** | Swap models/providers without touching the harness |
+| Embeddings | **Provider-agnostic gateway, OpenRouter `/embeddings`** — default `perplexity/pplx-embed-v1-0.6b` | Single vendor with the LLM gateway; dimensions pinned to the vector column (`implementation.md` §3) |
 | Auth | **Google Sign-In (OIDC)** | The SPA gets a Google ID token (Google Identity Services); the API verifies it against Google's JWKS (`aud=GOOGLE_CLIENT_ID`, `email_verified`) and JIT-provisions users by email. No third-party auth service, no tenant, no extra Pulumi stack. `dev_bypass` mode for local/tests |
 
 ## 6. Interactions, Boundary & State
@@ -292,21 +420,24 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
   with one embodiment active at a time there is no cross-surface state to reconcile (invariants
   #4, #5).
 
-## 7. Folder Structure (Phase 0)
+## 7. Folder Structure (Phases 0–1)
 
 ```
 /                      repo root
   docs/                canonical documentation
   packages/            TS monorepo (workspaces)
     core/              the companion (surface-agnostic) — invariant #1
-      harness/         agent loop + extension hooks (§4)
+      harness/         agent loop + extension hooks (§4); semantic recall (P1)
       llm/             provider-agnostic LLM gateway
-      memory/          MemoryStore interface + P0 transcript impl
+      embedding/       provider-agnostic embedding gateway (P1)
+      ingestion/       parse → segment → enrich → embed pipeline + runner + deferred-job sweeper (P1, §4.8)
+      memory/          MemoryStore (transcript) + SemanticMemoryStore (P1)
       identity/        companion "home" model + store
-    api/               BFF / surface boundary (Fastify); incl. memory-inspection routes
-    web/               React web client (P0 surface); incl. read-only memory browser
+      quota/           per-user daily token-cap state (P1, §4.8)
+    api/               BFF / surface boundary (Fastify); memory + source + usage routes
+    web/               React web client; chat w/ citations, sources page, memory browser, usage badge
     shared/            shared TS types / contracts
-    eval/              offline memory-vs-performance harness (→ companionmemory.md §5)
+    eval/              live memory-vs-performance harness (→ companionmemory.md §5)
   db/                  migrations & schema (→ implementation.md)
   scripts/             dev / seed / ops scripts
 ```
@@ -332,6 +463,11 @@ the full threat model live in `implementation.md` and Phase 8 respectively (`dev
   API boundary before the core is reached.
 - **Transport** — HTTPS/TLS everywhere; secure DB connections.
 - **Input validation** — all client and external (LLM) data validated at the boundary before use.
+- **Server-side fetch boundary (SSRF)** — link ingestion fetches user-supplied URLs from the
+  server, so destinations are restricted to public HTTP(S): the URL is checked for scheme and
+  blocked host/IP literals, **and the connection-layer DNS lookup re-validates every resolved
+  address** so a public hostname cannot rebind to a private/metadata IP; redirects are refused
+  and the body is read under a byte ceiling (`implementation.md`).
 - **LLM provider trust boundary** — user content sent to the provider is an explicit external
   trust boundary; provider data-handling assumptions documented in `implementation.md`.
 

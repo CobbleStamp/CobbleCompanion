@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { vector } from '@electric-sql/pglite/vector';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { fileURLToPath } from 'node:url';
@@ -16,7 +17,9 @@ export async function createTestDatabase(): Promise<{
   db: Database;
   close: () => Promise<void>;
 }> {
-  const client = new PGlite();
+  // pgvector is loaded so the same migrations (incl. CREATE EXTENSION vector)
+  // run against PGlite as against server Postgres.
+  const client = new PGlite({ extensions: { vector } });
   const pglite = drizzle(client, { schema });
   await migrate(pglite, { migrationsFolder });
   // PGlite and node-postgres drizzle handles share the same query-builder surface

@@ -1,24 +1,32 @@
-import type { EpisodicMemorySection, MemorySnapshotDto } from '@cobble/shared';
+/**
+ * Read-only memory browser routes (companionmemory.md). Exposes what a
+ * companion "holds", grouped by memory kind: the episodic transcript, the
+ * Phase 1 semantic store (sources/sections/facts + ingestion progress, with a
+ * search endpoint), and procedural as a planned-but-empty section (P3).
+ */
+
+import type {
+  EpisodicMemorySection,
+  MemorySnapshotDto,
+  SemanticMemorySection,
+  SemanticSearchResultDto,
+} from '@cobble/shared';
+import { semanticSearchSchema } from '@cobble/shared';
 import type { FastifyInstance } from 'fastify';
 import type { AppDeps } from '../app.js';
 import type { RequireAuth } from '../auth-guard.js';
+import { overCapGuard } from '../quota-guard.js';
 
 interface CompanionParams {
   readonly companionId: string;
 }
 
-/**
- * Read-only memory browser (companionmemory.md). Exposes what a companion
- * "holds", grouped by memory kind. Phase 0 has only the episodic transcript;
- * semantic (P1) and procedural (P3) surface as planned-but-empty sections so the
- * full knowledge-base shape is visible before the stores exist.
- */
 export function registerMemoryRoutes(
   app: FastifyInstance,
   deps: AppDeps,
   requireAuth: RequireAuth,
 ): void {
-  const { identity, memory } = deps;
+  const { identity, memory, semantic, embeddings, config, quota } = deps;
 
   // A sectioned snapshot of everything the companion holds.
   app.get(
@@ -36,13 +44,102 @@ export function registerMemoryRoutes(
         messageCount: await memory.countMessages(companion.id),
       };
 
+      const counts = await semantic.counts(companion.id);
+      const jobs = await semantic.listJobs(companion.id);
+      const semanticSection: SemanticMemorySection = {
+        status: 'available',
+        sourceCount: counts.sources,
+        sectionCount: counts.sections,
+        factCount: counts.facts,
+        jobs: jobs.map((job) => ({
+          id: job.id,
+          sourceId: job.sourceId,
+          status: job.status,
+          sectionsTotal: job.sectionsTotal,
+          sectionsDone: job.sectionsDone,
+          error: job.error,
+        })),
+      };
+
       const snapshot: MemorySnapshotDto = {
         identity: companion,
         episodic,
-        semantic: { status: 'not_implemented', plannedPhase: 'Phase 1' },
+        semantic: semanticSection,
         procedural: { status: 'not_implemented', plannedPhase: 'Phase 3' },
       };
       return reply.send({ memory: snapshot });
+    },
+  );
+
+  // Search the semantic store directly (the browser's recall window).
+  app.post(
+    '/companions/:companionId/memory/search',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const { companionId } = request.params as CompanionParams;
+      const parsed = semanticSearchSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: 'a search query is required' });
+      }
+      const companion = await identity.getCompanion(companionId, request.userId!);
+      if (!companion) {
+        return reply.code(404).send({ error: 'companion not found' });
+      }
+      // Search spends an embedding, so it's gated by the same daily token cap.
+      const overCap = await overCapGuard(quota, request.userId!);
+      if (overCap) {
+        return reply.code(429).send({ error: overCap });
+      }
+
+      // Degrade, don't 500: if the embedding provider fails, fall back to the
+      // lexical arm (an empty embedding skips vector search in the store).
+      let queryEmbedding: readonly number[] = [];
+      let searchTokens = 0;
+      try {
+        const { vectors, usage } = await embeddings.embed({
+          input: [parsed.data.query],
+          model: config.embeddingModel,
+          dimensions: config.embeddingDimensions,
+        });
+        queryEmbedding = vectors[0] ?? [];
+        searchTokens = usage.totalTokens;
+      } catch (error) {
+        deps.logger.error('memory search embedding failed; degrading to lexical-only', {
+          operation: 'memory.search',
+          companionId: companion.id,
+          error,
+        });
+      }
+      // Best-effort debit against the daily cap — never fails the search (logging.md).
+      try {
+        await quota.recordUsage(request.userId!, searchTokens);
+      } catch (error) {
+        deps.logger.error('failed to record search token usage', {
+          operation: 'memory.search',
+          companionId: companion.id,
+          error,
+        });
+      }
+      const hits = await semantic.search(companion.id, {
+        queryEmbedding,
+        queryText: parsed.data.query,
+        topK: parsed.data.topK,
+      });
+      const results: SemanticSearchResultDto[] = hits.map((hit) => ({
+        citation: {
+          sourceId: hit.sourceId,
+          sourceTitle: hit.sourceTitle,
+          chapterTitle: hit.chapterTitle,
+          topicTitle: hit.topicTitle,
+          paraStart: hit.paraStart,
+          paraEnd: hit.paraEnd,
+          pageStart: hit.pageStart,
+          pageEnd: hit.pageEnd,
+        },
+        originalText: hit.originalText,
+        score: hit.score,
+      }));
+      return reply.send({ results });
     },
   );
 }

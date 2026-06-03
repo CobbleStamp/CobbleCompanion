@@ -1,6 +1,12 @@
-import type { CompanionDto, MemorySnapshotDto, MessageDto } from '@cobble/shared';
+import type {
+  CompanionDto,
+  MemorySnapshotDto,
+  MessageDto,
+  SemanticSearchResultDto,
+} from '@cobble/shared';
 import { useEffect, useState } from 'react';
-import { fetchMessages, getCompanionMemory } from '../api/client.js';
+import { fetchMessages, getCompanionMemory, searchMemory } from '../api/client.js';
+import { UsageBadge } from '../components/UsageBadge.js';
 
 interface MemoryBrowserProps {
   readonly companion: CompanionDto;
@@ -9,8 +15,9 @@ interface MemoryBrowserProps {
 
 /**
  * Read-only memory browser (companionmemory.md). Shows what the companion holds,
- * grouped by memory kind. Phase 0 has only the episodic transcript; semantic and
- * procedural render as "coming soon" so the full knowledge-base shape is visible.
+ * grouped by memory kind: the episodic transcript, the semantic store's
+ * source/section/fact counts (Phase 1), and procedural as "coming soon" so the
+ * full knowledge-base shape is visible.
  */
 export function MemoryBrowser({ companion, onBack }: MemoryBrowserProps): JSX.Element {
   const [snapshot, setSnapshot] = useState<MemorySnapshotDto | null>(null);
@@ -34,14 +41,20 @@ export function MemoryBrowser({ companion, onBack }: MemoryBrowserProps): JSX.El
       setTranscript([]);
       return;
     }
-    setOpen(true);
-    setTranscript(await fetchMessages(companion.id));
+    try {
+      const messages = await fetchMessages(companion.id);
+      setOpen(true);
+      setTranscript(messages);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load transcript');
+    }
   }
 
   return (
     <main className="chat">
       <header>
         <h1>{companion.name} · Memory</h1>
+        <UsageBadge />
         <button type="button" onClick={onBack}>
           Back to chat
         </button>
@@ -94,10 +107,17 @@ export function MemoryBrowser({ companion, onBack }: MemoryBrowserProps): JSX.El
             )}
           </section>
 
-          <PlannedSection
-            title="Semantic — knowledge from sources"
-            phase={snapshot.semantic.plannedPhase}
-          />
+          <section className="memory-section">
+            <h2>Semantic — knowledge from sources</h2>
+            <p className="who">
+              {snapshot.semantic.sourceCount} source
+              {snapshot.semantic.sourceCount === 1 ? '' : 's'} · {snapshot.semantic.sectionCount}{' '}
+              section
+              {snapshot.semantic.sectionCount === 1 ? '' : 's'} · {snapshot.semantic.factCount} fact
+              {snapshot.semantic.factCount === 1 ? '' : 's'}
+            </p>
+            {snapshot.semantic.sectionCount > 0 && <SemanticSearch companionId={companion.id} />}
+          </section>
           <PlannedSection
             title="Procedural — learned skills & workflows"
             phase={snapshot.procedural.plannedPhase}
@@ -105,6 +125,64 @@ export function MemoryBrowser({ companion, onBack }: MemoryBrowserProps): JSX.El
         </div>
       )}
     </main>
+  );
+}
+
+interface SemanticSearchProps {
+  readonly companionId: string;
+}
+
+/** Recall window: search what the companion has read, with verbatim provenance. */
+function SemanticSearch({ companionId }: SemanticSearchProps): JSX.Element {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<SemanticSearchResultDto[] | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function onSearch(event: React.FormEvent): Promise<void> {
+    event.preventDefault();
+    if (query.trim().length === 0 || busy) return;
+    setBusy(true);
+    try {
+      setResults(await searchMemory(companionId, query.trim()));
+      setSearchError(null);
+    } catch (err) {
+      setResults(null);
+      setSearchError(err instanceof Error ? err.message : 'Search failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div>
+      <form onSubmit={(e) => void onSearch(e)}>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search what it has read…"
+          aria-label="Search semantic memory"
+        />
+        <button type="submit" disabled={busy}>
+          Search
+        </button>
+      </form>
+      {searchError && <p className="error">{searchError}</p>}
+      {results && results.length === 0 && <p className="who">Nothing found for that.</p>}
+      {results && results.length > 0 && (
+        <ul className="memory-list">
+          {results.map((result) => (
+            <li key={`${result.citation.sourceId}-${result.citation.paraStart}`}>
+              <p className="who">
+                {result.citation.sourceTitle} · {result.citation.topicTitle} · para{' '}
+                {result.citation.paraStart}–{result.citation.paraEnd}
+              </p>
+              <blockquote>{result.originalText}</blockquote>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

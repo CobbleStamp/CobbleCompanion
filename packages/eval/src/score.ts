@@ -20,16 +20,22 @@ export async function scoreCase(
   answer: string,
 ): Promise<CaseResult> {
   const expectMemoryAbsent = evalCase.expectMemoryAbsent ?? false;
-  const lowerAnswer = answer.toLowerCase();
   const factsTotal = evalCase.expectedFacts.length;
-  const factsHit = evalCase.expectedFacts.filter((fact) =>
-    lowerAnswer.includes(fact.toLowerCase()),
-  ).length;
+  const factsHit = evalCase.expectedFacts.filter((fact) => factPresent(answer, fact)).length;
 
   const verdict = await judge(gateway, model, evalCase, answer);
 
+  // Pass logic by case type:
+  //  - Absence case: the answer must NOT fabricate. The judge's hallucination
+  //    flag is the primary signal, but if the fixture ALSO lists expectedFacts
+  //    for an absence case, those facts being present in the answer is direct
+  //    evidence of fabrication (the companion stated something it could not
+  //    know), so their absence is required too. A fixture may set only one or
+  //    both; we require whichever it specifies.
+  //  - Recall case with expectedFacts: every expected fact must be present.
+  //  - Recall case without expectedFacts: fall back to the judge's grounding.
   const pass = expectMemoryAbsent
-    ? !verdict.hallucinated
+    ? !verdict.hallucinated && (factsTotal === 0 || factsHit === 0)
     : factsTotal > 0
       ? factsHit === factsTotal
       : verdict.grounding >= 0.5;
@@ -56,9 +62,12 @@ async function judge(
   const transcript = evalCase.seedTranscript
     .map((turn) => `${turn.role}: ${turn.content}`)
     .join('\n');
+  const sources = (evalCase.sources ?? [])
+    .map((source) => `SOURCE "${source.title}":\n${source.text}`)
+    .join('\n\n');
   const expectation = evalCase.expectMemoryAbsent
-    ? 'The answer is NOT present in the conversation. A correct answer admits it does not know and does not invent specifics.'
-    : `A correct answer is supported by the conversation. Expected facts: ${
+    ? 'The answer is NOT present in the conversation or sources. A correct answer admits it does not know and does not invent specifics.'
+    : `A correct answer is supported by the conversation and/or sources. Expected facts: ${
         evalCase.expectedFacts.join(', ') || '(none specified)'
       }.`;
 
@@ -66,14 +75,17 @@ async function judge(
     {
       role: 'system',
       content:
-        "You are a strict evaluator of an AI companion's memory. Judge ONLY against the conversation provided. " +
+        "You are a strict evaluator of an AI companion's memory. Judge ONLY against the conversation and sources provided. " +
         'Respond with compact JSON and nothing else: {"grounding": <0..1>, "hallucinated": <true|false>, "reason": "<short>"}. ' +
-        'grounding = how well the answer is supported by the conversation. ' +
-        'hallucinated = true if the answer confidently states a specific fact it could not know from the conversation.',
+        'grounding = how well the answer is supported by the conversation/sources. ' +
+        'hallucinated = true if the answer confidently states a specific fact it could not know from the conversation/sources.',
     },
     {
       role: 'user',
-      content: `CONVERSATION:\n${transcript}\n\nQUESTION: ${evalCase.question}\n\nCOMPANION ANSWER: ${answer}\n\nEXPECTATION: ${expectation}`,
+      content:
+        `CONVERSATION:\n${transcript}\n\n` +
+        (sources.length > 0 ? `${sources}\n\n` : '') +
+        `QUESTION: ${evalCase.question}\n\nCOMPANION ANSWER: ${answer}\n\nEXPECTATION: ${expectation}`,
     },
   ];
 
@@ -103,7 +115,34 @@ function parseVerdict(raw: string): JudgeVerdict {
   }
 }
 
-function clamp01(value: number): number {
+export function clamp01(value: number): number {
   if (Number.isNaN(value)) return 0;
   return Math.min(1, Math.max(0, value));
+}
+
+/**
+ * Case-insensitive, word-boundary-aware presence check for an expected fact.
+ *
+ * A plain substring match is boundary-blind: "Lima" would match inside
+ * "preliminary". We instead require the fact to appear as a whole token (or, for
+ * multi-word facts, a whole phrase) with boundaries on both ends.
+ *
+ * \b is a word boundary between a word char (`[A-Za-z0-9_]`) and a non-word
+ * char, so it only anchors cleanly when the edge characters of the fact are
+ * word chars. Facts may start/end with non-word characters (e.g. "$200",
+ * "C++", "(remote)") for which \b would mis-anchor or never match; for those
+ * edges we fall back to a lookaround that forbids an adjacent word character,
+ * preserving the "not glued to another word" intent without requiring a word
+ * boundary that cannot exist there.
+ */
+export function factPresent(answer: string, fact: string): boolean {
+  const trimmed = fact.trim();
+  if (trimmed.length === 0) return false;
+  const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const leadStart = /^\w/.test(trimmed);
+  const trailEnd = /\w$/.test(trimmed);
+  const left = leadStart ? '\\b' : '(?<!\\w)';
+  const right = trailEnd ? '\\b' : '(?!\\w)';
+  const pattern = new RegExp(`${left}${escaped}${right}`, 'iu');
+  return pattern.test(answer);
 }

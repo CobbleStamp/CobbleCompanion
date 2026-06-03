@@ -2,8 +2,15 @@ import type {
   ChatStreamEvent,
   CompanionDto,
   CreateCompanionBody,
+  CreateLinkSourceBody,
+  CreateNoteSourceBody,
+  IngestionJobDto,
   MemorySnapshotDto,
   MessageDto,
+  SectionDto,
+  SemanticSearchResultDto,
+  SourceDto,
+  UsageDto,
 } from '@cobble/shared';
 
 const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? '';
@@ -78,6 +85,102 @@ export async function fetchMessages(companionId: string): Promise<MessageDto[]> 
 export async function getCompanionMemory(companionId: string): Promise<MemorySnapshotDto> {
   const body = await request<{ memory: MemorySnapshotDto }>(`/companions/${companionId}/memory`);
   return body.memory;
+}
+
+/** A source intake response: the created source and its queued ingestion job. */
+export interface SourceIntake {
+  readonly source: SourceDto;
+  readonly job: IngestionJobDto;
+}
+
+/** Add a plain-text note to the companion's knowledge base. */
+export async function createNoteSource(
+  companionId: string,
+  input: CreateNoteSourceBody,
+): Promise<SourceIntake> {
+  return request<SourceIntake>(`/companions/${companionId}/sources/note`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+/** Add a web link; the article is fetched and read in the background. */
+export async function createLinkSource(
+  companionId: string,
+  input: CreateLinkSourceBody,
+): Promise<SourceIntake> {
+  return request<SourceIntake>(`/companions/${companionId}/sources/link`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+/** Upload a document file (PDF/txt/md/docx/pptx); reading happens in the background. */
+export async function uploadFileSource(companionId: string, file: File): Promise<SourceIntake> {
+  const auth = await authHeaders();
+  const form = new FormData();
+  form.append('file', file);
+  const response = await fetch(`${API_URL}/companions/${companionId}/sources/file`, {
+    method: 'POST',
+    headers: auth,
+    body: form,
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `upload failed (${response.status})`);
+  }
+  return (await response.json()) as SourceIntake;
+}
+
+/** The companion's sources, newest first. */
+export async function listSources(companionId: string): Promise<SourceDto[]> {
+  const body = await request<{ sources: SourceDto[] }>(`/companions/${companionId}/sources`);
+  return body.sources;
+}
+
+/** One source plus its sections (verbatim text + provenance). */
+export async function getSourceDetail(
+  companionId: string,
+  sourceId: string,
+): Promise<{ source: SourceDto; sections: SectionDto[] }> {
+  return request(`/companions/${companionId}/sources/${sourceId}`);
+}
+
+/** Ingestion progress for all sources ("Cobble has read N of M"). */
+export async function listIngestionJobs(companionId: string): Promise<IngestionJobDto[]> {
+  const body = await request<{ jobs: IngestionJobDto[] }>(`/companions/${companionId}/ingestion`);
+  return body.jobs;
+}
+
+/** Delete a source (and its job + sections) — e.g. dropping a job parked at the cap. */
+export async function deleteSource(companionId: string, sourceId: string): Promise<void> {
+  const auth = await authHeaders();
+  const response = await fetch(`${API_URL}/companions/${companionId}/sources/${sourceId}`, {
+    method: 'DELETE',
+    headers: auth,
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `delete failed (${response.status})`);
+  }
+}
+
+/** The signed-in user's daily token-budget standing (the live usage indicator). */
+export async function getUsage(): Promise<UsageDto> {
+  const body = await request<{ usage: UsageDto }>(`/usage`);
+  return body.usage;
+}
+
+/** Search the companion's semantic memory (the browser's recall window). */
+export async function searchMemory(
+  companionId: string,
+  query: string,
+): Promise<SemanticSearchResultDto[]> {
+  const body = await request<{ results: SemanticSearchResultDto[] }>(
+    `/companions/${companionId}/memory/search`,
+    { method: 'POST', body: JSON.stringify({ query }) },
+  );
+  return body.results;
 }
 
 /** Send a message and yield streamed chat events (SSE). */

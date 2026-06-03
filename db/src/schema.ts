@@ -1,14 +1,44 @@
-import type { MessageRole } from '@cobble/shared';
-import { bigserial, index, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import type { IngestionStatus, MessageRole, SourceKind } from '@cobble/shared';
+import { sql } from 'drizzle-orm';
+import {
+  bigint,
+  bigserial,
+  customType,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  real,
+  text,
+  timestamp,
+  uuid,
+  vector,
+} from 'drizzle-orm/pg-core';
 
 /**
- * Phase 0 data model (implementation.md §1). Multi-tenant: every row is reachable
- * only through its owning user/companion (architecture.md invariant #5). Later
- * phases add semantic/episodic/procedural tables via new migrations.
+ * Data model (implementation.md §1). Multi-tenant: every row is reachable
+ * only through its owning user/companion (architecture.md invariant #5).
+ * Phase 0: users/companions/messages. Phase 1 adds the semantic-memory tables
+ * (sources/sections/facts/ingestion_jobs — original text canonical, the fact
+ * overlay indexes INTO it; see docs/ontology.md).
  *
  * Auth is handled by Google Sign-In; users are JIT-provisioned by the email
  * claim on a verified Google ID token, so there is no local credential/token table.
  */
+
+/**
+ * Embedding dimensionality pinned for the `sections.embedding` vector column.
+ * The embedding gateway must request exactly this many dimensions; changing it
+ * requires a new migration (implementation.md §3).
+ */
+export const EMBEDDING_DIMENSIONS = 1024;
+
+/** Postgres `tsvector` column type for full-text search (not built into drizzle). */
+const tsvector = customType<{ data: string }>({
+  dataType() {
+    return 'tsvector';
+  },
+});
 
 export const users = pgTable('users', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -56,8 +86,157 @@ export const messages = pgTable(
   (table) => [index('messages_companion_idx').on(table.companionId, table.seq)],
 );
 
+/**
+ * Layer 0 — sources: the verbatim originals the user fed the companion. The
+ * extracted `raw_text` is the canonical knowledge substrate; everything derived
+ * (sections, facts) is rebuildable from it and never substitutes for it.
+ */
+export const sources = pgTable(
+  'sources',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companionId: uuid('companion_id')
+      .notNull()
+      .references(() => companions.id, { onDelete: 'cascade' }),
+    kind: text('kind').$type<SourceKind>().notNull(),
+    title: text('title').notNull(),
+    // Filename for uploaded files, URL for links, null for notes.
+    origin: text('origin'),
+    rawText: text('raw_text').notNull(),
+    byteSize: integer('byte_size'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('sources_companion_idx').on(table.companionId)],
+);
+
+/**
+ * Off-request-path ingestion status — the durable progress surface behind the
+ * "Cobble has read 3 of 5 books" UI. One job per source ingestion run.
+ */
+export const ingestionJobs = pgTable(
+  'ingestion_jobs',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companionId: uuid('companion_id')
+      .notNull()
+      .references(() => companions.id, { onDelete: 'cascade' }),
+    sourceId: uuid('source_id')
+      .notNull()
+      .references(() => sources.id, { onDelete: 'cascade' }),
+    status: text('status').$type<IngestionStatus>().notNull().default('queued'),
+    sectionsTotal: integer('sections_total').notNull().default(0),
+    sectionsDone: integer('sections_done').notNull().default(0),
+    // User-safe failure reason; internal detail stays in logs.
+    error: text('error'),
+    // Parsed paragraphs held while a job is `deferred` (over the daily token cap):
+    // parsing is free, so we keep its output and resume the AI passes after reset
+    // without re-uploading. Null outside the deferred state.
+    parsedDoc: jsonb('parsed_doc'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('ingestion_jobs_companion_idx').on(table.companionId, table.status)],
+);
+
+/**
+ * Layer 1 — sections: the retrieval units. `original_text` is a PURE VERBATIM
+ * slice of the source (whole paragraphs, never split mid-paragraph); the
+ * embedding may additionally be conditioned on `context_header`, but the stored
+ * text is always the original so the companion can quote it and cite where to
+ * read it (para/page ranges).
+ */
+export const sections = pgTable(
+  'sections',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    // Denormalized tenancy scope for fast filtered retrieval.
+    companionId: uuid('companion_id')
+      .notNull()
+      .references(() => companions.id, { onDelete: 'cascade' }),
+    sourceId: uuid('source_id')
+      .notNull()
+      .references(() => sources.id, { onDelete: 'cascade' }),
+    chapterTitle: text('chapter_title'),
+    // Pass-1 (segmentation) output: what this section is about.
+    topicTitle: text('topic_title').notNull(),
+    originalText: text('original_text').notNull(),
+    // Pass-2 (enrichment) output: one-line context for embedding disambiguation.
+    contextHeader: text('context_header'),
+    paraStart: integer('para_start').notNull(),
+    paraEnd: integer('para_end').notNull(),
+    pageStart: integer('page_start'),
+    pageEnd: integer('page_end'),
+    // Section order within its source.
+    ord: integer('ord').notNull(),
+    // Nullable until the embedding pass completes.
+    embedding: vector('embedding', { dimensions: EMBEDDING_DIMENSIONS }),
+    // Generated in the migration as: GENERATED ALWAYS AS (to_tsvector('english', original_text)) STORED
+    fts: tsvector('fts').generatedAlwaysAs(sql`to_tsvector('english', original_text)`),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('sections_companion_idx').on(table.companionId),
+    index('sections_source_idx').on(table.sourceId, table.ord),
+    index('sections_embedding_hnsw_idx').using('hnsw', table.embedding.op('vector_cosine_ops')),
+    index('sections_fts_idx').using('gin', table.fts),
+  ],
+);
+
+/**
+ * Layer 2 — facts: the typed knowledge overlay (docs/ontology.md). An index INTO
+ * the verbatim text: every fact carries `section_id` provenance and the overlay
+ * is rebuildable from sources without data loss. Entities are denormalized
+ * strings in subject/object (normalization is a deferred ontology evolution).
+ */
+export const facts = pgTable(
+  'facts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companionId: uuid('companion_id')
+      .notNull()
+      .references(() => companions.id, { onDelete: 'cascade' }),
+    sectionId: uuid('section_id')
+      .notNull()
+      .references(() => sections.id, { onDelete: 'cascade' }),
+    // Core fact type from the closed ontology set (validated at ingestion).
+    factType: text('fact_type').notNull(),
+    subject: text('subject').notNull(),
+    predicate: text('predicate'),
+    object: text('object').notNull(),
+    // Pass-2 self-reported extraction confidence (0–1).
+    confidence: real('confidence'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('facts_companion_idx').on(table.companionId, table.factType),
+    index('facts_section_idx').on(table.sectionId),
+  ],
+);
+
+/**
+ * Per-user token budget for the daily cap (architecture.md token budget). One
+ * row per user: a running token counter for the current window plus the instant
+ * it resets (fixed daily, UTC). When `now()` passes `window_reset_at` the window
+ * rolls, carrying clamped overage forward as debt. `cap_override` grants an
+ * account a non-default allowance (null → the configured default).
+ */
+export const userTokenUsage = pgTable('user_token_usage', {
+  userId: uuid('user_id')
+    .primaryKey()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  windowResetAt: timestamp('window_reset_at', { withTimezone: true }).notNull(),
+  usedTokens: bigint('used_tokens', { mode: 'number' }).notNull().default(0),
+  capOverride: integer('cap_override'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const schema = {
   users,
   companions,
   messages,
+  sources,
+  ingestionJobs,
+  sections,
+  facts,
+  userTokenUsage,
 };

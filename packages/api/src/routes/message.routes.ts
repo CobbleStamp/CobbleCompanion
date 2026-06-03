@@ -2,6 +2,7 @@ import { sendMessageSchema } from '@cobble/shared';
 import type { FastifyInstance } from 'fastify';
 import type { AppDeps } from '../app.js';
 import type { RequireAuth } from '../auth-guard.js';
+import { overCapGuard } from '../quota-guard.js';
 import { streamSse } from '../sse.js';
 
 interface CompanionParams {
@@ -18,7 +19,7 @@ export function registerMessageRoutes(
   deps: AppDeps,
   requireAuth: RequireAuth,
 ): void {
-  const { identity, memory, harness } = deps;
+  const { identity, memory, harness, quota, logger } = deps;
 
   // Read the companion's transcript (oldest-first).
   app.get(
@@ -49,13 +50,21 @@ export function registerMessageRoutes(
       if (!companion) {
         return reply.code(404).send({ error: 'companion not found' });
       }
+      // Daily token cap: refuse before spending, so the wall is a clean 429 (no
+      // partial SSE). Turn-based chat means there's nothing in flight to outrun.
+      const overCap = await overCapGuard(quota, request.userId!);
+      if (overCap) {
+        return reply.code(429).send({ error: overCap });
+      }
 
       await streamSse(
         reply,
         harness.runTurn({
           companion,
           userContent: parsed.data.content,
+          ownerId: request.userId!,
         }),
+        logger,
       );
     },
   );

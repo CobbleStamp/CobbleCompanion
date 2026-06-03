@@ -1,11 +1,12 @@
 /**
  * Types for the memory-vs-performance evaluation harness (companionmemory.md).
  *
- * The harness seeds a conversation transcript, asks a question, and scores the
- * companion's answer under several MEMORY CONFIGURATIONS — measuring how the
- * memory the companion can reach affects the quality of what it says. Phase 0's
- * only memory is the transcript recency window, so the config axis is
- * `recentLimit`; the same shape extends to semantic-retrieval configs at P1.
+ * The harness seeds a conversation transcript (and, for Phase 1 cases, ingests
+ * sources), asks a question, and scores the companion's answer under several
+ * MEMORY CONFIGURATIONS — measuring how the memory the companion can reach
+ * affects the quality of what it says. Config axes: the transcript recency
+ * window (`recentLimit`, Phase 0) and semantic retrieval over ingested sources
+ * (`semantic`, Phase 1 — including the contextual-header A/B knob).
  */
 
 export interface SeedTurn {
@@ -13,15 +14,23 @@ export interface SeedTurn {
   readonly content: string;
 }
 
+/** A source ingested before asking (Phase 1 grounded-recall cases). */
+export interface SeedSource {
+  readonly title: string;
+  readonly text: string;
+}
+
 export interface EvalCase {
   readonly id: string;
   readonly description?: string;
   /** Prior conversation turns to seed before asking (oldest-first). */
   readonly seedTranscript: readonly SeedTurn[];
+  /** Sources fed through the real ingestion pipeline before asking (P1). */
+  readonly sources?: readonly SeedSource[];
   readonly question: string;
   /** Substrings expected in a correct answer when the memory is reachable. */
   readonly expectedFacts: readonly string[];
-  /** When true, the answer is NOT in the transcript — a correct companion declines. */
+  /** When true, the answer is NOT in reachable memory — a correct companion declines. */
   readonly expectMemoryAbsent?: boolean;
 }
 
@@ -39,6 +48,12 @@ export interface MemoryConfig {
   readonly label: string;
   /** Transcript recency window the harness recalls (Phase 0 memory knob). */
   readonly recentLimit: number;
+  /** Semantic retrieval over ingested sources (Phase 1 memory knob). */
+  readonly semantic?: {
+    readonly topK: number;
+    /** A/B: prefix the Pass-2 context header onto embedding inputs. */
+    readonly useContextHeader: boolean;
+  };
 }
 
 export interface CaseResult {
