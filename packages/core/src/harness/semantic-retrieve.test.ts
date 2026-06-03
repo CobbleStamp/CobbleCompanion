@@ -89,9 +89,7 @@ describe('toContextBlock', () => {
     // Splice attack: removing the inner sentinel must not assemble an outer one.
     const half = UNTRUSTED_CLOSE.slice(0, 10);
     const rest = UNTRUSTED_CLOSE.slice(10);
-    const block = toContextBlock(
-      makeHit({ originalText: `x ${half}${UNTRUSTED_CLOSE}${rest} y` }),
-    );
+    const block = toContextBlock(makeHit({ originalText: `x ${half}${UNTRUSTED_CLOSE}${rest} y` }));
     expect(block.content.split(UNTRUSTED_CLOSE)).toHaveLength(2);
   });
 
@@ -103,9 +101,7 @@ describe('toContextBlock', () => {
   });
 
   it('omits chapter and pages when absent', () => {
-    const block = toContextBlock(
-      makeHit({ chapterTitle: null, pageStart: null, pageEnd: null }),
-    );
+    const block = toContextBlock(makeHit({ chapterTitle: null, pageStart: null, pageEnd: null }));
     expect(block.content).not.toContain('chapter:');
     expect(block.content).not.toContain('pages');
     expect(block.content).toContain('paragraphs 3–5');
