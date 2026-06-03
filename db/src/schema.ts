@@ -1,10 +1,12 @@
 import type { IngestionStatus, MessageRole, SourceKind } from '@cobble/shared';
 import { sql } from 'drizzle-orm';
 import {
+  bigint,
   bigserial,
   customType,
   index,
   integer,
+  jsonb,
   pgTable,
   real,
   text,
@@ -126,6 +128,10 @@ export const ingestionJobs = pgTable(
     sectionsDone: integer('sections_done').notNull().default(0),
     // User-safe failure reason; internal detail stays in logs.
     error: text('error'),
+    // Parsed paragraphs held while a job is `deferred` (over the daily token cap):
+    // parsing is free, so we keep its output and resume the AI passes after reset
+    // without re-uploading. Null outside the deferred state.
+    parsedDoc: jsonb('parsed_doc'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -207,6 +213,23 @@ export const facts = pgTable(
   ],
 );
 
+/**
+ * Per-user token budget for the daily cap (architecture.md token budget). One
+ * row per user: a running token counter for the current window plus the instant
+ * it resets (fixed daily, UTC). When `now()` passes `window_reset_at` the window
+ * rolls, carrying clamped overage forward as debt. `cap_override` grants an
+ * account a non-default allowance (null → the configured default).
+ */
+export const userTokenUsage = pgTable('user_token_usage', {
+  userId: uuid('user_id')
+    .primaryKey()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  windowResetAt: timestamp('window_reset_at', { withTimezone: true }).notNull(),
+  usedTokens: bigint('used_tokens', { mode: 'number' }).notNull().default(0),
+  capOverride: integer('cap_override'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const schema = {
   users,
   companions,
@@ -215,4 +238,5 @@ export const schema = {
   ingestionJobs,
   sections,
   facts,
+  userTokenUsage,
 };

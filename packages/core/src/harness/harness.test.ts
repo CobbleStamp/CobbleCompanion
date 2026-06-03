@@ -141,7 +141,9 @@ describe('Harness.runTurn (Phase 0 single-pass loop)', () => {
       const [section] = await semantic.insertSections(companion.id, source.id, [
         { topicTitle: 'Ceviche origins', originalText: text, paraStart: 3, paraEnd: 5, ord: 0 },
       ]);
-      const [vector] = await embeddings.embed({
+      const {
+        vectors: [vector],
+      } = await embeddings.embed({
         input: [text],
         model: 'fake-embed',
         dimensions: EMBEDDING_DIMENSIONS,

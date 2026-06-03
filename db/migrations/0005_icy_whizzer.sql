@@ -1,0 +1,1 @@
+ALTER TABLE "ingestion_jobs" ADD COLUMN "parsed_doc" jsonb;

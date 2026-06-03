@@ -100,8 +100,10 @@ via the **Memory** and **Sources** buttons in the chat header
 section (message count + "View transcript" toggle), the semantic section
 (source/section/fact counts + a search box returning verbatim passages with
 provenance), and a "coming soon" panel for procedural. The Sources page handles
-intake (file upload, note, link) and shows reading progress; grounded chat answers
-render their citations inline in `Chat.tsx`.
+intake (file upload, note, link), shows reading progress, and lets the user delete a
+source (incl. one parked at the daily token cap); a usage indicator in each page
+header shows the day's token allowance. Grounded chat answers render their citations
+inline in `Chat.tsx`.
 
 ## 5. Evaluating memory vs performance
 

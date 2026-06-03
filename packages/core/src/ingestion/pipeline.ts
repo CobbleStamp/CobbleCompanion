@@ -11,6 +11,8 @@ import type { EmbeddingGateway } from '../embedding/gateway.js';
 import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import type { NewSection, SectionRecord, SemanticMemoryStore } from '../memory/semantic-store.js';
+import type { TokenQuotaStore } from '../quota/store.js';
+import { createUsageAccumulator, meteredLlmGateway, type UsageAccumulator } from '../usage.js';
 import { buildEmbeddingInput } from './embedder.js';
 import { enrichSection } from './enricher.js';
 import type { ParsedDocument } from './parser.js';
@@ -44,6 +46,8 @@ export interface IngestionPipelineOptions {
   readonly logger: Logger;
   /** How payloads become parsed documents; defaults to the standard source parser. */
   readonly sourceParser?: SourceParser;
+  /** Debits the run's tokens against the owner's daily cap; omitted = no metering. */
+  readonly quota?: TokenQuotaStore;
 }
 
 export interface IngestionRunParams {
@@ -51,7 +55,16 @@ export interface IngestionRunParams {
   readonly sourceId: string;
   readonly jobId: string;
   readonly sourceTitle: string;
-  readonly payload: IngestionPayload;
+  /** The companion's owner — the account the run's tokens are debited to. */
+  readonly ownerId?: string;
+  /** Raw input for a fresh run; parsed off the request path. */
+  readonly payload?: IngestionPayload;
+  /**
+   * A pre-parsed document for resuming a previously `deferred` job: parsing
+   * already happened, so the run skips straight to the (token-spending) AI
+   * passes. Exactly one of `payload` / `resumeDocument` is set.
+   */
+  readonly resumeDocument?: ParsedDocument;
 }
 
 /** Sections embedded per gateway call. */
@@ -68,21 +81,43 @@ export class IngestionPipeline {
   async run(params: IngestionRunParams): Promise<void> {
     const { semantic, logger } = this.options;
     const { companionId, sourceId, jobId } = params;
+    // One tally for the whole run: the two LLM passes (via a metered gateway)
+    // and the embedding pass all deposit here, debited once at the end.
+    const usage = createUsageAccumulator();
     try {
-      await semantic.updateJob(jobId, { status: 'parsing' });
-      const document = await this.sourceParser.parse(params.payload);
-      await semantic.setSourceText(sourceId, document.rawText);
+      // Parsing is free (no tokens). A fresh run parses and stores the canonical
+      // text; a resume reuses the parse held on the deferred job.
+      let document: ParsedDocument;
+      if (params.resumeDocument) {
+        document = params.resumeDocument;
+      } else {
+        await semantic.updateJob(jobId, { status: 'parsing' });
+        if (!params.payload) {
+          throw new Error('ingestion run has neither a payload nor a resume document');
+        }
+        document = await this.sourceParser.parse(params.payload);
+        await semantic.setSourceText(sourceId, document.rawText);
+      }
 
-      await semantic.updateJob(jobId, { status: 'segmenting' });
-      const sections = await this.segmentIntoSections(params, document);
+      // Quota gate: the AI passes (segment/enrich/embed) are the token cost, so
+      // gate them. Over cap → hold the parse and defer until the daily reset (the
+      // sweeper resumes it). Mid-run overage is allowed; rollover debt handles it.
+      if (await this.isOverCap(params.ownerId)) {
+        await semantic.updateJob(jobId, { status: 'deferred', parsedDoc: document });
+        return;
+      }
+
+      await semantic.updateJob(jobId, { status: 'segmenting', parsedDoc: null });
+      const sections = await this.segmentIntoSections(params, document, usage);
       await semantic.updateJob(jobId, { status: 'enriching', sectionsTotal: sections.length });
 
-      const headers = await this.enrichSections(params, sections);
+      const headers = await this.enrichSections(params, sections, usage);
 
       await semantic.updateJob(jobId, { status: 'embedding' });
-      await this.embedSections(sections, headers);
+      await this.embedSections(sections, headers, usage);
 
       await semantic.updateJob(jobId, { status: 'done' });
+      await this.debit(params.ownerId, usage);
     } catch (error) {
       logger.error('ingestion run failed', {
         operation: 'ingestion.pipeline.run',
@@ -94,17 +129,27 @@ export class IngestionPipeline {
       await semantic.updateJob(jobId, {
         status: 'failed',
         error: 'Cobble could not finish reading this source. Please try again.',
+        parsedDoc: null,
       });
     }
+  }
+
+  /** Whether the owner is over their daily cap (false when unmetered, e.g. tests). */
+  private async isOverCap(ownerId: string | undefined): Promise<boolean> {
+    if (!this.options.quota || !ownerId) {
+      return false;
+    }
+    return this.options.quota.isOverCap(ownerId);
   }
 
   /** Pass 1: LLM boundary marking, then slice VERBATIM paragraph ranges into rows. */
   private async segmentIntoSections(
     params: IngestionRunParams,
     document: ParsedDocument,
+    usage: UsageAccumulator,
   ): Promise<readonly SectionRecord[]> {
     const boundaries = await segmentParagraphs(
-      this.options.llm,
+      meteredLlmGateway(this.options.llm, usage.sink),
       this.options.ingestionModel,
       document.paragraphs,
       this.options.logger,
@@ -120,13 +165,15 @@ export class IngestionPipeline {
   private async enrichSections(
     params: IngestionRunParams,
     sections: readonly SectionRecord[],
+    usage: UsageAccumulator,
   ): Promise<ReadonlyMap<string, string>> {
     const { semantic, logger } = this.options;
+    const llm = meteredLlmGateway(this.options.llm, usage.sink);
     const headers = new Map<string, string>();
     let done = 0;
     for (const section of sections) {
       const enrichment = await enrichSection(
-        this.options.llm,
+        llm,
         this.options.ingestionModel,
         {
           sourceTitle: params.sourceTitle,
@@ -153,10 +200,11 @@ export class IngestionPipeline {
   private async embedSections(
     sections: readonly SectionRecord[],
     headers: ReadonlyMap<string, string>,
+    usage: UsageAccumulator,
   ): Promise<void> {
     for (let offset = 0; offset < sections.length; offset += EMBED_BATCH_SIZE) {
       const batch = sections.slice(offset, offset + EMBED_BATCH_SIZE);
-      const vectors = await this.options.embeddings.embed({
+      const { vectors, usage: embedUsage } = await this.options.embeddings.embed({
         input: batch.map((section) =>
           buildEmbeddingInput(
             {
@@ -169,9 +217,31 @@ export class IngestionPipeline {
         model: this.options.embeddingModel,
         dimensions: this.options.embeddingDimensions,
       });
+      usage.sink.add(embedUsage);
       for (let i = 0; i < batch.length; i++) {
         await this.options.semantic.setSectionEmbedding(batch[i]!.id, vectors[i]!);
       }
+    }
+  }
+
+  /**
+   * Debit the run's tokens against the owner's daily cap. Best-effort: a
+   * metering failure is logged but never fails an otherwise-successful run
+   * (logging.md); runs with no owner/quota (e.g. tests) skip metering.
+   */
+  private async debit(ownerId: string | undefined, usage: UsageAccumulator): Promise<void> {
+    const total = usage.total().totalTokens;
+    if (!this.options.quota || !ownerId || total <= 0) {
+      return;
+    }
+    try {
+      await this.options.quota.recordUsage(ownerId, total);
+    } catch (error) {
+      this.options.logger.error('failed to record ingestion token usage', {
+        operation: 'ingestion.pipeline.debit',
+        ownerId,
+        error,
+      });
     }
   }
 }

@@ -6,6 +6,7 @@ import type {
 } from '@cobble/shared';
 import { useEffect, useState } from 'react';
 import { fetchMessages, getCompanionMemory, searchMemory } from '../api/client.js';
+import { UsageBadge } from '../components/UsageBadge.js';
 
 interface MemoryBrowserProps {
   readonly companion: CompanionDto;
@@ -53,6 +54,7 @@ export function MemoryBrowser({ companion, onBack }: MemoryBrowserProps): JSX.El
     <main className="chat">
       <header>
         <h1>{companion.name} · Memory</h1>
+        <UsageBadge />
         <button type="button" onClick={onBack}>
           Back to chat
         </button>

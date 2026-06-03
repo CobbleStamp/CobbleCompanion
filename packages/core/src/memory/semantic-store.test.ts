@@ -18,7 +18,9 @@ import {
 const gateway = new FakeEmbeddingGateway();
 
 async function embedOne(text: string): Promise<readonly number[]> {
-  const [vector] = await gateway.embed({
+  const {
+    vectors: [vector],
+  } = await gateway.embed({
     input: [text],
     model: 'fake',
     dimensions: EMBEDDING_DIMENSIONS,
@@ -246,5 +248,71 @@ describe('DrizzleSemanticMemoryStore', () => {
     const counts = await store.counts(companionId);
     expect(counts.sources).toBe(2);
     expect(counts.sections).toBe(1);
+  });
+
+  it('lists deferred jobs with owner + held parse, and clears on resume', async () => {
+    const source = await store.createSource(companionId, {
+      kind: 'note',
+      title: 'Parked note',
+      rawText: 'held',
+    });
+    const job = await store.createJob(companionId, source.id);
+    await store.updateJob(job.id, {
+      status: 'deferred',
+      parsedDoc: { rawText: 'held', paragraphs: [{ ord: 1, text: 'held' }] },
+    });
+
+    const deferred = await store.listDeferredJobs();
+    expect(deferred).toHaveLength(1);
+    expect(deferred[0]!.jobId).toBe(job.id);
+    expect(deferred[0]!.sourceTitle).toBe('Parked note');
+    expect(deferred[0]!.parsedDoc.paragraphs[0]!.text).toBe('held');
+
+    await store.updateJob(job.id, { status: 'segmenting', parsedDoc: null });
+    expect(await store.listDeferredJobs()).toHaveLength(0);
+  });
+
+  it('fails interrupted jobs on restart but spares deferred and terminal ones', async () => {
+    const make = async (status: 'parsing' | 'segmenting' | 'deferred' | 'done') => {
+      const source = await store.createSource(companionId, {
+        kind: 'note',
+        title: status,
+        rawText: '',
+      });
+      const job = await store.createJob(companionId, source.id);
+      await store.updateJob(job.id, { status });
+      return job.id;
+    };
+    const parsing = await make('parsing');
+    const segmenting = await make('segmenting');
+    const deferred = await make('deferred');
+    const done = await make('done');
+
+    const failedCount = await store.failInterruptedJobs();
+    expect(failedCount).toBe(2);
+
+    const byId = new Map((await store.listJobs(companionId)).map((j) => [j.id, j.status]));
+    expect(byId.get(parsing)).toBe('failed');
+    expect(byId.get(segmenting)).toBe('failed');
+    expect(byId.get(deferred)).toBe('deferred'); // resumable — spared
+    expect(byId.get(done)).toBe('done'); // terminal — spared
+  });
+
+  it('deletes a source within its companion scope, cascading its job', async () => {
+    const source = await store.createSource(companionId, {
+      kind: 'note',
+      title: 'Doomed',
+      rawText: 'x',
+    });
+    await store.createJob(companionId, source.id);
+
+    // Another owner cannot delete it.
+    expect(await store.deleteSource(otherCompanionId, source.id)).toBe(false);
+    expect(await store.listSources(companionId)).toHaveLength(1);
+
+    // The owner can; the job cascades away with the source.
+    expect(await store.deleteSource(companionId, source.id)).toBe(true);
+    expect(await store.listSources(companionId)).toHaveLength(0);
+    expect(await store.listJobs(companionId)).toHaveLength(0);
   });
 });

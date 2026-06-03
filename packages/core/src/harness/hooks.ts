@@ -1,4 +1,5 @@
 import type { Citation, MessageRole } from '@cobble/shared';
+import type { TokenUsage } from '../usage.js';
 
 /**
  * The harness's named extension points (architecture.md invariant #3,
@@ -54,9 +55,16 @@ export interface RetrieveParams {
   readonly userContent: string;
 }
 
+/** What the retrieval hook returns: the context blocks plus any token usage it
+ * spent (e.g. the query embedding), so the harness can meter the whole turn. */
+export interface RetrieveResult {
+  readonly blocks: readonly ContextBlock[];
+  readonly usage: TokenUsage;
+}
+
 // memory-retrieval hook — assembles prior context for a turn (P0: the recency
 // window over the single continuous transcript; P1: + semantic recall)
-export type RetrieveContext = (params: RetrieveParams) => Promise<readonly ContextBlock[]>;
+export type RetrieveContext = (params: RetrieveParams) => Promise<RetrieveResult>;
 
 // tool hooks — gate around every tool call (P3)
 export type BeforeToolCall = (call: ToolCall, ctx: TurnCtx) => Promise<ToolCall | Block>;

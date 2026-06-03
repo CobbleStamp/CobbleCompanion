@@ -104,6 +104,7 @@ flowchart TB
 | **Semantic Store** | Sources (verbatim), sections (vector + FTS), fact overlay, ingestion jobs (P1) | Hybrid retrieval with provenance; contract → `ontology.md` |
 | **Ingestion Pipeline + Runner** | Two-pass source reading off the request path (P1, §4.8) | Durable status in `ingestion_jobs`; replaceable by a real worker |
 | **Identity Store** | Companion "home" record | Source of truth surfaces load from |
+| **Token Quota Store** | Per-user daily token-budget state — the cost cap (P1, §4.8) | Postgres-backed (`user_token_usage`); routes enforce it inline |
 | **Persistence** | Relational + vector storage | Postgres + `pgvector`; schemas → `implementation.md` |
 | **Eval Harness** | Offline memory-vs-performance evaluation (`packages/eval`) | Not on the serving path; live OpenRouter. See `companionmemory.md` §5 |
 
@@ -292,9 +293,11 @@ lever, so the model *reads everything* but *emits almost nothing* (~1% of input 
 
 ```mermaid
 flowchart LR
-    UP["upload (file · note · link)<br/>202 + queued job · 429 over limit"] --> RUN["Ingestion Runner<br/>(off request path)"]
+    UP["upload (file · note · link)<br/>202 + queued job · 429 only if queue full"] --> RUN["Ingestion Runner<br/>(off request path)"]
     RUN --> PARSE["parse → atomic paragraphs<br/>(never split mid-paragraph)"]
-    PARSE --> P1["Pass 1 — segment:<br/>LLM emits ONLY boundaries + topics"]
+    PARSE --> GATE{"owner over<br/>daily token cap?"}
+    GATE -->|yes| DEFER["status: deferred<br/>(hold parse; sweeper resumes after reset)"]
+    GATE -->|no| P1["Pass 1 — segment:<br/>LLM emits ONLY boundaries + topics"]
     P1 --> SECT["sections = verbatim paragraph slices<br/>(the model never rewrites text)"]
     SECT --> P2["Pass 2 — enrich:<br/>one context line + typed facts (ontology.md)"]
     P2 --> EMB["embed: [context header +] verbatim text<br/>→ pgvector · FTS"]
@@ -315,12 +318,20 @@ Design rules (the "improved staged hybrid"; memory guide → `companionmemory.md
   paragraph/page range) so answers cite and can show the original passage.
 - **Failures are data.** A failed run lands on the job as a user-safe error; the durable
   status surface (`ingestion_jobs`) is what makes the in-process runner replaceable by a real
-  worker with no schema or API change (§8).
-- **Backpressure at the door.** Submissions (and memory searches) are rate-limited per owner,
-  and the runner caps queued+in-flight runs across all owners; past either limit the request
-  gets a 429 instead of unbounded spend or queue growth (knobs → `implementation.md` §config).
-  Limit state is in-memory, which assumes the single warm instance (§8) — a shared store is
-  the multi-replica follow-up.
+  worker with no schema or API change (§8). It also makes restart recovery clean: interrupted
+  in-flight jobs are failed on startup (re-upload), while `deferred` jobs keep their parse and
+  resume.
+- **Cost guardrail = a per-user daily token cap.** The real resource is LLM/embedding **tokens**,
+  so spend is metered against a **per-user cap over a fixed daily window** (resets 00:00 UTC);
+  overage carries to the next day as **debt clamped to one cap** (never a multi-day lockout). The
+  cap state lives in Postgres (`user_token_usage`), so it is correct across replicas — unlike a
+  per-instance request limiter. Each route enforces it inline: **chat & search** pre-flight-check
+  and return **429** when over cap; **ingestion defers** (see below). Actual token counts come from
+  the provider's `usage` (estimated only if a model omits it). Because **ingestion is serial** and
+  **chat is turn-based**, there is no in-app concurrency to outrun the post-hoc accounting — the
+  serialization *is* the burst backstop, so the cap is the whole defense (threat model:
+  legitimate-user cost control, not attacker resistance). The runner still caps queued+in-flight
+  runs (`INGESTION_QUEUE_MAX`) as a memory backstop. Knobs → `implementation.md` §config.
 
 #### Supported source formats (acceptance contract)
 
@@ -357,6 +368,13 @@ video, archives). `.docx`/`.pptx` share the zip `PK` magic, so the extension (up
 header (link) is the discriminator; the parser confirms the inner structure. The decoupled
 design lives in `content-parser.ts` (registry), `source-parser.ts` (payload → document facade
 the pipeline depends on), and `link-resolver.ts` (fetch + detect).
+
+> **Daily-cap deferral.** Parsing is free (no tokens); the **AI passes** (segment/enrich/embed)
+> are the cost. When the owner is over their daily token cap, the pipeline parses the source,
+> persists the parsed paragraphs on the job (`ingestion_jobs.parsed_doc`), sets status `deferred`,
+> and stops — no re-upload needed. A periodic sweeper resumes deferred jobs (serially, re-checking
+> the cap) as allowances reset, so the queue drains incrementally. Users can delete a parked job
+> (`DELETE …/sources/:id`). This is why over-cap uploads still return **202**, not 429.
 
 > **`kind` modeling:** `sources.kind` carries the format directly —
 > `pdf | note | link | txt | md | docx | pptx` (`implementation.md` §`sources`). The column is
@@ -405,11 +423,12 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
       harness/         agent loop + extension hooks (§4); semantic recall (P1)
       llm/             provider-agnostic LLM gateway
       embedding/       provider-agnostic embedding gateway (P1)
-      ingestion/       parse → segment → enrich → embed pipeline + runner (P1, §4.8)
+      ingestion/       parse → segment → enrich → embed pipeline + runner + deferred-job sweeper (P1, §4.8)
       memory/          MemoryStore (transcript) + SemanticMemoryStore (P1)
       identity/        companion "home" model + store
-    api/               BFF / surface boundary (Fastify); memory + source routes
-    web/               React web client; chat w/ citations, sources page, memory browser
+      quota/           per-user daily token-cap state (P1, §4.8)
+    api/               BFF / surface boundary (Fastify); memory + source + usage routes
+    web/               React web client; chat w/ citations, sources page, memory browser, usage badge
     shared/            shared TS types / contracts
     eval/              live memory-vs-performance harness (→ companionmemory.md §5)
   db/                  migrations & schema (→ implementation.md)

@@ -80,10 +80,16 @@ export function uploadKindForFilename(filename: string): UploadSourceKind | null
   return match?.kind ?? null;
 }
 
-/** Ingestion job lifecycle states, in pipeline order. */
+/**
+ * Ingestion job lifecycle states, in pipeline order. `deferred` is off the main
+ * line: a job that parsed successfully but whose AI passes wait for the owner's
+ * daily token allowance to reset (architecture.md §4.8); it resumes to
+ * `segmenting` once under the cap.
+ */
 export type IngestionStatus =
   | 'queued'
   | 'parsing'
+  | 'deferred'
   | 'segmenting'
   | 'enriching'
   | 'embedding'
@@ -108,6 +114,16 @@ export interface IngestionJobDto {
   readonly sectionsTotal: number;
   readonly sectionsDone: number;
   readonly error: string | null;
+}
+
+/** The signed-in user's daily token-budget standing, for the live usage indicator. */
+export interface UsageDto {
+  readonly usedTokens: number;
+  readonly capTokens: number;
+  /** Whole-percent of the cap consumed, clamped to 0–100. */
+  readonly percentUsed: number;
+  /** ISO instant the daily allowance resets (00:00 UTC). */
+  readonly resetsAt: string;
 }
 
 /** A retrieval section: verbatim original text plus its location in the source. */

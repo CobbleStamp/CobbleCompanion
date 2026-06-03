@@ -39,7 +39,7 @@ describe('hashToUnitVector', () => {
 describe('FakeEmbeddingGateway', () => {
   it('returns one vector per input, in order, and records params', async () => {
     const gateway = new FakeEmbeddingGateway();
-    const vectors = await gateway.embed({
+    const { vectors } = await gateway.embed({
       input: ['first', 'second'],
       model: 'fake-model',
       dimensions: 8,

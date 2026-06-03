@@ -6,14 +6,19 @@
  * Per testing.md, we fake the gateway interface rather than mock the real client.
  */
 
-import type { EmbeddingGateway, EmbeddingParams } from './gateway.js';
+import { estimateTokens } from '../usage.js';
+import type { EmbeddingGateway, EmbeddingParams, EmbeddingResult } from './gateway.js';
 
 export class FakeEmbeddingGateway implements EmbeddingGateway {
   lastParams: EmbeddingParams | null = null;
 
-  async embed(params: EmbeddingParams): Promise<readonly (readonly number[])[]> {
+  async embed(params: EmbeddingParams): Promise<EmbeddingResult> {
     this.lastParams = params;
-    return params.input.map((text) => hashToUnitVector(text, params.dimensions));
+    const promptTokens = estimateTokens(params.input.join('\n'));
+    return {
+      vectors: params.input.map((text) => hashToUnitVector(text, params.dimensions)),
+      usage: { promptTokens, completionTokens: 0, totalTokens: promptTokens },
+    };
   }
 }
 

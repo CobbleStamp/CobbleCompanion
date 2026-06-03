@@ -72,13 +72,27 @@ migrations under `db/`.
 | Field | Type | Notes |
 |---|---|---|
 | `id` / `companion_id` / `source_id` | uuid | cascade FKs |
-| `status` | text | `queued → parsing → segmenting → enriching → embedding → done` \| `failed` |
+| `status` | text | `queued → parsing → segmenting → enriching → embedding → done` \| `failed`; `deferred` is off-line (parsed, awaiting the daily token cap to reset — `architecture.md` §4.8) |
 | `sections_total` / `sections_done` | integer | drives "read N of M" |
 | `error` | text, nullable | user-safe failure reason; detail stays in logs |
+| `parsed_doc` | jsonb, nullable | parsed paragraphs held while `deferred`, so the AI passes resume without a re-upload; null otherwise |
 | `created_at` / `updated_at` | timestamptz | |
 
 > The durable status surface is what makes the in-process runner replaceable by a real worker
-> with no schema/API change (`architecture.md` §4.8, §8).
+> with no schema/API change (`architecture.md` §4.8, §8), and lets deferred jobs survive a restart.
+
+### `user_token_usage` — daily token cap state (Phase 1)
+| Field | Type | Notes |
+|---|---|---|
+| `user_id` | uuid (PK, FK → `users.id`, cascade) | one row per user |
+| `window_reset_at` | timestamptz | when the current fixed-daily (UTC) window rolls; overage carries as debt clamped to one cap |
+| `used_tokens` | bigint | tokens spent in the current window (LLM + embedding) |
+| `cap_override` | integer, nullable | per-account cap; null → the `TOKEN_CAP_PER_DAY` default |
+| `updated_at` | timestamptz | |
+
+> Postgres-backed so the cap is correct across replicas. Routes enforce it inline: chat/search
+> 429 over cap, ingestion defers (`architecture.md` §4.8). `GET /usage` exposes the standing for
+> the web client's live indicator.
 
 ### `sections` — Layer 1: retrieval units (Phase 1)
 | Field | Type | Notes |
@@ -196,9 +210,7 @@ Loaded from environment / a secret manager; required values validated at startup
 | `INGESTION_MODEL` | Cheap model for the two ingestion reading passes (default `google/gemini-2.5-flash`) — input-heavy, output-bounded (`architecture.md` §4.8) |
 | `INGESTION_MAX_BYTES` | Source upload size cap, also the link-fetch body ceiling (default 25 MiB) |
 | `USE_CONTEXT_HEADER` | `true` (default) \| `false` — prefix the Pass-2 context header onto embedding inputs (the eval A/B knob, `companionmemory.md` §5) |
-| `RATE_LIMIT_WINDOW_MS` | Window for the per-owner rate limits on LLM/embedding-spend routes (default 60 000 ms) |
-| `INGESTION_RATE_MAX` | Max source submissions (file/note/link) per owner per window (default 10) |
-| `SEARCH_RATE_MAX` | Max memory searches per owner per window (default 30) |
+| `TOKEN_CAP_PER_DAY` | Per-user daily token cap (LLM + embedding) — the cost guardrail across all routes; fixed daily UTC window, overage carries as clamped debt (default 1 000 000). Per-account override → `user_token_usage.cap_override` |
 | `INGESTION_QUEUE_MAX` | Backstop cap on queued+in-flight ingestion runs across all owners; submissions past it get 429 (default 100) |
 
 **_Deferred:_** worker tuning, proactivity cadence, push-notification credentials (P2+).

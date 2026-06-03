@@ -75,6 +75,28 @@ describe('message routes', () => {
     expect(res.json().error).toBe('message content is required');
   });
 
+  it('refuses a turn with 429 when the owner is over the daily token cap', async () => {
+    const owner = await ctx.deps.identity.ensureUserByEmail('owner@example.com');
+    await ctx.deps.quota.recordUsage(owner.id, ctx.deps.config.tokenCapPerDay);
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/messages`,
+      headers: auth,
+      payload: { content: 'hello there' },
+    });
+
+    expect(res.statusCode).toBe(429);
+    expect(res.json().error).toMatch(/allowance/i);
+    // The refused turn left no transcript behind.
+    const messages = await ctx.app.inject({
+      method: 'GET',
+      url: `/companions/${companionId}/messages`,
+      headers: auth,
+    });
+    expect(messages.json().messages).toEqual([]);
+  });
+
   it('streams an assistant reply and persists the transcript (end-to-end SSE)', async () => {
     await ctx.app.listen({ port: 0, host: '127.0.0.1' });
     const { port } = ctx.app.server.address() as AddressInfo;
@@ -104,5 +126,10 @@ describe('message routes', () => {
       ['user', 'hello there'],
       ['assistant', 'Hi there'],
     ]);
+
+    // The turn's tokens (LLM + query embedding) are debited to the owner's cap.
+    const owner = await ctx.deps.identity.ensureUserByEmail('owner@example.com');
+    const usage = await ctx.deps.quota.getUsage(owner.id);
+    expect(usage.usedTokens).toBeGreaterThan(0);
   });
 });

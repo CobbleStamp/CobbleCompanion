@@ -37,6 +37,8 @@ const history: MessageDto[] = [
 vi.mock('../api/client.js', () => ({
   fetchMessages: vi.fn(),
   sendMessage: vi.fn(async function* () {}),
+  // The usage badge polls this; reject so it stays hidden in these tests.
+  getUsage: vi.fn(() => Promise.reject(new Error('no usage'))),
 }));
 
 function renderChat(): void {

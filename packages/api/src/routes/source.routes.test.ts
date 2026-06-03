@@ -55,6 +55,10 @@ describe('source routes', () => {
     expect(jobs).toHaveLength(1);
     expect(jobs[0].status).toBe('done');
     expect(jobs[0].sectionsDone).toBe(jobs[0].sectionsTotal);
+
+    // Ingestion's LLM + embedding tokens are debited to the owner's daily cap.
+    const owner = await ctx.deps.identity.ensureUserByEmail('owner@example.com');
+    expect((await ctx.deps.quota.getUsage(owner.id)).usedTokens).toBeGreaterThan(0);
   });
 
   it('rejects an invalid note body', async () => {
@@ -87,6 +91,41 @@ describe('source routes', () => {
       headers: auth,
     });
     expect(['done', 'failed']).toContain(progress.json().jobs[0].status);
+  });
+
+  it('deletes a source within its companion and 404s a cross-owner delete', async () => {
+    const created = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/sources/note`,
+      headers: auth,
+      payload: { title: 'Doomed', text: 'Gone soon.\n\nReally.' },
+    });
+    const sourceId = created.json().source.id;
+    await ctx.deps.ingestion.whenIdle();
+
+    // A different owner cannot reach this companion's source.
+    const intruder = ctx.bearerFor('intruder@example.com');
+    const denied = await ctx.app.inject({
+      method: 'DELETE',
+      url: `/companions/${companionId}/sources/${sourceId}`,
+      headers: intruder,
+    });
+    expect(denied.statusCode).toBe(404);
+
+    // The owner can; the source (and its job) is gone afterwards.
+    const ok = await ctx.app.inject({
+      method: 'DELETE',
+      url: `/companions/${companionId}/sources/${sourceId}`,
+      headers: auth,
+    });
+    expect(ok.statusCode).toBe(204);
+
+    const list = await ctx.app.inject({
+      method: 'GET',
+      url: `/companions/${companionId}/sources`,
+      headers: auth,
+    });
+    expect(list.json().sources).toHaveLength(0);
   });
 
   it('rejects a link with an invalid URL', async () => {
@@ -301,45 +340,6 @@ describe('source routes', () => {
         ...('payload' in route ? { payload: route.payload } : {}),
       });
       expect(res.statusCode).toBe(404);
-    }
-  });
-
-  it('rate-limits ingestion per owner with one cap shared across note and link', async () => {
-    const limited = await makeTestApp(undefined, undefined, { config: { ingestionRateMax: 2 } });
-    try {
-      const ownerAuth = limited.bearerFor('owner@example.com');
-      const made = await limited.app.inject({
-        method: 'POST',
-        url: '/companions',
-        headers: ownerAuth,
-        payload: { name: 'Pebble', form: 'fox', temperament: 'curious' },
-      });
-      const id = made.json().companion.id;
-      const submitNote = (): Promise<{ statusCode: number; body: string }> =>
-        limited.app
-          .inject({
-            method: 'POST',
-            url: `/companions/${id}/sources/note`,
-            headers: ownerAuth,
-            payload: { title: 'Note', text: 'Body text.' },
-          })
-          .then((r) => ({ statusCode: r.statusCode, body: r.body }));
-
-      // INGESTION_RATE_MAX is documented as the cap across PDF/note/link
-      // combined — a note and a link together exhaust a cap of 2.
-      expect((await submitNote()).statusCode).toBe(202);
-      const link = await limited.app.inject({
-        method: 'POST',
-        url: `/companions/${id}/sources/link`,
-        headers: ownerAuth,
-        payload: { url: 'https://example.com/article' },
-      });
-      expect(link.statusCode).toBe(202);
-      const third = await submitNote();
-      expect(third.statusCode).toBe(429);
-      expect(JSON.parse(third.body).error).toMatch(/too many requests/);
-    } finally {
-      await limited.close();
     }
   });
 

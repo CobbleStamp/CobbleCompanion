@@ -9,10 +9,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   createLinkSource,
   createNoteSource,
+  deleteSource,
   listIngestionJobs,
   listSources,
   uploadFileSource,
 } from '../api/client.js';
+import { UsageBadge } from '../components/UsageBadge.js';
 
 interface SourcesProps {
   readonly companionName: string;
@@ -22,9 +24,13 @@ interface SourcesProps {
 
 const POLL_INTERVAL_MS = 1_500;
 
-/** Job states that still change — keep polling while any source is in one. */
+/**
+ * Job states that still change on their own — keep polling while any source is
+ * in one. `deferred` is excluded: it waits (possibly hours) for the daily token
+ * allowance to reset, so fast polling would be wasteful.
+ */
 function isActive(job: IngestionJobDto): boolean {
-  return job.status !== 'done' && job.status !== 'failed';
+  return job.status !== 'done' && job.status !== 'failed' && job.status !== 'deferred';
 }
 
 export function Sources({ companionName, companionId, onBack }: SourcesProps): JSX.Element {
@@ -68,6 +74,18 @@ export function Sources({ companionName, companionId, onBack }: SourcesProps): J
     };
   }, [jobs, refresh]);
 
+  const remove = useCallback(
+    async (sourceId: string): Promise<void> => {
+      try {
+        await deleteSource(companionId, sourceId);
+        await refresh();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to delete source');
+      }
+    },
+    [companionId, refresh],
+  );
+
   const jobBySource = new Map(jobs.map((job) => [job.sourceId, job]));
   const readCount = jobs.filter((job) => job.status === 'done').length;
 
@@ -75,6 +93,7 @@ export function Sources({ companionName, companionId, onBack }: SourcesProps): J
     <main className="chat">
       <header>
         <h1>{companionName} · Sources</h1>
+        <UsageBadge />
         <button type="button" onClick={onBack}>
           Back to chat
         </button>
@@ -96,10 +115,20 @@ export function Sources({ companionName, companionId, onBack }: SourcesProps): J
           return (
             <li key={source.id} className="memory-section">
               <strong>{source.title}</strong> <span className="who">({source.kind})</span>
+              <button
+                type="button"
+                className="link-button"
+                onClick={() => void remove(source.id)}
+                aria-label={`Delete ${source.title}`}
+              >
+                Delete
+              </button>
               {job && (
                 <p className="who">
                   {job.status === 'done' && `read · ${job.sectionsTotal} sections`}
                   {job.status === 'failed' && `failed: ${job.error ?? 'unknown error'}`}
+                  {job.status === 'deferred' &&
+                    'waiting for your daily allowance to reset, then Cobble finishes reading it'}
                   {isActive(job) &&
                     `${job.status}… ${job.sectionsDone}/${job.sectionsTotal || '?'} sections`}
                 </p>

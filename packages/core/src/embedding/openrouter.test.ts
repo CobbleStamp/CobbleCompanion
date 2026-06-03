@@ -19,6 +19,7 @@ describe('OpenRouterEmbeddingGateway', () => {
               { index: 1, embedding: [0, 1] },
               { index: 0, embedding: [1, 0] },
             ],
+            usage: { prompt_tokens: 7, total_tokens: 7 },
           }),
           { status: 200 },
         ),
@@ -26,7 +27,7 @@ describe('OpenRouterEmbeddingGateway', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const gateway = new OpenRouterEmbeddingGateway({ apiKey: 'test-key' });
-    const vectors = await gateway.embed({
+    const { vectors, usage } = await gateway.embed({
       input: ['first', 'second'],
       model: 'perplexity/pplx-embed-v1-0.6b',
       dimensions: 2,
@@ -36,6 +37,7 @@ describe('OpenRouterEmbeddingGateway', () => {
       [1, 0],
       [0, 1],
     ]);
+    expect(usage).toEqual({ promptTokens: 7, completionTokens: 0, totalTokens: 7 });
 
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('https://openrouter.ai/api/v1/embeddings');
@@ -52,7 +54,10 @@ describe('OpenRouterEmbeddingGateway', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const gateway = new OpenRouterEmbeddingGateway({ apiKey: 'test-key' });
-    expect(await gateway.embed({ input: [], model: 'm', dimensions: 2 })).toEqual([]);
+    expect(await gateway.embed({ input: [], model: 'm', dimensions: 2 })).toEqual({
+      vectors: [],
+      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

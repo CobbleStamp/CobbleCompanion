@@ -13,6 +13,7 @@ import type { EmbeddingGateway } from '../embedding/gateway.js';
 import type { Logger } from '../logging.js';
 import type { SemanticMemoryStore, SemanticSearchHit } from '../memory/semantic-store.js';
 import type { MemoryStore } from '../memory/store.js';
+import { ZERO_USAGE, type TokenUsage } from '../usage.js';
 import type { ContextBlock, RetrieveContext } from './hooks.js';
 
 export interface SemanticRetrieveOptions {
@@ -37,12 +38,22 @@ export function createSemanticRetrieveContext(options: SemanticRetrieveOptions):
   const recentLimit = options.recentLimit ?? DEFAULT_RECENT_LIMIT;
 
   return async ({ companionId, userContent }) => {
-    const semanticBlocks = await retrieveSemanticBlocks(options, companionId, userContent, topK);
+    const { blocks: semanticBlocks, usage } = await retrieveSemanticBlocks(
+      options,
+      companionId,
+      userContent,
+      topK,
+    );
     const recent = await options.memory.getRecentMessages(companionId, recentLimit);
-    return [
-      ...semanticBlocks,
-      ...recent.map((message): ContextBlock => ({ role: message.role, content: message.content })),
-    ];
+    return {
+      blocks: [
+        ...semanticBlocks,
+        ...recent.map(
+          (message): ContextBlock => ({ role: message.role, content: message.content }),
+        ),
+      ],
+      usage,
+    };
   };
 }
 
@@ -51,29 +62,30 @@ async function retrieveSemanticBlocks(
   companionId: string,
   userContent: string,
   topK: number,
-): Promise<readonly ContextBlock[]> {
+): Promise<{ blocks: readonly ContextBlock[]; usage: TokenUsage }> {
   try {
-    const [queryEmbedding] = await options.embeddings.embed({
+    const { vectors, usage } = await options.embeddings.embed({
       input: [userContent],
       model: options.embeddingModel,
       dimensions: options.embeddingDimensions,
     });
+    const [queryEmbedding] = vectors;
     if (!queryEmbedding) {
-      return [];
+      return { blocks: [], usage };
     }
     const hits = await options.semantic.search(companionId, {
       queryEmbedding,
       queryText: userContent,
       topK,
     });
-    return hits.map(toContextBlock);
+    return { blocks: hits.map(toContextBlock), usage };
   } catch (error) {
     options.logger.error('semantic recall failed; degrading to recency-only context', {
       operation: 'harness.semanticRetrieve',
       companionId,
       error,
     });
-    return [];
+    return { blocks: [], usage: ZERO_USAGE };
   }
 }
 

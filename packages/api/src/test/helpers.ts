@@ -10,6 +10,7 @@ import {
   createSemanticRetrieveContext,
   DrizzleIdentityStore,
   DrizzleSemanticMemoryStore,
+  DrizzleTokenQuotaStore,
   FakeEmbeddingGateway,
   FakeLlmGateway,
   Harness,
@@ -57,10 +58,8 @@ export const testConfig: AppConfig = {
   ingestionModel: 'test-ingestion-model',
   ingestionMaxBytes: 25 * 1024 * 1024,
   useContextHeader: true,
-  rateLimitWindowMs: 60 * 1000,
-  ingestionRateMax: 10,
-  searchRateMax: 30,
   ingestionQueueMax: 100,
+  tokenCapPerDay: 1_000_000,
   appUrl: 'http://localhost:3001',
   authMode: 'google',
   googleClientId: 'test-google-client-id',
@@ -94,6 +93,7 @@ export async function makeTestApp(
   const { db, close: closeDb } = await createTestDatabase();
   const memory = new TranscriptMemoryStore(db);
   const semantic = new DrizzleSemanticMemoryStore(db);
+  const quota = new DrizzleTokenQuotaStore(db, { defaultCapTokens: config.tokenCapPerDay });
   const embeddings = new FakeEmbeddingGateway();
   const llmGateway = new FakeLlmGateway(chunks);
   const tokenVerifier = new FakeTokenVerifier();
@@ -109,6 +109,7 @@ export async function makeTestApp(
         embeddingModel: config.embeddingModel,
         embeddingDimensions: config.embeddingDimensions,
         useContextHeader: config.useContextHeader,
+        quota,
         logger: silentLogger,
       }),
       silentLogger,
@@ -124,6 +125,7 @@ export async function makeTestApp(
       gateway: llmGateway,
       memory,
       model: 'test-model',
+      quota,
       logger: silentLogger,
       retrieveContext: createSemanticRetrieveContext({
         memory,
@@ -134,6 +136,7 @@ export async function makeTestApp(
         logger: silentLogger,
       }),
     }),
+    quota,
     tokenVerifier,
     config,
     logger,

@@ -5,6 +5,8 @@
  * the FakeEmbeddingGateway (./fake.ts).
  */
 
+import type { TokenUsage } from '../usage.js';
+
 export interface EmbeddingParams {
   /** Texts to embed, one vector returned per entry, in order. */
   readonly input: readonly string[];
@@ -16,6 +18,12 @@ export interface EmbeddingParams {
    */
   readonly dimensions: number;
   readonly signal?: AbortSignal;
+}
+
+/** Vectors (one per input, in order) plus the call's token usage. */
+export interface EmbeddingResult {
+  readonly vectors: readonly (readonly number[])[];
+  readonly usage: TokenUsage;
 }
 
 /** Typed gateway failure — provider errors surface as data, not raw throws (§4.7). */
@@ -32,6 +40,6 @@ export class EmbeddingGatewayError extends Error {
 }
 
 export interface EmbeddingGateway {
-  /** Embed each input text; resolves to one vector per input, in input order. */
-  embed(params: EmbeddingParams): Promise<readonly (readonly number[])[]>;
+  /** Embed each input text; resolves to one vector per input (in order) plus usage. */
+  embed(params: EmbeddingParams): Promise<EmbeddingResult>;
 }

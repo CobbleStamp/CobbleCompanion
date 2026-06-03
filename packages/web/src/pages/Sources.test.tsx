@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createLinkSource,
   createNoteSource,
+  deleteSource,
   listIngestionJobs,
   listSources,
   uploadFileSource,
@@ -21,6 +22,9 @@ vi.mock('../api/client.js', () => ({
   createNoteSource: vi.fn(),
   createLinkSource: vi.fn(),
   uploadFileSource: vi.fn(),
+  deleteSource: vi.fn(),
+  // The usage badge polls this; reject so it stays hidden in these tests.
+  getUsage: vi.fn(() => Promise.reject(new Error('no usage'))),
 }));
 
 const sources: SourceDto[] = [
@@ -61,6 +65,28 @@ describe('Sources', () => {
     vi.mocked(createNoteSource).mockReset();
     vi.mocked(createLinkSource).mockReset();
     vi.mocked(uploadFileSource).mockReset();
+    vi.mocked(deleteSource).mockReset();
+  });
+
+  it('shows a deferred job as waiting and deletes a source on demand', async () => {
+    vi.mocked(listSources).mockResolvedValue([sources[0]!]);
+    vi.mocked(listIngestionJobs).mockResolvedValue([
+      {
+        id: 'j1',
+        sourceId: 's1',
+        status: 'deferred',
+        sectionsTotal: 0,
+        sectionsDone: 0,
+        error: null,
+      },
+    ]);
+    vi.mocked(deleteSource).mockResolvedValue();
+
+    render(<Sources companionName="Pebble" companionId="companion-1" onBack={() => {}} />);
+    await waitFor(() => expect(screen.getByText(/waiting for your daily allowance/)).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: /Delete Peru/ }));
+    await waitFor(() => expect(deleteSource).toHaveBeenCalledWith('companion-1', 's1'));
   });
 
   it('shows the reading-progress headline and per-source status', async () => {

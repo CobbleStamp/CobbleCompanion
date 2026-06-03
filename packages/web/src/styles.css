@@ -98,6 +98,37 @@ button:disabled {
 .header-actions {
   display: flex;
   gap: 0.5rem;
+  align-items: center;
+}
+
+/* Live daily token-budget indicator (UsageBadge). */
+.usage-badge {
+  font-size: 0.8rem;
+  color: #4b5563;
+  background: #eef2f7;
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  white-space: nowrap;
+}
+.usage-badge--high {
+  color: #92400e;
+  background: #fef3c7;
+}
+.usage-badge--full {
+  color: #991b1b;
+  background: #fee2e2;
+}
+
+/* Inline text button (e.g. delete a source). */
+.link-button {
+  background: none;
+  border: none;
+  color: #2563eb;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  margin-left: 0.5rem;
+  text-decoration: underline;
 }
 
 .memory-sections {

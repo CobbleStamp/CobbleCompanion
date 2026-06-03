@@ -7,6 +7,7 @@
 import type { Citation, CompanionDto, MessageRole } from '@cobble/shared';
 import { useEffect, useRef, useState } from 'react';
 import { fetchMessages, sendMessage } from '../api/client.js';
+import { UsageBadge } from '../components/UsageBadge.js';
 
 interface ChatProps {
   readonly companion: CompanionDto;
@@ -80,6 +81,7 @@ export function Chat({
       <header>
         <h1>{companion.name}</h1>
         <nav className="header-actions">
+          <UsageBadge />
           <button type="button" onClick={onOpenSources}>
             Sources
           </button>

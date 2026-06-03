@@ -12,6 +12,7 @@ export {
   combineHits,
   DrizzleSemanticMemoryStore,
   type CreateSourceInput,
+  type DeferredJob,
   type JobPatch,
   type JobRecord,
   type NewFact,
@@ -39,7 +40,29 @@ export {
   type EmbeddingGateway,
   EmbeddingGatewayError,
   type EmbeddingParams,
+  type EmbeddingResult,
 } from './embedding/gateway.js';
+
+// Token quota (per-user daily cap state)
+export {
+  DrizzleTokenQuotaStore,
+  type DrizzleTokenQuotaStoreOptions,
+  type TokenQuotaStore,
+  type UsageSnapshot,
+} from './quota/store.js';
+
+// Token usage / metering (per-user daily cap)
+export {
+  addUsage,
+  createUsageAccumulator,
+  estimateTokens,
+  estimateUsage,
+  meteredLlmGateway,
+  ZERO_USAGE,
+  type TokenUsage,
+  type UsageAccumulator,
+  type UsageSink,
+} from './usage.js';
 export {
   OpenRouterEmbeddingGateway,
   type OpenRouterEmbeddingConfig,
@@ -115,6 +138,7 @@ export {
   type IngestionPipelineOptions,
   type IngestionRunParams,
 } from './ingestion/pipeline.js';
+export { resumeDeferredJobs, type DeferredSweepDeps } from './ingestion/deferred-sweeper.js';
 
 // Logging
 export { consoleLogger, type Logger } from './logging.js';

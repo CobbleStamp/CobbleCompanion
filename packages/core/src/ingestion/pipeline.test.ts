@@ -12,6 +12,8 @@ import { DrizzleIdentityStore } from '../identity/store.js';
 import type { LlmGateway, LlmStreamParams } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import { DrizzleSemanticMemoryStore } from '../memory/semantic-store.js';
+import type { TokenQuotaStore, UsageSnapshot } from '../quota/store.js';
+import { estimateUsage, type TokenUsage } from '../usage.js';
 import { createHttpLinkResolver } from './link-resolver.js';
 import { IngestionPipeline } from './pipeline.js';
 import { createSourceParser } from './source-parser.js';
@@ -34,9 +36,27 @@ class ScriptedLlmGateway implements LlmGateway {
 
   constructor(private readonly responses: readonly string[]) {}
 
-  async *stream(params: LlmStreamParams): AsyncIterable<string> {
+  async *stream(params: LlmStreamParams): AsyncGenerator<string, TokenUsage, void> {
     this.calls.push(params);
-    yield this.responses[Math.min(this.next++, this.responses.length - 1)]!;
+    const response = this.responses[Math.min(this.next++, this.responses.length - 1)]!;
+    yield response;
+    return estimateUsage(params.messages.map((message) => message.content).join('\n'), response);
+  }
+}
+
+/** Quota fake with a flippable over-cap flag (we own the seam). */
+class StubQuota implements TokenQuotaStore {
+  over = false;
+  recorded = 0;
+
+  async getUsage(): Promise<UsageSnapshot> {
+    return { usedTokens: this.recorded, capTokens: 1000, resetsAt: '2026-06-04T00:00:00.000Z' };
+  }
+  async recordUsage(_userId: string, total: number): Promise<void> {
+    this.recorded += total;
+  }
+  async isOverCap(): Promise<boolean> {
+    return this.over;
   }
 }
 
@@ -78,7 +98,11 @@ describe('IngestionPipeline', () => {
     await close();
   });
 
-  function makePipeline(llm: LlmGateway, useContextHeader = false): IngestionPipeline {
+  function makePipeline(
+    llm: LlmGateway,
+    useContextHeader = false,
+    quota?: TokenQuotaStore,
+  ): IngestionPipeline {
     return new IngestionPipeline({
       semantic,
       llm,
@@ -88,6 +112,7 @@ describe('IngestionPipeline', () => {
       embeddingDimensions: EMBEDDING_DIMENSIONS,
       useContextHeader,
       logger: silentLogger,
+      ...(quota ? { quota } : {}),
     });
   }
 
@@ -182,6 +207,70 @@ describe('IngestionPipeline', () => {
     expect(job?.error).toMatch(/could not finish reading/);
     // No internal detail leaks into the user-safe message.
     expect(job?.error).not.toMatch(/pdf\.js|stack|TypeError/i);
+  });
+
+  it('defers the AI passes (holding the parse) when the owner is over the daily cap', async () => {
+    const quota = new StubQuota();
+    quota.over = true;
+    const llm = new ScriptedLlmGateway([SEGMENT_RESPONSE, ENRICH_CONQUEST, ENRICH_CUISINE]);
+    const { sourceId, jobId } = await seedSourceAndJob();
+
+    await makePipeline(llm, false, quota).run({
+      companionId,
+      ownerId: 'owner',
+      sourceId,
+      jobId,
+      sourceTitle: 'Peru notes',
+      payload: { kind: 'note', text: NOTE_TEXT },
+    });
+
+    const [job] = await semantic.listJobs(companionId);
+    expect(job?.status).toBe('deferred');
+    // Parsing is free, so the canonical text is stored — but no AI passes ran.
+    expect(await semantic.getSourceText(companionId, sourceId)).toBe(NOTE_TEXT);
+    expect(await semantic.listSectionsBySource(companionId, sourceId)).toHaveLength(0);
+    expect(llm.calls).toHaveLength(0);
+
+    const deferred = await semantic.listDeferredJobs();
+    expect(deferred).toHaveLength(1);
+    expect(deferred[0]!.parsedDoc.paragraphs.length).toBeGreaterThan(0);
+  });
+
+  it('resumes a deferred job from its held parse once back under cap', async () => {
+    const quota = new StubQuota();
+    quota.over = true;
+    const llm = new ScriptedLlmGateway([SEGMENT_RESPONSE, ENRICH_CONQUEST, ENRICH_CUISINE]);
+    const { sourceId, jobId } = await seedSourceAndJob();
+    const pipeline = makePipeline(llm, false, quota);
+
+    await pipeline.run({
+      companionId,
+      ownerId: 'owner',
+      sourceId,
+      jobId,
+      sourceTitle: 'Peru notes',
+      payload: { kind: 'note', text: NOTE_TEXT },
+    });
+
+    const [deferred] = await semantic.listDeferredJobs();
+    expect(deferred).toBeDefined();
+
+    // Back under cap: resume from the held parse (no payload, no re-parse).
+    quota.over = false;
+    await pipeline.run({
+      companionId,
+      ownerId: 'owner',
+      sourceId: deferred!.sourceId,
+      jobId: deferred!.jobId,
+      sourceTitle: deferred!.sourceTitle,
+      resumeDocument: deferred!.parsedDoc,
+    });
+
+    const [job] = await semantic.listJobs(companionId);
+    expect(job?.status).toBe('done');
+    expect(await semantic.listSectionsBySource(companionId, sourceId)).toHaveLength(2);
+    // The held parse is cleared once the job leaves the deferred state.
+    expect(await semantic.listDeferredJobs()).toHaveLength(0);
   });
 
   it('refuses links to private/internal addresses (SSRF guard) without fetching', async () => {
@@ -317,7 +406,9 @@ describe('IngestionPipeline', () => {
   });
 
   async function embedText(text: string): Promise<readonly number[]> {
-    const [vector] = await embeddings.embed({
+    const {
+      vectors: [vector],
+    } = await embeddings.embed({
       input: [text],
       model: 'fake-embed',
       dimensions: EMBEDDING_DIMENSIONS,

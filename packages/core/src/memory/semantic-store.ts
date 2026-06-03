@@ -8,9 +8,10 @@
  * filters; every hit carries provenance back to its source.
  */
 
-import { facts, ingestionJobs, sections, sources, type Database } from '@cobble/db';
+import { companions, facts, ingestionJobs, sections, sources, type Database } from '@cobble/db';
 import type { IngestionStatus, SourceKind } from '@cobble/shared';
-import { and, count, desc, eq, sql } from 'drizzle-orm';
+import { and, count, desc, eq, notInArray, sql } from 'drizzle-orm';
+import type { ParsedDocument } from '../ingestion/parser.js';
 
 export interface CreateSourceInput {
   readonly kind: SourceKind;
@@ -79,6 +80,18 @@ export interface JobPatch {
   readonly sectionsTotal?: number;
   readonly sectionsDone?: number;
   readonly error?: string;
+  /** Parsed paragraphs to hold while `deferred`; `null` clears them on resume/finish. */
+  readonly parsedDoc?: ParsedDocument | null;
+}
+
+/** A deferred job with everything the sweeper needs to resume it after reset. */
+export interface DeferredJob {
+  readonly jobId: string;
+  readonly companionId: string;
+  readonly ownerId: string;
+  readonly sourceId: string;
+  readonly sourceTitle: string;
+  readonly parsedDoc: ParsedDocument;
 }
 
 /** A retrieval hit: the verbatim section plus full provenance and a fused score. */
@@ -145,6 +158,16 @@ export interface SemanticMemoryStore {
   createJob(companionId: string, sourceId: string): Promise<JobRecord>;
   updateJob(jobId: string, patch: JobPatch): Promise<void>;
   listJobs(companionId: string): Promise<readonly JobRecord[]>;
+  /** Jobs waiting on a cap reset (status `deferred`), with owner + parsed doc. */
+  listDeferredJobs(): Promise<readonly DeferredJob[]>;
+  /**
+   * Recover from a restart: fail every non-terminal, non-`deferred` job (its
+   * in-memory parse state is gone). Deferred jobs are resumable and left alone.
+   * Returns how many were failed.
+   */
+  failInterruptedJobs(): Promise<number>;
+  /** Owner-scoped source delete (cascades to its sections + job). Returns true if removed. */
+  deleteSource(companionId: string, sourceId: string): Promise<boolean>;
 }
 
 /** An internal ranked hit from one retrieval arm, pre-fusion. */
@@ -372,6 +395,61 @@ export class DrizzleSemanticMemoryStore implements SemanticMemoryStore {
       .where(eq(ingestionJobs.companionId, companionId))
       .orderBy(desc(ingestionJobs.createdAt));
     return rows.map(toJobRecord);
+  }
+
+  async listDeferredJobs(): Promise<readonly DeferredJob[]> {
+    const rows = await this.db
+      .select({
+        jobId: ingestionJobs.id,
+        companionId: ingestionJobs.companionId,
+        sourceId: ingestionJobs.sourceId,
+        parsedDoc: ingestionJobs.parsedDoc,
+        sourceTitle: sources.title,
+        ownerId: companions.ownerId,
+      })
+      .from(ingestionJobs)
+      .innerJoin(sources, eq(sources.id, ingestionJobs.sourceId))
+      .innerJoin(companions, eq(companions.id, ingestionJobs.companionId))
+      .where(eq(ingestionJobs.status, 'deferred'))
+      .orderBy(ingestionJobs.createdAt);
+    return rows
+      .filter((row): row is typeof row & { parsedDoc: ParsedDocument } => row.parsedDoc != null)
+      .map((row) => ({
+        jobId: row.jobId,
+        companionId: row.companionId,
+        ownerId: row.ownerId,
+        sourceId: row.sourceId,
+        sourceTitle: row.sourceTitle,
+        parsedDoc: row.parsedDoc,
+      }));
+  }
+
+  async failInterruptedJobs(): Promise<number> {
+    const stranded = await this.db
+      .select({ id: ingestionJobs.id })
+      .from(ingestionJobs)
+      .where(notInArray(ingestionJobs.status, ['done', 'failed', 'deferred']));
+    if (stranded.length === 0) {
+      return 0;
+    }
+    await this.db
+      .update(ingestionJobs)
+      .set({
+        status: 'failed',
+        error: 'Reading was interrupted. Please re-upload this source.',
+        parsedDoc: null,
+        updatedAt: new Date(),
+      })
+      .where(notInArray(ingestionJobs.status, ['done', 'failed', 'deferred']));
+    return stranded.length;
+  }
+
+  async deleteSource(companionId: string, sourceId: string): Promise<boolean> {
+    const deleted = await this.db
+      .delete(sources)
+      .where(and(eq(sources.id, sourceId), eq(sources.companionId, companionId)))
+      .returning({ id: sources.id });
+    return deleted.length > 0;
   }
 
   /** Tenancy scope plus the optional metadata filters, shared by both arms. */

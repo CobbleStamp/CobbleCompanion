@@ -43,6 +43,8 @@ vi.mock('../api/client.js', () => ({
   getCompanionMemory: vi.fn(),
   fetchMessages: vi.fn(),
   searchMemory: vi.fn(),
+  // The usage badge polls this; reject so it stays hidden in these tests.
+  getUsage: vi.fn(() => Promise.reject(new Error('no usage'))),
 }));
 
 describe('MemoryBrowser', () => {

@@ -23,7 +23,7 @@ import {
   type SourceRecord,
 } from '@cobble/core';
 import type { FastifyInstance } from 'fastify';
-import type { AppDeps, RateLimitHook } from '../app.js';
+import type { AppDeps } from '../app.js';
 import type { RequireAuth } from '../auth-guard.js';
 
 /** An Error the central handler renders as a 429 (statusCode < 500 → message passes through). */
@@ -82,15 +82,16 @@ export function registerSourceRoutes(
   app: FastifyInstance,
   deps: AppDeps,
   requireAuth: RequireAuth,
-  rateLimits: { readonly ingestion: RateLimitHook },
 ): void {
   const { identity, semantic, ingestion } = deps;
-  // Auth first (sets the owner key), then the per-owner ingestion limiter.
-  const ingestPreHandlers = [requireAuth, rateLimits.ingestion];
+  // Intake routes share the auth preHandler; over-cap uploads are accepted and
+  // deferred by the pipeline rather than rejected up front (architecture.md §4.8).
+  const ingestPreHandlers = [requireAuth];
 
   /** Create the source + job and hand the payload to the background runner. */
   async function enqueue(
     companionId: string,
+    ownerId: string,
     input: { kind: SourceDto['kind']; title: string; origin?: string; byteSize?: number },
     payload: IngestionPayload,
   ): Promise<{ source: SourceDto; job: IngestionJobDto }> {
@@ -112,6 +113,7 @@ export function registerSourceRoutes(
     try {
       ingestion.enqueue({
         companionId,
+        ownerId,
         sourceId: source.id,
         jobId: job.id,
         sourceTitle: source.title,
@@ -162,6 +164,7 @@ export function registerSourceRoutes(
       }
       const result = await enqueue(
         companion.id,
+        request.userId!,
         {
           kind,
           title: titleFromFilename(filename, kind),
@@ -190,6 +193,7 @@ export function registerSourceRoutes(
       }
       const result = await enqueue(
         companion.id,
+        request.userId!,
         { kind: 'note', title: parsed.data.title, byteSize: parsed.data.text.length },
         { kind: 'note', text: parsed.data.text },
       );
@@ -213,6 +217,7 @@ export function registerSourceRoutes(
       }
       const result = await enqueue(
         companion.id,
+        request.userId!,
         { kind: 'link', title: parsed.data.title ?? parsed.data.url, origin: parsed.data.url },
         { kind: 'link', url: parsed.data.url },
       );
@@ -251,6 +256,25 @@ export function registerSourceRoutes(
       }
       const sections = await semantic.listSectionsBySource(companion.id, sourceId);
       return reply.send({ source: toSourceDto(source), sections: sections.map(toSectionDto) });
+    },
+  );
+
+  // Delete a source (and its job + sections). Lets a user prune the queue — e.g.
+  // a job parked at the daily cap they no longer want to wait on.
+  app.delete(
+    '/companions/:companionId/sources/:sourceId',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const { companionId, sourceId } = request.params as SourceParams;
+      const companion = await identity.getCompanion(companionId, request.userId!);
+      if (!companion) {
+        return reply.code(404).send({ error: 'companion not found' });
+      }
+      const deleted = await semantic.deleteSource(companion.id, sourceId);
+      if (!deleted) {
+        return reply.code(404).send({ error: 'source not found' });
+      }
+      return reply.code(204).send();
     },
   );
 

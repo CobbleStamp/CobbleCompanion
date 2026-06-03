@@ -4,7 +4,13 @@
  * we relay `data[].embedding` vectors re-ordered by `data[].index`.
  */
 
-import { type EmbeddingGateway, EmbeddingGatewayError, type EmbeddingParams } from './gateway.js';
+import { estimateTokens, type TokenUsage } from '../usage.js';
+import {
+  type EmbeddingGateway,
+  EmbeddingGatewayError,
+  type EmbeddingParams,
+  type EmbeddingResult,
+} from './gateway.js';
 
 const OPENROUTER_EMBEDDINGS_URL = 'https://openrouter.ai/api/v1/embeddings';
 
@@ -28,14 +34,17 @@ export class OpenRouterEmbeddingGateway implements EmbeddingGateway {
     this.baseUrl = config.baseUrl ?? OPENROUTER_EMBEDDINGS_URL;
   }
 
-  async embed(params: EmbeddingParams): Promise<readonly (readonly number[])[]> {
+  async embed(params: EmbeddingParams): Promise<EmbeddingResult> {
     if (params.input.length === 0) {
-      return [];
+      return { vectors: [], usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } };
     }
     const response = await this.request(params);
     const payload = (await response.json().catch((cause: unknown) => {
       throw new EmbeddingGatewayError('OpenRouter returned non-JSON embeddings body', cause);
-    })) as { data?: readonly EmbeddingResponseItem[] };
+    })) as {
+      data?: readonly EmbeddingResponseItem[];
+      usage?: { prompt_tokens?: number; total_tokens?: number };
+    };
 
     const items = payload.data;
     if (!items || items.length !== params.input.length) {
@@ -57,7 +66,7 @@ export class OpenRouterEmbeddingGateway implements EmbeddingGateway {
       }
       vectors[index] = embedding;
     }
-    return vectors;
+    return { vectors, usage: toUsage(payload.usage, params.input) };
   }
 
   private async request(params: EmbeddingParams): Promise<Response> {
@@ -87,6 +96,19 @@ export class OpenRouterEmbeddingGateway implements EmbeddingGateway {
     }
     return response;
   }
+}
+
+/**
+ * Embedding usage from the response (prompt-only; no completion), estimating
+ * from the inputs when the provider omits it so accounting is never silently 0.
+ */
+function toUsage(
+  usage: { prompt_tokens?: number; total_tokens?: number } | undefined,
+  input: readonly string[],
+): TokenUsage {
+  const promptTokens =
+    usage?.prompt_tokens ?? usage?.total_tokens ?? estimateTokens(input.join('\n'));
+  return { promptTokens, completionTokens: 0, totalTokens: usage?.total_tokens ?? promptTokens };
 }
 
 async function safeText(response: Response): Promise<string> {

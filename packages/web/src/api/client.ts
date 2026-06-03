@@ -10,6 +10,7 @@ import type {
   SectionDto,
   SemanticSearchResultDto,
   SourceDto,
+  UsageDto,
 } from '@cobble/shared';
 
 const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? '';
@@ -149,6 +150,25 @@ export async function getSourceDetail(
 export async function listIngestionJobs(companionId: string): Promise<IngestionJobDto[]> {
   const body = await request<{ jobs: IngestionJobDto[] }>(`/companions/${companionId}/ingestion`);
   return body.jobs;
+}
+
+/** Delete a source (and its job + sections) — e.g. dropping a job parked at the cap. */
+export async function deleteSource(companionId: string, sourceId: string): Promise<void> {
+  const auth = await authHeaders();
+  const response = await fetch(`${API_URL}/companions/${companionId}/sources/${sourceId}`, {
+    method: 'DELETE',
+    headers: auth,
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `delete failed (${response.status})`);
+  }
+}
+
+/** The signed-in user's daily token-budget standing (the live usage indicator). */
+export async function getUsage(): Promise<UsageDto> {
+  const body = await request<{ usage: UsageDto }>(`/usage`);
+  return body.usage;
 }
 
 /** Search the companion's semantic memory (the browser's recall window). */

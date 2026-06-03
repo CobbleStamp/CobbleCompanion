@@ -24,25 +24,19 @@ describe('loadConfig', () => {
     expect(config.embeddingDimensions).toBe(1024);
     expect(config.useContextHeader).toBe(true);
     expect(config.ingestionMaxBytes).toBeGreaterThan(0);
-    expect(config.rateLimitWindowMs).toBe(60 * 1000);
-    expect(config.ingestionRateMax).toBe(10);
-    expect(config.searchRateMax).toBe(30);
     expect(config.ingestionQueueMax).toBe(100);
+    expect(config.tokenCapPerDay).toBe(1_000_000);
   });
 
-  it('overrides rate-limit knobs from the environment', () => {
+  it('overrides the queue + token-cap knobs from the environment', () => {
     const config = loadConfig({
       ...base,
       ...fakeProviders,
-      RATE_LIMIT_WINDOW_MS: '5000',
-      INGESTION_RATE_MAX: '3',
-      SEARCH_RATE_MAX: '7',
       INGESTION_QUEUE_MAX: '2',
+      TOKEN_CAP_PER_DAY: '50000',
     });
-    expect(config.rateLimitWindowMs).toBe(5000);
-    expect(config.ingestionRateMax).toBe(3);
-    expect(config.searchRateMax).toBe(7);
     expect(config.ingestionQueueMax).toBe(2);
+    expect(config.tokenCapPerDay).toBe(50000);
   });
 
   it('requires GOOGLE_CLIENT_ID when AUTH_MODE=google', () => {

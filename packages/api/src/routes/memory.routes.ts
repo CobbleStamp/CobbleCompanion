@@ -13,8 +13,9 @@ import type {
 } from '@cobble/shared';
 import { semanticSearchSchema } from '@cobble/shared';
 import type { FastifyInstance } from 'fastify';
-import type { AppDeps, RateLimitHook } from '../app.js';
+import type { AppDeps } from '../app.js';
 import type { RequireAuth } from '../auth-guard.js';
+import { overCapGuard } from '../quota-guard.js';
 
 interface CompanionParams {
   readonly companionId: string;
@@ -24,9 +25,8 @@ export function registerMemoryRoutes(
   app: FastifyInstance,
   deps: AppDeps,
   requireAuth: RequireAuth,
-  rateLimits: { readonly search: RateLimitHook },
 ): void {
-  const { identity, memory, semantic, embeddings, config } = deps;
+  const { identity, memory, semantic, embeddings, config, quota } = deps;
 
   // A sectioned snapshot of everything the companion holds.
   app.get(
@@ -74,7 +74,7 @@ export function registerMemoryRoutes(
   // Search the semantic store directly (the browser's recall window).
   app.post(
     '/companions/:companionId/memory/search',
-    { preHandler: [requireAuth, rateLimits.search] },
+    { preHandler: requireAuth },
     async (request, reply) => {
       const { companionId } = request.params as CompanionParams;
       const parsed = semanticSearchSchema.safeParse(request.body);
@@ -85,19 +85,36 @@ export function registerMemoryRoutes(
       if (!companion) {
         return reply.code(404).send({ error: 'companion not found' });
       }
+      // Search spends an embedding, so it's gated by the same daily token cap.
+      const overCap = await overCapGuard(quota, request.userId!);
+      if (overCap) {
+        return reply.code(429).send({ error: overCap });
+      }
 
       // Degrade, don't 500: if the embedding provider fails, fall back to the
       // lexical arm (an empty embedding skips vector search in the store).
       let queryEmbedding: readonly number[] = [];
+      let searchTokens = 0;
       try {
-        const [embedded] = await embeddings.embed({
+        const { vectors, usage } = await embeddings.embed({
           input: [parsed.data.query],
           model: config.embeddingModel,
           dimensions: config.embeddingDimensions,
         });
-        queryEmbedding = embedded ?? [];
+        queryEmbedding = vectors[0] ?? [];
+        searchTokens = usage.totalTokens;
       } catch (error) {
         deps.logger.error('memory search embedding failed; degrading to lexical-only', {
+          operation: 'memory.search',
+          companionId: companion.id,
+          error,
+        });
+      }
+      // Best-effort debit against the daily cap — never fails the search (logging.md).
+      try {
+        await quota.recordUsage(request.userId!, searchTokens);
+      } catch (error) {
+        deps.logger.error('failed to record search token usage', {
           operation: 'memory.search',
           companionId: companion.id,
           error,

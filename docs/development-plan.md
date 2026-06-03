@@ -80,6 +80,9 @@ context. This is the heart of the PoC.
   (`product-overview.md` §2.1).
 - Grounded recall in chat: retrieval-augmented answers with provenance ("from your Peru book").
 - Ingestion status/feedback UI ("Cobble has read 3 of 5 books").
+- **Cost guardrail:** a per-user **daily token cap** (the one spend control — replaces per-route
+  request limits) with a live usage indicator; over cap, chat/search 429 and ingestion **defers**
+  until reset (`architecture.md` §4.8).
 
 **Done when:** a user uploads sources and Cobble answers questions grounded in them with correct
 citations; answers degrade gracefully when knowledge is absent (no confident hallucination).

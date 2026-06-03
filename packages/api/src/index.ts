@@ -12,6 +12,7 @@ import {
   createSourceParser,
   DrizzleIdentityStore,
   DrizzleSemanticMemoryStore,
+  DrizzleTokenQuotaStore,
   FakeEmbeddingGateway,
   FakeLlmGateway,
   Harness,
@@ -19,6 +20,7 @@ import {
   IngestionRunner,
   OpenRouterEmbeddingGateway,
   OpenRouterGateway,
+  resumeDeferredJobs,
   TranscriptMemoryStore,
   type EmbeddingGateway,
   type LlmGateway,
@@ -65,6 +67,7 @@ async function main(): Promise<void> {
   const identity = new DrizzleIdentityStore(db);
   const memory = new TranscriptMemoryStore(db);
   const semantic = new DrizzleSemanticMemoryStore(db);
+  const quota = new DrizzleTokenQuotaStore(db, { defaultCapTokens: config.tokenCapPerDay });
   const llmGateway = createGateway(config);
   const embeddings = createEmbeddingGateway(config);
 
@@ -80,6 +83,7 @@ async function main(): Promise<void> {
       sourceParser: createSourceParser({
         linkResolver: createHttpLinkResolver({ maxBytes: config.ingestionMaxBytes }),
       }),
+      quota,
       logger: consoleLogger,
     }),
     consoleLogger,
@@ -90,6 +94,7 @@ async function main(): Promise<void> {
     gateway: llmGateway,
     memory,
     model: config.llmModel,
+    quota,
     logger: consoleLogger,
     retrieveContext: createSemanticRetrieveContext({
       memory,
@@ -108,14 +113,37 @@ async function main(): Promise<void> {
     embeddings,
     ingestion,
     harness,
+    quota,
     tokenVerifier: createTokenVerifier(config),
     config,
     logger: consoleLogger,
   });
 
+  // Restart recovery: jobs interrupted mid-run lost their in-memory state, so
+  // fail them (the user re-uploads); deferred jobs kept their parse and resume.
+  const failed = await semantic.failInterruptedJobs();
+  if (failed > 0) {
+    consoleLogger.info('failed interrupted ingestion jobs on startup', { count: failed });
+  }
+
+  // Resume parked (deferred) jobs now and on a timer, so work that hit yesterday's
+  // cap drains as allowances reset (architecture.md §4.8). Serial + cap-gated, so
+  // it never overspends.
+  const sweepDeps = { semantic, quota, ingestion, logger: consoleLogger };
+  await resumeDeferredJobs(sweepDeps);
+  const sweepTimer = setInterval(() => {
+    void resumeDeferredJobs(sweepDeps).catch((error: unknown) => {
+      consoleLogger.error('deferred-job sweep failed', { error });
+    });
+  }, DEFERRED_SWEEP_INTERVAL_MS);
+  sweepTimer.unref();
+
   await app.listen({ port: config.port, host: '0.0.0.0' });
   consoleLogger.info('api listening', { port: config.port });
 }
+
+/** How often to resume deferred ingestion jobs (cheap; just a status scan). */
+const DEFERRED_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 main().catch((error: unknown) => {
   consoleLogger.error('api failed to start', { error });
