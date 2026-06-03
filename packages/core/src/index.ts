@@ -8,6 +8,21 @@ export {
 
 // Memory
 export { TranscriptMemoryStore, type MemoryStore } from './memory/store.js';
+export {
+  combineHits,
+  DrizzleSemanticMemoryStore,
+  type CreateSourceInput,
+  type JobPatch,
+  type JobRecord,
+  type NewFact,
+  type NewSection,
+  type SectionRecord,
+  type SemanticCounts,
+  type SemanticMemoryStore,
+  type SemanticSearchHit,
+  type SemanticSearchParams,
+  type SourceRecord,
+} from './memory/semantic-store.js';
 
 // LLM gateway
 export {
