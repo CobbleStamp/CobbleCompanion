@@ -1,5 +1,14 @@
-import type { Harness, IdentityStore, Logger, MemoryStore } from '@cobble/core';
+import type {
+  EmbeddingGateway,
+  Harness,
+  IdentityStore,
+  IngestionRunner,
+  Logger,
+  MemoryStore,
+  SemanticMemoryStore,
+} from '@cobble/core';
 import cors from '@fastify/cors';
+import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -12,6 +21,7 @@ import { registerAuthRoutes } from './routes/auth.routes.js';
 import { registerCompanionRoutes } from './routes/companion.routes.js';
 import { registerMemoryRoutes } from './routes/memory.routes.js';
 import { registerMessageRoutes } from './routes/message.routes.js';
+import { registerSourceRoutes } from './routes/source.routes.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -23,6 +33,9 @@ declare module 'fastify' {
 export interface AppDeps {
   readonly identity: IdentityStore;
   readonly memory: MemoryStore;
+  readonly semantic: SemanticMemoryStore;
+  readonly embeddings: EmbeddingGateway;
+  readonly ingestion: IngestionRunner;
   readonly harness: Harness;
   readonly tokenVerifier: TokenVerifier;
   readonly config: AppConfig;
@@ -42,6 +55,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   await app.register(cors, {
     origin: deps.config.appUrl,
     allowedHeaders: ['Content-Type', 'Authorization'],
+  });
+
+  // Multipart uploads (PDF sources), capped at the configured size.
+  await app.register(multipart, {
+    limits: { fileSize: deps.config.ingestionMaxBytes, files: 1 },
   });
 
   // Tolerate an empty body on application/json requests. Fastify's default JSON
@@ -96,6 +114,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerCompanionRoutes(app, deps, requireAuth);
   registerMessageRoutes(app, deps, requireAuth);
   registerMemoryRoutes(app, deps, requireAuth);
+  registerSourceRoutes(app, deps, requireAuth);
 
   registerSpa(app);
 

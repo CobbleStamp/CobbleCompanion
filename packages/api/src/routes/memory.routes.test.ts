@@ -23,7 +23,7 @@ describe('memory routes', () => {
     await ctx.close();
   });
 
-  it('returns a sectioned snapshot with the episodic transcript and planned sections', async () => {
+  it('returns a sectioned snapshot with episodic, semantic, and planned sections', async () => {
     await ctx.deps.memory.appendMessage(companionId, 'user', 'hello');
     await ctx.deps.memory.appendMessage(companionId, 'assistant', 'hi');
 
@@ -37,8 +37,57 @@ describe('memory routes', () => {
     expect(memory.identity.id).toBe(companionId);
     expect(memory.episodic.status).toBe('available');
     expect(memory.episodic.messageCount).toBe(2);
-    expect(memory.semantic.status).toBe('not_implemented');
+    expect(memory.semantic.status).toBe('available');
+    expect(memory.semantic.sourceCount).toBe(0);
+    expect(memory.semantic.jobs).toEqual([]);
     expect(memory.procedural.status).toBe('not_implemented');
+  });
+
+  it('reflects ingested sources in the semantic section and searches them', async () => {
+    // Feed a note through the real ingestion path and wait for the runner.
+    const created = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/sources/note`,
+      headers: auth,
+      payload: {
+        title: 'Peru notes',
+        text: 'Ceviche is cured with lime juice.\n\nIt is served along the Lima coast.',
+      },
+    });
+    expect(created.statusCode).toBe(202);
+    await ctx.deps.ingestion.whenIdle();
+
+    const snapshot = await ctx.app.inject({
+      method: 'GET',
+      url: `/companions/${companionId}/memory`,
+      headers: auth,
+    });
+    const { memory } = snapshot.json();
+    expect(memory.semantic.sourceCount).toBe(1);
+    expect(memory.semantic.sectionCount).toBeGreaterThan(0);
+    expect(memory.semantic.jobs[0].status).toBe('done');
+
+    const search = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/memory/search`,
+      headers: auth,
+      payload: { query: 'ceviche lime' },
+    });
+    expect(search.statusCode).toBe(200);
+    const { results } = search.json();
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].citation.sourceTitle).toBe('Peru notes');
+    expect(results[0].originalText).toContain('Ceviche is cured with lime juice.');
+  });
+
+  it('rejects a search without a query', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/memory/search`,
+      headers: auth,
+      payload: {},
+    });
+    expect(res.statusCode).toBe(400);
   });
 
   it('404s the snapshot when the companion is not owned', async () => {

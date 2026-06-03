@@ -1,8 +1,20 @@
+/**
+ * Shared API test harness: builds the real Fastify app over an in-memory
+ * PGlite database with fake gateways (fakes-over-mocks) and a fake token
+ * verifier, so route tests exercise the true auth → route → core → db path.
+ */
+
+import { EMBEDDING_DIMENSIONS } from '@cobble/db';
 import { createTestDatabase } from '@cobble/db/testing';
 import {
+  createSemanticRetrieveContext,
   DrizzleIdentityStore,
+  DrizzleSemanticMemoryStore,
+  FakeEmbeddingGateway,
   FakeLlmGateway,
   Harness,
+  IngestionPipeline,
+  IngestionRunner,
   TranscriptMemoryStore,
   type Logger,
 } from '@cobble/core';
@@ -39,6 +51,12 @@ export const testConfig: AppConfig = {
   llmProvider: 'fake',
   openrouterApiKey: '',
   llmModel: 'test-model',
+  embeddingProvider: 'fake',
+  embeddingModel: 'fake-embed',
+  embeddingDimensions: EMBEDDING_DIMENSIONS,
+  ingestionModel: 'test-ingestion-model',
+  ingestionMaxBytes: 25 * 1024 * 1024,
+  useContextHeader: true,
   appUrl: 'http://localhost:3001',
   authMode: 'google',
   googleClientId: 'test-google-client-id',
@@ -62,15 +80,42 @@ export async function makeTestApp(
 ): Promise<TestApp> {
   const { db, close: closeDb } = await createTestDatabase();
   const memory = new TranscriptMemoryStore(db);
+  const semantic = new DrizzleSemanticMemoryStore(db);
+  const embeddings = new FakeEmbeddingGateway();
+  const llmGateway = new FakeLlmGateway(chunks);
   const tokenVerifier = new FakeTokenVerifier();
+  const ingestion = new IngestionRunner(
+    new IngestionPipeline({
+      semantic,
+      llm: llmGateway,
+      embeddings,
+      ingestionModel: testConfig.ingestionModel,
+      embeddingModel: testConfig.embeddingModel,
+      embeddingDimensions: testConfig.embeddingDimensions,
+      useContextHeader: testConfig.useContextHeader,
+      logger: silentLogger,
+    }),
+    silentLogger,
+  );
   const deps: AppDeps = {
     identity: new DrizzleIdentityStore(db),
     memory,
+    semantic,
+    embeddings,
+    ingestion,
     harness: new Harness({
-      gateway: new FakeLlmGateway(chunks),
+      gateway: llmGateway,
       memory,
       model: 'test-model',
       logger: silentLogger,
+      retrieveContext: createSemanticRetrieveContext({
+        memory,
+        semantic,
+        embeddings,
+        embeddingModel: testConfig.embeddingModel,
+        embeddingDimensions: testConfig.embeddingDimensions,
+        logger: silentLogger,
+      }),
     }),
     tokenVerifier,
     config: testConfig,
@@ -91,6 +136,7 @@ export async function makeTestApp(
     tokenVerifier,
     bearerFor,
     close: async () => {
+      await ingestion.whenIdle();
       await app.close();
       await closeDb();
     },

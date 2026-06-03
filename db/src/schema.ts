@@ -1,4 +1,4 @@
-import type { MessageRole } from '@cobble/shared';
+import type { IngestionStatus, MessageRole, SourceKind } from '@cobble/shared';
 import { sql } from 'drizzle-orm';
 import {
   bigserial,
@@ -83,19 +83,6 @@ export const messages = pgTable(
   },
   (table) => [index('messages_companion_idx').on(table.companionId, table.seq)],
 );
-
-/** A source's kind — how it entered the companion's knowledge base. */
-export type SourceKind = 'pdf' | 'note' | 'link';
-
-/** Ingestion job lifecycle states, in pipeline order (architecture.md ingestion flow). */
-export type IngestionStatus =
-  | 'queued'
-  | 'parsing'
-  | 'segmenting'
-  | 'enriching'
-  | 'embedding'
-  | 'done'
-  | 'failed';
 
 /**
  * Layer 0 — sources: the verbatim originals the user fed the companion. The

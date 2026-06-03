@@ -18,7 +18,7 @@ const snapshot: MemorySnapshotDto = {
     status: 'available',
     messageCount: 2,
   },
-  semantic: { status: 'not_implemented', plannedPhase: 'Phase 1' },
+  semantic: { status: 'available', sourceCount: 3, sectionCount: 12, factCount: 7, jobs: [] },
   procedural: { status: 'not_implemented', plannedPhase: 'Phase 3' },
 };
 
@@ -50,14 +50,15 @@ describe('MemoryBrowser', () => {
     vi.mocked(fetchMessages).mockReset().mockResolvedValue(transcript);
   });
 
-  it('renders identity, the single episodic transcript, and planned sections', async () => {
+  it('renders identity, the episodic transcript, semantic counts, and planned sections', async () => {
     render(<MemoryBrowser companion={companion} onBack={() => {}} />);
 
     await waitFor(() => expect(screen.getByText(/Episodic — conversation/)).toBeTruthy());
     expect(screen.getByText('curious and warm')).toBeTruthy();
     expect(screen.getByText(/2 messages in one continuous conversation/)).toBeTruthy();
+    // The semantic store surfaces what the companion has read.
+    expect(screen.getByText(/3 sources · 12 sections · 7 facts/)).toBeTruthy();
     // Designed-but-unbuilt sections surface their planned phase.
-    expect(screen.getByText(/planned for Phase 1/)).toBeTruthy();
     expect(screen.getByText(/planned for Phase 3/)).toBeTruthy();
   });
 

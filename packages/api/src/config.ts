@@ -18,6 +18,16 @@ export interface AppConfig {
   readonly llmProvider: 'openrouter' | 'fake';
   readonly openrouterApiKey: string;
   readonly llmModel: string;
+  readonly embeddingProvider: 'openrouter' | 'fake';
+  readonly embeddingModel: string;
+  /** Must equal the `sections.embedding` vector column dimension (db schema). */
+  readonly embeddingDimensions: number;
+  /** Cheap model for the two ingestion reading passes (input-heavy, output-bounded). */
+  readonly ingestionModel: string;
+  /** Upload size cap for source files. */
+  readonly ingestionMaxBytes: number;
+  /** A/B knob: prefix the Pass-2 context header onto embedding inputs. */
+  readonly useContextHeader: boolean;
   readonly appUrl: string;
   readonly authMode: AuthMode;
   readonly googleClientId: string;
@@ -32,6 +42,19 @@ const envSchema = z
     LLM_PROVIDER: z.enum(['openrouter', 'fake']).default('openrouter'),
     OPENROUTER_API_KEY: z.string().default(''),
     LLM_MODEL: z.string().default('anthropic/claude-3.5-sonnet'),
+    EMBEDDING_PROVIDER: z.enum(['openrouter', 'fake']).default('openrouter'),
+    EMBEDDING_MODEL: z.string().default('perplexity/pplx-embed-v1-0.6b'),
+    EMBEDDING_DIM: z.coerce.number().int().positive().default(1024),
+    INGESTION_MODEL: z.string().default('google/gemini-2.5-flash'),
+    INGESTION_MAX_BYTES: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(25 * 1024 * 1024),
+    USE_CONTEXT_HEADER: z
+      .enum(['true', 'false'])
+      .default('true')
+      .transform((value) => value === 'true'),
     APP_URL: z.string().url().default('http://localhost:3001'),
     AUTH_MODE: z.enum(['google', 'dev_bypass']).default('google'),
     // Public OAuth Web client ID — shipped to the browser, not a secret.
@@ -45,6 +68,13 @@ const envSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'OPENROUTER_API_KEY is required when LLM_PROVIDER=openrouter',
+        path: ['OPENROUTER_API_KEY'],
+      });
+    }
+    if (env.EMBEDDING_PROVIDER === 'openrouter' && env.OPENROUTER_API_KEY.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'OPENROUTER_API_KEY is required when EMBEDDING_PROVIDER=openrouter',
         path: ['OPENROUTER_API_KEY'],
       });
     }
@@ -65,6 +95,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     llmProvider: parsed.LLM_PROVIDER,
     openrouterApiKey: parsed.OPENROUTER_API_KEY,
     llmModel: parsed.LLM_MODEL,
+    embeddingProvider: parsed.EMBEDDING_PROVIDER,
+    embeddingModel: parsed.EMBEDDING_MODEL,
+    embeddingDimensions: parsed.EMBEDDING_DIM,
+    ingestionModel: parsed.INGESTION_MODEL,
+    ingestionMaxBytes: parsed.INGESTION_MAX_BYTES,
+    useContextHeader: parsed.USE_CONTEXT_HEADER,
     appUrl: parsed.APP_URL,
     authMode: parsed.AUTH_MODE,
     googleClientId: parsed.GOOGLE_CLIENT_ID,

@@ -29,12 +29,70 @@ export interface MessageDto {
   readonly createdAt: string;
 }
 
+// --- Sources & ingestion (Phase 1 semantic memory) ---
+
+/** How a source entered the companion's knowledge base. */
+export type SourceKind = 'pdf' | 'note' | 'link';
+
+/** Ingestion job lifecycle states, in pipeline order. */
+export type IngestionStatus =
+  | 'queued'
+  | 'parsing'
+  | 'segmenting'
+  | 'enriching'
+  | 'embedding'
+  | 'done'
+  | 'failed';
+
+/** A source the user fed the companion (the verbatim text is fetched on demand). */
+export interface SourceDto {
+  readonly id: string;
+  readonly kind: SourceKind;
+  readonly title: string;
+  readonly origin: string | null;
+  readonly byteSize: number | null;
+  readonly createdAt: string;
+}
+
+/** Ingestion progress for one source — drives "Cobble has read N of M". */
+export interface IngestionJobDto {
+  readonly id: string;
+  readonly sourceId: string;
+  readonly status: IngestionStatus;
+  readonly sectionsTotal: number;
+  readonly sectionsDone: number;
+  readonly error: string | null;
+}
+
+/** A retrieval section: verbatim original text plus its location in the source. */
+export interface SectionDto {
+  readonly id: string;
+  readonly sourceId: string;
+  readonly chapterTitle: string | null;
+  readonly topicTitle: string;
+  readonly originalText: string;
+  /** The companion's one-line reading of the section (Pass 2 of ingestion). */
+  readonly contextHeader: string | null;
+  readonly paraStart: number;
+  readonly paraEnd: number;
+  readonly pageStart: number | null;
+  readonly pageEnd: number | null;
+  readonly ord: number;
+}
+
+/** One semantic-search result for the memory browser. */
+export interface SemanticSearchResultDto {
+  readonly citation: Citation;
+  readonly originalText: string;
+  readonly score: number;
+}
+
 // --- Memory snapshot (the read-only memory browser, companionmemory.md) ---
 
 /**
  * A memory section that is designed but not yet built. The browser renders these
  * as "coming soon" panels so the full knowledge-base shape is visible before the
- * stores exist (semantic = P1, procedural = P3). See companionmemory.md.
+ * stores exist (procedural = P3). See companionmemory.md.
  */
 export interface PlannedMemorySection {
   readonly status: 'not_implemented';
@@ -43,13 +101,22 @@ export interface PlannedMemorySection {
 }
 
 /**
- * The episodic memory section — Phase 0's only real memory: the companion's
- * single continuous transcript (implementation.md §1). One companion holds one
- * lifelong conversation, so this is a single message stream, not a list.
+ * The episodic memory section — the companion's single continuous transcript
+ * (implementation.md §1). One companion holds one lifelong conversation, so
+ * this is a single message stream, not a list.
  */
 export interface EpisodicMemorySection {
   readonly status: 'available';
   readonly messageCount: number;
+}
+
+/** The semantic memory section — what the companion has read (Phase 1). */
+export interface SemanticMemorySection {
+  readonly status: 'available';
+  readonly sourceCount: number;
+  readonly sectionCount: number;
+  readonly factCount: number;
+  readonly jobs: readonly IngestionJobDto[];
 }
 
 /**
@@ -59,7 +126,7 @@ export interface EpisodicMemorySection {
 export interface MemorySnapshotDto {
   readonly identity: CompanionDto;
   readonly episodic: EpisodicMemorySection;
-  readonly semantic: PlannedMemorySection;
+  readonly semantic: SemanticMemorySection;
   readonly procedural: PlannedMemorySection;
 }
 
@@ -76,6 +143,24 @@ export const sendMessageSchema = z.object({
   content: z.string().trim().min(1).max(8_000),
 });
 export type SendMessageBody = z.infer<typeof sendMessageSchema>;
+
+export const createNoteSourceSchema = z.object({
+  title: z.string().trim().min(1).max(200),
+  text: z.string().trim().min(1).max(500_000),
+});
+export type CreateNoteSourceBody = z.infer<typeof createNoteSourceSchema>;
+
+export const createLinkSourceSchema = z.object({
+  url: z.string().url().max(2_000),
+  title: z.string().trim().min(1).max(200).optional(),
+});
+export type CreateLinkSourceBody = z.infer<typeof createLinkSourceSchema>;
+
+export const semanticSearchSchema = z.object({
+  query: z.string().trim().min(1).max(1_000),
+  topK: z.number().int().min(1).max(20).default(8),
+});
+export type SemanticSearchBody = z.infer<typeof semanticSearchSchema>;
 
 // --- Provenance (Phase 1 grounded recall, docs/companionmemory.md) ---
 

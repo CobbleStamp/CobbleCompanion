@@ -9,8 +9,9 @@ interface MemoryBrowserProps {
 
 /**
  * Read-only memory browser (companionmemory.md). Shows what the companion holds,
- * grouped by memory kind. Phase 0 has only the episodic transcript; semantic and
- * procedural render as "coming soon" so the full knowledge-base shape is visible.
+ * grouped by memory kind: the episodic transcript, the semantic store's
+ * source/section/fact counts (Phase 1), and procedural as "coming soon" so the
+ * full knowledge-base shape is visible.
  */
 export function MemoryBrowser({ companion, onBack }: MemoryBrowserProps): JSX.Element {
   const [snapshot, setSnapshot] = useState<MemorySnapshotDto | null>(null);
@@ -94,10 +95,16 @@ export function MemoryBrowser({ companion, onBack }: MemoryBrowserProps): JSX.El
             )}
           </section>
 
-          <PlannedSection
-            title="Semantic — knowledge from sources"
-            phase={snapshot.semantic.plannedPhase}
-          />
+          <section className="memory-section">
+            <h2>Semantic — knowledge from sources</h2>
+            <p className="who">
+              {snapshot.semantic.sourceCount} source
+              {snapshot.semantic.sourceCount === 1 ? '' : 's'} · {snapshot.semantic.sectionCount}{' '}
+              section
+              {snapshot.semantic.sectionCount === 1 ? '' : 's'} · {snapshot.semantic.factCount} fact
+              {snapshot.semantic.factCount === 1 ? '' : 's'}
+            </p>
+          </section>
           <PlannedSection
             title="Procedural — learned skills & workflows"
             phase={snapshot.procedural.plannedPhase}

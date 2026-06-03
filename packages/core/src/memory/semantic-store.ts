@@ -8,15 +8,8 @@
  * filters; every hit carries provenance back to its source.
  */
 
-import {
-  facts,
-  ingestionJobs,
-  sections,
-  sources,
-  type Database,
-  type IngestionStatus,
-  type SourceKind,
-} from '@cobble/db';
+import { facts, ingestionJobs, sections, sources, type Database } from '@cobble/db';
+import type { IngestionStatus, SourceKind } from '@cobble/shared';
 import { and, count, desc, eq, sql } from 'drizzle-orm';
 
 export interface CreateSourceInput {
