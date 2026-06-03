@@ -1,0 +1,15 @@
+{
+  "name": "cobblecompanion-github",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Pulumi project that owns CobbleCompanion's GitHub repository governance (branch protection on main).",
+  "main": "index.ts",
+  "dependencies": {
+    "@pulumi/github": "6.14.0",
+    "@pulumi/pulumi": "3.142.0"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.10",
+    "typescript": "5.5.3"
+  }
+}

@@ -1,0 +1,5 @@
+config:
+  # The GitHub org/user that owns the repository. The provider's token
+  # (GITHUB_TOKEN env var) must have admin rights on this owner's repo.
+  github:owner: CobbleStamp
+encryptionsalt: v1:XqNRHCs30Q4=:v1:v49/CQi9cXZfjy0+:4tdhrv+OUN7Q6psGGnPASX0wzGswMw==

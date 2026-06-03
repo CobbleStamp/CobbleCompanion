@@ -1,11 +1,12 @@
 # infra — Pulumi infrastructure
 
-One Pulumi (TypeScript) project provisions everything CobbleCompanion needs to
-run in the cloud:
+Pulumi (TypeScript) projects provision everything CobbleCompanion needs to run
+in the cloud and govern its repository:
 
 | Project | Owns | README |
 |---|---|---|
 | [`gcp/`](./gcp/README.md) | One Cloud Run service (Fastify API + built SPA), Artifact Registry, Secret Manager, IAM | `gcp/README.md` |
+| [`github/`](./github/README.md) | GitHub branch protection on `main` (merge blocked until the CI `verify` check passes) | `github/README.md` |
 
 It uses an AWS S3 state backend and a `PULUMI_CONFIG_PASSPHRASE`.
 
