@@ -89,6 +89,25 @@ describe('createHttpLinkResolver', () => {
     await expect(resolver.resolve('https://example.com/missing')).rejects.toThrow(/responded 404/);
   });
 
+  it('passes redirect:"error" to fetch so a redirect is refused, not followed', async () => {
+    // The resolver fetches with `redirect: 'error'` (link-resolver.ts) so a
+    // public URL cannot bounce the fetch to a private address. Under undici a
+    // 3xx then surfaces as a TypeError rather than a followed Response; the
+    // fake emulates that, and the seam captures the init so we can pin it.
+    let seenRedirect: RequestRedirect | undefined;
+    const redirectingFetch: typeof fetch = (async (_input: unknown, init?: RequestInit) => {
+      seenRedirect = init?.redirect;
+      if (init?.redirect === 'error') {
+        throw new TypeError('fetch failed'); // undici's redirect:'error' surface
+      }
+      return new Response(null, { status: 302, headers: { location: 'http://10.0.0.1/' } });
+    }) as typeof fetch;
+
+    const resolver = createHttpLinkResolver({ fetchFn: redirectingFetch });
+    await expect(resolver.resolve('https://example.com/redirector')).rejects.toThrow();
+    expect(seenRedirect).toBe('error');
+  });
+
   it('rejects content it cannot identify or read as text', async () => {
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01]);
     const resolver = createHttpLinkResolver({ fetchFn: respondWith(png, 'image/png') });

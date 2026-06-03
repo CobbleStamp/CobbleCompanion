@@ -7,6 +7,7 @@
 import { EMBEDDING_DIMENSIONS } from '@cobble/db';
 import { createTestDatabase } from '@cobble/db/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { EmbeddingGateway, EmbeddingParams, EmbeddingResult } from '../embedding/gateway.js';
 import { FakeEmbeddingGateway } from '../embedding/fake.js';
 import { DrizzleIdentityStore } from '../identity/store.js';
 import type { LlmGateway, LlmStreamParams } from '../llm/gateway.js';
@@ -41,6 +42,13 @@ class ScriptedLlmGateway implements LlmGateway {
     const response = this.responses[Math.min(this.next++, this.responses.length - 1)]!;
     yield response;
     return estimateUsage(params.messages.map((message) => message.content).join('\n'), response);
+  }
+}
+
+/** Embedding gateway that always throws (we own the seam) — for the embed-stage failure path. */
+class ThrowingEmbeddingGateway implements EmbeddingGateway {
+  async embed(_params: EmbeddingParams): Promise<EmbeddingResult> {
+    throw new Error('embedding provider unavailable');
   }
 }
 
@@ -207,6 +215,50 @@ describe('IngestionPipeline', () => {
     expect(job?.error).toMatch(/could not finish reading/);
     // No internal detail leaks into the user-safe message.
     expect(job?.error).not.toMatch(/pdf\.js|stack|TypeError/i);
+  });
+
+  it('fails the job (user-safe) when embedding throws after enrichment, leaving sections as residue', async () => {
+    const llm = new ScriptedLlmGateway([SEGMENT_RESPONSE, ENRICH_CONQUEST, ENRICH_CUISINE]);
+    const { sourceId, jobId } = await seedSourceAndJob();
+
+    await new IngestionPipeline({
+      semantic,
+      llm,
+      embeddings: new ThrowingEmbeddingGateway(),
+      ingestionModel: 'cheap-model',
+      embeddingModel: 'fake-embed',
+      embeddingDimensions: EMBEDDING_DIMENSIONS,
+      useContextHeader: false,
+      logger: silentLogger,
+    }).run({
+      companionId,
+      sourceId,
+      jobId,
+      sourceTitle: 'Peru notes',
+      payload: { kind: 'note', text: NOTE_TEXT },
+    });
+
+    const [job] = await semantic.listJobs(companionId);
+    expect(job?.status).toBe('failed');
+    // User-safe message only — no provider/internal detail leaks.
+    expect(job?.error).toMatch(/could not finish reading/);
+    expect(job?.error).not.toMatch(/embedding provider|stack|Error/i);
+
+    // Residue contract: segmentation + enrichment already committed, so the
+    // verbatim sections (with context headers) persist; the embed stage never
+    // completed, so NO section carries a vector — a pure-vector query (no
+    // lexical overlap) returns nothing because there is nothing to match.
+    expect(await semantic.getSourceText(companionId, sourceId)).toBe(NOTE_TEXT);
+    const sections = await semantic.listSectionsBySource(companionId, sourceId);
+    expect(sections).toHaveLength(2);
+    expect(sections[0]?.contextHeader).toContain('Pizarro founds Lima');
+
+    const vectorHits = await semantic.search(companionId, {
+      queryEmbedding: await embedText(sections[0]!.originalText),
+      queryText: 'zzz-no-lexical-overlap',
+      topK: 5,
+    });
+    expect(vectorHits).toHaveLength(0);
   });
 
   it('defers the AI passes (holding the parse) when the owner is over the daily cap', async () => {

@@ -37,16 +37,24 @@ export class OpenRouterGateway implements LlmGateway {
     const fallback = (): TokenUsage =>
       estimateUsage(params.messages.map((message) => message.content).join('\n'), text);
     const reader = body.getReader();
+    // Tracks whether the reader drained to its natural end. A consumer that
+    // breaks out early (or a thrown error) leaves this false, so the `finally`
+    // cancels the body — `releaseLock()` alone leaks the underlying connection.
+    let drained = false;
     try {
       for (;;) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          drained = true;
+          break;
+        }
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         buffer = lines.pop() ?? '';
         for (const line of lines) {
           const frame = parseSseLine(line);
           if (frame === DONE) {
+            drained = true;
             return usage ?? fallback();
           }
           if (!frame) continue;
@@ -60,6 +68,9 @@ export class OpenRouterGateway implements LlmGateway {
         }
       }
     } finally {
+      if (!drained) {
+        await reader.cancel().catch(() => undefined);
+      }
       reader.releaseLock();
     }
     return usage ?? fallback();

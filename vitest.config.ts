@@ -9,6 +9,7 @@ export default defineConfig({
     projects: [
       'packages/shared/vitest.config.ts',
       'packages/core/vitest.config.ts',
+      'packages/eval/vitest.config.ts',
       'packages/api/vitest.config.ts',
       'packages/web/vitest.config.ts',
       'db/vitest.config.ts',

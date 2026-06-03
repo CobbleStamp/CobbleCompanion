@@ -4,7 +4,7 @@
  * assistant's reply so the user always sees where an answer came from.
  */
 
-import type { Citation, CompanionDto, MessageRole } from '@cobble/shared';
+import type { Citation, CompanionDto, MessageDto, MessageRole } from '@cobble/shared';
 import { useEffect, useRef, useState } from 'react';
 import { fetchMessages, sendMessage } from '../api/client.js';
 import { UsageBadge } from '../components/UsageBadge.js';
@@ -17,6 +17,12 @@ interface ChatProps {
 }
 
 interface ChatLine {
+  /**
+   * The server message id once persisted (from the transcript or the `done`
+   * event). Absent on optimistic lines that have not yet been confirmed, which
+   * fall back to their array index for the React key.
+   */
+  readonly id?: string;
   readonly role: MessageRole;
   readonly content: string;
   readonly citations?: readonly Citation[];
@@ -43,7 +49,7 @@ export function Chat({
         // A companion has one lifelong conversation, so resuming is just loading
         // its transcript — no session to pick or create.
         const history = await fetchMessages(companion.id);
-        setLines(history.map((m) => ({ role: m.role, content: m.content })));
+        setLines(history.map((m) => ({ id: m.id, role: m.role, content: m.content })));
         setReady(true);
       } catch (err) {
         // Allow a retry on remount rather than getting stuck in a half-started state.
@@ -59,6 +65,7 @@ export function Chat({
     const content = input.trim();
     setInput('');
     setBusy(true);
+    setError(null);
     setLines((prev) => [...prev, { role: 'user', content }, { role: 'assistant', content: '' }]);
 
     try {
@@ -67,10 +74,21 @@ export function Chat({
           setLines((prev) => appendToLast(prev, event_.value));
         } else if (event_.type === 'citations') {
           setLines((prev) => citeLast(prev, event_.citations));
+        } else if (event_.type === 'done') {
+          // The authoritative persisted reply (server id + final content) replaces
+          // whatever the token deltas built, and gives the line a stable key.
+          setLines((prev) => finalizeLast(prev, event_.message));
         } else if (event_.type === 'error') {
+          // A streamed failure is data: surface it inline on the assistant line.
           setLines((prev) => appendToLast(prev, `\n[${event_.message}]`));
         }
       }
+    } catch (err) {
+      // A thrown send (network failure, malformed SSE frame) leaves an empty
+      // optimistic assistant bubble; drop it and surface the failure.
+      console.error('chat send failed', { companionId: companion.id, error: err });
+      setLines((prev) => dropEmptyAssistantTail(prev));
+      setError(err instanceof Error ? err.message : 'Failed to send message');
     } finally {
       setBusy(false);
     }
@@ -96,7 +114,7 @@ export function Chat({
       {error && <p className="error">{error}</p>}
       <ul className="transcript">
         {lines.map((line, index) => (
-          <li key={index} className={`line ${line.role}`}>
+          <li key={line.id ?? index} className={`line ${line.role}`}>
             <span className="who">{line.role === 'user' ? 'You' : companion.name}</span>
             <span className="content">{line.content}</span>
             {line.citations && line.citations.length > 0 && (
@@ -135,6 +153,35 @@ function citeLast(lines: ChatLine[], citations: readonly Citation[]): ChatLine[]
   if (lines.length === 0) return lines;
   const last = lines[lines.length - 1]!;
   return [...lines.slice(0, -1), { ...last, citations }];
+}
+
+/**
+ * Replace the streamed assistant line with the persisted message: the server's
+ * content is authoritative over the concatenated token deltas, and its id
+ * becomes the line's stable React key. Citations already attached during the
+ * stream are preserved.
+ */
+function finalizeLast(lines: ChatLine[], message: MessageDto): ChatLine[] {
+  if (lines.length === 0) return lines;
+  const last = lines[lines.length - 1]!;
+  return [
+    ...lines.slice(0, -1),
+    { ...last, id: message.id, role: message.role, content: message.content },
+  ];
+}
+
+/**
+ * Drop a trailing, still-empty optimistic assistant bubble — used when a send
+ * throws before any token arrived, so the transcript isn't left with a blank
+ * reply line.
+ */
+function dropEmptyAssistantTail(lines: ChatLine[]): ChatLine[] {
+  if (lines.length === 0) return lines;
+  const last = lines[lines.length - 1]!;
+  if (last.role === 'assistant' && last.content.length === 0) {
+    return lines.slice(0, -1);
+  }
+  return lines;
 }
 
 /** Collapse repeated passages from the same source span into one chip. */

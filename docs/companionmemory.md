@@ -72,7 +72,9 @@ kind slots in as it lands.
 
 A read-only view of everything a companion holds, grouped by memory kind.
 
-**API** (`packages/api/src/routes/memory.routes.ts` and `source.routes.ts`, owner-scoped):
+**API** (owner-scoped; `/memory` + `/memory/search` in
+`packages/api/src/routes/memory.routes.ts`, `/sources…` + `/ingestion` in
+`source.routes.ts`):
 
 - `GET /companions/:companionId/memory` — a sectioned snapshot
   (`MemorySnapshotDto` in `packages/shared/src/contracts.ts`): `identity`,

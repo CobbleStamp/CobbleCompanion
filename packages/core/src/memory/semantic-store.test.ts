@@ -61,6 +61,49 @@ describe('combineHits (reciprocal-rank fusion)', () => {
   it('returns empty for empty inputs', () => {
     expect(combineHits([], [], 5)).toEqual([]);
   });
+
+  it('assigns the hand-computed RRF score 2/61 to a rank-0 hit in both arms', () => {
+    // RRF score = Σ 1/(60 + rank + 1); rank 0 in both arms → 1/61 + 1/61.
+    const fused = combineHits([hit('both')], [hit('both')], 10);
+    expect(fused).toHaveLength(1);
+    expect(fused[0]?.score).toBeCloseTo(2 / 61, 12);
+  });
+
+  it('assigns the hand-computed RRF score 1/61 to a rank-0 hit in one arm only', () => {
+    const fused = combineHits([hit('vec-only')], [], 10);
+    expect(fused).toHaveLength(1);
+    expect(fused[0]?.score).toBeCloseTo(1 / 61, 12);
+  });
+
+  it('orders strictly by fused score: both-arms (2/61) above single-arm (1/62)', () => {
+    // `both` is rank 0 in each arm → 1/61 + 1/61 = 2/61. `vec` and `lex` each
+    // sit at rank 1 (the rank-0 slot is taken by `both`) in one arm → 1/62.
+    const fused = combineHits([hit('both'), hit('vec')], [hit('both'), hit('lex')], 10);
+    expect(fused[0]?.sectionId).toBe('both');
+    expect(fused[0]?.score).toBeCloseTo(2 / 61, 12);
+    // The two single-arm hits both score 1/62 and trail `both`; assert their
+    // shared score and set-membership (their relative order is the tie case).
+    const rest = fused.slice(1);
+    expect(rest.map((h) => h.sectionId).sort()).toEqual(['lex', 'vec']);
+    for (const h of rest) {
+      expect(h.score).toBeCloseTo(1 / 62, 12);
+    }
+  });
+
+  it('keeps both members of a score tie, with the non-tied head ordered first', () => {
+    // `top` is rank 0 in both arms (2/61); `a` and `b` each sit at rank 1 in a
+    // different arm (1/62 each) — a genuine score tie. The head order is
+    // deterministic (top first); the tied pair's relative order follows the
+    // sort's behavior for equal keys, so assert membership for the pair and
+    // exact position only for the unambiguous head.
+    const fused = combineHits([hit('top'), hit('a')], [hit('top'), hit('b')], 10);
+    expect(fused).toHaveLength(3);
+    expect(fused[0]?.sectionId).toBe('top');
+    const tied = fused.slice(1).map((h) => h.sectionId);
+    expect(tied.sort()).toEqual(['a', 'b']);
+    expect(fused[1]?.score).toBeCloseTo(1 / 62, 12);
+    expect(fused[2]?.score).toBeCloseTo(1 / 62, 12);
+  });
 });
 
 describe('DrizzleSemanticMemoryStore', () => {
@@ -170,6 +213,48 @@ describe('DrizzleSemanticMemoryStore', () => {
     });
 
     expect(hits.some((h) => h.sectionId === sectionId)).toBe(true);
+  });
+
+  it('skips the vector arm for an empty query embedding but still returns lexical hits', async () => {
+    const { sectionId } = await seedSection('The ceviche tradition began on the coast.');
+    await seedSection('Trains to Machu Picchu leave early.');
+
+    // Empty embedding (provider down / degraded): the vector arm is skipped
+    // entirely, yet the lexical arm still answers.
+    const hits = await store.search(companionId, {
+      queryEmbedding: [],
+      queryText: 'ceviche',
+      topK: 5,
+    });
+
+    expect(hits.map((h) => h.sectionId)).toContain(sectionId);
+  });
+
+  it('returns a vector hit even when the query text has zero FTS matches', async () => {
+    const { sectionId } = await seedSection('ceviche history in Lima');
+
+    // Query text matches nothing lexically, but the vector arm finds the
+    // semantically identical section.
+    const hits = await store.search(companionId, {
+      queryEmbedding: await embedOne('ceviche history in Lima'),
+      queryText: 'zzzznomatchtoken',
+      topK: 5,
+    });
+
+    expect(hits.map((h) => h.sectionId)).toEqual([sectionId]);
+  });
+
+  it('returns no hits when both arms are empty', async () => {
+    await seedSection('ceviche history in Lima');
+
+    const hits = await store.search(companionId, {
+      // Empty embedding skips the vector arm; the query text matches nothing.
+      queryEmbedding: [],
+      queryText: 'zzzznomatchtoken',
+      topK: 5,
+    });
+
+    expect(hits).toEqual([]);
   });
 
   it('applies the sourceId metadata filter', async () => {

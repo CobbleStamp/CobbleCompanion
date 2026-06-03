@@ -7,13 +7,16 @@
  * multi-day lockout. The effective cap is the per-account override or, absent
  * one, the configured default.
  *
- * PoC scope: read-modify-write without an explicit transaction. Same-user
- * concurrency is effectively absent (chat is turn-based, ingestion serial), so a
- * race would at worst miscount slightly; multi-replica atomicity is a later add.
+ * Concurrency: the accrual increment is applied atomically in SQL
+ * (`used = used + n`), so concurrent debits for the same user (e.g. a chat turn
+ * and a memory-search) can't lose an update. The window roll uses a conditional
+ * update guarded on the observed `windowResetAt`; if a concurrent first-of-day
+ * call already won the roll, this one re-reads and proceeds. Multi-replica
+ * serialization beyond this is a later add.
  */
 
 import { type Database, userTokenUsage } from '@cobble/db';
-import { eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 
 /** A user's current budget standing, for the UI and the cap checks. */
 export interface UsageSnapshot {
@@ -67,10 +70,16 @@ export class DrizzleTokenQuotaStore implements TokenQuotaStore {
     if (totalTokens <= 0) {
       return;
     }
-    const { used } = await this.loadAndRoll(userId);
+    // Roll the window first so the increment lands in the current window, then
+    // apply the increment atomically in SQL — a concurrent debit for the same
+    // user reads-and-writes against the live row, so no update is lost.
+    await this.loadAndRoll(userId);
     await this.db
       .update(userTokenUsage)
-      .set({ usedTokens: used + totalTokens, updatedAt: this.now() })
+      .set({
+        usedTokens: sql`${userTokenUsage.usedTokens} + ${totalTokens}`,
+        updatedAt: this.now(),
+      })
       .where(eq(userTokenUsage.userId, userId));
   }
 
@@ -109,10 +118,37 @@ export class DrizzleTokenQuotaStore implements TokenQuotaStore {
       // the account out beyond the next window.
       const debt = Math.min(cap, Math.max(0, row.usedTokens - cap));
       const resetsAt = nextUtcMidnight(now);
-      await this.db
+      // Guard the roll on the observed reset instant: only the request that sees
+      // the still-expired window writes the new one. A concurrent first-of-day
+      // call that already rolled changes `windowResetAt`, so this update matches
+      // 0 rows — in which case we re-read the freshly-rolled row and proceed.
+      const rolled = await this.db
         .update(userTokenUsage)
         .set({ usedTokens: debt, windowResetAt: resetsAt, updatedAt: now })
-        .where(eq(userTokenUsage.userId, userId));
+        .where(
+          and(
+            eq(userTokenUsage.userId, userId),
+            eq(userTokenUsage.windowResetAt, row.windowResetAt),
+          ),
+        )
+        .returning();
+      if (rolled.length > 0) {
+        return { used: debt, cap, resetsAt };
+      }
+      const [fresh] = await this.db
+        .select()
+        .from(userTokenUsage)
+        .where(eq(userTokenUsage.userId, userId))
+        .limit(1);
+      if (fresh) {
+        const freshCap = fresh.capOverride ?? this.defaultCap;
+        return {
+          used: fresh.usedTokens,
+          cap: freshCap,
+          resetsAt: fresh.windowResetAt,
+        };
+      }
+      // Extremely unlikely (row vanished); fall back to our computed roll.
       return { used: debt, cap, resetsAt };
     }
 

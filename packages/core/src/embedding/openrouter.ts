@@ -107,6 +107,10 @@ export class OpenRouterEmbeddingGateway implements EmbeddingGateway {
 /**
  * Embedding usage from the response (prompt-only; no completion), estimating
  * from the inputs when the provider omits it so accounting is never silently 0.
+ * `totalTokens` is derived from `promptTokens` rather than trusted from the
+ * provider: embeddings have no completion tokens, and a provider returning
+ * `total_tokens: 0` alongside real `prompt_tokens` must not zero the daily-cap
+ * debit.
  */
 function toUsage(
   usage: { prompt_tokens?: number; total_tokens?: number } | undefined,
@@ -114,7 +118,7 @@ function toUsage(
 ): TokenUsage {
   const promptTokens =
     usage?.prompt_tokens ?? usage?.total_tokens ?? estimateTokens(input.join('\n'));
-  return { promptTokens, completionTokens: 0, totalTokens: usage?.total_tokens ?? promptTokens };
+  return { promptTokens, completionTokens: 0, totalTokens: promptTokens };
 }
 
 async function safeText(response: Response): Promise<string> {

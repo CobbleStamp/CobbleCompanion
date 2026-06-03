@@ -126,7 +126,7 @@ training set and fits incremental ingestion; GIN on `fts`; btree on `(companion_
 `SemanticMemoryStore.search` runs two arms over `sections` scoped by `companion_id` —
 **vector** (`embedding <=> query` cosine, top-K) and **lexical** (`fts @@ plainto_tsquery`,
 `ts_rank`-ordered, top-K) — and fuses them with **reciprocal-rank fusion**
-(score = Σ 1/(60 + rank)), which is scale-free so the two scores never need calibrating.
+(score = Σ 1/(K + r), with K=60 and r the 1-based rank within each arm), which is scale-free so the two scores never need calibrating.
 Optional metadata filters: `source_id`, and `entity` (an EXISTS over the fact overlay's
 subject/object — how a section whose text only says "he" is still found by "Pizarro"). Every
 hit carries provenance (source title, chapter, topic, para/page range) + the verbatim text.
@@ -147,9 +147,14 @@ implementations; later phases supply real ones without changing the loop.
 // memory-retrieval hook — assembles prior context for a turn. Takes the
 // current user content because query-dependent recall (P1 semantic memory
 // embeds the question) needs it; the P0 recency window ignores it. The object
-// param keeps future fields additive — this was the one P1 hook-signature change.
+// param keeps future fields additive. P1 changed both ends of this signature:
+// the new `userContent` param AND the return — it now yields a RetrieveResult
+// carrying the blocks plus the `usage` spent recalling them (the query
+// embedding), so the harness can meter the whole turn against the daily
+// cap (`user_token_usage`, §1).
 interface RetrieveParams { companionId: string; userContent: string }
-type RetrieveContext = (params: RetrieveParams) => Promise<ContextBlock[]>;
+interface RetrieveResult { blocks: readonly ContextBlock[]; usage: TokenUsage }
+type RetrieveContext = (params: RetrieveParams) => Promise<RetrieveResult>;
 
 // a context block may carry provenance (P1 semantic recall); the harness
 // surfaces a turn's provenance as a `citations` stream event before `done`

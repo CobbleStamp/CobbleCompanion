@@ -49,6 +49,28 @@ describe('OpenRouterEmbeddingGateway', () => {
     });
   });
 
+  it('derives totalTokens from prompt_tokens, ignoring a bogus total_tokens:0', async () => {
+    // A provider that reports real prompt usage but total_tokens:0 must not zero
+    // the daily-cap debit — embeddings have no completion tokens.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              data: [{ index: 0, embedding: [1, 0] }],
+              usage: { prompt_tokens: 42, total_tokens: 0 },
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+
+    const gateway = new OpenRouterEmbeddingGateway({ apiKey: 'test-key' });
+    const { usage } = await gateway.embed({ input: ['x'], model: 'm', dimensions: 2 });
+    expect(usage).toEqual({ promptTokens: 42, completionTokens: 0, totalTokens: 42 });
+  });
+
   it('short-circuits empty input without a network call', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);

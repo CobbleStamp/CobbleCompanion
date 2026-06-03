@@ -19,7 +19,7 @@ export function registerMessageRoutes(
   deps: AppDeps,
   requireAuth: RequireAuth,
 ): void {
-  const { identity, memory, harness, quota } = deps;
+  const { identity, memory, harness, quota, logger } = deps;
 
   // Read the companion's transcript (oldest-first).
   app.get(
@@ -64,6 +64,7 @@ export function registerMessageRoutes(
           userContent: parsed.data.content,
           ownerId: request.userId!,
         }),
+        logger,
       );
     },
   );

@@ -102,6 +102,58 @@ describe('OpenRouterGateway', () => {
     expect(JSON.parse(init.body as string).usage).toEqual({ include: true });
   });
 
+  it('cancels the underlying body when the consumer breaks out early', async () => {
+    const cancel = vi.fn(async () => undefined);
+    const encoder = new TextEncoder();
+    // A stream that would keep yielding; the consumer breaks after the first
+    // chunk, so the generator's finally must cancel rather than just releaseLock.
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"a"}}]}\n'));
+      },
+      cancel,
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(body, { status: 200 })),
+    );
+
+    const gateway = new OpenRouterGateway({ apiKey: 'test-key' });
+    for await (const chunk of gateway.stream({
+      messages: [{ role: 'user', content: 'hi' }],
+      model: 'm',
+    })) {
+      expect(chunk).toBe('a');
+      break;
+    }
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not cancel the body when the stream drains to [DONE]', async () => {
+    const cancel = vi.fn(async () => undefined);
+    const encoder = new TextEncoder();
+    const lines = ['data: {"choices":[{"delta":{"content":"a"}}]}', 'data: [DONE]'];
+    let i = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (i < lines.length) {
+          controller.enqueue(encoder.encode(`${lines[i++]}\n`));
+        } else {
+          controller.close();
+        }
+      },
+      cancel,
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(body, { status: 200 })),
+    );
+
+    const gateway = new OpenRouterGateway({ apiKey: 'test-key' });
+    await collect(gateway.stream({ messages: [{ role: 'user', content: 'hi' }], model: 'm' }));
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
   it('throws a typed error on a non-OK response', async () => {
     vi.stubGlobal(
       'fetch',

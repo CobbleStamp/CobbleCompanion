@@ -85,6 +85,42 @@ describe('DrizzleTokenQuotaStore', () => {
     expect((await quota.getUsage(userId)).usedTokens).toBe(DEFAULT_CAP); // clamped to one cap
   });
 
+  it('stays under cap at cap-1 and flips over once cap is exceeded', async () => {
+    const quota = store();
+    await quota.recordUsage(userId, DEFAULT_CAP - 1); // 999, one below the cap
+    expect((await quota.getUsage(userId)).usedTokens).toBe(DEFAULT_CAP - 1);
+    expect(await quota.isOverCap(userId)).toBe(false);
+
+    await quota.recordUsage(userId, 2); // → 1001, over the cap
+    expect(await quota.isOverCap(userId)).toBe(true);
+  });
+
+  it('rolls the window with a per-account cap override applied to debt', async () => {
+    const quota = store();
+    await quota.recordUsage(userId, 100); // creates the row
+    await db
+      .update(userTokenUsage)
+      .set({ capOverride: 5000 })
+      .where(eq(userTokenUsage.userId, userId));
+    await quota.recordUsage(userId, 5900); // 6000 total, 1000 over the override
+
+    // Cross midnight: debt clamps to the override cap, not the default.
+    clock = new Date('2026-06-04T00:00:01.000Z');
+    const usage = await quota.getUsage(userId);
+    expect(usage.capTokens).toBe(5000);
+    expect(usage.usedTokens).toBe(1000); // carried debt under the override cap
+    expect(usage.resetsAt).toBe('2026-06-05T00:00:00.000Z');
+    expect(await quota.isOverCap(userId)).toBe(false);
+  });
+
+  it('does not lose an update when two recordUsage calls interleave', async () => {
+    const quota = store();
+    await quota.recordUsage(userId, 1); // create the row up front
+    await Promise.all([quota.recordUsage(userId, 400), quota.recordUsage(userId, 300)]);
+    // Atomic SQL increment: both debits land regardless of interleaving.
+    expect((await quota.getUsage(userId)).usedTokens).toBe(701);
+  });
+
   it('honors a per-account cap override', async () => {
     const quota = store();
     await quota.recordUsage(userId, 100); // creates the row

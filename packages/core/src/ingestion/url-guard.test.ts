@@ -54,8 +54,20 @@ describe('assertPublicHttpUrl', () => {
     ['NAT64 local-use', 'http://[64:ff9b:1::a9fe:a9fe]/'],
     ['6to4 of 10.0.0.1', 'http://[2002:a00:1::]/'],
     ['Teredo prefix', 'http://[2001:0:1234::1]/'],
+    // Non-dotted IPv4 spellings of 127.0.0.1: the WHATWG URL parser normalizes
+    // these to the dotted-quad loopback host BEFORE the string guard inspects
+    // them, so the URL-level layer already rejects them (pinning that, since
+    // `parseIpv4` itself only understands the dotted form).
+    ['integer-form IPv4 loopback', 'http://2130706433/'],
+    ['hex-form IPv4 loopback', 'http://0x7f000001/'],
   ])('rejects %s', (_label, url) => {
     expect(() => assertPublicHttpUrl(url)).toThrow();
+  });
+
+  it('normalizes integer/hex IPv4 hostnames to the dotted-quad loopback', () => {
+    // Documents WHY the rejections above fire: normalization, not parseIpv4.
+    expect(new URL('http://2130706433/').hostname).toBe('127.0.0.1');
+    expect(new URL('http://0x7f000001/').hostname).toBe('127.0.0.1');
   });
 });
 
@@ -72,6 +84,14 @@ describe('isBlockedIpAddress', () => {
     expect(isBlockedIpAddress('64:ff9b::a9fe:a9fe')).toBe(true);
     expect(isBlockedIpAddress('fd00::1')).toBe(true);
     expect(isBlockedIpAddress('2606:4700::6810:84e5')).toBe(false);
+  });
+
+  it('does not recognize non-dotted IPv4 spellings (judged after normalization)', () => {
+    // `parseIpv4` only parses the dotted form, so these bare tokens are treated
+    // as ordinary hostnames here — the URL parser normalizes them to dotted
+    // loopback before this function ever sees them (see assertPublicHttpUrl).
+    expect(isBlockedIpAddress('2130706433')).toBe(false);
+    expect(isBlockedIpAddress('0x7f000001')).toBe(false);
   });
 });
 
@@ -118,6 +138,11 @@ describe('createGuardedLookup', () => {
         { address: '10.0.0.5', family: 4 },
       ],
       'v6-private.example': [{ address: 'fd00::1', family: 6 }],
+      // A name resolving to the dotted loopback — the resolution-time guard's
+      // job (an integer/hex literal would already be dotted by then, but a real
+      // DNS answer can only ever be a dotted/colon address, so this is the form
+      // the lookup layer must catch).
+      'loopback.example': [{ address: '127.0.0.1', family: 4 }],
       'empty.example': [],
     }),
   );
@@ -135,6 +160,12 @@ describe('createGuardedLookup', () => {
 
   it('rejects when ANY resolved address is private, even alongside public ones', async () => {
     await expect(runLookup(lookup, 'mixed.example', true)).rejects.toThrow(/private or internal/);
+  });
+
+  it('rejects a hostname resolving to the IPv4 loopback (127.0.0.1)', async () => {
+    await expect(runLookup(lookup, 'loopback.example', false)).rejects.toThrow(
+      /private or internal/,
+    );
   });
 
   it('rejects a hostname resolving to a private IPv6 address', async () => {

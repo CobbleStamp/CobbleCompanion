@@ -169,3 +169,81 @@ describe('Chat grounded turns', () => {
     expect(screen.queryByText(/Grounded in:/)).toBeNull();
   });
 });
+
+describe('Chat send finalization', () => {
+  beforeEach(() => {
+    vi.mocked(fetchMessages).mockReset().mockResolvedValue([]);
+    vi.mocked(sendMessage).mockReset();
+  });
+
+  it('replaces the streamed content with the persisted done.message', async () => {
+    // Tokens build a partial reply; the authoritative `done.message.content`
+    // (here trimmed/corrected by the server) replaces it verbatim.
+    const events: ChatStreamEvent[] = [
+      { type: 'token', value: 'partial ' },
+      { type: 'token', value: 'draft' },
+      {
+        type: 'done',
+        message: {
+          id: 'm-final',
+          companionId: companion.id,
+          role: 'assistant',
+          content: 'Final authoritative answer.',
+          createdAt: '2026-01-03T00:00:03.000Z',
+        },
+      },
+    ];
+    vi.mocked(sendMessage).mockImplementation(async function* () {
+      yield* events;
+    });
+
+    renderChat();
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText(/Message Pebble/) as HTMLInputElement).disabled).toBe(
+        false,
+      ),
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/Message Pebble/), {
+      target: { value: 'question' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => expect(screen.getByText('Final authoritative answer.')).toBeTruthy());
+    // The streamed-only text is gone — the persisted content won.
+    expect(screen.queryByText('partial draft')).toBeNull();
+  });
+
+  it('surfaces the error and removes the empty bubble when a send throws', async () => {
+    vi.mocked(sendMessage).mockImplementation(
+      // A network/parse failure mid-stream before any token arrives.
+      async function* (): AsyncGenerator<ChatStreamEvent> {
+        throw new Error('stream interrupted');
+      },
+    );
+
+    renderChat();
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText(/Message Pebble/) as HTMLInputElement).disabled).toBe(
+        false,
+      ),
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/Message Pebble/), {
+      target: { value: 'will fail' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    // The failure is surfaced to the user...
+    await waitFor(() => expect(screen.getByText('stream interrupted')).toBeTruthy());
+    // ...the composer is re-enabled (busy reset)...
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+    // ...the user's line stays, and exactly one transcript line remains: no
+    // empty assistant bubble was left behind.
+    expect(screen.getByText('will fail')).toBeTruthy();
+    expect(document.querySelectorAll('.transcript .line').length).toBe(1);
+    expect(document.querySelector('.transcript .line.assistant')).toBeNull();
+  });
+});
