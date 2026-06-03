@@ -1,4 +1,10 @@
-import type { CompanionDto, MessageRole } from '@cobble/shared';
+/**
+ * The chat surface: the companion's single continuous, streamed conversation.
+ * Grounded turns render their citations ("Grounded in: …") under the
+ * assistant's reply so the user always sees where an answer came from.
+ */
+
+import type { Citation, CompanionDto, MessageRole } from '@cobble/shared';
 import { useEffect, useRef, useState } from 'react';
 import { fetchMessages, sendMessage } from '../api/client.js';
 
@@ -6,15 +12,21 @@ interface ChatProps {
   readonly companion: CompanionDto;
   readonly onSignOut: () => void;
   readonly onOpenMemory: () => void;
+  readonly onOpenSources: () => void;
 }
 
 interface ChatLine {
   readonly role: MessageRole;
   readonly content: string;
+  readonly citations?: readonly Citation[];
 }
 
-/** Step 3: hold the companion's single continuous, streamed conversation. */
-export function Chat({ companion, onSignOut, onOpenMemory }: ChatProps): JSX.Element {
+export function Chat({
+  companion,
+  onSignOut,
+  onOpenMemory,
+  onOpenSources,
+}: ChatProps): JSX.Element {
   const [lines, setLines] = useState<ChatLine[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -52,6 +64,8 @@ export function Chat({ companion, onSignOut, onOpenMemory }: ChatProps): JSX.Ele
       for await (const event_ of sendMessage(companion.id, content)) {
         if (event_.type === 'token') {
           setLines((prev) => appendToLast(prev, event_.value));
+        } else if (event_.type === 'citations') {
+          setLines((prev) => citeLast(prev, event_.citations));
         } else if (event_.type === 'error') {
           setLines((prev) => appendToLast(prev, `\n[${event_.message}]`));
         }
@@ -66,6 +80,9 @@ export function Chat({ companion, onSignOut, onOpenMemory }: ChatProps): JSX.Ele
       <header>
         <h1>{companion.name}</h1>
         <nav className="header-actions">
+          <button type="button" onClick={onOpenSources}>
+            Sources
+          </button>
           <button type="button" onClick={onOpenMemory}>
             Memory
           </button>
@@ -80,6 +97,14 @@ export function Chat({ companion, onSignOut, onOpenMemory }: ChatProps): JSX.Ele
           <li key={index} className={`line ${line.role}`}>
             <span className="who">{line.role === 'user' ? 'You' : companion.name}</span>
             <span className="content">{line.content}</span>
+            {line.citations && line.citations.length > 0 && (
+              <span className="citations who">
+                Grounded in:{' '}
+                {dedupeCitations(line.citations)
+                  .map((citation) => formatCitation(citation))
+                  .join(' · ')}
+              </span>
+            )}
           </li>
         ))}
       </ul>
@@ -101,5 +126,32 @@ export function Chat({ companion, onSignOut, onOpenMemory }: ChatProps): JSX.Ele
 function appendToLast(lines: ChatLine[], delta: string): ChatLine[] {
   if (lines.length === 0) return lines;
   const last = lines[lines.length - 1]!;
-  return [...lines.slice(0, -1), { role: last.role, content: last.content + delta }];
+  return [...lines.slice(0, -1), { ...last, content: last.content + delta }];
+}
+
+function citeLast(lines: ChatLine[], citations: readonly Citation[]): ChatLine[] {
+  if (lines.length === 0) return lines;
+  const last = lines[lines.length - 1]!;
+  return [...lines.slice(0, -1), { ...last, citations }];
+}
+
+/** Collapse repeated passages from the same source span into one chip. */
+function dedupeCitations(citations: readonly Citation[]): readonly Citation[] {
+  const seen = new Set<string>();
+  return citations.filter((citation) => {
+    const key = `${citation.sourceId}:${citation.paraStart}-${citation.paraEnd}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** "Peru book (ch. 4, para 12–18)" — human-readable, locatable provenance. */
+function formatCitation(citation: Citation): string {
+  const parts = [
+    citation.chapterTitle ? `ch. ${citation.chapterTitle}` : null,
+    `para ${citation.paraStart}–${citation.paraEnd}`,
+    citation.pageStart !== null ? `p. ${citation.pageStart}` : null,
+  ].filter((part): part is string => part !== null);
+  return `${citation.sourceTitle} (${parts.join(', ')})`;
 }

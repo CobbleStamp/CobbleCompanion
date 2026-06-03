@@ -1,7 +1,12 @@
-import type { CompanionDto, MessageDto } from '@cobble/shared';
-import { render, screen, waitFor } from '@testing-library/react';
+/**
+ * Chat tests: transcript resume, failure handling, and grounded-turn citation
+ * rendering from the streamed citations event.
+ */
+
+import type { ChatStreamEvent, CompanionDto, MessageDto } from '@cobble/shared';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchMessages } from '../api/client.js';
+import { fetchMessages, sendMessage } from '../api/client.js';
 import { Chat } from './Chat.js';
 
 const companion: CompanionDto = {
@@ -31,19 +36,30 @@ const history: MessageDto[] = [
 
 vi.mock('../api/client.js', () => ({
   fetchMessages: vi.fn(),
-  // sendMessage is imported by Chat but unused on mount; stub as an empty stream.
   sendMessage: vi.fn(async function* () {}),
 }));
+
+function renderChat(): void {
+  render(
+    <Chat
+      companion={companion}
+      onSignOut={() => {}}
+      onOpenMemory={() => {}}
+      onOpenSources={() => {}}
+    />,
+  );
+}
 
 describe('Chat mount', () => {
   beforeEach(() => {
     vi.mocked(fetchMessages).mockReset();
+    vi.mocked(sendMessage).mockReset();
   });
 
   it('resumes the companion transcript on open', async () => {
     vi.mocked(fetchMessages).mockResolvedValue(history);
 
-    render(<Chat companion={companion} onSignOut={() => {}} onOpenMemory={() => {}} />);
+    renderChat();
 
     await waitFor(() => expect(screen.getByText('welcome back')).toBeTruthy());
     expect(screen.getByText('hello again')).toBeTruthy();
@@ -54,7 +70,7 @@ describe('Chat mount', () => {
   it('starts empty for a companion with no history', async () => {
     vi.mocked(fetchMessages).mockResolvedValue([]);
 
-    render(<Chat companion={companion} onSignOut={() => {}} onOpenMemory={() => {}} />);
+    renderChat();
 
     await waitFor(() => expect(fetchMessages).toHaveBeenCalledWith(companion.id));
     expect(screen.queryByText('welcome back')).toBeNull();
@@ -63,12 +79,91 @@ describe('Chat mount', () => {
   it('surfaces an error and keeps the composer disabled when the transcript fails to load', async () => {
     vi.mocked(fetchMessages).mockRejectedValue(new Error('network down'));
 
-    render(<Chat companion={companion} onSignOut={() => {}} onOpenMemory={() => {}} />);
+    renderChat();
 
     // The failure message is shown to the user rather than a half-started chat.
     await waitFor(() => expect(screen.getByText('network down')).toBeTruthy());
     // The composer stays disabled because the transcript never became ready.
     expect((screen.getByPlaceholderText(/Message Pebble/) as HTMLInputElement).disabled).toBe(true);
     expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe('Chat grounded turns', () => {
+  beforeEach(() => {
+    vi.mocked(fetchMessages).mockReset().mockResolvedValue([]);
+    vi.mocked(sendMessage).mockReset();
+  });
+
+  it('renders the citations chip under a grounded assistant reply', async () => {
+    const events: ChatStreamEvent[] = [
+      {
+        type: 'citations',
+        citations: [
+          {
+            sourceId: 's1',
+            sourceTitle: 'Peru: A Culinary History',
+            chapterTitle: null,
+            topicTitle: 'Ceviche origins',
+            paraStart: 12,
+            paraEnd: 18,
+            pageStart: 41,
+            pageEnd: 42,
+          },
+        ],
+      },
+      { type: 'token', value: 'Ceviche is cured with lime.' },
+      {
+        type: 'done',
+        message: {
+          id: 'm3',
+          companionId: companion.id,
+          role: 'assistant',
+          content: 'Ceviche is cured with lime.',
+          createdAt: '2026-01-03T00:00:03.000Z',
+        },
+      },
+    ];
+    vi.mocked(sendMessage).mockImplementation(async function* () {
+      yield* events;
+    });
+
+    renderChat();
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText(/Message Pebble/) as HTMLInputElement).disabled).toBe(
+        false,
+      ),
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/Message Pebble/), {
+      target: { value: 'how is ceviche made?' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => expect(screen.getByText('Ceviche is cured with lime.')).toBeTruthy());
+    expect(
+      screen.getByText(/Grounded in:.*Peru: A Culinary History \(para 12–18, p\. 41\)/),
+    ).toBeTruthy();
+  });
+
+  it('shows no citation chip for an ungrounded reply', async () => {
+    vi.mocked(sendMessage).mockImplementation(async function* () {
+      yield { type: 'token', value: 'Just chatting!' } as ChatStreamEvent;
+    });
+
+    renderChat();
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText(/Message Pebble/) as HTMLInputElement).disabled).toBe(
+        false,
+      ),
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/Message Pebble/), {
+      target: { value: 'hi' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => expect(screen.getByText('Just chatting!')).toBeTruthy());
+    expect(screen.queryByText(/Grounded in:/)).toBeNull();
   });
 });

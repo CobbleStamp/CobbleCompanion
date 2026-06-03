@@ -1,6 +1,11 @@
-import type { CompanionDto, MemorySnapshotDto, MessageDto } from '@cobble/shared';
+import type {
+  CompanionDto,
+  MemorySnapshotDto,
+  MessageDto,
+  SemanticSearchResultDto,
+} from '@cobble/shared';
 import { useEffect, useState } from 'react';
-import { fetchMessages, getCompanionMemory } from '../api/client.js';
+import { fetchMessages, getCompanionMemory, searchMemory } from '../api/client.js';
 
 interface MemoryBrowserProps {
   readonly companion: CompanionDto;
@@ -104,6 +109,7 @@ export function MemoryBrowser({ companion, onBack }: MemoryBrowserProps): JSX.El
               {snapshot.semantic.sectionCount === 1 ? '' : 's'} · {snapshot.semantic.factCount} fact
               {snapshot.semantic.factCount === 1 ? '' : 's'}
             </p>
+            {snapshot.semantic.sectionCount > 0 && <SemanticSearch companionId={companion.id} />}
           </section>
           <PlannedSection
             title="Procedural — learned skills & workflows"
@@ -112,6 +118,58 @@ export function MemoryBrowser({ companion, onBack }: MemoryBrowserProps): JSX.El
         </div>
       )}
     </main>
+  );
+}
+
+interface SemanticSearchProps {
+  readonly companionId: string;
+}
+
+/** Recall window: search what the companion has read, with verbatim provenance. */
+function SemanticSearch({ companionId }: SemanticSearchProps): JSX.Element {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<SemanticSearchResultDto[] | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function onSearch(event: React.FormEvent): Promise<void> {
+    event.preventDefault();
+    if (query.trim().length === 0 || busy) return;
+    setBusy(true);
+    try {
+      setResults(await searchMemory(companionId, query.trim()));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div>
+      <form onSubmit={(e) => void onSearch(e)}>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search what it has read…"
+          aria-label="Search semantic memory"
+        />
+        <button type="submit" disabled={busy}>
+          Search
+        </button>
+      </form>
+      {results && results.length === 0 && <p className="who">Nothing found for that.</p>}
+      {results && results.length > 0 && (
+        <ul className="memory-list">
+          {results.map((result) => (
+            <li key={`${result.citation.sourceId}-${result.citation.paraStart}`}>
+              <p className="who">
+                {result.citation.sourceTitle} · {result.citation.topicTitle} · para{' '}
+                {result.citation.paraStart}–{result.citation.paraEnd}
+              </p>
+              <blockquote>{result.originalText}</blockquote>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
