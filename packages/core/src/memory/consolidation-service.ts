@@ -183,12 +183,9 @@ export interface ConsolidationSweepDeps {
  */
 export async function sweepConsolidation(deps: ConsolidationSweepDeps): Promise<number> {
   const minTurns = deps.minTurns ?? DEFAULT_MIN_TURNS;
+  let companionIds: readonly string[];
   try {
-    const companionIds = await deps.episodic.companionsNeedingConsolidation(minTurns);
-    for (const companionId of companionIds) {
-      deps.runner.request(companionId);
-    }
-    return companionIds.length;
+    companionIds = await deps.episodic.companionsNeedingConsolidation(minTurns);
   } catch (error) {
     deps.logger.error('consolidation sweep failed', {
       operation: 'memory.sweepConsolidation',
@@ -196,4 +193,20 @@ export async function sweepConsolidation(deps: ConsolidationSweepDeps): Promise<
     });
     return 0;
   }
+  // Isolate per companion: one bad request() must not abort the rest of the
+  // worklist (the sweep is best-effort catch-up; failures are logged, not fatal).
+  let requested = 0;
+  for (const companionId of companionIds) {
+    try {
+      deps.runner.request(companionId);
+      requested += 1;
+    } catch (error) {
+      deps.logger.error('consolidation sweep failed to request a companion', {
+        operation: 'memory.sweepConsolidation',
+        companionId,
+        error,
+      });
+    }
+  }
+  return requested;
 }
