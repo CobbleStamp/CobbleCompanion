@@ -1,6 +1,7 @@
 // Identity (the companion "home")
 export {
   DrizzleIdentityStore,
+  type CompanionRecord,
   type CreateCompanionInput,
   type IdentityStore,
   type UserRecord,
@@ -14,6 +15,13 @@ export {
   type ConsolidationCandidate,
   type PersonaSummary,
 } from './memory/consolidation.js';
+export { ConsolidationRunner, type ConsolidationTarget } from './memory/consolidation-runner.js';
+export {
+  ConsolidationService,
+  sweepConsolidation,
+  type ConsolidationServiceOptions,
+  type ConsolidationSweepDeps,
+} from './memory/consolidation-service.js';
 export { reciprocalRankFusion, RRF_K } from './memory/rrf.js';
 export {
   combineHits,

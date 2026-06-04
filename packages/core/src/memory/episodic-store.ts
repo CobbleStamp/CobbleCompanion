@@ -13,8 +13,8 @@
  * episodes so consolidation is incremental and restart-safe.
  */
 
-import { companions, episodes, type Database } from '@cobble/db';
-import { and, count, desc, eq, sql } from 'drizzle-orm';
+import { companions, episodes, messages, type Database } from '@cobble/db';
+import { and, count, desc, eq, gt, sql } from 'drizzle-orm';
 import { stripNul } from '../text/sanitize.js';
 import { reciprocalRankFusion } from './rrf.js';
 
@@ -91,6 +91,13 @@ export interface EpisodicMemoryStore {
   countEpisodes(companionId: string): Promise<number>;
   /** The highest transcript `seq` already rolled into episodes (the cursor). */
   consolidatedThroughSeq(companionId: string): Promise<number>;
+  /**
+   * Companion ids whose un-consolidated transcript tail is at least
+   * `minPendingTurns` long — i.e. `max(messages.seq) - consolidatedThroughSeq >=
+   * minPendingTurns`. The system sweep's worklist (startup catch-up + periodic):
+   * unscoped by design, like the deferred-ingestion sweep.
+   */
+  companionsNeedingConsolidation(minPendingTurns: number): Promise<readonly string[]>;
 }
 
 /** Select projection: a hit minus its fused score (occurred_* as Date pre-format). */
@@ -218,6 +225,26 @@ export class DrizzleEpisodicMemoryStore implements EpisodicMemoryStore {
       .where(eq(companions.id, companionId))
       .limit(1);
     return row?.seq ?? 0;
+  }
+
+  async companionsNeedingConsolidation(minPendingTurns: number): Promise<readonly string[]> {
+    // COUNT this companion's turns past its cursor — NOT max(seq) − cursor, since
+    // `seq` is a GLOBAL bigserial (a companion's max seq reflects total system
+    // traffic, not its own turn count). INNER JOIN on seq > cursor, so companions
+    // with no pending turns drop out and the count is the true pending tail.
+    const rows = await this.db
+      .select({ id: companions.id })
+      .from(companions)
+      .innerJoin(
+        messages,
+        and(
+          eq(messages.companionId, companions.id),
+          gt(messages.seq, companions.consolidatedThroughSeq),
+        ),
+      )
+      .groupBy(companions.id)
+      .having(sql`count(${messages.id}) >= ${minPendingTurns}`);
+    return rows.map((row) => row.id);
   }
 
   /** Tenancy scope plus the optional wall-clock window, shared by both arms. */
