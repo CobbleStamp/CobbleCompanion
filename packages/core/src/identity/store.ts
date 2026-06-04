@@ -52,6 +52,16 @@ export interface IdentityStore {
    */
   getCompanionById(companionId: string): Promise<CompanionRecord | null>;
   listCompanions(ownerId: string): Promise<readonly CompanionDto[]>;
+  /**
+   * Persist the re-synthesized evolved persona and advance the evolution cursor
+   * (`personaUpdatedThroughSeq`) — a BACKGROUND write from the personality
+   * evolver, keyed by companionId after the consolidation that triggered it.
+   */
+  updateEvolvedPersona(
+    companionId: string,
+    evolvedPersona: string,
+    personaUpdatedThroughSeq: number,
+  ): Promise<void>;
 }
 
 export class DrizzleIdentityStore implements IdentityStore {
@@ -104,6 +114,17 @@ export class DrizzleIdentityStore implements IdentityStore {
     const rows = await this.db.select().from(companions).where(eq(companions.ownerId, ownerId));
     return rows.map(toCompanionDto);
   }
+
+  async updateEvolvedPersona(
+    companionId: string,
+    evolvedPersona: string,
+    personaUpdatedThroughSeq: number,
+  ): Promise<void> {
+    await this.db
+      .update(companions)
+      .set({ evolvedPersona, personaUpdatedThroughSeq })
+      .where(eq(companions.id, companionId));
+  }
 }
 
 function toUserRecord(row: typeof users.$inferSelect): UserRecord {
@@ -120,6 +141,7 @@ function toCompanionDto(row: typeof companions.$inferSelect): CompanionDto {
     name: row.name,
     form: row.form,
     temperament: row.temperament,
+    evolvedPersona: row.evolvedPersona,
     createdAt: row.createdAt.toISOString(),
   };
 }

@@ -17,7 +17,14 @@ export interface CompanionDto {
   readonly id: string;
   readonly name: string;
   readonly form: string;
+  /** The immutable creation seed; personality EVOLUTION is additive (below). */
   readonly temperament: string;
+  /**
+   * Phase 2 — "who I've become with you": a short description re-synthesized from
+   * accumulated episodes, blended into the persona prompt alongside the seed and
+   * shown on the identity card. Null until the first evolution pass runs.
+   */
+  readonly evolvedPersona: string | null;
   readonly createdAt: string;
 }
 

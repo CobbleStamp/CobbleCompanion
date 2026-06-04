@@ -16,6 +16,7 @@ import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import { createUsageAccumulator, meteredLlmGateway, type UsageSink } from '../usage.js';
 import type { TokenQuotaStore } from '../quota/store.js';
+import type { PersonalityEvolver } from '../personality/evolve.js';
 import { consolidateWindow, type ConsolidationCandidate } from './consolidation.js';
 import type { ConsolidationTarget } from './consolidation-runner.js';
 import type { EpisodicMemoryStore, NewEpisode } from './episodic-store.js';
@@ -34,6 +35,12 @@ export interface ConsolidationServiceOptions {
   readonly logger: Logger;
   /** Debits + gates the run against the owner's daily cap; omit = unmetered (tests). */
   readonly quota?: TokenQuotaStore;
+  /**
+   * Re-synthesizes the evolved persona after new episodes form (Phase 2). Fired
+   * only when the run produced episodes; self-gates + meters + never throws.
+   * Omitted = consolidation without personality evolution (e.g. tests).
+   */
+  readonly evolver?: PersonalityEvolver;
   /** Don't reflect until at least this many un-consolidated turns have accrued. */
   readonly minTurns?: number;
   /** Max turns reflected in one run (keeps the prompt + run bounded). */
@@ -95,6 +102,11 @@ export class ConsolidationService implements ConsolidationTarget {
       // resulted (a span of pure filler), so we never re-reflect it.
       await episodic.appendEpisodes(companionId, embedded, throughSeq);
       await this.debit(companion.ownerId, usage.total().totalTokens);
+      // New memories formed → let the companion's character grow from them.
+      // Self-gating + metered + never throws; only worth firing when episodes exist.
+      if (embedded.length > 0 && this.options.evolver) {
+        await this.options.evolver.evolve(companionId);
+      }
     } catch (error) {
       logger.error('consolidation run failed', {
         operation: 'memory.consolidationService.consolidate',

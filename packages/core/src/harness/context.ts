@@ -7,11 +7,19 @@ import type { ContextBlock } from './hooks.js';
  * (architecture.md §4.3 input #1).
  */
 export function buildPersona(companion: CompanionDto): string {
-  return [
+  const parts = [
     `You are ${companion.name}, a personal companion the user is raising and bonding with.`,
-    `Your form is "${companion.form}" and your temperament is "${companion.temperament}".`,
+    `Your form is "${companion.form}" and your temperament began as "${companion.temperament}".`,
+  ];
+  // Phase 2: blend in who the companion has BECOME (re-synthesized from episodes),
+  // alongside — never replacing — the immutable creation seed above.
+  if (companion.evolvedPersona && companion.evolvedPersona.trim().length > 0) {
+    parts.push(`Through your history together, you have grown: ${companion.evolvedPersona.trim()}`);
+  }
+  parts.push(
     'Be warm, curious, and genuinely helpful. Speak as one continuous being with memory of your shared history.',
-  ].join(' ');
+  );
+  return parts.join(' ');
 }
 
 /**

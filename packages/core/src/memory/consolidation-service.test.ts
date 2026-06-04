@@ -168,6 +168,27 @@ describe('ConsolidationService', () => {
       service().consolidate('00000000-0000-0000-0000-000000000000'),
     ).resolves.not.toThrow();
   });
+
+  it('triggers personality evolution only when episodes were formed', async () => {
+    const evolver = { evolve: vi.fn().mockResolvedValue(undefined) };
+
+    // A span that yields an episode (seqs 1–8, cited 1–4) → evolution fired.
+    await seedTurns(8);
+    await service({ evolver }, new FakeLlmGateway([EPISODE_JSON])).consolidate(companionId);
+    expect(evolver.evolve).toHaveBeenCalledWith(companionId);
+    expect(evolver.evolve).toHaveBeenCalledTimes(1);
+
+    // A fresh companion whose span is pure filler → evolution NOT fired.
+    const user = await identity.ensureUserByEmail('owner@example.com');
+    const quiet = await identity.createCompanion(user.id, {
+      name: 'Quiet',
+      form: 'owl',
+      temperament: 'calm',
+    });
+    for (let i = 0; i < 8; i++) await memory.appendMessage(quiet.id, 'user', `m${i}`);
+    await service({ evolver }, new FakeLlmGateway(['{"episodes":[]}'])).consolidate(quiet.id);
+    expect(evolver.evolve).toHaveBeenCalledTimes(1); // still only the first
+  });
 });
 
 describe('sweepConsolidation', () => {

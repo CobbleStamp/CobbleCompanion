@@ -105,6 +105,13 @@ export {
   type EpisodicRetrieveOptions,
 } from './harness/episodic-retrieve.js';
 export { composeRetrieveContext } from './harness/compose-retrieve.js';
+
+// Personality evolution (Phase 2)
+export {
+  LlmPersonalityEvolver,
+  type PersonalityEvolver,
+  type PersonalityEvolverOptions,
+} from './personality/evolve.js';
 export {
   idleInitiator,
   isBlock,
