@@ -35,7 +35,7 @@ being is proven, because they add platform cost without changing whether the cor
 | Phase | Theme | Surface | Proves / Delivers | Status |
 |---|---|---|---|---|
 | **0** | Foundations & walking skeleton | Web | You can talk to Cobble end-to-end; stack decided | ✅ **Done** (PR #1) |
-| **1** | The knowledge organism | Web | Ingest sources → semantic memory → grounded recall ⭐ | 🔨 **Implemented** — eval gate pending |
+| **1** | The knowledge organism | Web | Ingest sources → semantic memory → grounded recall ⭐ | ✅ **Done** (PR #2) |
 | **2** | Memory & continuity | Web | Episodic memory, companion identity, cloud "home" | Planned |
 | **3** | Tools, action & trust | Web | Tool/MCP use + propose→approve approval queue | Planned |
 | **4** | Proactivity engine | Web | Motivated, tunable initiative ⭐ | Planned |
@@ -95,9 +95,15 @@ pgvector + FTS hybrid retrieval and a typed fact overlay (`ontology.md`), built 
 output-bounded ingestion pipeline off the request path (`architecture.md` §4.8); semantic recall
 fills the harness memory hook with citation-carrying grounding; web surface adds the Sources
 page ("read N of M"), chat citation chips, and memory search; the eval harness gained
-source-grounded cases + semantic configs with the contextual-header A/B. **Gate before marking
-done:** run the live eval (recall/grounding/hallucination across configs) and the manual e2e
-(upload a file → grounded answer with correct citation → out-of-knowledge question declines).
+source-grounded cases + semantic configs with the contextual-header A/B. **Gate passed**
+(2026-06-04, `docs/eval/phase1-eval-20260604.txt`): the live eval shows semantic configs at
+100% recall / 1.00 grounding / 0% hallucination, and the source-grounded `ceviche` case
+goes from grounding 0.40 + hallucination under recency-only to 1.00 + no hallucination once
+the source is retrieved — the differentiator the PoC exists to prove. The contextual-header
+A/B was a tie on this set (no decisive winner; revisit on a larger eval set, `architecture.md`
+§4.8). The manual e2e passed against the live stack: a `.md` upload read to `done`, a grounded
+question returned the correct answer with a citation event, and an out-of-knowledge question
+declined without fabricating.
 
 ### Phase 2 — Memory & Continuity
 **Goal:** Cobble remembers your shared history and is recognizably *the same being* over time.
