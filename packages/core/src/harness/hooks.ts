@@ -30,6 +30,8 @@ export interface ToolResult {
 
 export interface TurnCtx {
   readonly companionId: string;
+  /** The companion's owner — tools scope tenant state and bill tokens to it (P3). */
+  readonly ownerId: string;
 }
 
 /** A loop ENTRY — a human turn (P0) or a proactive trigger (P4). */

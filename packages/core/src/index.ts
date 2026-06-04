@@ -1,3 +1,19 @@
+// Tools (P3 — the companion's hands; the gate decides which run freely)
+export { type Tool, toToolDef, toolErrorMessage } from './tools/tool.js';
+export { ToolRegistry } from './tools/registry.js';
+export { createWebFetchTool, type WebFetchOptions } from './tools/web-fetch.js';
+export {
+  createMemorySearchTool,
+  type MemorySearchOptions,
+  type SemanticSearchPort,
+} from './tools/memory-search.js';
+export {
+  createIngestSourceTool,
+  type IngestSourceOptions,
+  type IngestionEnqueuePort,
+  type SourceRegistrationPort,
+} from './tools/ingest-source.js';
+
 // Identity (the companion "home")
 export {
   DrizzleIdentityStore,
