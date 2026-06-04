@@ -1,4 +1,4 @@
-import type { Citation, MessageRole } from '@cobble/shared';
+import type { Citation, MessageRole, ProposalDto } from '@cobble/shared';
 import type { ToolCall } from '../llm/gateway.js';
 import type { TokenUsage } from '../usage.js';
 
@@ -44,6 +44,8 @@ export interface Entry {
 export interface Block {
   readonly blocked: true;
   readonly reason: string;
+  /** The persisted proposal the gate enqueued; the harness relays it to the surface. */
+  readonly proposal?: ProposalDto;
 }
 
 /**

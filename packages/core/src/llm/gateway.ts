@@ -11,6 +11,9 @@ export interface LlmMessage {
   readonly content: string;
   /** Set on a `tool`-role message: the id of the tool call this result answers. */
   readonly toolCallId?: string;
+  /** Set on an `assistant` message that requested tools — replayed so the
+   * provider can correlate the following `tool` messages to their calls. */
+  readonly toolCalls?: readonly ToolCall[];
 }
 
 /**

@@ -2,6 +2,7 @@ import { estimateUsage, type TokenUsage } from '../usage.js';
 import {
   type LlmGateway,
   LlmGatewayError,
+  type LlmMessage,
   type LlmStreamParams,
   type StreamResult,
   type ToolCall,
@@ -108,7 +109,7 @@ export class OpenRouterGateway implements LlmGateway {
         body: JSON.stringify({
           model: params.model,
           stream: true,
-          messages: params.messages,
+          messages: params.messages.map(toWireMessage),
           // Advertise tools (OpenAI function-tool shape) only when the turn has
           // any — a text-only turn sends no `tools` field (P0 path unchanged).
           ...(params.tools && params.tools.length > 0
@@ -152,6 +153,29 @@ interface SseFrame {
   readonly content?: string;
   readonly usage?: TokenUsage;
   readonly toolCalls?: readonly RawToolCallDelta[];
+}
+
+/**
+ * Map an {@link LlmMessage} to the OpenAI/OpenRouter wire shape. A `tool`-role
+ * message carries its `tool_call_id`; an assistant message that made tool calls
+ * replays them as `tool_calls` so the provider can correlate the results.
+ */
+function toWireMessage(message: LlmMessage): Record<string, unknown> {
+  if (message.role === 'tool') {
+    return { role: 'tool', content: message.content, tool_call_id: message.toolCallId };
+  }
+  if (message.role === 'assistant' && message.toolCalls && message.toolCalls.length > 0) {
+    return {
+      role: 'assistant',
+      content: message.content,
+      tool_calls: message.toolCalls.map((call) => ({
+        ...(call.id !== undefined ? { id: call.id } : {}),
+        type: 'function',
+        function: { name: call.name, arguments: JSON.stringify(call.args) },
+      })),
+    };
+  }
+  return { role: message.role, content: message.content };
 }
 
 /** Map a {@link ToolDef} to the OpenAI/OpenRouter `tools[]` request shape. */

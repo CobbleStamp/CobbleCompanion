@@ -336,9 +336,33 @@ export interface StreamErrorEvent {
   readonly message: string;
 }
 
+/** Lifecycle of a proposed effectful action held for the user (architecture.md §4.4). */
+export type ProposalStatus = 'pending' | 'approved' | 'rejected';
+
+/** A held effectful tool call awaiting the user's one-tap approval (P3). */
+export interface ProposalDto {
+  readonly id: string;
+  /** The effectful tool the companion wants to run (e.g. `ingest_source`). */
+  readonly toolName: string;
+  /** A short, human-readable description of what will happen if approved. */
+  readonly summary: string;
+  readonly status: ProposalStatus;
+  readonly createdAt: string;
+}
+
+/**
+ * Emitted when a turn EXITs because an effectful action was blocked for approval
+ * (propose→approve). The action is held in the approval queue, not executed.
+ */
+export interface StreamProposalEvent {
+  readonly type: 'proposal';
+  readonly proposal: ProposalDto;
+}
+
 export type ChatStreamEvent =
   | StreamTokenEvent
   | StreamCitationsEvent
+  | StreamProposalEvent
   | StreamDoneEvent
   | StreamErrorEvent;
 
