@@ -4,6 +4,8 @@ import type {
   CreateCompanionBody,
   CreateLinkSourceBody,
   CreateNoteSourceBody,
+  EpisodeDto,
+  EpisodeSearchResultDto,
   IngestionJobDto,
   MemorySnapshotDto,
   MessageDto,
@@ -187,6 +189,24 @@ export async function searchMemory(
 ): Promise<SemanticSearchResultDto[]> {
   const body = await request<{ results: SemanticSearchResultDto[] }>(
     `/companions/${companionId}/memory/search`,
+    { method: 'POST', body: JSON.stringify({ query }) },
+  );
+  return body.results;
+}
+
+/** The companion's consolidated episodic memories, most recent first. */
+export async function listEpisodes(companionId: string): Promise<EpisodeDto[]> {
+  const body = await request<{ episodes: EpisodeDto[] }>(`/companions/${companionId}/episodes`);
+  return body.episodes;
+}
+
+/** Recall episodes by topic (the browser's episodic recall window). */
+export async function searchEpisodes(
+  companionId: string,
+  query: string,
+): Promise<EpisodeSearchResultDto[]> {
+  const body = await request<{ results: EpisodeSearchResultDto[] }>(
+    `/companions/${companionId}/episodes/search`,
     { method: 'POST', body: JSON.stringify({ query }) },
   );
   return body.results;

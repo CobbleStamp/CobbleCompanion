@@ -1,11 +1,19 @@
 import type {
   CompanionDto,
+  EpisodeDto,
+  EpisodeSearchResultDto,
   MemorySnapshotDto,
   MessageDto,
   SemanticSearchResultDto,
 } from '@cobble/shared';
 import { useEffect, useState } from 'react';
-import { fetchMessages, getCompanionMemory, searchMemory } from '../api/client.js';
+import {
+  fetchMessages,
+  getCompanionMemory,
+  listEpisodes,
+  searchEpisodes,
+  searchMemory,
+} from '../api/client.js';
 import { UsageBadge } from '../components/UsageBadge.js';
 
 interface MemoryBrowserProps {
@@ -70,7 +78,12 @@ export function MemoryBrowser({ companion, onBack }: MemoryBrowserProps): JSX.El
             <p>
               <strong>{snapshot.identity.name}</strong> — a {snapshot.identity.form}.
             </p>
-            <p>{snapshot.identity.temperament}</p>
+            <p>Temperament at creation: {snapshot.identity.temperament}</p>
+            {snapshot.identity.evolvedPersona && (
+              <p className="evolved">
+                <strong>Who they've grown into:</strong> {snapshot.identity.evolvedPersona}
+              </p>
+            )}
             <p className="who">Since {formatDate(snapshot.identity.createdAt)}</p>
           </section>
 
@@ -108,6 +121,15 @@ export function MemoryBrowser({ companion, onBack }: MemoryBrowserProps): JSX.El
           </section>
 
           <section className="memory-section">
+            <h2>Episodic — memories</h2>
+            <p className="who">
+              {snapshot.episodic.episodeCount} consolidated memor
+              {snapshot.episodic.episodeCount === 1 ? 'y' : 'ies'} of your shared history
+            </p>
+            {snapshot.episodic.episodeCount > 0 && <EpisodesSection companionId={companion.id} />}
+          </section>
+
+          <section className="memory-section">
             <h2>Semantic — knowledge from sources</h2>
             <p className="who">
               {snapshot.semantic.sourceCount} source
@@ -125,6 +147,73 @@ export function MemoryBrowser({ companion, onBack }: MemoryBrowserProps): JSX.El
         </div>
       )}
     </main>
+  );
+}
+
+interface EpisodesSectionProps {
+  readonly companionId: string;
+}
+
+/** The episode timeline (consolidated memories) plus a topic-recall window. */
+function EpisodesSection({ companionId }: EpisodesSectionProps): JSX.Element {
+  const [episodes, setEpisodes] = useState<EpisodeDto[] | null>(null);
+  const [results, setResults] = useState<EpisodeSearchResultDto[] | null>(null);
+  const [query, setQuery] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        setEpisodes(await listEpisodes(companionId));
+      } catch {
+        setEpisodes([]);
+      }
+    })();
+  }, [companionId]);
+
+  async function onSearch(event: React.FormEvent): Promise<void> {
+    event.preventDefault();
+    if (query.trim().length === 0 || busy) return;
+    setBusy(true);
+    try {
+      setResults(await searchEpisodes(companionId, query.trim()));
+      setSearchError(null);
+    } catch (err) {
+      setResults(null);
+      setSearchError(err instanceof Error ? err.message : 'Search failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // The recalled set when a search is active, else the full timeline.
+  const shown = results ? results.map((result) => result.episode) : (episodes ?? []);
+
+  return (
+    <div>
+      <form onSubmit={(e) => void onSearch(e)}>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Recall a memory…"
+          aria-label="Search episodic memory"
+        />
+        <button type="submit" disabled={busy}>
+          Recall
+        </button>
+      </form>
+      {searchError && <p className="error">{searchError}</p>}
+      {results && results.length === 0 && <p className="who">No memory of that yet.</p>}
+      <ul className="memory-list">
+        {shown.map((episode) => (
+          <li key={episode.id}>
+            <p className="who">{formatWhen(episode.occurredStart, episode.occurredEnd)}</p>
+            <blockquote>{episode.summary}</blockquote>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -203,4 +292,11 @@ function PlannedSection({ title, phase }: PlannedSectionProps): JSX.Element {
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleString();
+}
+
+/** A memory's wall-clock span as a friendly date (or date range). */
+function formatWhen(occurredStart: string, occurredEnd: string): string {
+  const start = new Date(occurredStart).toLocaleDateString();
+  const end = new Date(occurredEnd).toLocaleDateString();
+  return start === end ? start : `${start} – ${end}`;
 }

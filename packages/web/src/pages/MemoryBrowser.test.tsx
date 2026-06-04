@@ -1,7 +1,13 @@
 import type { CompanionDto, MemorySnapshotDto, MessageDto } from '@cobble/shared';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchMessages, getCompanionMemory, searchMemory } from '../api/client.js';
+import {
+  fetchMessages,
+  getCompanionMemory,
+  listEpisodes,
+  searchEpisodes,
+  searchMemory,
+} from '../api/client.js';
 import { MemoryBrowser } from './MemoryBrowser.js';
 
 const companion: CompanionDto = {
@@ -47,6 +53,8 @@ vi.mock('../api/client.js', () => ({
   getCompanionMemory: vi.fn(),
   fetchMessages: vi.fn(),
   searchMemory: vi.fn(),
+  listEpisodes: vi.fn(),
+  searchEpisodes: vi.fn(),
   // The usage badge polls this; reject so it stays hidden in these tests.
   getUsage: vi.fn(() => Promise.reject(new Error('no usage'))),
 }));
@@ -55,13 +63,15 @@ describe('MemoryBrowser', () => {
   beforeEach(() => {
     vi.mocked(getCompanionMemory).mockReset().mockResolvedValue(snapshot);
     vi.mocked(fetchMessages).mockReset().mockResolvedValue(transcript);
+    vi.mocked(listEpisodes).mockReset().mockResolvedValue([]);
+    vi.mocked(searchEpisodes).mockReset().mockResolvedValue([]);
   });
 
   it('renders identity, the episodic transcript, semantic counts, and planned sections', async () => {
     render(<MemoryBrowser companion={companion} onBack={() => {}} />);
 
     await waitFor(() => expect(screen.getByText(/Episodic — conversation/)).toBeTruthy());
-    expect(screen.getByText('curious and warm')).toBeTruthy();
+    expect(screen.getByText(/curious and warm/)).toBeTruthy();
     expect(screen.getByText(/2 messages in one continuous conversation/)).toBeTruthy();
     // The semantic store surfaces what the companion has read.
     expect(screen.getByText(/3 sources · 12 sections · 7 facts/)).toBeTruthy();
@@ -115,6 +125,62 @@ describe('MemoryBrowser', () => {
       screen.getByText(/Peru: A Culinary History · Ceviche origins · para 12–18/),
     ).toBeTruthy();
     expect(searchMemory).toHaveBeenCalledWith(companion.id, 'ceviche');
+  });
+
+  it('shows the evolved persona on the identity card once it exists', async () => {
+    vi.mocked(getCompanionMemory).mockResolvedValue({
+      ...snapshot,
+      identity: {
+        ...companion,
+        evolvedPersona: "You've grown playful and know they cook to unwind.",
+      },
+    });
+
+    render(<MemoryBrowser companion={companion} onBack={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText(/Who they've grown into/)).toBeTruthy());
+    expect(screen.getByText(/cook to unwind/)).toBeTruthy();
+    // The immutable seed is still shown alongside it.
+    expect(screen.getByText(/Temperament at creation: curious and warm/)).toBeTruthy();
+  });
+
+  it('renders the episode timeline and recalls episodes by topic', async () => {
+    vi.mocked(listEpisodes).mockResolvedValue([
+      {
+        id: 'ep1',
+        summary: 'You loved the ceviche in Lima.',
+        occurredStart: '2026-01-10T00:00:00.000Z',
+        occurredEnd: '2026-01-10T01:00:00.000Z',
+        salience: 0.9,
+      },
+    ]);
+    vi.mocked(searchEpisodes).mockResolvedValue([
+      {
+        episode: {
+          id: 'ep2',
+          summary: 'You hiked Rainbow Mountain at altitude.',
+          occurredStart: '2026-03-10T00:00:00.000Z',
+          occurredEnd: '2026-03-10T01:00:00.000Z',
+          salience: 0.7,
+        },
+        score: 0.04,
+      },
+    ]);
+
+    render(<MemoryBrowser companion={companion} onBack={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText(/1 consolidated memory/)).toBeTruthy());
+    expect(screen.getByText('You loved the ceviche in Lima.')).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Search episodic memory'), {
+      target: { value: 'mountain' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Recall' }));
+
+    await waitFor(() =>
+      expect(screen.getByText('You hiked Rainbow Mountain at altitude.')).toBeTruthy(),
+    );
+    expect(searchEpisodes).toHaveBeenCalledWith(companion.id, 'mountain');
   });
 
   it('hides the transcript control for a companion with no messages', async () => {
