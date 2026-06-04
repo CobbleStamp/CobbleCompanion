@@ -124,7 +124,7 @@ describe('composeRetrieveContext', () => {
       usage: { promptTokens: 2, completionTokens: 0, totalTokens: 2 },
     });
 
-    const composed = composeRetrieveContext(armA, armB);
+    const composed = composeRetrieveContext(logger, armA, armB);
     const result = await composed({ companionId: 'c1', userContent: 'q' });
 
     expect(result.blocks.map((b) => b.content)).toEqual(['A', 'B', 'recent turn']);
@@ -132,9 +132,34 @@ describe('composeRetrieveContext', () => {
   });
 
   it('is a no-op shape with zero arms', async () => {
-    const composed = composeRetrieveContext();
+    const composed = composeRetrieveContext(logger);
     const result = await composed({ companionId: 'c1', userContent: 'q' });
     expect(result.blocks).toEqual([]);
     expect(result.usage.totalTokens).toBe(0);
+  });
+
+  it('isolates a throwing arm: the others still contribute and the turn survives', async () => {
+    const throwing: RetrieveContext = async () => {
+      throw new Error('arm blew up');
+    };
+    const healthy: RetrieveContext = async () => ({
+      blocks: [
+        { role: 'system', content: 'grounding' },
+        { role: 'user', content: 'recent turn' },
+      ],
+      usage: { promptTokens: 2, completionTokens: 0, totalTokens: 2 },
+    });
+
+    // Throwing arm first, healthy arm last (recency carrier) — the order the
+    // harness uses. The throw must not abort the loop or the turn.
+    const composed = composeRetrieveContext(logger, throwing, healthy);
+    const result = await composed({ companionId: 'c1', userContent: 'q' });
+
+    expect(result.blocks.map((b) => b.content)).toEqual(['grounding', 'recent turn']);
+    expect(result.usage.totalTokens).toBe(2);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('degrading'),
+      expect.objectContaining({ companionId: 'c1' }),
+    );
   });
 });

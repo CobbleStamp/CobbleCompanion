@@ -122,6 +122,7 @@ async function main(): Promise<void> {
     // semantic recall (P1) which appends the recency transcript window last — so
     // a turn carries persona + memories + grounding + recent transcript, in order.
     retrieveContext: composeRetrieveContext(
+      consoleLogger,
       createEpisodicRetrieveContext({
         episodic,
         // Both arms embed the same query; a shared one-entry memo collapses the

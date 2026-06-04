@@ -208,7 +208,7 @@ function makeHarness(deps: EvalDeps, config: MemoryConfig): Harness {
     model: deps.model,
     recentLimit: config.recentLimit,
     logger: silentLogger,
-    ...(arms.length > 0 ? { retrieveContext: composeRetrieveContext(...arms) } : {}),
+    ...(arms.length > 0 ? { retrieveContext: composeRetrieveContext(silentLogger, ...arms) } : {}),
   });
 }
 

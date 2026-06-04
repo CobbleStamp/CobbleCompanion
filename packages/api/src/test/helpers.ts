@@ -165,6 +165,7 @@ export async function makeTestApp(
       quota,
       logger: silentLogger,
       retrieveContext: composeRetrieveContext(
+        silentLogger,
         createEpisodicRetrieveContext({
           episodic,
           embeddings: retrievalEmbeddings,
