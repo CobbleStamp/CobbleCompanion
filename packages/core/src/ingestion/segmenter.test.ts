@@ -4,10 +4,10 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import type { LlmGateway, LlmStreamParams } from '../llm/gateway.js';
+import type { LlmGateway, LlmStreamParams, StreamResult } from '../llm/gateway.js';
 import { FakeLlmGateway } from '../llm/fake.js';
 import type { Logger } from '../logging.js';
-import { estimateUsage, type TokenUsage } from '../usage.js';
+import { estimateUsage } from '../usage.js';
 import type { Paragraph } from './parser.js';
 import { parseBoundaries, segmentParagraphs } from './segmenter.js';
 import { MAX_INGESTION_PROMPT_CHARS, UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from './untrusted.js';
@@ -24,10 +24,13 @@ class RecordingLlmGateway implements LlmGateway {
 
   constructor(private readonly response: string) {}
 
-  async *stream(params: LlmStreamParams): AsyncGenerator<string, TokenUsage, void> {
+  async *stream(params: LlmStreamParams): AsyncGenerator<string, StreamResult, void> {
     this.calls.push(params);
     yield this.response;
-    return estimateUsage(params.messages.map((m) => m.content).join('\n'), this.response);
+    return {
+      usage: estimateUsage(params.messages.map((m) => m.content).join('\n'), this.response),
+      toolCalls: [],
+    };
   }
 }
 

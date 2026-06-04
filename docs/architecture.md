@@ -261,6 +261,47 @@ flowchart LR
     class USER human;
 ```
 
+> **Design fixed now, implementation deferred to Phase 4.** The motivation engine *is* the thing
+> that fills the `Initiator` hook (architecture.md invariant #3; reserved in code, returns `null`
+> today). It is the **"will"** of a deliberate **body-then-will split**: Phase 3 builds the *body*
+> — the tools, the propose→approve gate (§4.4), the tool-call audit log, and the **lead inventory**
+> (a persistent frontier of discovered-but-unread leads, e.g. URLs spotted while reading) — and
+> Phase 4 builds the *will* that drives that body on its own. The ordering is a safety
+> precondition, not a convenience: an autonomous, exploring, token-*spending* companion is only
+> acceptable because **every consequential act already routes through the approval gate and every
+> tool call is logged** (the §4.4 generalized invariant). The body is verifiable with deterministic
+> tests; the will only by measurement over time (its named risk is annoyance, `development-plan.md`
+> §3), so it lands on a foundation already trusted. The exploration loop is *identical* whether a
+> human or the motivation engine triggers it — Phase 3 works the inventory **on the user's command**
+> ("go through your reading list"); Phase 4 works it **on an idle tick**.
+
+The engine's parts (each additive, no loop change):
+
+- **Trigger** — an idle/periodic tick (the background-runner + sweep pattern already used for
+  consolidation, §4.3) asks "is there anything worth doing?" → may emit a non-human ENTRY, or stay
+  idle. Return-after-absence and external events (e.g. arrival somewhere new, Phase 6) are further
+  triggers.
+- **Drives (what it wants)** — **learned** user interests (read out of semantic/episodic memory, not
+  a configured setting) + the companion's personality (seed temperament + evolved persona, §4.3) +
+  pending **leads** (the inventory) + bond maintenance (time since last contact) + pending
+  work/opportunities (`product-overview.md` §5.4).
+- **Arbitration** — score candidate actions by drive × salience; **"idle" is a valid outcome**
+  (sparing, not annoying).
+- **Attention model (the "creature")** — each initiation is a **bounded burst**, never a full drain
+  of the inventory. Personality parameters shape it: **focus length** (steps before re-deciding),
+  **boredom** (interest on a thread decays without payoff), **distractibility** (a higher-salience
+  lead can preempt). Different Cobbles run different constants — a tenacious deep-reader vs. a magpie
+  that flits.
+- **Budget** — bounded by the per-run ceiling (reused from the Phase 3 loop guard, §4.7) and the
+  daily token cap (§4.8).
+- **Output** — a proactive turn → a message/question, or a **proposal awaiting approval** (in-app on
+  web; sparing push when away, Phase 6). Consequential acts still pass the §4.4 gate.
+- **Tunability** — a global frequency/intensity dial (Phase 4 DoD).
+
+**Phase 3 builds the substrate** the engine plugs into: the **lead inventory**, the `Initiator`
+contract, and the **burst-budget knob** (the §4.7 per-run ceiling that Phase 4 parameterizes by
+personality).
+
 ### 4.6 Phase 0 realization (end-to-end)
 
 The same loop, instantiated across the real Phase 0 components — single-pass, with streaming:

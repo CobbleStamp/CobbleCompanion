@@ -159,6 +159,11 @@ Cobble has **motivations** and acts on them when you're idle or away. Its initia
 - **Pending work & opportunities** — unfinished tasks and time-sensitive openings (a price
   drop, a deadline).
 
+Its initiative also has a **temperament**: how often it reaches out, how long it stays absorbed in
+something, and how easily it gets pulled to something new all reflect *this* Cobble's personality —
+one is a tenacious deep-diver, another a curious magpie. So proactivity feels like a creature with
+its own attention, not a scheduler.
+
 **Outreach model:** rich, conversational proactivity when you're **present** (you've summoned it
 into a room); and **sparing, high-value push notifications** when you're away (e.g. you've
 arrived somewhere new, or an opportunity is expiring). Frequency is **tunable** so it feels

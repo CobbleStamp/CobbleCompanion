@@ -6,7 +6,7 @@
  * and let callers tally usage across many calls.
  */
 
-import type { LlmGateway } from './llm/gateway.js';
+import type { LlmGateway, StreamResult } from './llm/gateway.js';
 
 /** Prompt/completion/total token counts for one LLM or embedding call. */
 export interface TokenUsage {
@@ -58,12 +58,16 @@ export function createUsageAccumulator(): UsageAccumulator {
   };
 }
 
+/** A {@link StreamResult} with no usage and no tool calls (the fallback). */
+const ZERO_STREAM_RESULT: StreamResult = { usage: ZERO_USAGE, toolCalls: [] };
+
 /**
- * Wrap an LLM gateway so every stream's final usage (the generator's return
- * value) is deposited into `sink` — even when the consumer drains the stream
- * with `for await` and discards the return. The deposit happens in the generator
- * body on the terminating `.next()` call, which `for await` always makes, so
- * callers like the segmenter/enricher need no change to be metered.
+ * Wrap an LLM gateway so every stream's final usage (carried on the generator's
+ * {@link StreamResult} return value) is deposited into `sink` — even when the
+ * consumer drains the stream with `for await` and discards the return. The
+ * deposit happens in the generator body on the terminating `.next()` call, which
+ * `for await` always makes, so callers like the segmenter/enricher need no change
+ * to be metered. Any tool calls are passed through on the return untouched.
  */
 export function meteredLlmGateway(inner: LlmGateway, sink: UsageSink): LlmGateway {
   return {
@@ -72,9 +76,9 @@ export function meteredLlmGateway(inner: LlmGateway, sink: UsageSink): LlmGatewa
       for (;;) {
         const { value, done } = await iterator.next();
         if (done) {
-          const usage = value ?? ZERO_USAGE;
-          sink.add(usage);
-          return usage;
+          const result = value ?? ZERO_STREAM_RESULT;
+          sink.add(result.usage);
+          return result;
         }
         yield value;
       }

@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { TokenUsage } from '../usage.js';
-import { LlmGatewayError } from './gateway.js';
+import { LlmGatewayError, type StreamResult } from './gateway.js';
 import { OpenRouterGateway } from './openrouter.js';
 
 function sseStream(lines: readonly string[]): ReadableStream<Uint8Array> {
@@ -21,14 +20,14 @@ async function collect(iterable: AsyncIterable<string>): Promise<string> {
   return out;
 }
 
-/** Drive the stream to completion, capturing both the text and the returned usage. */
-async function collectWithUsage(
-  stream: AsyncGenerator<string, TokenUsage, void>,
-): Promise<{ text: string; usage: TokenUsage }> {
+/** Drive the stream to completion, capturing both the text and the returned result. */
+async function collectWithResult(
+  stream: AsyncGenerator<string, StreamResult, void>,
+): Promise<{ text: string; result: StreamResult }> {
   let text = '';
   for (;;) {
     const { value, done } = await stream.next();
-    if (done) return { text, usage: value };
+    if (done) return { text, result: value };
     text += value;
   }
 }
@@ -70,11 +69,11 @@ describe('OpenRouterGateway', () => {
     );
 
     const gateway = new OpenRouterGateway({ apiKey: 'test-key' });
-    const { text, usage } = await collectWithUsage(
+    const { text, result } = await collectWithResult(
       gateway.stream({ messages: [{ role: 'user', content: 'hi' }], model: 'm' }),
     );
     expect(text).toBe('Hi');
-    expect(usage).toEqual({ promptTokens: 11, completionTokens: 3, totalTokens: 14 });
+    expect(result.usage).toEqual({ promptTokens: 11, completionTokens: 3, totalTokens: 14 });
   });
 
   it('estimates usage (~4 chars/token) when the provider omits a usage frame', async () => {
@@ -85,11 +84,11 @@ describe('OpenRouterGateway', () => {
     );
 
     const gateway = new OpenRouterGateway({ apiKey: 'test-key' });
-    const { usage } = await collectWithUsage(
+    const { result } = await collectWithResult(
       gateway.stream({ messages: [{ role: 'user', content: 'abcdefgh' }], model: 'm' }),
     );
     // prompt "abcdefgh" (8 → 2) + completion "abcd" (4 → 1).
-    expect(usage).toEqual({ promptTokens: 2, completionTokens: 1, totalTokens: 3 });
+    expect(result.usage).toEqual({ promptTokens: 2, completionTokens: 1, totalTokens: 3 });
   });
 
   it('sends usage:{include:true} so OpenRouter appends the usage frame', async () => {
@@ -152,6 +151,122 @@ describe('OpenRouterGateway', () => {
     const gateway = new OpenRouterGateway({ apiKey: 'test-key' });
     await collect(gateway.stream({ messages: [{ role: 'user', content: 'hi' }], model: 'm' }));
     expect(cancel).not.toHaveBeenCalled();
+  });
+
+  it('accumulates a tool call whose arguments are split across frames', async () => {
+    const body = sseStream([
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"web_fetch","arguments":"{\\"url\\":"}}]}}]}',
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"https://x.dev\\"}"}}]}}]}',
+      'data: [DONE]',
+    ]);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(body, { status: 200 })),
+    );
+
+    const gateway = new OpenRouterGateway({ apiKey: 'test-key' });
+    const { text, result } = await collectWithResult(
+      gateway.stream({ messages: [{ role: 'user', content: 'read it' }], model: 'm' }),
+    );
+    expect(text).toBe('');
+    expect(result.toolCalls).toEqual([
+      { id: 'call_1', name: 'web_fetch', args: { url: 'https://x.dev' } },
+    ]);
+  });
+
+  it('accumulates two interleaved tool calls keyed by index', async () => {
+    const body = sseStream([
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"a","function":{"name":"web_fetch","arguments":"{\\"url\\":\\"u\\"}"}}]}}]}',
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"b","function":{"name":"memory_search","arguments":"{\\"q\\":"}}]}}]}',
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":1,"function":{"arguments":"\\"peru\\"}"}}]}}]}',
+      'data: [DONE]',
+    ]);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(body, { status: 200 })),
+    );
+
+    const gateway = new OpenRouterGateway({ apiKey: 'test-key' });
+    const { result } = await collectWithResult(
+      gateway.stream({ messages: [{ role: 'user', content: 'go' }], model: 'm' }),
+    );
+    expect(result.toolCalls).toEqual([
+      { id: 'a', name: 'web_fetch', args: { url: 'u' } },
+      { id: 'b', name: 'memory_search', args: { q: 'peru' } },
+    ]);
+  });
+
+  it('relays text and a tool call together in one turn', async () => {
+    const body = sseStream([
+      'data: {"choices":[{"delta":{"content":"Let me check. "}}]}',
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"memory_search","arguments":"{\\"q\\":\\"x\\"}"}}]}}]}',
+      'data: [DONE]',
+    ]);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(body, { status: 200 })),
+    );
+
+    const gateway = new OpenRouterGateway({ apiKey: 'test-key' });
+    const { text, result } = await collectWithResult(
+      gateway.stream({ messages: [{ role: 'user', content: 'go' }], model: 'm' }),
+    );
+    expect(text).toBe('Let me check. ');
+    expect(result.toolCalls).toEqual([{ id: 'c1', name: 'memory_search', args: { q: 'x' } }]);
+  });
+
+  it('degrades malformed tool-call arguments to an empty object (failures are data)', async () => {
+    const body = sseStream([
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c","function":{"name":"web_fetch","arguments":"{not json"}}]}}]}',
+      'data: [DONE]',
+    ]);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(body, { status: 200 })),
+    );
+
+    const gateway = new OpenRouterGateway({ apiKey: 'test-key' });
+    const { result } = await collectWithResult(
+      gateway.stream({ messages: [{ role: 'user', content: 'go' }], model: 'm' }),
+    );
+    expect(result.toolCalls).toEqual([{ id: 'c', name: 'web_fetch', args: {} }]);
+  });
+
+  it('sends the advertised tools in the OpenAI function shape, and omits the field otherwise', async () => {
+    const fetchMock = vi.fn(async () => new Response(sseStream(['data: [DONE]']), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const gateway = new OpenRouterGateway({ apiKey: 'test-key' });
+    await collect(
+      gateway.stream({
+        messages: [{ role: 'user', content: 'hi' }],
+        model: 'm',
+        tools: [
+          {
+            name: 'web_fetch',
+            description: 'Fetch a URL',
+            parameters: { type: 'object', properties: { url: { type: 'string' } } },
+          },
+        ],
+      }),
+    );
+    const [, initWith] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const withTools = JSON.parse(initWith.body as string);
+    expect(withTools.tools).toEqual([
+      {
+        type: 'function',
+        function: {
+          name: 'web_fetch',
+          description: 'Fetch a URL',
+          parameters: { type: 'object', properties: { url: { type: 'string' } } },
+        },
+      },
+    ]);
+
+    await collect(gateway.stream({ messages: [{ role: 'user', content: 'hi' }], model: 'm' }));
+    const [, initNo] = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
+    const noTools = JSON.parse(initNo.body as string);
+    expect(noTools.tools).toBeUndefined();
   });
 
   it('throws a typed error on a non-OK response', async () => {

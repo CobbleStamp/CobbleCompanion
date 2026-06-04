@@ -54,9 +54,12 @@ export {
   LlmGatewayError,
   type LlmMessage,
   type LlmStreamParams,
+  type StreamResult,
+  type ToolCall,
+  type ToolDef,
 } from './llm/gateway.js';
 export { OpenRouterGateway, type OpenRouterConfig } from './llm/openrouter.js';
-export { FakeLlmGateway } from './llm/fake.js';
+export { FakeLlmGateway, type FakeTurn } from './llm/fake.js';
 
 // Embedding gateway
 export {
@@ -126,7 +129,6 @@ export {
   type Initiator,
   type RetrieveContext,
   type RetrieveParams,
-  type ToolCall,
   type ToolResult,
   type TurnCtx,
 } from './harness/hooks.js';

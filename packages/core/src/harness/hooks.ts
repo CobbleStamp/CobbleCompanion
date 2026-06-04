@@ -1,5 +1,8 @@
 import type { Citation, MessageRole } from '@cobble/shared';
+import type { ToolCall } from '../llm/gateway.js';
 import type { TokenUsage } from '../usage.js';
+
+export type { ToolCall };
 
 /**
  * The harness's named extension points (architecture.md invariant #3,
@@ -18,14 +21,11 @@ export interface ContextBlock {
   readonly provenance?: readonly Citation[];
 }
 
-export interface ToolCall {
-  readonly name: string;
-  readonly args: Record<string, unknown>;
-}
-
 export interface ToolResult {
   readonly name: string;
   readonly content: string;
+  /** Correlates this result to the {@link ToolCall} it answers (the call's id). */
+  readonly toolCallId?: string;
 }
 
 export interface TurnCtx {
