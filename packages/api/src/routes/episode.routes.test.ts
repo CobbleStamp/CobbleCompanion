@@ -110,7 +110,66 @@ describe('episode routes', () => {
     expect(res.json().memory.episodic.episodeCount).toBe(1);
   });
 
+  it('rejects a search whose topK falls outside [1, 20] or is non-integer', async () => {
+    const badTopKs: readonly number[] = [0, -1, 21, 2.5];
+    for (const topK of badTopKs) {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: `/companions/${companionId}/episodes/search`,
+        headers: auth,
+        payload: { query: 'ceviche', topK },
+      });
+      expect(res.statusCode, `topK=${topK} should be rejected`).toBe(400);
+    }
+  });
+
+  it('accepts a topK within [1, 20] and defaults topK when omitted', async () => {
+    await seedEpisode('You loved the ceviche in Lima', '2026-01-10', 4);
+
+    const withinBounds = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/episodes/search`,
+      headers: auth,
+      payload: { query: 'ceviche', topK: 20 },
+    });
+    expect(withinBounds.statusCode).toBe(200);
+
+    const omitted = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/episodes/search`,
+      headers: auth,
+      payload: { query: 'ceviche' },
+    });
+    expect(omitted.statusCode).toBe(200);
+  });
+
+  it('degrades to lexical-only recall when the embeddings gateway throws', async () => {
+    await seedEpisode('You loved the ceviche in Lima', '2026-01-10', 4);
+    await seedEpisode('You debugged your printer for an hour', '2026-02-10', 8);
+
+    // Force the search request's embed() to fail. The route catches this and
+    // falls back to lexical recall (an empty query embedding skips the vector
+    // arm in the store) rather than 500-ing.
+    ctx.deps.embeddings.embed = async () => {
+      throw new Error('embedding provider unavailable');
+    };
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/episodes/search`,
+      headers: auth,
+      payload: { query: 'ceviche' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const { results } = res.json();
+    expect(results).toHaveLength(1);
+    expect(results[0].episode.summary).toContain('ceviche');
+    expect(results[0].score).toBeGreaterThan(0);
+  });
+
   it('owner-scopes the timeline and search (404 for a non-owner)', async () => {
+    await seedEpisode('You loved the ceviche in Lima', '2026-01-10', 4);
     const otherAuth = ctx.bearerFor('intruder@example.com');
     const timeline = await ctx.app.inject({
       method: 'GET',
@@ -118,6 +177,16 @@ describe('episode routes', () => {
       headers: otherAuth,
     });
     expect(timeline.statusCode).toBe(404);
+
+    // The search path resolves the companion against the caller's ownership
+    // before touching the store, so a non-owner gets a 404 — not the episode.
+    const search = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/episodes/search`,
+      headers: otherAuth,
+      payload: { query: 'ceviche' },
+    });
+    expect(search.statusCode).toBe(404);
 
     const missing = await ctx.app.inject({
       method: 'GET',

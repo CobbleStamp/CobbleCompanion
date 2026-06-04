@@ -1,7 +1,8 @@
 /**
- * Tests for the episodic retrieve arm + the compose helper: it embeds the turn,
- * recalls relevant episodes as fenced, time-anchored memory blocks, degrades on
- * failure, and composes with other arms (recency appended once).
+ * Tests for the episodic retrieve arm: it embeds the turn, recalls relevant
+ * episodes as fenced, time-anchored memory blocks, and degrades on failure
+ * (embedding rejection or an empty vectors array). The compose helper that
+ * stitches arms together has its own dedicated tests in compose-retrieve.test.ts.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -9,9 +10,8 @@ import { FakeEmbeddingGateway } from '../embedding/fake.js';
 import type { EmbeddingGateway } from '../embedding/gateway.js';
 import type { EpisodeSearchHit, EpisodicMemoryStore } from '../memory/episodic-store.js';
 import { UNTRUSTED_CLOSE } from '../ingestion/untrusted.js';
-import { composeRetrieveContext } from './compose-retrieve.js';
+import { ZERO_USAGE } from '../usage.js';
 import { createEpisodicRetrieveContext, toEpisodeBlock } from './episodic-retrieve.js';
-import type { RetrieveContext } from './hooks.js';
 
 const logger = { error: vi.fn(), info: vi.fn() };
 const EMBEDDING_DIMENSIONS = 1024;
@@ -108,58 +108,30 @@ describe('createEpisodicRetrieveContext', () => {
     expect(result.usage.totalTokens).toBe(0);
     expect(search).not.toHaveBeenCalled();
   });
-});
 
-describe('composeRetrieveContext', () => {
-  it('concatenates blocks in order and sums usage', async () => {
-    const armA: RetrieveContext = async () => ({
-      blocks: [{ role: 'system', content: 'A' }],
-      usage: { promptTokens: 1, completionTokens: 0, totalTokens: 1 },
-    });
-    const armB: RetrieveContext = async () => ({
-      blocks: [
-        { role: 'system', content: 'B' },
-        { role: 'user', content: 'recent turn' },
-      ],
-      usage: { promptTokens: 2, completionTokens: 0, totalTokens: 2 },
-    });
-
-    const composed = composeRetrieveContext(logger, armA, armB);
-    const result = await composed({ companionId: 'c1', userContent: 'q' });
-
-    expect(result.blocks.map((b) => b.content)).toEqual(['A', 'B', 'recent turn']);
-    expect(result.usage.totalTokens).toBe(3);
-  });
-
-  it('is a no-op shape with zero arms', async () => {
-    const composed = composeRetrieveContext(logger);
-    const result = await composed({ companionId: 'c1', userContent: 'q' });
-    expect(result.blocks).toEqual([]);
-    expect(result.usage.totalTokens).toBe(0);
-  });
-
-  it('isolates a throwing arm: the others still contribute and the turn survives', async () => {
-    const throwing: RetrieveContext = async () => {
-      throw new Error('arm blew up');
+  it('searches lexically when embedding resolves with an empty vectors array', async () => {
+    // Provider hiccup mid-batch: it resolves (no throw) but returns no vector.
+    const emptyEmbed: EmbeddingGateway = {
+      embed: vi.fn().mockResolvedValue({ vectors: [], usage: ZERO_USAGE }),
     };
-    const healthy: RetrieveContext = async () => ({
-      blocks: [
-        { role: 'system', content: 'grounding' },
-        { role: 'user', content: 'recent turn' },
-      ],
-      usage: { promptTokens: 2, completionTokens: 0, totalTokens: 2 },
+    const search = vi.fn().mockResolvedValue([hit()]);
+    const arm = createEpisodicRetrieveContext({
+      episodic: fakeEpisodic(search),
+      embeddings: emptyEmbed,
+      embeddingModel: 'fake',
+      embeddingDimensions: EMBEDDING_DIMENSIONS,
+      logger,
     });
 
-    // Throwing arm first, healthy arm last (recency carrier) — the order the
-    // harness uses. The throw must not abort the loop or the turn.
-    const composed = composeRetrieveContext(logger, throwing, healthy);
-    const result = await composed({ companionId: 'c1', userContent: 'q' });
+    const result = await arm({ companionId: 'c1', userContent: 'tell me about Peru' });
 
-    expect(result.blocks.map((b) => b.content)).toEqual(['grounding', 'recent turn']);
-    expect(result.usage.totalTokens).toBe(2);
-    expect(logger.error).toHaveBeenCalledWith(
-      expect.stringContaining('degrading'),
-      expect.objectContaining({ companionId: 'c1' }),
+    // queryEmbedding falls back to [] (vectors[0] is undefined), but the lexical
+    // search still runs and returns blocks — recall degrades gracefully.
+    expect(search).toHaveBeenCalledWith(
+      'c1',
+      expect.objectContaining({ queryEmbedding: [], queryText: 'tell me about Peru' }),
     );
+    expect(result.blocks).toHaveLength(1);
+    expect(result.blocks[0]?.content).toContain('ceviche');
   });
 });

@@ -5,7 +5,7 @@
 > `product-overview.md`; for *scope & priorities* see `development-plan.md`; for *internal
 > mechanisms* (data models, schemas, config, security implementation) see `implementation.md`.
 >
-> **Status: incremental.** Built up phase by phase; currently specifies **Phases 0–1**
+> **Status: incremental.** Built up phase by phase; currently specifies **Phases 0–2**
 > (`development-plan.md` §3). Content for later phases is marked **_Deferred — Phase N_**. The
 > **Architectural Invariants** (§2) are the exception — load-bearing boundaries fixed now.
 
@@ -17,11 +17,13 @@ to keep that companion *core* surface-agnostic so surfaces (web now; mobile, des
 in as clients. **Phase 0** delivered the smallest end-to-end slice: a user creates a Cobble on the
 **web** surface and holds a persisted, single continuous conversation (§2, invariant #6).
 **Phase 1** adds the knowledge organism: sources are ingested into **semantic memory** (§4.8) and
-chat answers ground themselves in them with citations.
+chat answers ground themselves in them with citations. **Phase 2** adds memory & continuity: a
+background pass consolidates the transcript into **episodic memory** (recalled by topic, §4.3) and
+the companion's **personality evolves** from those episodes.
 
-**Non-goals / scope boundaries (Phases 0–1):** no episodic store beyond the transcript (Phase 2),
-no tools/MCP or approval queue (Phase 3), no proactivity (Phase 4), no growth/visual system
-(Phase 5), no native surfaces or OS tools (Phase 6–7). See `development-plan.md`.
+**Non-goals / scope boundaries (Phases 0–2):** no tools/MCP or approval queue (Phase 3), no
+proactivity (Phase 4), no growth/visual system (Phase 5), no native surfaces or OS tools
+(Phase 6–7). See `development-plan.md`.
 
 ## 2. Architectural Invariants (design decisions)
 
@@ -112,7 +114,7 @@ flowchart TB
 | **Persistence** | Relational + vector storage | Postgres + `pgvector`; schemas → `implementation.md` |
 | **Eval Harness** | Offline memory-vs-performance evaluation (`packages/eval`) | Not on the serving path; live OpenRouter. See `companionmemory.md` §5 |
 
-**_Deferred — later phases:_** Episodic Store (P2), Tool Registry / MCP & Approval Queue (P3),
+**_Deferred — later phases:_** Tool Registry / MCP & Approval Queue (P3),
 Proactivity Scheduler & Motivation Engine (P4), Growth/Progression service (P5), Mobile/Desktop
 clients, OS-tool bridges & Sync Courier (P6–7).
 
@@ -454,18 +456,19 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
   with one embodiment active at a time there is no cross-surface state to reconcile (invariants
   #4, #5).
 
-## 7. Folder Structure (Phases 0–1)
+## 7. Folder Structure (Phases 0–2)
 
 ```
 /                      repo root
   docs/                canonical documentation
   packages/            TS monorepo (workspaces)
     core/              the companion (surface-agnostic) — invariant #1
-      harness/         agent loop + extension hooks (§4); semantic recall (P1)
+      harness/         agent loop + extension hooks (§4); semantic + episodic recall (P1, P2 §4.3)
       llm/             provider-agnostic LLM gateway
-      embedding/       provider-agnostic embedding gateway (P1)
+      embedding/       provider-agnostic embedding gateway (P1; request-path memoizing wrapper P2)
       ingestion/       parse → segment → enrich → embed pipeline + runner + deferred-job sweeper (P1, §4.8)
-      memory/          MemoryStore (transcript) + SemanticMemoryStore (P1)
+      memory/          MemoryStore (transcript) + SemanticMemoryStore (P1) + EpisodicMemoryStore + consolidation service/runner (P2)
+      personality/     evolvedPersona synthesis from episodes (P2)
       identity/        companion "home" model + store
       quota/           per-user daily token-cap state (P1, §4.8)
     api/               BFF / surface boundary (Fastify); memory + source + usage routes

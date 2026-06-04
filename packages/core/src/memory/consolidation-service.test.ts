@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeEmbeddingGateway } from '../embedding/fake.js';
 import type { EmbeddingGateway } from '../embedding/gateway.js';
 import { FakeLlmGateway } from '../llm/fake.js';
+import type { LlmGateway } from '../llm/gateway.js';
 import type { TokenQuotaStore, UsageSnapshot } from '../quota/store.js';
 import { DrizzleIdentityStore } from '../identity/store.js';
 import {
@@ -77,7 +78,7 @@ describe('ConsolidationService', () => {
 
   function service(
     overrides: Partial<ConsolidationServiceOptions> = {},
-    llm = new FakeLlmGateway([EPISODE_JSON]),
+    llm: LlmGateway = new FakeLlmGateway([EPISODE_JSON]),
     embeddings: EmbeddingGateway = new FakeEmbeddingGateway(),
   ): ConsolidationService {
     return new ConsolidationService({
@@ -160,6 +161,62 @@ describe('ConsolidationService', () => {
       topK: 5,
     });
     expect(hits).toHaveLength(1);
+  });
+
+  it('cursor stays put when a run throws, and a retry reprocesses the same window', async () => {
+    await seedTurns(8); // meets the default minTurns (6)
+
+    // A gateway that throws mid-stream → consolidateWindow propagates, the
+    // service catches + logs, and the cursor must not advance (failures are data).
+    const failingLlm: LlmGateway = {
+      // eslint-disable-next-line require-yield
+      async *stream() {
+        throw new Error('llm down');
+      },
+    };
+    await service({}, failingLlm).consolidate(companionId);
+
+    expect(await episodic.consolidatedThroughSeq(companionId)).toBe(0);
+    expect(await episodic.countEpisodes(companionId)).toBe(0);
+    expect(logger.error).toHaveBeenCalledWith(
+      'consolidation run failed',
+      expect.objectContaining({ companionId, error: expect.any(Error) }),
+    );
+
+    // Retry with the failure removed → the SAME window is reprocessed, the
+    // cursor advances, and the episode is persisted (idempotent restart-safety).
+    await service({}, new FakeLlmGateway([EPISODE_JSON])).consolidate(companionId);
+
+    expect(await episodic.consolidatedThroughSeq(companionId)).toBe(8);
+    expect(await episodic.countEpisodes(companionId)).toBe(1);
+  });
+
+  it('drains a tail longer than maxWindow over multiple runs', async () => {
+    await seedTurns(20);
+    // An episode whose cited range spans any window, so each run yields one.
+    const wideEpisode =
+      '{"episodes":[{"summary":"You loved the ceviche in Lima.","startSeq":1,"endSeq":1000,"salience":0.9}]}';
+    // Each run reflects at most maxWindow turns; the rest drains over later runs.
+    // minTurns: 1 so the short final remainder (< maxWindow) still consolidates.
+    const consolidate = (): Promise<void> =>
+      service({ maxWindow: 6, minTurns: 1 }, new FakeLlmGateway([wideEpisode])).consolidate(
+        companionId,
+      );
+
+    await consolidate();
+    expect(await episodic.consolidatedThroughSeq(companionId)).toBe(6); // at most maxWindow
+
+    await consolidate();
+    expect(await episodic.consolidatedThroughSeq(companionId)).toBe(12);
+
+    await consolidate();
+    expect(await episodic.consolidatedThroughSeq(companionId)).toBe(18);
+
+    await consolidate();
+    expect(await episodic.consolidatedThroughSeq(companionId)).toBe(20); // whole tail drained
+
+    // Episodes were formed across the multiple runs, not just one.
+    expect(await episodic.countEpisodes(companionId)).toBeGreaterThan(1);
   });
 
   it('does nothing for a companion deleted between trigger and run', async () => {

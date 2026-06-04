@@ -157,6 +157,7 @@ interface EpisodesSectionProps {
 /** The episode timeline (consolidated memories) plus a topic-recall window. */
 function EpisodesSection({ companionId }: EpisodesSectionProps): JSX.Element {
   const [episodes, setEpisodes] = useState<EpisodeDto[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [results, setResults] = useState<EpisodeSearchResultDto[] | null>(null);
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(false);
@@ -166,8 +167,11 @@ function EpisodesSection({ companionId }: EpisodesSectionProps): JSX.Element {
     void (async () => {
       try {
         setEpisodes(await listEpisodes(companionId));
-      } catch {
+        setLoadError(null);
+      } catch (err) {
+        console.error('failed to load episode timeline', { companionId, error: err });
         setEpisodes([]);
+        setLoadError(err instanceof Error ? err.message : 'Failed to load memories');
       }
     })();
   }, [companionId]);
@@ -205,6 +209,9 @@ function EpisodesSection({ companionId }: EpisodesSectionProps): JSX.Element {
       </form>
       {searchError && <p className="error">{searchError}</p>}
       {results && results.length === 0 && <p className="who">No memory of that yet.</p>}
+      {!results && loadError && <p className="error">{loadError}</p>}
+      {!results && episodes === null && <p className="who">Loading memories…</p>}
+      {!results && episodes?.length === 0 && !loadError && <p className="who">No memories yet.</p>}
       <ul className="memory-list">
         {shown.map((episode) => (
           <li key={episode.id}>
