@@ -12,17 +12,22 @@ import {
   ConsolidationService,
   createEpisodicRetrieveContext,
   createMemoizingEmbeddingGateway,
+  createIngestSourceTool,
+  createMemorySearchTool,
   createSemanticRetrieveContext,
   DrizzleEpisodicMemoryStore,
   DrizzleIdentityStore,
+  DrizzleProposalStore,
   DrizzleSemanticMemoryStore,
   DrizzleTokenQuotaStore,
+  DrizzleToolCallLog,
   FakeEmbeddingGateway,
   FakeLlmGateway,
   Harness,
   IngestionPipeline,
   IngestionRunner,
   LlmIngestionAnnouncer,
+  ToolRegistry,
   TranscriptMemoryStore,
   type Logger,
 } from '@cobble/core';
@@ -150,6 +155,21 @@ export async function makeTestApp(
     }),
     silentLogger,
   );
+  // The Phase 3 tool surface: read-only memory_search + effectful ingest_source
+  // (web_fetch is omitted here — it needs a live resolver and isn't exercised by
+  // route tests). The proposal store + audit log back the approval queue.
+  const tools = new ToolRegistry([
+    createMemorySearchTool({
+      semantic,
+      embeddings,
+      embeddingModel: config.embeddingModel,
+      embeddingDimensions: config.embeddingDimensions,
+      logger: silentLogger,
+    }),
+    createIngestSourceTool({ semantic, ingestion, logger: silentLogger }),
+  ]);
+  const proposals = new DrizzleProposalStore(db);
+  const toolCallLog = new DrizzleToolCallLog(db);
   const deps: AppDeps = {
     identity,
     memory,
@@ -158,6 +178,9 @@ export async function makeTestApp(
     embeddings,
     ingestion,
     consolidation,
+    tools,
+    proposals,
+    toolCallLog,
     harness: new Harness({
       gateway: llmGateway,
       memory,

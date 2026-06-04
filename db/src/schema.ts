@@ -1,4 +1,4 @@
-import type { IngestionStatus, MessageRole, SourceKind } from '@cobble/shared';
+import type { IngestionStatus, MessageRole, ProposalStatus, SourceKind } from '@cobble/shared';
 import { sql } from 'drizzle-orm';
 import {
   bigint,
@@ -292,6 +292,57 @@ export const facts = pgTable(
  * rolls, carrying clamped overage forward as debt. `cap_override` grants an
  * account a non-default allowance (null → the configured default).
  */
+/**
+ * Approval queue (Phase 3, architecture.md §4.4). An effectful tool call the
+ * companion wants to make is held here as `pending` until the user approves it;
+ * `tool_args` is the serialized call. `status` advances pending→approved/rejected
+ * exactly once via a conditional update (the propose→approve gate's atomic claim,
+ * mirroring the deferred-job claim) so a double-confirm cannot double-execute.
+ */
+export const proposals = pgTable(
+  'proposals',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companionId: uuid('companion_id')
+      .notNull()
+      .references(() => companions.id, { onDelete: 'cascade' }),
+    toolName: text('tool_name').notNull(),
+    // The serialized tool-call arguments to run verbatim once approved.
+    toolArgs: jsonb('tool_args').notNull(),
+    // The provider's tool-call id, kept for audit/correlation; null if absent.
+    toolCallId: text('tool_call_id'),
+    // A short human description shown in the approval card.
+    summary: text('summary').notNull(),
+    status: text('status').$type<ProposalStatus>().notNull().default('pending'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  },
+  (table) => [index('proposals_companion_status_idx').on(table.companionId, table.status)],
+);
+
+/**
+ * Tool-call audit log (Phase 3 DoD: "every tool call is logged"). One row per
+ * executed tool call — read-only and approved-effectful alike — capturing the
+ * name, the args, and the result content. Append-only; never on the read path.
+ */
+export const toolCalls = pgTable(
+  'tool_calls',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    // Monotonic insertion order — `created_at` ties within a millisecond, so the
+    // audit log orders by this for a deterministic newest-first listing.
+    seq: bigserial('seq', { mode: 'number' }).notNull(),
+    companionId: uuid('companion_id')
+      .notNull()
+      .references(() => companions.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    args: jsonb('args').notNull(),
+    result: text('result').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('tool_calls_companion_idx').on(table.companionId, table.seq)],
+);
+
 export const userTokenUsage = pgTable('user_token_usage', {
   userId: uuid('user_id')
     .primaryKey()
@@ -311,5 +362,7 @@ export const schema = {
   ingestionJobs,
   sections,
   facts,
+  proposals,
+  toolCalls,
   userTokenUsage,
 };

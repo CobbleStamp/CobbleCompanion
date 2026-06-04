@@ -13,12 +13,17 @@ import {
   createEpisodicRetrieveContext,
   createHttpLinkResolver,
   createMemoizingEmbeddingGateway,
+  createIngestSourceTool,
+  createMemorySearchTool,
   createSemanticRetrieveContext,
   createSourceParser,
+  createWebFetchTool,
   DrizzleEpisodicMemoryStore,
   DrizzleIdentityStore,
+  DrizzleProposalStore,
   DrizzleSemanticMemoryStore,
   DrizzleTokenQuotaStore,
+  DrizzleToolCallLog,
   FakeEmbeddingGateway,
   FakeLlmGateway,
   Harness,
@@ -30,6 +35,7 @@ import {
   OpenRouterGateway,
   resumeDeferredJobs,
   sweepConsolidation,
+  ToolRegistry,
   TranscriptMemoryStore,
   type EmbeddingGateway,
   type LlmGateway,
@@ -169,6 +175,26 @@ async function main(): Promise<void> {
   });
   const consolidation = new ConsolidationRunner(consolidationService, consoleLogger);
 
+  // Phase 3 tool surface: read-only web_fetch + memory_search and the effectful
+  // ingest_source (gated by propose→approve). The proposal store backs the
+  // approval queue; the tool-call log satisfies the "every call is logged" DoD.
+  const tools = new ToolRegistry([
+    createWebFetchTool({
+      resolver: createHttpLinkResolver({ maxBytes: config.ingestionMaxBytes }),
+      logger: consoleLogger,
+    }),
+    createMemorySearchTool({
+      semantic,
+      embeddings,
+      embeddingModel: config.embeddingModel,
+      embeddingDimensions: config.embeddingDimensions,
+      logger: consoleLogger,
+    }),
+    createIngestSourceTool({ semantic, ingestion, logger: consoleLogger }),
+  ]);
+  const proposals = new DrizzleProposalStore(db);
+  const toolCallLog = new DrizzleToolCallLog(db);
+
   const app = await buildApp({
     identity,
     memory,
@@ -178,6 +204,9 @@ async function main(): Promise<void> {
     ingestion,
     consolidation,
     harness,
+    tools,
+    proposals,
+    toolCallLog,
     quota,
     tokenVerifier: createTokenVerifier(config),
     config,

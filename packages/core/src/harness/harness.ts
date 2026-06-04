@@ -3,8 +3,8 @@ import type { LlmGateway, LlmMessage } from '../llm/gateway.js';
 import { consoleLogger, type Logger } from '../logging.js';
 import type { MemoryStore } from '../memory/store.js';
 import type { TokenQuotaStore } from '../quota/store.js';
+import { dispatchTool } from '../tools/dispatch.js';
 import { ToolRegistry } from '../tools/registry.js';
-import { toolErrorMessage } from '../tools/tool.js';
 import {
   addUsage,
   createUsageAccumulator,
@@ -20,7 +20,6 @@ import {
   type AfterToolCall,
   type BeforeToolCall,
   type RetrieveContext,
-  type ToolResult,
   type TurnCtx,
 } from './hooks.js';
 
@@ -180,7 +179,14 @@ export class Harness {
             yield* this.finish(companion.id, ownerId, text, retrievalUsage, acc);
             return;
           }
-          const result = await this.runTool(gated.name, gated.args, call.id, ctx);
+          const result = await dispatchTool(
+            this.registry,
+            gated.name,
+            gated.args,
+            ctx,
+            this.logger,
+            call.id,
+          );
           const logged = await this.afterToolCall(result, ctx);
           messages.push({
             role: 'tool',
@@ -222,31 +228,6 @@ export class Harness {
     yield { type: 'done', message };
   }
 
-  /** Dispatch one tool call through the registry; an unknown tool or a throw
-   * becomes an error {@link ToolResult} (failures are data, §4.7). */
-  private async runTool(
-    name: string,
-    args: Record<string, unknown>,
-    toolCallId: string | undefined,
-    ctx: TurnCtx,
-  ): Promise<ToolResult> {
-    const tool = this.registry.get(name);
-    if (!tool) {
-      return { name, content: `Error: unknown tool "${name}".`, ...(toolCallId ? { toolCallId } : {}) };
-    }
-    try {
-      const result = await tool.run(args, ctx);
-      return toolCallId ? { ...result, toolCallId } : result;
-    } catch (error) {
-      this.logger.error('tool execution threw', {
-        operation: 'harness.runTool',
-        companionId: ctx.companionId,
-        tool: name,
-        error,
-      });
-      return { name, content: `Error: ${toolErrorMessage(error)}`, ...(toolCallId ? { toolCallId } : {}) };
-    }
-  }
 
   /**
    * Debit the turn's tokens against the owner's daily cap. Best-effort: a

@@ -7,7 +7,10 @@ import type {
   IngestionRunner,
   Logger,
   MemoryStore,
+  ProposalStore,
   SemanticMemoryStore,
+  ToolCallLog,
+  ToolRegistry,
   TokenQuotaStore,
 } from '@cobble/core';
 import cors from '@fastify/cors';
@@ -25,6 +28,7 @@ import { registerCompanionRoutes } from './routes/companion.routes.js';
 import { registerEpisodeRoutes } from './routes/episode.routes.js';
 import { registerMemoryRoutes } from './routes/memory.routes.js';
 import { registerMessageRoutes } from './routes/message.routes.js';
+import { registerProposalRoutes } from './routes/proposal.routes.js';
 import { registerSourceRoutes } from './routes/source.routes.js';
 import { registerUsageRoutes } from './routes/usage.routes.js';
 
@@ -45,6 +49,12 @@ export interface AppDeps {
   /** Off-request episodic reflection — the message route requests it post-turn. */
   readonly consolidation: ConsolidationRunner;
   readonly harness: Harness;
+  /** The tools available to the companion (P3) — also used to run approved calls. */
+  readonly tools: ToolRegistry;
+  /** The propose→approve queue (P3). */
+  readonly proposals: ProposalStore;
+  /** The "every tool call is logged" audit log (P3). */
+  readonly toolCallLog: ToolCallLog;
   readonly quota: TokenQuotaStore;
   readonly tokenVerifier: TokenVerifier;
   readonly config: AppConfig;
@@ -129,6 +139,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerMemoryRoutes(app, deps, requireAuth);
   registerEpisodeRoutes(app, deps, requireAuth);
   registerSourceRoutes(app, deps, requireAuth);
+  registerProposalRoutes(app, deps, requireAuth);
   registerUsageRoutes(app, deps, requireAuth);
 
   registerSpa(app);
