@@ -139,6 +139,27 @@ describe('DrizzleEpisodicMemoryStore', () => {
     expect(hits[0]?.episodeId).toBe(ceviche);
   });
 
+  it('returns no hits for a pure stop-word query (empty tsquery)', async () => {
+    // 'the' is an english stop word, so plainto_tsquery('english', 'the')
+    // produces an EMPTY tsquery that matches no rows. With the vector arm
+    // skipped (empty embedding), the lexical arm is all there is — and it must
+    // return nothing rather than spuriously matching the seeded episode.
+    await seed('You loved the ceviche in Lima', {
+      seqStart: 1,
+      seqEnd: 8,
+      ...jan,
+      embed: false,
+    });
+
+    const hits = await store.searchEpisodes(companionId, {
+      queryEmbedding: [],
+      queryText: 'the',
+      topK: 5,
+    });
+
+    expect(hits).toEqual([]);
+  });
+
   it('restricts recall to a wall-clock window (recall-by-time)', async () => {
     const january = await seed('Our trip planning chat', { seqStart: 1, seqEnd: 8, ...jan });
     await seed('Our trip recap chat', { seqStart: 9, seqEnd: 20, ...mar });

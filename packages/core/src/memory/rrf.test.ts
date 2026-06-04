@@ -49,4 +49,25 @@ describe('reciprocalRankFusion', () => {
     const fused = reciprocalRankFusion([[first], [second]], (i) => i.id, 5);
     expect(fused[0]?.item.arm).toBe('vector');
   });
+
+  it('breaks an equal-score tie by first-seen order (stable sort)', () => {
+    // `a` and `b` each sit at rank 0 in a different arm → 1/61 apiece, an exact
+    // tie. V8's Array.sort is stable, so equal-score items keep their first-seen
+    // (Map insertion) order: `a` (seen in arm 0) precedes `b` (seen in arm 1).
+    // A flipped tie-break or an unstable comparator would reorder them — and so
+    // would change which item topK truncation drops.
+    const fused = reciprocalRankFusion([[{ id: 'a' }], [{ id: 'b' }]], keyOf, 5);
+    expect(fused).toHaveLength(2);
+    expect(fused[0]?.score).toBeCloseTo(1 / 61, 12);
+    expect(fused[1]?.score).toBeCloseTo(1 / 61, 12);
+    expect(fused.map((h) => h.item.id)).toEqual(['a', 'b']);
+  });
+
+  it('truncates an equal-score tie deterministically by first-seen order', () => {
+    // Three first-seen singletons, all tied at 1/61; topK=2 must keep the first
+    // two seen (`a`, `b`) and drop `c`. Deterministic only because the sort is
+    // stable — an unstable one could surface `c` over `a` or `b`.
+    const fused = reciprocalRankFusion([[{ id: 'a' }], [{ id: 'b' }], [{ id: 'c' }]], keyOf, 2);
+    expect(fused.map((h) => h.item.id)).toEqual(['a', 'b']);
+  });
 });
