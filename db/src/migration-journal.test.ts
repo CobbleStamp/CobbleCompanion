@@ -75,25 +75,37 @@ describe('migration journal ordering', () => {
     }
   });
 
-  it('reaches the final schema from every incremental upgrade point', async () => {
-    const journal = await readJournal();
-    // For each prefix length: migrate to that point, then migrate with the
-    // full folder — the path every existing database takes on upgrade.
-    for (let count = 1; count < journal.entries.length; count++) {
-      const prefixFolder = await writePrefixFolder(journal, count);
-      const client = new PGlite({ extensions: { vector } });
-      try {
-        const db = drizzle(client);
-        await migrate(db, { migrationsFolder: prefixFolder });
-        await migrate(db, { migrationsFolder });
-        const tables = await listTables(client);
-        expect(tables, `upgrade from prefix of ${count} migrations`).toEqual(
-          expect.arrayContaining(['companions', 'ingestion_jobs', 'sections', 'user_token_usage']),
-        );
-      } finally {
-        await client.close();
-        await rm(prefixFolder, { recursive: true, force: true });
+  // Spins up a fresh PGlite per migration prefix and replays the whole folder
+  // through each — work that grows with every migration, so under full-suite
+  // parallel load the default 5s timeout is too tight. Give it room.
+  it(
+    'reaches the final schema from every incremental upgrade point',
+    { timeout: 30_000 },
+    async () => {
+      const journal = await readJournal();
+      // For each prefix length: migrate to that point, then migrate with the
+      // full folder — the path every existing database takes on upgrade.
+      for (let count = 1; count < journal.entries.length; count++) {
+        const prefixFolder = await writePrefixFolder(journal, count);
+        const client = new PGlite({ extensions: { vector } });
+        try {
+          const db = drizzle(client);
+          await migrate(db, { migrationsFolder: prefixFolder });
+          await migrate(db, { migrationsFolder });
+          const tables = await listTables(client);
+          expect(tables, `upgrade from prefix of ${count} migrations`).toEqual(
+            expect.arrayContaining([
+              'companions',
+              'ingestion_jobs',
+              'sections',
+              'user_token_usage',
+            ]),
+          );
+        } finally {
+          await client.close();
+          await rm(prefixFolder, { recursive: true, force: true });
+        }
       }
-    }
-  });
+    },
+  );
 });

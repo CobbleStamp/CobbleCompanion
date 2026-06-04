@@ -5,10 +5,10 @@
 > system is* (components, flows, decisions) see `architecture.md`; for *what we're building and in
 > what order* see `development-plan.md`.
 >
-> **Status: incremental.** Specifies **Phases 0–1** (`development-plan.md` §3); later phases are
+> **Status: incremental.** Specifies **Phases 0–2** (`development-plan.md` §3); later phases are
 > marked **_Deferred — Phase N_**.
 
-## 1. Data Model (Phases 0–1)
+## 1. Data Model (Phases 0–2)
 
 Postgres (with `pgvector` available for later phases). Multi-tenant: every row is scoped by owner
 (`architecture.md` §2, invariant #5). Field types are indicative; authoritative DDL lives in
@@ -33,7 +33,10 @@ migrations under `db/`.
 | `owner_id` | uuid (FK → `users.id`) | tenancy scope |
 | `name` | text | user-chosen |
 | `form` | text | species/appearance archetype (seed) |
-| `temperament` | text | starting personality seed (`product-overview.md` §5.5) |
+| `temperament` | text | **immutable** starting personality seed (`product-overview.md` §5.5) |
+| `evolved_persona` | text, nullable (P2) | "who I've become with you" — re-synthesized from episodes, blended into the persona prompt beside the seed; null until the first evolution |
+| `persona_updated_through_seq` | bigint, default 0 (P2) | transcript `seq` the evolved persona was last synthesized from (evolution cursor) |
+| `consolidated_through_seq` | bigint, default 0 (P2) | highest transcript `seq` already rolled into episodes (consolidation cursor) |
 | `created_at` | timestamptz | |
 
 ### `messages` — transcript (episodic-memory substrate)
@@ -64,6 +67,35 @@ migrations under `db/`.
 > **Ordering note:** recency recall orders by `seq`, not `created_at` — many turns can share a
 > `created_at` at sub-millisecond resolution, so a monotonic ordinal is the source of truth for
 > transcript order. `seq` is a single global sequence, so it orders the whole transcript.
+
+### `episodes` — consolidated episodic memory (Phase 2)
+| Field | Type | Notes |
+|---|---|---|
+| `id` | uuid (PK) | |
+| `companion_id` | uuid (FK → `companions.id`, cascade) | tenancy scope; indexed `(companion_id, occurred_end)` for the time-window filter + "latest episodes" scans, and `(companion_id, seq_end)` for the cursor |
+| `summary` | text | the consolidated narrative ("you loved the ceviche in Lima…") |
+| `seq_start` / `seq_end` | bigint | transcript `seq` range this episode consolidated — idempotent, incremental rebuilds |
+| `occurred_start` / `occurred_end` | timestamptz | wall-clock span the episode covers; rendered as the date on each recalled block. The store can also filter recall to a time window, but no recall path passes one yet (see note) |
+| `salience` | real, nullable | self-reported 0–1 weight, stored and displayed only. Filler is dropped at consolidation (the reflection pass omits it); recall ranking (RRF) does **not** use this value (see note) |
+| `embedding` | `vector(1024)`, nullable | HNSW `vector_cosine_ops`; nullable → recalled lexically until embedded |
+| `fts` | tsvector (generated from `summary`) | GIN-indexed |
+| `created_at` | timestamptz | |
+
+> **Derived, not canonical.** Episodes are a rebuildable overlay over the one transcript (no
+> session entity — invariant #6). A background **consolidation** pass reflects the
+> un-consolidated tail (`seq > companions.consolidated_through_seq`) into episodes and advances
+> the cursor atomically; recall is the same vector + FTS hybrid (RRF) as `sections` —
+> **topic-only** in production (`architecture.md` §4.3, §4.8). Personality evolution reads recent
+> episodes to re-synthesize `companions.evolved_persona`.
+>
+> **Recall scope (P2).** Two episode signals exist in the store but are **not wired into recall**:
+> (1) the **wall-clock time window** — `EpisodicStore.searchEpisodes` accepts an optional
+> `after`/`before` filter (unit-tested), but neither the harness episodic arm nor the
+> `/episodes/search` API passes one (`episodeSearchSchema` has no time fields, and nothing parses
+> time from a turn), so production recall is topic-only and the `occurred_*` span is only a date
+> annotation on the rendered block; (2) **salience** is ignored by RRF — it ranks by fused
+> vector/FTS rank alone. Filler never reaches recall because the consolidation pass omits it, not
+> because salience down-weights it. Wiring either into recall is deferred.
 
 ### `sources` — Layer 0: verbatim originals (Phase 1)
 | Field | Type | Notes |
@@ -193,13 +225,15 @@ length capped. Only numeric locators (paragraph/page ranges) render as trusted t
 `provenance` carries titles verbatim — sanitization is prompt-only; UI rendering escapes
 separately.
 
-### 2.2 Context assembly (Phases 0–1)
+### 2.2 Context assembly (Phases 0–2)
 
 A turn's prompt is composed, in order, from: **(1)** the companion identity row (`name`, `form`,
-`temperament` → persona system prompt), **(2)** the base system prompt, **(3)** `RetrieveContext`
-output — P1: top-K semantic grounding blocks (verbatim sections with source/para preambles)
-followed by the most-recent N transcript messages (the recency window); later episodic (P2)
-recall. The available-tools list is still empty.
+`temperament` → persona system prompt — P2 blends in `evolved_persona` beside the seed when
+present), **(2)** the base system prompt, **(3)** `RetrieveContext` output. The hook is one slot;
+`composeRetrieveContext` runs the arms in order — **P2 episodic** memory blocks (time-anchored,
+fenced), then **P1** top-K semantic grounding blocks (verbatim sections with source/para
+preambles), then the most-recent N transcript messages (the recency window, appended once by the
+semantic arm). Each arm degrades independently. The available-tools list is still empty.
 
 ### 2.3 Turn & loop mechanics (Phase 0)
 

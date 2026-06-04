@@ -15,6 +15,24 @@ export interface CreateCompanionInput {
 }
 
 /**
+ * The full companion "home" row, including owner + Phase 2 personality state
+ * (`evolvedPersona` and the evolution/consolidation cursors). Returned only to
+ * BACKGROUND workers via {@link IdentityStore.getCompanionById}; surfaces get the
+ * trimmed `CompanionDto`.
+ */
+export interface CompanionRecord {
+  readonly id: string;
+  readonly ownerId: string;
+  readonly name: string;
+  readonly form: string;
+  readonly temperament: string;
+  readonly evolvedPersona: string | null;
+  readonly personaUpdatedThroughSeq: number;
+  readonly consolidatedThroughSeq: number;
+  readonly createdAt: string;
+}
+
+/**
  * Identity Store — owns users and the companion "home" (architecture.md §3,
  * invariant #4). All companion reads are scoped by `ownerId` (invariant #5).
  */
@@ -23,7 +41,27 @@ export interface IdentityStore {
   getUserById(id: string): Promise<UserRecord | null>;
   createCompanion(ownerId: string, input: CreateCompanionInput): Promise<CompanionDto>;
   getCompanion(id: string, ownerId: string): Promise<CompanionDto | null>;
+  /**
+   * Unscoped companion lookup for BACKGROUND workers only (episodic
+   * consolidation / personality evolution), which run by companionId after the
+   * triggering request already established owner scope, or off a system sweep.
+   * Never reachable from a user request path — those use the owner-scoped
+   * {@link getCompanion} (invariant #5). Mirrors the cross-companion system
+   * reads the deferred-ingestion sweeper already makes. Returns the full
+   * {@link CompanionRecord} (owner + personality state) those workers need.
+   */
+  getCompanionById(companionId: string): Promise<CompanionRecord | null>;
   listCompanions(ownerId: string): Promise<readonly CompanionDto[]>;
+  /**
+   * Persist the re-synthesized evolved persona and advance the evolution cursor
+   * (`personaUpdatedThroughSeq`) — a BACKGROUND write from the personality
+   * evolver, keyed by companionId after the consolidation that triggered it.
+   */
+  updateEvolvedPersona(
+    companionId: string,
+    evolvedPersona: string,
+    personaUpdatedThroughSeq: number,
+  ): Promise<void>;
 }
 
 export class DrizzleIdentityStore implements IdentityStore {
@@ -63,9 +101,29 @@ export class DrizzleIdentityStore implements IdentityStore {
     return row ? toCompanionDto(row) : null;
   }
 
+  async getCompanionById(companionId: string): Promise<CompanionRecord | null> {
+    const [row] = await this.db
+      .select()
+      .from(companions)
+      .where(eq(companions.id, companionId))
+      .limit(1);
+    return row ? toCompanionRecord(row) : null;
+  }
+
   async listCompanions(ownerId: string): Promise<readonly CompanionDto[]> {
     const rows = await this.db.select().from(companions).where(eq(companions.ownerId, ownerId));
     return rows.map(toCompanionDto);
+  }
+
+  async updateEvolvedPersona(
+    companionId: string,
+    evolvedPersona: string,
+    personaUpdatedThroughSeq: number,
+  ): Promise<void> {
+    await this.db
+      .update(companions)
+      .set({ evolvedPersona, personaUpdatedThroughSeq })
+      .where(eq(companions.id, companionId));
   }
 }
 
@@ -83,6 +141,21 @@ function toCompanionDto(row: typeof companions.$inferSelect): CompanionDto {
     name: row.name,
     form: row.form,
     temperament: row.temperament,
+    evolvedPersona: row.evolvedPersona,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function toCompanionRecord(row: typeof companions.$inferSelect): CompanionRecord {
+  return {
+    id: row.id,
+    ownerId: row.ownerId,
+    name: row.name,
+    form: row.form,
+    temperament: row.temperament,
+    evolvedPersona: row.evolvedPersona,
+    personaUpdatedThroughSeq: row.personaUpdatedThroughSeq,
+    consolidatedThroughSeq: row.consolidatedThroughSeq,
     createdAt: row.createdAt.toISOString(),
   };
 }

@@ -7,6 +7,7 @@ const companion: CompanionDto = {
   name: 'Pebble',
   form: 'fox',
   temperament: 'curious and gentle',
+  evolvedPersona: null,
   createdAt: new Date(0).toISOString(),
 };
 
@@ -16,6 +17,24 @@ describe('buildPersona', () => {
     expect(persona).toContain('Pebble');
     expect(persona).toContain('fox');
     expect(persona).toContain('curious and gentle');
+  });
+
+  it('keeps the seed temperament and omits the evolved clause before any evolution', () => {
+    const persona = buildPersona(companion);
+    expect(persona).toContain('began as "curious and gentle"');
+    expect(persona).not.toContain('Through your history together');
+  });
+
+  it('blends the evolved persona alongside the seed once it exists', () => {
+    const evolved = buildPersona({
+      ...companion,
+      evolvedPersona: "You've grown playful and you know they cook to unwind.",
+    });
+    // The immutable seed is preserved …
+    expect(evolved).toContain('began as "curious and gentle"');
+    // … and the evolved growth is blended in.
+    expect(evolved).toContain('Through your history together, you have grown');
+    expect(evolved).toContain('they cook to unwind');
   });
 });
 

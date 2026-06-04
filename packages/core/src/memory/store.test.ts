@@ -69,6 +69,32 @@ describe('TranscriptMemoryStore', () => {
     expect(recalled?.sourceId).toBeNull();
   });
 
+  it('reads transcript turns after a seq cursor, oldest-first, with seq + Date', async () => {
+    const first = await memory.appendMessage(companionId, 'user', 'one');
+    await memory.appendMessage(companionId, 'assistant', 'two');
+    await memory.appendMessage(companionId, 'user', 'three');
+
+    // The whole window starts from the very beginning (cursor 0).
+    const all = await memory.getMessagesSince(companionId, 0, 10);
+    expect(all.map((m) => m.content)).toEqual(['one', 'two', 'three']);
+    expect(all[0]?.seq).toBeTypeOf('number');
+    expect(all[0]?.createdAt).toBeInstanceOf(Date);
+
+    // Only turns strictly after the first message's seq.
+    const since = await memory.getMessagesSince(companionId, all[0]!.seq, 10);
+    expect(since.map((m) => m.content)).toEqual(['two', 'three']);
+
+    // The limit caps the window from the cursor forward.
+    const capped = await memory.getMessagesSince(companionId, 0, 2);
+    expect(capped.map((m) => m.content)).toEqual(['one', 'two']);
+
+    // Scoped to its own companion.
+    await memory.appendMessage(otherCompanionId, 'user', 'theirs');
+    const mineOnly = await memory.getMessagesSince(companionId, 0, 10);
+    expect(mineOnly.every((m) => m.content !== 'theirs')).toBe(true);
+    expect(first.id).toBeTypeOf('string');
+  });
+
   it('links a turn to its source and round-trips the sourceId', async () => {
     const source = await semantic.createSource(companionId, {
       kind: 'pdf',

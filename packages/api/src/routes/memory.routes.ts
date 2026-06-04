@@ -26,7 +26,7 @@ export function registerMemoryRoutes(
   deps: AppDeps,
   requireAuth: RequireAuth,
 ): void {
-  const { identity, memory, semantic, embeddings, config, quota } = deps;
+  const { identity, memory, semantic, episodic, embeddings, config, quota } = deps;
 
   // A sectioned snapshot of everything the companion holds.
   app.get(
@@ -39,9 +39,10 @@ export function registerMemoryRoutes(
         return reply.code(404).send({ error: 'companion not found' });
       }
 
-      const episodic: EpisodicMemorySection = {
+      const episodicSection: EpisodicMemorySection = {
         status: 'available',
         messageCount: await memory.countMessages(companion.id),
+        episodeCount: await episodic.countEpisodes(companion.id),
       };
 
       const counts = await semantic.counts(companion.id);
@@ -63,7 +64,7 @@ export function registerMemoryRoutes(
 
       const snapshot: MemorySnapshotDto = {
         identity: companion,
-        episodic,
+        episodic: episodicSection,
         semantic: semanticSection,
         procedural: { status: 'not_implemented', plannedPhase: 'Phase 3' },
       };

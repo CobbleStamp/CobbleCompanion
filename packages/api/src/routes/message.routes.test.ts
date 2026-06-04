@@ -1,5 +1,5 @@
 import type { AddressInfo } from 'node:net';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeTestApp, type TestApp } from '../test/helpers.js';
 
 const ABSENT_UUID = '00000000-0000-0000-0000-000000000000';
@@ -131,5 +131,46 @@ describe('message routes', () => {
     const owner = await ctx.deps.identity.ensureUserByEmail('owner@example.com');
     const usage = await ctx.deps.quota.getUsage(owner.id);
     expect(usage.usedTokens).toBeGreaterThan(0);
+  });
+
+  // The background reflection pass is nudged once per completed turn (fired
+  // after the reply has streamed, fire-and-forget). We wrap the runner's
+  // `request` with a delegating spy so the real coalesce/cap logic still runs.
+  it('requests background consolidation after a successful turn', async () => {
+    const original = ctx.deps.consolidation.request.bind(ctx.deps.consolidation);
+    const requestSpy = vi
+      .spyOn(ctx.deps.consolidation, 'request')
+      .mockImplementation((id: string) => original(id));
+
+    await ctx.app.listen({ port: 0, host: '127.0.0.1' });
+    const { port } = ctx.app.server.address() as AddressInfo;
+
+    const response = await fetch(`http://127.0.0.1:${port}/companions/${companionId}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...auth },
+      body: JSON.stringify({ content: 'hello there' }),
+    });
+    await response.text(); // drain the SSE stream so the trigger has fired
+
+    expect(requestSpy).toHaveBeenCalledWith(companionId);
+  });
+
+  // The over-cap wall is a clean 429 with no turn run, so there's nothing new
+  // to reflect — the consolidation nudge must not fire on a refused turn.
+  it('does not request consolidation when the turn is refused over the daily cap', async () => {
+    const requestSpy = vi.spyOn(ctx.deps.consolidation, 'request').mockImplementation(() => {});
+
+    const owner = await ctx.deps.identity.ensureUserByEmail('owner@example.com');
+    await ctx.deps.quota.recordUsage(owner.id, ctx.deps.config.tokenCapPerDay);
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/messages`,
+      headers: auth,
+      payload: { content: 'hello there' },
+    });
+
+    expect(res.statusCode).toBe(429);
+    expect(requestSpy).not.toHaveBeenCalled();
   });
 });

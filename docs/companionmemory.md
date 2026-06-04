@@ -60,7 +60,7 @@ the fact overlay's contract: [`ontology.md`](./ontology.md).
 | ------------------- | ------------------ | ---------------------------------------------- |
 | Episodic transcript | ✅ Built (Phase 0) | —                                              |
 | Semantic memory     | ✅ Built (Phase 1) | —                                              |
-| Episodic store      | ⚠️ Transcript only | Phase 2                                        |
+| Episodic store      | ✅ Built (Phase 2) — consolidated episodes + personality evolution | — |
 | Procedural memory   | ❌ Not built       | Phase 3                                        |
 | Approval queue      | ❌ Not built       | Phase 3                                        |
 | Manage/delete UI    | ❌ Not built       | Phase 8                                        |

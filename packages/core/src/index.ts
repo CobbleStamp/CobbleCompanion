@@ -1,13 +1,28 @@
 // Identity (the companion "home")
 export {
   DrizzleIdentityStore,
+  type CompanionRecord,
   type CreateCompanionInput,
   type IdentityStore,
   type UserRecord,
 } from './identity/store.js';
 
 // Memory
-export { TranscriptMemoryStore, type MemoryStore } from './memory/store.js';
+export { TranscriptMemoryStore, type MemoryStore, type TranscriptEntry } from './memory/store.js';
+export {
+  consolidateWindow,
+  parseEpisodes,
+  type ConsolidationCandidate,
+  type PersonaSummary,
+} from './memory/consolidation.js';
+export { ConsolidationRunner, type ConsolidationTarget } from './memory/consolidation-runner.js';
+export {
+  ConsolidationService,
+  sweepConsolidation,
+  type ConsolidationServiceOptions,
+  type ConsolidationSweepDeps,
+} from './memory/consolidation-service.js';
+export { reciprocalRankFusion, RRF_K } from './memory/rrf.js';
 export {
   combineHits,
   DrizzleSemanticMemoryStore,
@@ -24,6 +39,14 @@ export {
   type SemanticSearchParams,
   type SourceRecord,
 } from './memory/semantic-store.js';
+export {
+  DrizzleEpisodicMemoryStore,
+  type EpisodeRecord,
+  type EpisodeSearchHit,
+  type EpisodeSearchParams,
+  type EpisodicMemoryStore,
+  type NewEpisode,
+} from './memory/episodic-store.js';
 
 // LLM gateway
 export {
@@ -68,6 +91,7 @@ export {
   type OpenRouterEmbeddingConfig,
 } from './embedding/openrouter.js';
 export { FakeEmbeddingGateway, hashToUnitVector } from './embedding/fake.js';
+export { createMemoizingEmbeddingGateway } from './embedding/memoizing.js';
 
 // Harness (the agent loop)
 export { Harness, type HarnessOptions, type RunTurnParams } from './harness/harness.js';
@@ -76,6 +100,19 @@ export {
   createSemanticRetrieveContext,
   type SemanticRetrieveOptions,
 } from './harness/semantic-retrieve.js';
+export {
+  createEpisodicRetrieveContext,
+  toEpisodeBlock,
+  type EpisodicRetrieveOptions,
+} from './harness/episodic-retrieve.js';
+export { composeRetrieveContext } from './harness/compose-retrieve.js';
+
+// Personality evolution (Phase 2)
+export {
+  LlmPersonalityEvolver,
+  type PersonalityEvolver,
+  type PersonalityEvolverOptions,
+} from './personality/evolve.js';
 export {
   idleInitiator,
   isBlock,

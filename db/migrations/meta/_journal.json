@@ -50,6 +50,13 @@
       "when": 1780500000004,
       "tag": "0006_wonderful_tyger_tiger",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1780553424721,
+      "tag": "0007_complete_banshee",
+      "breakpoints": true
     }
   ]
 }

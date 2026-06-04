@@ -56,7 +56,24 @@ export const companions = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     form: text('form').notNull(),
+    // The immutable creation seed. Personality EVOLUTION is additive (below): the
+    // seed is never overwritten so the companion's origin stays legible.
     temperament: text('temperament').notNull(),
+    // Phase 2 — personality evolution. The re-synthesized "who I've become with
+    // you", blended into the persona prompt alongside the seed; null until the
+    // first evolution pass runs. `persona_updated_through_seq` is the transcript
+    // point it was last synthesized from, so evolution is incremental and
+    // restart-safe (mirrors the ingestion deferral cursor pattern).
+    evolvedPersona: text('evolved_persona'),
+    personaUpdatedThroughSeq: bigint('persona_updated_through_seq', { mode: 'number' })
+      .notNull()
+      .default(0),
+    // Phase 2 — episodic consolidation cursor: the highest transcript `seq` already
+    // rolled into episodes. The background consolidation pass resumes from here, so
+    // only new transcript is processed and re-runs are idempotent by seq range.
+    consolidatedThroughSeq: bigint('consolidated_through_seq', { mode: 'number' })
+      .notNull()
+      .default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index('companions_owner_idx').on(table.ownerId)],
@@ -89,6 +106,56 @@ export const messages = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index('messages_companion_idx').on(table.companionId, table.seq)],
+);
+
+/**
+ * Episodic memory (Phase 2) — consolidated, time-anchored memories DERIVED from
+ * the transcript, not a parallel conversation. A background reflection pass rolls
+ * spans of `messages` into consolidated `summary` narratives ("last July in
+ * Lima you loved that ceviche"), embedded + FTS-indexed so the harness can recall
+ * the right past episode by topic. The transcript stays canonical: episodes
+ * are rebuildable from it and never substitute for it (no session entity — the one
+ * lifelong conversation is preserved, invariant #6).
+ *
+ * `seq_start`/`seq_end` record the transcript range consolidated, so the pass is
+ * incremental (resumes past `companions.consolidated_through_seq`) and idempotent
+ * (a range maps to a deterministic episode set). `occurred_*` are the wall-clock
+ * span (the date shown on a recalled block); the store can filter recall to a time
+ * window, but no recall path passes one yet, so production recall is topic-only.
+ * Mirrors `sections` for the vector/FTS hybrid machinery.
+ */
+export const episodes = pgTable(
+  'episodes',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companionId: uuid('companion_id')
+      .notNull()
+      .references(() => companions.id, { onDelete: 'cascade' }),
+    // The consolidated narrative — what's worth remembering about this span.
+    summary: text('summary').notNull(),
+    // The transcript range this episode consolidated (idempotency + incrementality).
+    seqStart: bigint('seq_start', { mode: 'number' }).notNull(),
+    seqEnd: bigint('seq_end', { mode: 'number' }).notNull(),
+    // Wall-clock span the episode covers — the date shown on a recalled block, and
+    // the column the store's (currently unwired) time-window filter ranges over.
+    occurredStart: timestamp('occurred_start', { withTimezone: true }).notNull(),
+    occurredEnd: timestamp('occurred_end', { withTimezone: true }).notNull(),
+    // Self-reported 0–1 weight: how much this episode matters. Stored and displayed
+    // only — recall (RRF) does not use it; filler is dropped at consolidation time.
+    salience: real('salience'),
+    // Nullable until the embedding pass completes (mirrors sections.embedding).
+    embedding: vector('embedding', { dimensions: EMBEDDING_DIMENSIONS }),
+    fts: tsvector('fts').generatedAlwaysAs(sql`to_tsvector('english', summary)`),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // Time-window filter (store capability) and "latest episodes" scans.
+    index('episodes_companion_time_idx').on(table.companionId, table.occurredEnd),
+    // Cursor lookups + range-dedup on the consolidation path.
+    index('episodes_companion_seq_idx').on(table.companionId, table.seqEnd),
+    index('episodes_embedding_hnsw_idx').using('hnsw', table.embedding.op('vector_cosine_ops')),
+    index('episodes_fts_idx').using('gin', table.fts),
+  ],
 );
 
 /**
@@ -239,6 +306,7 @@ export const schema = {
   users,
   companions,
   messages,
+  episodes,
   sources,
   ingestionJobs,
   sections,

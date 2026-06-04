@@ -4,6 +4,7 @@ import { createPgDatabase, type Database } from './client.js';
 import {
   companions,
   EMBEDDING_DIMENSIONS,
+  episodes,
   facts,
   ingestionJobs,
   sections,
@@ -181,5 +182,163 @@ describe('semantic memory schema (PGlite + pgvector)', () => {
     expect(await db.select().from(sources)).toHaveLength(0);
     expect(await db.select().from(sections)).toHaveLength(0);
     expect(await db.select().from(facts)).toHaveLength(0);
+  });
+});
+
+describe('episodic memory schema (PGlite + pgvector)', () => {
+  let db: Database;
+  let close: () => Promise<void>;
+  let companionId: string;
+
+  /** A unit vector with a single 1 at `hot`, so cosine distance is 0 to itself. */
+  function basisVector(hot: number): number[] {
+    const v: number[] = new Array<number>(EMBEDDING_DIMENSIONS).fill(0);
+    v[hot] = 1;
+    return v;
+  }
+
+  async function seedEpisode(input: {
+    summary: string;
+    embedding: number[];
+    seqStart: number;
+    seqEnd: number;
+    occurredStart: Date;
+    occurredEnd: Date;
+    salience?: number;
+  }): Promise<string> {
+    const [episode] = await db
+      .insert(episodes)
+      .values({ companionId, ...input })
+      .returning();
+    return episode!.id;
+  }
+
+  beforeEach(async () => {
+    ({ db, close } = await createTestDatabase());
+    const [user] = await db.insert(users).values({ email: 'episodic@example.com' }).returning();
+    const [companion] = await db
+      .insert(companions)
+      .values({ ownerId: user!.id, name: 'Pebble', form: 'fox', temperament: 'curious' })
+      .returning();
+    companionId = companion!.id;
+  });
+
+  afterEach(async () => {
+    await close();
+  });
+
+  it('defaults the personality-evolution and consolidation cursors on a new companion', async () => {
+    const [companion] = await db.select().from(companions).where(eq(companions.id, companionId));
+
+    // Seed temperament is set; evolution is additive and starts empty.
+    expect(companion?.temperament).toBe('curious');
+    expect(companion?.evolvedPersona).toBeNull();
+    expect(companion?.personaUpdatedThroughSeq).toBe(0);
+    expect(companion?.consolidatedThroughSeq).toBe(0);
+  });
+
+  it('orders episodes by cosine distance to a query embedding', async () => {
+    const limaId = await seedEpisode({
+      summary: 'You loved the ceviche in Lima',
+      embedding: basisVector(0),
+      seqStart: 1,
+      seqEnd: 8,
+      occurredStart: new Date('2026-01-01T00:00:00Z'),
+      occurredEnd: new Date('2026-01-01T01:00:00Z'),
+      salience: 0.9,
+    });
+    await seedEpisode({
+      summary: 'We debugged your printer for an hour',
+      embedding: basisVector(1),
+      seqStart: 9,
+      seqEnd: 20,
+      occurredStart: new Date('2026-02-01T00:00:00Z'),
+      occurredEnd: new Date('2026-02-01T01:00:00Z'),
+    });
+
+    const query = basisVector(0);
+    const rows = await db
+      .select({ id: episodes.id })
+      .from(episodes)
+      .where(eq(episodes.companionId, companionId))
+      .orderBy(sql`${episodes.embedding} <=> ${JSON.stringify(query)}::vector`)
+      .limit(1);
+
+    expect(rows[0]?.id).toBe(limaId);
+  });
+
+  it('matches episodes by full-text search over the summary', async () => {
+    const cevicheId = await seedEpisode({
+      summary: 'You loved the ceviche in Lima',
+      embedding: basisVector(0),
+      seqStart: 1,
+      seqEnd: 8,
+      occurredStart: new Date('2026-01-01T00:00:00Z'),
+      occurredEnd: new Date('2026-01-01T01:00:00Z'),
+    });
+    await seedEpisode({
+      summary: 'We debugged your printer for an hour',
+      embedding: basisVector(1),
+      seqStart: 9,
+      seqEnd: 20,
+      occurredStart: new Date('2026-02-01T00:00:00Z'),
+      occurredEnd: new Date('2026-02-01T01:00:00Z'),
+    });
+
+    const rows = await db
+      .select({ id: episodes.id })
+      .from(episodes)
+      .where(
+        sql`${episodes.companionId} = ${companionId} AND ${episodes.fts} @@ plainto_tsquery('english', ${'ceviche'})`,
+      );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe(cevicheId);
+  });
+
+  it('recalls episodes within a wall-clock time range (recall-by-time)', async () => {
+    const januaryId = await seedEpisode({
+      summary: 'January trip planning',
+      embedding: basisVector(0),
+      seqStart: 1,
+      seqEnd: 8,
+      occurredStart: new Date('2026-01-10T00:00:00Z'),
+      occurredEnd: new Date('2026-01-10T01:00:00Z'),
+    });
+    await seedEpisode({
+      summary: 'March dentist appointment',
+      embedding: basisVector(1),
+      seqStart: 9,
+      seqEnd: 20,
+      occurredStart: new Date('2026-03-10T00:00:00Z'),
+      occurredEnd: new Date('2026-03-10T01:00:00Z'),
+    });
+
+    const rows = await db
+      .select({ id: episodes.id })
+      .from(episodes)
+      .where(
+        sql`${episodes.companionId} = ${companionId}
+            AND ${episodes.occurredEnd} >= ${'2026-01-01T00:00:00Z'}
+            AND ${episodes.occurredStart} < ${'2026-02-01T00:00:00Z'}`,
+      );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe(januaryId);
+  });
+
+  it('cascades episode deletion when the companion is deleted (tenancy invariant)', async () => {
+    await seedEpisode({
+      summary: 'You loved the ceviche in Lima',
+      embedding: basisVector(0),
+      seqStart: 1,
+      seqEnd: 8,
+      occurredStart: new Date('2026-01-01T00:00:00Z'),
+      occurredEnd: new Date('2026-01-01T01:00:00Z'),
+    });
+
+    expect(await db.select().from(episodes)).toHaveLength(1);
+    await db.delete(companions).where(eq(companions.id, companionId));
+    expect(await db.select().from(episodes)).toHaveLength(0);
   });
 });
