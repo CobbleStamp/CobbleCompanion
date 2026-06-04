@@ -126,6 +126,14 @@ export function registerProposalRoutes(
           error,
         });
       }
+      // NOTE — re-entry origin (revisit with the motivation engine, architecture.md §4.4/§4.5):
+      // this re-enters for EVERY approval, including explore-origin proposals. That's correct for a
+      // chat ask (a present partner to continue/confirm with, and multi-step asks like "remember it
+      // and summarize it" need it). It is the wrong shape for a *self-directed* origin (explore now;
+      // autonomous in Phase 4): there is no conversational task to continue, and deciding the
+      // companion's own next move is the motivation engine's agenda-setting job, not a confirm-route
+      // reflex (and per-approval re-entry is incoherent for an explore batch). When that engine
+      // lands: stamp proposal origin and re-enter here only for `chat`.
       await streamSse(
         reply,
         harness.continueAfterApproval({

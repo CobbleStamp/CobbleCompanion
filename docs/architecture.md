@@ -250,6 +250,28 @@ saved") — rather than the conversation dead-ending on a raw tool line. No susp
 resumed; the transcript is the only state (§4.7). Approving an action mid-continuation can itself
 produce a new proposal — the gate re-applies. **Reject** resolves the proposal without executing.
 
+> **Open — who decides "what next" after an approved action (settle when the motivation engine
+> lands, §4.5).** Re-entry on approval is right for **chat**: a conversational partner is present, so
+> even when the approved action *was* the whole request ("remember this page"), a natural
+> confirmation or follow-up reads as companion-like — and a multi-step ask ("remember it **and**
+> summarize it") *requires* the continuation. Crucially, **terminality is not knowable at propose
+> time**: the model often can't summarize until the page is actually read, so it proposes the ingest
+> alone and only decides whether to continue once it sees the result. So the model must get the
+> post-approval turn and decide for itself — we don't try to predict it.
+>
+> Today the confirm route re-enters for **every** approval, including **explore**-origin proposals
+> (the reading-list "go through your list" action, §4.5). That is the part to revisit here: for a
+> **self-directed** origin there is no conversational task to continue, and choosing the companion's
+> *own* next move is **agenda-setting — the motivation engine's job (§4.5), not a confirm-route
+> reflex**. Per-approval re-entry is also the wrong *granularity* for a batch: explore approves N
+> proposals through N queue cards → N disjoint mini-turns, each blind to the others. Keep the two
+> concerns apart: *reacting to the person who just approved* is conversational (fine — ideally
+> **once** per batch); *deciding the next self-directed action* belongs to the outer loop. **To
+> address when Phase 4 lands:** stamp each proposal with its origin (a `chat` vs `explore`/
+> `autonomous` marker on the `proposals` row), have confirm re-enter only for `chat`, and let the
+> motivation engine pick up post-action "what next" for the rest from the full updated state on its
+> own cadence.
+
 ```mermaid
 flowchart TD
     CALL["tool call"] --> GATE{"beforeToolCall:<br/>effectful / costly?"}
@@ -299,6 +321,18 @@ flowchart LR
 > §3), so it lands on a foundation already trusted. The exploration loop is *identical* whether a
 > human or the motivation engine triggers it — Phase 3 works the inventory **on the user's command**
 > ("go through your reading list"); Phase 4 works it **on an idle tick**.
+
+> **This engine owns post-action "what next" for self-directed work (paired with §4.4).** When an
+> approved action did not come from a live conversation — an `explore`/idle-tick ingest rather than a
+> chat ask — the question "what should I do now that this is done?" is *agenda-setting*, and that is
+> precisely this engine's job, not the confirm route's. It sees the **full** updated state (the new
+> memory, the remaining lead frontier) at once, runs on the creature's own cadence, and surfaces
+> proactively — so it can react **once** to a finished batch instead of N times mid-approval. The
+> confirm route should therefore **defer** here: re-enter the loop only for `chat`-origin approvals
+> (a present partner to reply to, §4.4) and leave self-directed continuation to this engine. A brief
+> in-character acknowledgement to *whoever approved* a proactive proposal is still fine — that is
+> conversational, and distinct from deciding the next move. Until this engine exists, Phase 3 simply
+> re-enters on every approval (the known wart called out in §4.4).
 
 The engine's parts (each additive, no loop change):
 
