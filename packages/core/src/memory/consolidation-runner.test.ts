@@ -114,4 +114,38 @@ describe('ConsolidationRunner', () => {
     expect(target.consolidate).toHaveBeenCalledWith('ok');
     expect(runner.pending()).toBe(0);
   });
+
+  it('close() drains the in-flight queue before resolving', async () => {
+    const target = new GatedTarget();
+    const runner = new ConsolidationRunner(target, logger);
+
+    runner.request('a'); // in flight (blocked)
+    runner.request('b'); // queued
+
+    let closed = false;
+    const closing = runner.close().then(() => {
+      closed = true;
+    });
+    await tick();
+    expect(closed).toBe(false); // still draining 'a'
+
+    target.releaseAll();
+    await closing;
+    expect(closed).toBe(true);
+    expect(target.calls).toEqual(['a', 'b']); // both drained, none dropped
+    expect(runner.pending()).toBe(0);
+  });
+
+  it('drops requests once closing, so shutdown can settle (sweep recovers them)', async () => {
+    const target = new GatedTarget();
+    target.releaseAll(); // runs resolve immediately
+    const runner = new ConsolidationRunner(target, logger);
+
+    await runner.close(); // nothing queued → resolves at once, now stopping
+    runner.request('a'); // no-op while stopping
+    await runner.whenIdle();
+
+    expect(target.calls).toEqual([]); // never ran
+    expect(runner.pending()).toBe(0);
+  });
 });
