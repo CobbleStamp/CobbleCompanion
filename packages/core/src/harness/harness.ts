@@ -137,7 +137,13 @@ export class Harness {
             iteration,
             tokens: acc.total().totalTokens,
           });
-          yield* this.finish(companion.id, ownerId, lastText || PARTIAL_FALLBACK, retrievalUsage, acc);
+          yield* this.finish(
+            companion.id,
+            ownerId,
+            lastText || PARTIAL_FALLBACK,
+            retrievalUsage,
+            acc,
+          );
           return;
         }
 
@@ -172,7 +178,8 @@ export class Harness {
           if (isBlock(gated)) {
             // Propose→approve: the action is held, not run. Record what the
             // companion said (or the proposal summary), surface the proposal, EXIT.
-            const text = turnText.trim().length > 0 ? turnText : gated.proposal?.summary ?? gated.reason;
+            const text =
+              turnText.trim().length > 0 ? turnText : (gated.proposal?.summary ?? gated.reason);
             if (gated.proposal) {
               yield { type: 'proposal', proposal: gated.proposal };
             }
@@ -227,7 +234,6 @@ export class Harness {
     await this.debit(ownerId, addUsage(retrievalUsage, acc.total()));
     yield { type: 'done', message };
   }
-
 
   /**
    * Debit the turn's tokens against the owner's daily cap. Best-effort: a

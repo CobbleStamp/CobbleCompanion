@@ -92,7 +92,9 @@ describe('createWebFetchTool', () => {
   });
 
   it('does not harvest when no lead store is configured', async () => {
-    const tool = createWebFetchTool({ resolver: htmlResolver('<a href="https://x.dev">x</a>', 'https://s.dev') });
+    const tool = createWebFetchTool({
+      resolver: htmlResolver('<a href="https://x.dev">x</a>', 'https://s.dev'),
+    });
     // No throw, returns text; nothing to assert beyond it completing.
     const result = await tool.run({ url: 'https://s.dev' }, ctx);
     expect(result.name).toBe('web_fetch');

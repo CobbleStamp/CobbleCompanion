@@ -78,7 +78,12 @@ export function registerProposalRoutes(
       // Every tool call is logged (the DoD). Best-effort: a log hiccup must not
       // fail an action the user already approved (logging.md).
       try {
-        await toolCallLog.record(companion.id, proposal.toolName, proposal.toolArgs, result.content);
+        await toolCallLog.record(
+          companion.id,
+          proposal.toolName,
+          proposal.toolArgs,
+          result.content,
+        );
       } catch (error) {
         logger.error('failed to log approved tool call', {
           operation: 'proposals.confirm.log',

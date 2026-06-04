@@ -45,9 +45,9 @@ function fakeRunner(full = false): IngestionEnqueuePort & { enqueued: IngestionR
 
 describe('createIngestSourceTool', () => {
   it('is an effectful tool (gated by propose→approve)', () => {
-    expect(createIngestSourceTool({ semantic: fakeStore(), ingestion: fakeRunner() }).effectful).toBe(
-      true,
-    );
+    expect(
+      createIngestSourceTool({ semantic: fakeStore(), ingestion: fakeRunner() }).effectful,
+    ).toBe(true);
   });
 
   it('creates a link source + job and enqueues the read, scoped to the turn', async () => {
@@ -89,7 +89,11 @@ describe('createIngestSourceTool', () => {
         return { id: 'job' };
       },
     };
-    const tool = createIngestSourceTool({ semantic, ingestion: fakeRunner(), logger: silentLogger });
+    const tool = createIngestSourceTool({
+      semantic,
+      ingestion: fakeRunner(),
+      logger: silentLogger,
+    });
     const result = await tool.run({ url: 'https://x.dev/post' }, ctx);
     expect(result.content).toMatch(/busy reading/);
   });

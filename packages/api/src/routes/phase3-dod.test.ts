@@ -13,8 +13,14 @@ import type { ChatStreamEvent } from '@cobble/shared';
 
 /** A scripted run: turn 1 searches memory (read-only), turn 2 proposes ingesting. */
 const TURNS = [
-  { chunks: ['Let me check what I already know. '], toolCalls: [{ id: 't1', name: 'memory_search', args: { query: 'peru food' } }] },
-  { chunks: ['That looks worth keeping. '], toolCalls: [{ id: 't2', name: 'ingest_source', args: { url: 'https://x.dev/peru' } }] },
+  {
+    chunks: ['Let me check what I already know. '],
+    toolCalls: [{ id: 't1', name: 'memory_search', args: { query: 'peru food' } }],
+  },
+  {
+    chunks: ['That looks worth keeping. '],
+    toolCalls: [{ id: 't2', name: 'ingest_source', args: { url: 'https://x.dev/peru' } }],
+  },
 ];
 
 async function streamEvents(ctx: TestApp, companionId: string, auth: { authorization: string }) {
@@ -56,9 +62,9 @@ describe('Phase 3 DoD — multi-step task ends in a held proposal', () => {
 
     // The turn EXITed proposing the effectful action.
     const proposalEvent = events.find((e) => e.type === 'proposal');
-    expect(proposalEvent && proposalEvent.type === 'proposal' && proposalEvent.proposal.toolName).toBe(
-      'ingest_source',
-    );
+    expect(
+      proposalEvent && proposalEvent.type === 'proposal' && proposalEvent.proposal.toolName,
+    ).toBe('ingest_source');
 
     // Nothing consequential executed: no source ingested, the action is pending.
     expect(await ctx.deps.semantic.listSources(companionId)).toHaveLength(0);

@@ -22,7 +22,10 @@ export interface LeadStore {
   /** Capture a lead; a no-op if this companion already has this URL (idempotent). */
   record(companionId: string, url: string, why?: string): Promise<void>;
   /** Leads in the given statuses, oldest first (the reading-list order). */
-  listByStatus(companionId: string, statuses: readonly LeadStatus[]): Promise<readonly LeadRecord[]>;
+  listByStatus(
+    companionId: string,
+    statuses: readonly LeadStatus[],
+  ): Promise<readonly LeadRecord[]>;
   /** Advance a lead's lifecycle (new→read→ingested/discarded). */
   markStatus(companionId: string, leadId: string, status: LeadStatus): Promise<void>;
 }

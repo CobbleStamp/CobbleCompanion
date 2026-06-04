@@ -9,7 +9,11 @@ export {
   type ProposalRecord,
   type ProposalStore,
 } from './tools/proposal-store.js';
-export { DrizzleToolCallLog, type ToolCallLog, type ToolCallRecord } from './tools/tool-call-log.js';
+export {
+  DrizzleToolCallLog,
+  type ToolCallLog,
+  type ToolCallRecord,
+} from './tools/tool-call-log.js';
 export { createApprovalGate, createLoggingAfterToolCall } from './tools/gate.js';
 export { DrizzleLeadStore, type LeadRecord, type LeadStore } from './tools/lead-store.js';
 export {

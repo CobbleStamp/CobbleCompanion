@@ -230,9 +230,7 @@ function parseArgs(argsText: string): Record<string, unknown> {
   if (trimmed.length === 0) return {};
   try {
     const parsed: unknown = JSON.parse(trimmed);
-    return typeof parsed === 'object' && parsed !== null
-      ? (parsed as Record<string, unknown>)
-      : {};
+    return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
   } catch {
     return {};
   }
@@ -288,7 +286,11 @@ function parseSseLine(line: string): SseFrame | typeof DONE | null {
 /** Normalize a raw `delta.tool_calls` array into {@link RawToolCallDelta}s. */
 function parseToolCallDeltas(
   raw:
-    | ReadonlyArray<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }>
+    | ReadonlyArray<{
+        index?: number;
+        id?: string;
+        function?: { name?: string; arguments?: string };
+      }>
     | undefined,
 ): RawToolCallDelta[] {
   if (!raw) return [];

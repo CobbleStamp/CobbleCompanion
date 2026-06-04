@@ -17,8 +17,16 @@ describe('DrizzleProposalStore', () => {
     store = new DrizzleProposalStore(created.db);
     const identity = new DrizzleIdentityStore(created.db);
     const user = await identity.ensureUserByEmail('owner@example.com');
-    const a = await identity.createCompanion(user.id, { name: 'A', form: 'fox', temperament: 'curious' });
-    const b = await identity.createCompanion(user.id, { name: 'B', form: 'owl', temperament: 'calm' });
+    const a = await identity.createCompanion(user.id, {
+      name: 'A',
+      form: 'fox',
+      temperament: 'curious',
+    });
+    const b = await identity.createCompanion(user.id, {
+      name: 'B',
+      form: 'owl',
+      temperament: 'calm',
+    });
     companionId = a.id;
     otherCompanionId = b.id;
   });

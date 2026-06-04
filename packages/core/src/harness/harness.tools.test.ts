@@ -3,7 +3,13 @@
  * the dead-loop budget guard, and failures-as-data when a tool throws.
  */
 
-import type { ChatStreamEvent, CompanionDto, MessageDto, MessageRole, ProposalDto } from '@cobble/shared';
+import type {
+  ChatStreamEvent,
+  CompanionDto,
+  MessageDto,
+  MessageRole,
+  ProposalDto,
+} from '@cobble/shared';
 import { describe, expect, it } from 'vitest';
 import { FakeLlmGateway, type FakeTurn } from '../llm/fake.js';
 import type { ToolCall } from '../llm/gateway.js';
@@ -33,7 +39,11 @@ function memory(): MemoryStore & { appended: MessageDto[] } {
   const appended: MessageDto[] = [];
   return {
     appended,
-    async appendMessage(companionId: string, role: MessageRole, content: string): Promise<MessageDto> {
+    async appendMessage(
+      companionId: string,
+      role: MessageRole,
+      content: string,
+    ): Promise<MessageDto> {
       const message: MessageDto = {
         id: `m-${appended.length + 1}`,
         companionId,
@@ -58,7 +68,11 @@ function memory(): MemoryStore & { appended: MessageDto[] } {
 }
 
 /** A tool that records its calls and returns a fixed string. */
-function recordingTool(name: string, effectful: boolean, reply: string): Tool & { calls: unknown[] } {
+function recordingTool(
+  name: string,
+  effectful: boolean,
+  reply: string,
+): Tool & { calls: unknown[] } {
   const calls: unknown[] = [];
   return {
     calls,
@@ -90,7 +104,7 @@ describe('Harness inner loop (P3 tools)', () => {
     const tool = recordingTool('web_fetch', false, 'PAGE TEXT');
     const gateway = new FakeLlmGateway([
       { toolCalls: [call('web_fetch', { url: 'https://x.dev' })] },
-      { chunks: ['Based on the page, '], },
+      { chunks: ['Based on the page, '] },
       // (only two turns are needed; the second has no tool calls → exit)
     ] satisfies FakeTurn[]);
     const harness = new Harness({
@@ -101,7 +115,9 @@ describe('Harness inner loop (P3 tools)', () => {
       logger: silentLogger,
     });
 
-    const events = await collect(harness.runTurn({ companion, userContent: 'read it', ownerId: 'u1' }));
+    const events = await collect(
+      harness.runTurn({ companion, userContent: 'read it', ownerId: 'u1' }),
+    );
 
     expect(tool.calls).toEqual([{ url: 'https://x.dev' }]);
     expect(events.filter((e) => e.type === 'token')).toHaveLength(1);
@@ -109,7 +125,9 @@ describe('Harness inner loop (P3 tools)', () => {
     expect(done && done.type === 'done' && done.message.content).toBe('Based on the page, ');
     // The provider saw the tool result fed back as a tool-role message.
     const secondCall = gateway.calls[1]!;
-    expect(secondCall.messages.some((m) => m.role === 'tool' && m.content === 'PAGE TEXT')).toBe(true);
+    expect(secondCall.messages.some((m) => m.role === 'tool' && m.content === 'PAGE TEXT')).toBe(
+      true,
+    );
     expect(secondCall.messages.some((m) => m.role === 'assistant' && m.toolCalls)).toBe(true);
   });
 
@@ -128,7 +146,10 @@ describe('Harness inner loop (P3 tools)', () => {
         ? { blocked: true, reason: 'needs approval', proposal }
         : c;
     const gateway = new FakeLlmGateway([
-      { chunks: ['Let me save that. '], toolCalls: [call('ingest_source', { url: 'https://x.dev' })] },
+      {
+        chunks: ['Let me save that. '],
+        toolCalls: [call('ingest_source', { url: 'https://x.dev' })],
+      },
     ]);
     const harness = new Harness({
       gateway,
@@ -139,11 +160,15 @@ describe('Harness inner loop (P3 tools)', () => {
       logger: silentLogger,
     });
 
-    const events = await collect(harness.runTurn({ companion, userContent: 'save it', ownerId: 'u1' }));
+    const events = await collect(
+      harness.runTurn({ companion, userContent: 'save it', ownerId: 'u1' }),
+    );
 
     expect(tool.calls).toEqual([]); // nothing executed
     const proposalEvent = events.find((e) => e.type === 'proposal');
-    expect(proposalEvent && proposalEvent.type === 'proposal' && proposalEvent.proposal).toEqual(proposal);
+    expect(proposalEvent && proposalEvent.type === 'proposal' && proposalEvent.proposal).toEqual(
+      proposal,
+    );
     const done = events.find((e) => e.type === 'done');
     expect(done && done.type === 'done' && done.message.content).toBe('Let me save that. ');
     expect(gateway.calls).toHaveLength(1); // exited; no second model turn
@@ -196,7 +221,10 @@ describe('Harness inner loop (P3 tools)', () => {
         throw new Error('boom');
       },
     };
-    const gateway = new FakeLlmGateway([{ toolCalls: [call('web_fetch')] }, { chunks: ['recovered'] }]);
+    const gateway = new FakeLlmGateway([
+      { toolCalls: [call('web_fetch')] },
+      { chunks: ['recovered'] },
+    ]);
     const harness = new Harness({
       gateway,
       memory: memory(),
@@ -209,7 +237,9 @@ describe('Harness inner loop (P3 tools)', () => {
     expect(done && done.type === 'done' && done.message.content).toBe('recovered');
     // The error result was fed back to the model as a tool message.
     const secondCall = gateway.calls[1]!;
-    expect(secondCall.messages.some((m) => m.role === 'tool' && m.content.includes('boom'))).toBe(true);
+    expect(secondCall.messages.some((m) => m.role === 'tool' && m.content.includes('boom'))).toBe(
+      true,
+    );
   });
 
   // Guards the import surface used above (avoids an unused-import lint).

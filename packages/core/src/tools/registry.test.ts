@@ -23,8 +23,16 @@ describe('ToolRegistry', () => {
   it('advertises each tool as a ToolDef (name/description/parameters)', () => {
     const registry = new ToolRegistry([stubTool('web_fetch'), stubTool('ingest_source', true)]);
     expect(registry.list()).toEqual([
-      { name: 'web_fetch', description: 'the web_fetch tool', parameters: { type: 'object', properties: {} } },
-      { name: 'ingest_source', description: 'the ingest_source tool', parameters: { type: 'object', properties: {} } },
+      {
+        name: 'web_fetch',
+        description: 'the web_fetch tool',
+        parameters: { type: 'object', properties: {} },
+      },
+      {
+        name: 'ingest_source',
+        description: 'the ingest_source tool',
+        parameters: { type: 'object', properties: {} },
+      },
     ]);
     expect(registry.size).toBe(2);
   });

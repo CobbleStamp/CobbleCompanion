@@ -55,7 +55,10 @@ describe('createMemorySearchTool', () => {
   });
 
   it('embeds the query and formats hits with provenance', async () => {
-    const port = searchPort([hit(), hit({ chapterTitle: null, sourceTitle: 'Lima Notes', originalText: 'Best at noon.' })]);
+    const port = searchPort([
+      hit(),
+      hit({ chapterTitle: null, sourceTitle: 'Lima Notes', originalText: 'Best at noon.' }),
+    ]);
     const tool = createMemorySearchTool({
       semantic: port,
       embeddings: new FakeEmbeddingGateway(),

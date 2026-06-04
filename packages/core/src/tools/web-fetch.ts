@@ -59,7 +59,13 @@ export function createWebFetchTool(options: WebFetchOptions): Tool {
         // Capture outbound links into the reading list (best-effort — a harvest
         // hiccup must never fail the read). Only HTML pages carry links.
         if (options.leads && content.contentType === 'html') {
-          await harvestLinks(content.bytes, content.sourceUrl ?? url, ctx.companionId, options, logger);
+          await harvestLinks(
+            content.bytes,
+            content.sourceUrl ?? url,
+            ctx.companionId,
+            options,
+            logger,
+          );
         }
         const doc = await parseContent(content);
         const truncated = doc.rawText.length > maxChars;
@@ -118,7 +124,10 @@ function extractLinks(html: string, baseUrl: string): string[] {
     if (!raw) continue;
     try {
       const resolved = new URL(raw, baseUrl);
-      if ((resolved.protocol === 'http:' || resolved.protocol === 'https:') && resolved.href !== baseUrl) {
+      if (
+        (resolved.protocol === 'http:' || resolved.protocol === 'https:') &&
+        resolved.href !== baseUrl
+      ) {
         seen.add(resolved.href);
       }
     } catch {

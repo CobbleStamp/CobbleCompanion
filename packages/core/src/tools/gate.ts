@@ -26,9 +26,7 @@ export function createApprovalGate(
     if (!tool || !tool.effectful) {
       return call;
     }
-    const summary = tool.proposalSummary
-      ? tool.proposalSummary(call.args)
-      : `Run "${call.name}"`;
+    const summary = tool.proposalSummary ? tool.proposalSummary(call.args) : `Run "${call.name}"`;
     const record = await proposals.create(ctx.companionId, {
       toolName: call.name,
       toolArgs: call.args,
