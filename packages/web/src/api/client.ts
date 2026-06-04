@@ -221,16 +221,25 @@ export async function listProposals(companionId: string): Promise<ProposalDto[]>
   return body.proposals;
 }
 
-/** Approve a held action: it executes and the companion's confirmation is returned. */
-export async function confirmProposal(
+/**
+ * Approve a held action. The companion executes it, then RE-ENTERS the agent
+ * loop to narrate the outcome and continue the task, streamed back as SSE — so
+ * approving "remember this and summarize it" yields the summary, not a dead
+ * tool-result line. The streamed turn's rows land in the transcript.
+ */
+export async function* confirmProposal(
   companionId: string,
   proposalId: string,
-): Promise<MessageDto> {
-  const body = await request<{ message: MessageDto }>(
-    `/companions/${companionId}/proposals/${proposalId}/confirm`,
-    { method: 'POST' },
+): AsyncGenerator<ChatStreamEvent> {
+  const auth = await authHeaders();
+  const response = await fetch(
+    `${API_URL}/companions/${companionId}/proposals/${proposalId}/confirm`,
+    { method: 'POST', headers: auth },
   );
-  return body.message;
+  if (!response.ok || !response.body) {
+    throw new Error(`confirm failed (${response.status})`);
+  }
+  yield* readSse(response);
 }
 
 /** Decline a held action (nothing executes). */
@@ -282,8 +291,12 @@ export async function* sendMessage(
   if (!response.ok || !response.body) {
     throw new Error(`message failed (${response.status})`);
   }
+  yield* readSse(response);
+}
 
-  const reader = response.body.getReader();
+/** Parse a `text/event-stream` body into chat events (shared by chat + confirm). */
+async function* readSse(response: Response): AsyncGenerator<ChatStreamEvent> {
+  const reader = response.body!.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
   for (;;) {

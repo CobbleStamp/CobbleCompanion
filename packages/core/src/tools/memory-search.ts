@@ -44,6 +44,10 @@ export function createMemorySearchTool(options: MemorySearchOptions): Tool {
       additionalProperties: false,
     },
     effectful: false,
+    stepSummary(args): string {
+      const query = readStringArg(args, 'query');
+      return query !== null ? `Searched memory for “${query}”` : 'Searched memory';
+    },
     async run(rawArgs, ctx): Promise<ToolResult> {
       const query = readStringArg(rawArgs, 'query');
       if (query === null) {

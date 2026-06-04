@@ -8,8 +8,10 @@ import { fileSourceAcknowledgement } from '@cobble/shared';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  confirmProposal,
   fetchMessages,
   listIngestionJobs,
+  listProposals,
   listSources,
   sendMessage,
   uploadFileSource,
@@ -579,5 +581,81 @@ describe('Chat upload-turn persistence and proactive notes', () => {
     });
     // Merge-by-id: delivered exactly once, never duplicated by repeated fetches.
     expect(screen.getAllByText('All read — ask away!')).toHaveLength(1);
+  });
+});
+
+describe('Chat transcript fidelity (rich rows survive reload)', () => {
+  beforeEach(() => {
+    vi.mocked(fetchMessages).mockReset();
+    vi.mocked(listProposals).mockReset().mockResolvedValue([]);
+    vi.mocked(confirmProposal).mockReset();
+  });
+
+  it('renders tool-step and proposal rows from the persisted transcript on reload', async () => {
+    vi.mocked(fetchMessages).mockResolvedValue([
+      {
+        id: 's1',
+        companionId: companion.id,
+        sourceId: null,
+        role: 'assistant',
+        content: 'Read example.com',
+        kind: 'tool_step',
+        metadata: { toolName: 'web_fetch' },
+        createdAt: '2026-01-03T00:00:01.000Z',
+      },
+      {
+        id: 'p1',
+        companionId: companion.id,
+        sourceId: null,
+        role: 'assistant',
+        content: 'Remember https://x.dev',
+        kind: 'proposal',
+        metadata: { proposalId: 'pp1', toolName: 'ingest_source' },
+        createdAt: '2026-01-03T00:00:02.000Z',
+      },
+    ]);
+
+    renderChat();
+
+    // The look-up and the held action are part of the conversation history — not
+    // ephemeral chrome lost on reload.
+    await waitFor(() => expect(screen.getByText(/Read example\.com/)).toBeTruthy());
+    expect(screen.getByText(/Proposed: Remember https:\/\/x\.dev/)).toBeTruthy();
+  });
+
+  it('approving a proposal streams the narration and reconciles the transcript', async () => {
+    const narration: MessageDto = {
+      id: 'm9',
+      companionId: companion.id,
+      sourceId: null,
+      role: 'assistant',
+      content: 'Saved — here are the highlights.',
+      kind: 'message',
+      createdAt: '2026-01-03T00:00:09.000Z',
+    };
+    // Mount: empty transcript; reload after confirm returns the narration.
+    vi.mocked(fetchMessages).mockResolvedValueOnce([]).mockResolvedValue([narration]);
+    vi.mocked(listProposals).mockResolvedValue([
+      {
+        id: 'pp1',
+        toolName: 'ingest_source',
+        summary: 'Remember https://x.dev',
+        status: 'pending',
+        createdAt: '2026-01-03T00:00:00.000Z',
+      },
+    ]);
+    vi.mocked(confirmProposal).mockImplementation(async function* () {
+      yield { type: 'token', value: 'Saved — here are the highlights.' };
+      yield { type: 'done', message: narration };
+    });
+
+    renderChat();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Approve' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+
+    // The companion narrates the outcome (the loop re-entered), not a dead line.
+    await waitFor(() => expect(screen.getByText('Saved — here are the highlights.')).toBeTruthy());
+    expect(confirmProposal).toHaveBeenCalledWith(companion.id, 'pp1');
   });
 });

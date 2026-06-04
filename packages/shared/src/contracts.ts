@@ -11,6 +11,32 @@ import { z } from 'zod';
 export const messageRoleSchema = z.enum(['user', 'assistant', 'system']);
 export type MessageRole = z.infer<typeof messageRoleSchema>;
 
+/**
+ * What a transcript row *is*, beyond who said it. The transcript is the single
+ * source of truth for the conversation, so everything the user sees live must be
+ * a persisted row that reconstructs identically on reload (architecture.md §4.7):
+ * - `message`   — an ordinary typed/spoken turn (`role` says user vs. assistant).
+ * - `tool_step` — a friendly one-line record of a read-only tool the companion
+ *                 ran ("Searched memory for …", "Read example.com"). UI-only:
+ *                 excluded from the LLM context projection.
+ * - `proposal`  — a held effectful action awaiting approval; renders with inline
+ *                 Approve/Decline while still pending.
+ */
+export const messageKindSchema = z.enum(['message', 'tool_step', 'proposal']);
+export type MessageKind = z.infer<typeof messageKindSchema>;
+
+/**
+ * Structured extras a transcript row carries so the surface can re-render it
+ * exactly on reload. Kind-specific: `citations` on a grounded `message`,
+ * `toolName` on a `tool_step`, `toolName`+`proposalId` on a `proposal` (the id
+ * lets the surface attach the live Approve/Decline affordance to the row).
+ */
+export interface MessageMetadata {
+  readonly citations?: readonly Citation[];
+  readonly toolName?: string;
+  readonly proposalId?: string;
+}
+
 // --- Entities (mirror the persisted rows, minus tenancy internals) ---
 
 export interface CompanionDto {
@@ -33,6 +59,14 @@ export interface MessageDto {
   readonly companionId: string;
   readonly role: MessageRole;
   readonly content: string;
+  /**
+   * What this row is (ordinary message, tool step, or proposal). Absent is
+   * treated as `message` so older callers/fixtures stay valid; the store always
+   * populates it.
+   */
+  readonly kind?: MessageKind;
+  /** Kind-specific extras so the row re-renders identically on reload. */
+  readonly metadata?: MessageMetadata;
   /**
    * The source this turn is about, when it was written by an upload (the
    * attachment chip and its acknowledgement). Null for ordinary typed turns.
@@ -345,6 +379,16 @@ export interface StreamCitationsEvent {
   readonly citations: readonly Citation[];
 }
 
+/**
+ * A read-only tool the companion just ran, emitted the moment it completes so the
+ * live transcript shows "Cobble looked something up" in place. Carries the
+ * persisted `tool_step` row, so the live line and the reloaded one are identical.
+ */
+export interface StreamToolStepEvent {
+  readonly type: 'tool_step';
+  readonly step: MessageDto;
+}
+
 /** Terminal success event carrying the persisted assistant message. */
 export interface StreamDoneEvent {
   readonly type: 'done';
@@ -383,6 +427,7 @@ export interface StreamProposalEvent {
 export type ChatStreamEvent =
   | StreamTokenEvent
   | StreamCitationsEvent
+  | StreamToolStepEvent
   | StreamProposalEvent
   | StreamDoneEvent
   | StreamErrorEvent;

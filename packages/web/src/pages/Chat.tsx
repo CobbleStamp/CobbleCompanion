@@ -5,10 +5,12 @@
  */
 
 import type {
+  ChatStreamEvent,
   Citation,
   CompanionDto,
   IngestionStatus,
   MessageDto,
+  MessageKind,
   MessageRole,
 } from '@cobble/shared';
 import {
@@ -17,7 +19,7 @@ import {
   uploadKindForFilename,
 } from '@cobble/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { fetchMessages, sendMessage, uploadFileSource } from '../api/client.js';
+import { confirmProposal, fetchMessages, sendMessage, uploadFileSource } from '../api/client.js';
 import { IngestionPanel } from '../components/IngestionPanel.js';
 import { IngestionStatusButton } from '../components/IngestionStatusButton.js';
 import { Modal } from '../components/Modal.js';
@@ -42,6 +44,14 @@ interface ChatLine {
   readonly id?: string;
   readonly role: MessageRole;
   readonly content: string;
+  /**
+   * What this line is. `tool_step` renders as a muted "looked something up" note;
+   * `proposal` renders as a held-action log entry. Absent/`message` is an
+   * ordinary turn. Mirrors the transcript row's kind so reload == live.
+   */
+  readonly kind?: MessageKind;
+  /** On a `proposal` line, the proposal it records (links it to the live queue). */
+  readonly proposalId?: string;
   readonly citations?: readonly Citation[];
   /**
    * Marks a line as an attached file rather than a typed message, so it renders
@@ -63,10 +73,14 @@ interface ChatLine {
  * loaded on mount looks identical to the optimistic one shown right after upload.
  */
 function messageToLine(m: MessageDto): ChatLine {
+  const kind = m.kind ?? 'message';
   return {
     id: m.id,
     role: m.role,
     content: m.content,
+    kind,
+    ...(m.metadata?.citations ? { citations: m.metadata.citations } : {}),
+    ...(m.metadata?.proposalId ? { proposalId: m.metadata.proposalId } : {}),
     ...(m.sourceId !== null ? { sourceId: m.sourceId } : {}),
     attachment: m.role === 'user' && m.sourceId !== null,
   };
@@ -153,6 +167,53 @@ export function Chat({
     if (settled) void refreshTranscript();
   }, [ingestion.jobs, refreshTranscript]);
 
+  /**
+   * Drive a streamed turn into the transcript: tokens grow the trailing
+   * assistant bubble, citations attach to it, and read-only tool steps slot in
+   * above it as they happen. Returns whether the turn produced "rich" rows
+   * (tool steps or proposals) — when it did, the optimistic lines are an
+   * approximation, so the caller reconciles against the persisted transcript.
+   */
+  const consumeTurn = useCallback(
+    async (stream: AsyncGenerator<ChatStreamEvent>): Promise<boolean> => {
+      let rich = false;
+      for await (const event_ of stream) {
+        if (event_.type === 'token') {
+          setLines((prev) => appendToLast(prev, event_.value));
+        } else if (event_.type === 'citations') {
+          setLines((prev) => citeLast(prev, event_.citations));
+        } else if (event_.type === 'tool_step') {
+          // "Cobble looked something up" — show it above the reply as it happens.
+          rich = true;
+          setLines((prev) => insertStep(prev, event_.step));
+        } else if (event_.type === 'done') {
+          // The authoritative persisted reply (server id + final content) replaces
+          // whatever the token deltas built, and gives the line a stable key.
+          setLines((prev) => finalizeLast(prev, event_.message));
+        } else if (event_.type === 'proposal') {
+          // The turn EXITed proposing an effectful action; it's now a transcript
+          // row, and the live queue needs the pending entry for its Approve card.
+          rich = true;
+        } else if (event_.type === 'error') {
+          setLines((prev) => appendToLast(prev, `\n[${event_.message}]`));
+        }
+      }
+      return rich;
+    },
+    [],
+  );
+
+  /**
+   * Replace the rendered lines with the persisted transcript — the single source
+   * of truth. Called after a turn that produced tool steps or proposals, so the
+   * conversation (ordering, grounding, proposal rows) is exactly what a reload
+   * would show, not an optimistic approximation.
+   */
+  const reloadTranscript = useCallback(async (): Promise<void> => {
+    const history = await fetchMessages(companion.id);
+    setLines(history.map(messageToLine));
+  }, [companion.id]);
+
   async function onSend(event: React.FormEvent): Promise<void> {
     event.preventDefault();
     if (!ready || input.trim().length === 0 || busy) return;
@@ -163,23 +224,10 @@ export function Chat({
     setLines((prev) => [...prev, { role: 'user', content }, { role: 'assistant', content: '' }]);
 
     try {
-      for await (const event_ of sendMessage(companion.id, content)) {
-        if (event_.type === 'token') {
-          setLines((prev) => appendToLast(prev, event_.value));
-        } else if (event_.type === 'citations') {
-          setLines((prev) => citeLast(prev, event_.citations));
-        } else if (event_.type === 'done') {
-          // The authoritative persisted reply (server id + final content) replaces
-          // whatever the token deltas built, and gives the line a stable key.
-          setLines((prev) => finalizeLast(prev, event_.message));
-        } else if (event_.type === 'proposal') {
-          // The turn EXITed proposing an effectful action; pull it into the queue
-          // (rendered as an approval card below the transcript).
-          void proposalsCtl.refresh();
-        } else if (event_.type === 'error') {
-          // A streamed failure is data: surface it inline on the assistant line.
-          setLines((prev) => appendToLast(prev, `\n[${event_.message}]`));
-        }
+      const rich = await consumeTurn(sendMessage(companion.id, content));
+      if (rich) {
+        await proposalsCtl.refresh();
+        await reloadTranscript();
       }
     } catch (err) {
       // A thrown send (network failure, malformed SSE frame) leaves an empty
@@ -237,10 +285,29 @@ export function Chat({
     }
   }
 
-  /** Approve a held action; the companion's confirmation lands in the transcript. */
+  /**
+   * Approve a held action. The companion executes it and RE-ENTERS the loop to
+   * narrate the outcome and continue the task — streamed in like a normal turn —
+   * so "remember this and summarize it" yields the summary, not a dead line.
+   */
   async function onConfirmProposal(proposalId: string): Promise<void> {
-    const message = await proposalsCtl.confirm(proposalId);
-    setLines((prev) => [...prev, messageToLine(message)]);
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    // Optimistic bubble for the streamed narration; the reload reconciles the
+    // approved-action row and final ordering.
+    setLines((prev) => [...prev, { role: 'assistant', content: '' }]);
+    try {
+      await consumeTurn(confirmProposal(companion.id, proposalId));
+      await proposalsCtl.refresh();
+      await reloadTranscript();
+    } catch (err) {
+      console.error('confirm failed', { companionId: companion.id, error: err });
+      setLines((prev) => dropEmptyAssistantTail(prev));
+      setError(err instanceof Error ? err.message : 'Failed to approve action');
+    } finally {
+      setBusy(false);
+    }
   }
 
   function onDragOver(event: React.DragEvent): void {
@@ -292,28 +359,47 @@ export function Chat({
       </header>
       {error && <p className="error">{error}</p>}
       <ul className="transcript">
-        {lines.map((line, index) => (
-          <li
-            key={line.id ?? index}
-            className={`line ${line.role}${line.attachment ? ' attachment' : ''}`}
-          >
-            <span className="who">{line.role === 'user' ? 'You' : companion.name}</span>
-            <span className="content">{line.attachment ? `📎 ${line.content}` : line.content}</span>
-            {line.sourceId && !line.attachment && (
-              <button type="button" className="link-button" onClick={() => setStatusOpen(true)}>
-                View status →
-              </button>
-            )}
-            {line.citations && line.citations.length > 0 && (
-              <span className="citations who">
-                Grounded in:{' '}
-                {dedupeCitations(line.citations)
-                  .map((citation) => formatCitation(citation))
-                  .join(' · ')}
+        {lines.map((line, index) => {
+          const key = line.id ?? index;
+          // A read-only look-up: a muted, single-line "Cobble did X" note.
+          if (line.kind === 'tool_step') {
+            return (
+              <li key={key} className="line tool-step">
+                <span className="content">🔍 {line.content}</span>
+              </li>
+            );
+          }
+          // A held effectful action — a log entry in the conversation. The live
+          // Approve/Decline affordance is the queue card below while it's pending.
+          if (line.kind === 'proposal') {
+            return (
+              <li key={key} className="line proposal-line">
+                <span className="content">📋 Proposed: {line.content}</span>
+              </li>
+            );
+          }
+          return (
+            <li key={key} className={`line ${line.role}${line.attachment ? ' attachment' : ''}`}>
+              <span className="who">{line.role === 'user' ? 'You' : companion.name}</span>
+              <span className="content">
+                {line.attachment ? `📎 ${line.content}` : line.content}
               </span>
-            )}
-          </li>
-        ))}
+              {line.sourceId && !line.attachment && (
+                <button type="button" className="link-button" onClick={() => setStatusOpen(true)}>
+                  View status →
+                </button>
+              )}
+              {line.citations && line.citations.length > 0 && (
+                <span className="citations who">
+                  Grounded in:{' '}
+                  {dedupeCitations(line.citations)
+                    .map((citation) => formatCitation(citation))
+                    .join(' · ')}
+                </span>
+              )}
+            </li>
+          );
+        })}
       </ul>
       {proposalsCtl.proposals.length > 0 && (
         <div className="proposal-queue">
@@ -379,6 +465,17 @@ function citeLast(lines: ChatLine[], citations: readonly Citation[]): ChatLine[]
   if (lines.length === 0) return lines;
   const last = lines[lines.length - 1]!;
   return [...lines.slice(0, -1), { ...last, citations }];
+}
+
+/**
+ * Slot a read-only tool step in ABOVE the trailing assistant bubble, so the
+ * "looked something up" note appears before the reply it informed (matching the
+ * transcript's seq order after a reload).
+ */
+function insertStep(lines: ChatLine[], step: MessageDto): ChatLine[] {
+  const line = messageToLine(step);
+  if (lines.length === 0) return [line];
+  return [...lines.slice(0, -1), line, lines[lines.length - 1]!];
 }
 
 /**

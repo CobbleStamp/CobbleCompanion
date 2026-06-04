@@ -50,15 +50,18 @@ describe('proposal routes', () => {
     expect(proposals[0].status).toBe('pending');
   });
 
-  it('confirm executes the held action once, logs it, and records the outcome', async () => {
+  it('confirm executes the held action, logs it, then narrates the outcome (SSE)', async () => {
     const id = await seedProposal();
     const res = await ctx.app.inject({
       method: 'POST',
       url: `/companions/${companionId}/proposals/${id}/confirm`,
       headers: auth,
     });
-    expect(res.statusCode).toBe(200);
-    expect(res.json().message.content).toMatch(/Started reading https:\/\/x\.dev\/post/);
+    // Confirm now RE-ENTERS the loop and streams the companion's narration
+    // (the fake gateway scripts "Hi there"), rather than returning the raw line.
+    expect(res.headers['content-type']).toContain('text/event-stream');
+    expect(res.body).toContain('"type":"done"');
+    expect(res.body).toContain('Hi there');
 
     // The action executed: a source + ingestion job now exist.
     const sources = await ctx.deps.semantic.listSources(companionId);
@@ -68,6 +71,12 @@ describe('proposal routes', () => {
     expect(logged.map((r) => r.name)).toEqual(['ingest_source']);
     // The queue is now empty.
     expect(await ctx.deps.proposals.listPending(companionId)).toHaveLength(0);
+    // The transcript records the approved action (a friendly row that survives
+    // reload) followed by the companion's narration.
+    const transcript = await ctx.deps.memory.getRecentMessages(companionId, 10);
+    const contents = transcript.map((m) => m.content);
+    expect(contents.some((c) => /Started reading https:\/\/x\.dev\/post/.test(c))).toBe(true);
+    expect(contents).toContain('Hi there');
   });
 
   it('a second confirm is a no-op (exactly-once) and does not re-execute', async () => {

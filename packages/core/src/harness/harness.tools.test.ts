@@ -14,7 +14,7 @@ import { describe, expect, it } from 'vitest';
 import { FakeLlmGateway, type FakeTurn } from '../llm/fake.js';
 import type { ToolCall } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
-import type { MemoryStore, TranscriptEntry } from '../memory/store.js';
+import type { AppendOptions, MemoryStore, TranscriptEntry } from '../memory/store.js';
 import { ToolRegistry } from '../tools/registry.js';
 import type { Tool } from '../tools/tool.js';
 import { Harness } from './harness.js';
@@ -43,13 +43,16 @@ function memory(): MemoryStore & { appended: MessageDto[] } {
       companionId: string,
       role: MessageRole,
       content: string,
+      options?: AppendOptions,
     ): Promise<MessageDto> {
       const message: MessageDto = {
         id: `m-${appended.length + 1}`,
         companionId,
         role,
         content,
-        sourceId: null,
+        kind: options?.kind ?? 'message',
+        ...(options?.metadata ? { metadata: options.metadata } : {}),
+        sourceId: options?.sourceId ?? null,
         createdAt: new Date('2026-01-02').toISOString(),
       };
       appended.push(message);
@@ -328,6 +331,128 @@ describe('Harness inner loop (P3 tools)', () => {
     expect(secondCall.messages.some((m) => m.role === 'tool' && m.content.includes('boom'))).toBe(
       true,
     );
+  });
+
+  it('records a tool_step row + emits a tool_step event for a read-only call', async () => {
+    const tool = recordingTool('web_fetch', false, 'PAGE');
+    const gateway = new FakeLlmGateway([
+      { toolCalls: [call('web_fetch', { url: 'https://x.dev' })] },
+      { chunks: ['done'] },
+    ]);
+    const mem = memory();
+    const harness = new Harness({
+      gateway,
+      memory: mem,
+      model: 'm',
+      registry: new ToolRegistry([tool]),
+      logger: silentLogger,
+    });
+
+    const events = await collect(harness.runTurn({ companion, userContent: 'go', ownerId: 'u1' }));
+
+    const stepEvent = events.find((e) => e.type === 'tool_step');
+    expect(stepEvent && stepEvent.type === 'tool_step' && stepEvent.step.kind).toBe('tool_step');
+    expect(stepEvent && stepEvent.type === 'tool_step' && stepEvent.step.metadata?.toolName).toBe(
+      'web_fetch',
+    );
+    // The step is a persisted transcript row (so it survives reload), distinct
+    // from the assistant answer.
+    const persisted = mem.appended.find((m) => m.kind === 'tool_step');
+    expect(persisted?.content).toBe('Used web_fetch.');
+  });
+
+  it('persists grounding citations onto the assistant message', async () => {
+    const citation = {
+      sourceId: 's1',
+      sourceTitle: 'Peru book',
+      chapterTitle: '4',
+      topicTitle: 'Sacred Valley',
+      paraStart: 1,
+      paraEnd: 3,
+      pageStart: null,
+      pageEnd: null,
+    };
+    const gateway = new FakeLlmGateway([{ chunks: ['Grounded answer'] }]);
+    const mem = memory();
+    const harness = new Harness({
+      gateway,
+      memory: mem,
+      model: 'm',
+      retrieveContext: async () => ({
+        blocks: [{ role: 'system', content: 'passage', provenance: [citation] }],
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      }),
+      logger: silentLogger,
+    });
+
+    await collect(harness.runTurn({ companion, userContent: 'ask', ownerId: 'u1' }));
+
+    const answer = mem.appended.find(
+      (m) => m.role === 'assistant' && m.content === 'Grounded answer',
+    );
+    expect(answer?.metadata?.citations).toEqual([citation]);
+  });
+
+  it('persists a proposal row when an effectful call is held', async () => {
+    const tool = recordingTool('ingest_source', true, 'ingested');
+    const proposal: ProposalDto = {
+      id: 'p1',
+      toolName: 'ingest_source',
+      summary: 'Remember https://x.dev',
+      status: 'pending',
+      createdAt: new Date('2026-01-02').toISOString(),
+    };
+    const gate = async (c: HookToolCall, _ctx: TurnCtx): Promise<HookToolCall | Block> =>
+      'name' in c && c.name === 'ingest_source'
+        ? { blocked: true, reason: 'needs approval', proposal }
+        : c;
+    const gateway = new FakeLlmGateway([
+      { chunks: ['One moment. '], toolCalls: [call('ingest_source', { url: 'https://x.dev' })] },
+    ]);
+    const mem = memory();
+    const harness = new Harness({
+      gateway,
+      memory: mem,
+      model: 'm',
+      registry: new ToolRegistry([tool]),
+      beforeToolCall: gate,
+      logger: silentLogger,
+    });
+
+    await collect(harness.runTurn({ companion, userContent: 'save it', ownerId: 'u1' }));
+
+    // The propose→approve exchange is recorded so it survives a reload.
+    const row = mem.appended.find((m) => m.kind === 'proposal');
+    expect(row?.content).toBe('Remember https://x.dev');
+    expect(row?.metadata?.proposalId).toBe('p1');
+  });
+
+  it('continueAfterApproval narrates the outcome without persisting a user turn', async () => {
+    const gateway = new FakeLlmGateway([{ chunks: ['Saved — here are the highlights…'] }]);
+    const mem = memory();
+    const harness = new Harness({ gateway, memory: mem, model: 'm', logger: silentLogger });
+
+    const events = await collect(
+      harness.continueAfterApproval({
+        companion,
+        ownerId: 'u1',
+        outcome: 'Read https://x.dev into long-term memory.',
+      }),
+    );
+
+    const done = events.find((e) => e.type === 'done');
+    expect(done && done.type === 'done' && done.message.content).toBe(
+      'Saved — here are the highlights…',
+    );
+    // The approval is the ENTRY: no user message is appended.
+    expect(mem.appended.some((m) => m.role === 'user')).toBe(false);
+    // The model is told the action completed, so it won't re-propose it.
+    const modelCall = gateway.calls[0]!;
+    expect(
+      modelCall.messages.some(
+        (m) => m.role === 'user' && m.content.includes('Read https://x.dev into long-term memory.'),
+      ),
+    ).toBe(true);
   });
 
   // Guards the import surface used above (avoids an unused-import lint).

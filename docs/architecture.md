@@ -238,7 +238,17 @@ There are **no dedicated "ask" or "confirm" steps** — the loop runs until it h
 then EXITs with a plain message; the user's reply is the next ENTRY. The product's **propose→approve**
 trust model (`product-overview.md` §5.3) is realized mechanically as the `beforeToolCall` gate: a
 read-only tool runs freely, but an **effectful/costly** tool call (book · send · pay) is **blocked**,
-forcing an exit-to-approve. The user's approval re-enters as the next turn and the action executes.
+forcing an exit-to-approve. **Every** effectful call in the turn is held — the loop collects them all
+rather than bailing on the first — and each is written to the transcript as a `proposal` row so the
+held action survives a reload.
+
+On **approval**, the confirm route resolves the proposal exactly once, executes the held call
+(`dispatchTool`), logs it, records a friendly outcome row, and then **re-enters the agent loop**
+(`Harness.continueAfterApproval`): the outcome is injected as an ephemeral observation, so the
+companion *narrates* the result and continues whatever the user asked ("…then summarize what you
+saved") — rather than the conversation dead-ending on a raw tool line. No suspended generator is
+resumed; the transcript is the only state (§4.7). Approving an action mid-continuation can itself
+produce a new proposal — the gate re-applies. **Reject** resolves the proposal without executing.
 
 ```mermaid
 flowchart TD
@@ -357,7 +367,14 @@ sequenceDiagram
   message / an error result) that re-enters the loop — uniform recovery, and gaps are surfaced, never
   fabricated.
 - **Transcript is the source of truth.** Append-only; reconstructable into context; compaction
-  summarizes the compactible remainder when the window fills (P-later).
+  summarizes the compactible remainder when the window fills (P-later). **The rendered conversation —
+  live *and* after reload — is a projection of the transcript, never a richer separate reality (P3 ✅).**
+  So everything the user sees is a persisted row: a grounded answer carries its `citations` (metadata),
+  a read-only look-up is a `tool_step` row, a held action is a `proposal` row. Rows carry a **`kind`**
+  (`message` | `tool_step` | `proposal`) and `metadata`; the **LLM-context projection includes only
+  `message` rows** (tool steps + proposals are UI chrome and never re-enter the model's context, nor
+  episodic consolidation). Live streaming is a *progressive preview* of rows that will be persisted; a
+  turn that produced tool-step/proposal rows reconciles the surface against the transcript on settle.
 - **State is authoritative only at the home.** Surfaces never hold loop state (§6); a run reads from
   and writes back to the cloud home.
 

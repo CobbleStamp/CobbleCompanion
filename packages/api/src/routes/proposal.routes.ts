@@ -13,6 +13,7 @@ import type { FastifyInstance } from 'fastify';
 import type { AppDeps } from '../app.js';
 import type { RequireAuth } from '../auth-guard.js';
 import { overCapGuard } from '../quota-guard.js';
+import { streamSse } from '../sse.js';
 
 interface CompanionParams {
   readonly companionId: string;
@@ -27,7 +28,8 @@ export function registerProposalRoutes(
   deps: AppDeps,
   requireAuth: RequireAuth,
 ): void {
-  const { identity, memory, proposals, tools, toolCallLog, procedural, quota, logger } = deps;
+  const { identity, harness, memory, proposals, tools, toolCallLog, procedural, quota, logger } =
+    deps;
 
   // The pending approval queue (the surface polls this while any are pending).
   app.get(
@@ -105,10 +107,35 @@ export function registerProposalRoutes(
           error,
         });
       }
-      // Record the outcome to the transcript so the conversation reflects it
-      // (the tool's result content is already a user-facing sentence).
-      const message = await memory.appendMessage(companion.id, 'assistant', result.content);
-      return reply.send({ message });
+      // The approved action's outcome becomes a friendly transcript row (a UI
+      // record, filtered out of the model's context), then the agent loop
+      // RE-ENTERS so the companion narrates the result and continues whatever was
+      // asked ("…then summarize what you saved"). Best-effort persist: the
+      // continuation injects the outcome into context regardless, so the model
+      // knows the action completed even if this row write fails (logging.md).
+      try {
+        await memory.appendMessage(companion.id, 'assistant', result.content, {
+          kind: 'tool_step',
+          metadata: { toolName: proposal.toolName },
+        });
+      } catch (error) {
+        logger.error('failed to record approved action row', {
+          operation: 'proposals.confirm.row',
+          companionId: companion.id,
+          proposalId,
+          error,
+        });
+      }
+      await streamSse(
+        reply,
+        harness.continueAfterApproval({
+          companion,
+          ownerId: request.userId!,
+          outcome: result.content,
+        }),
+        logger,
+      );
+      return;
     },
   );
 

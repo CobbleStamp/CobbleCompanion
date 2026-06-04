@@ -27,6 +27,18 @@ export interface Tool {
    * is used when omitted.
    */
   proposalSummary?(args: Record<string, unknown>): string;
+  /**
+   * A short, friendly one-line record of running this call ("Searched memory for
+   * …", "Read example.com"), persisted as a `tool_step` transcript row so the
+   * conversation shows what the companion looked up. A generic line is used when
+   * omitted.
+   */
+  stepSummary?(args: Record<string, unknown>): string;
+}
+
+/** The `tool_step` line for a call: the tool's own summary, or a generic line. */
+export function toolStepSummary(tool: Tool, args: Record<string, unknown>): string {
+  return tool.stepSummary?.(args) ?? `Used ${tool.name}.`;
 }
 
 /** Project a tool to the wire shape the LLM gateway advertises to the provider. */

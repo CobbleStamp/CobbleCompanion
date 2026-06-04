@@ -1,6 +1,8 @@
 import type {
   IngestionStatus,
   LeadStatus,
+  MessageKind,
+  MessageMetadata,
   MessageRole,
   ProposalStatus,
   SourceKind,
@@ -105,6 +107,14 @@ export const messages = pgTable(
       .references(() => companions.id, { onDelete: 'cascade' }),
     role: text('role').$type<MessageRole>().notNull(),
     content: text('content').notNull(),
+    // What this row IS, beyond who said it — so the rich conversation (grounded
+    // answers, read-only tool steps, held proposals) reconstructs identically on
+    // reload. `message` for ordinary turns; the LLM-context projection includes
+    // only `message` rows (tool steps + proposals are UI chrome).
+    kind: text('kind').$type<MessageKind>().notNull().default('message'),
+    // Kind-specific extras (citations on a grounded answer, tool/proposal ids);
+    // null for a plain turn. Lets the surface re-render the row faithfully.
+    metadata: jsonb('metadata').$type<MessageMetadata>(),
     // Optional link to the source a turn is about — set on the attachment chip
     // and acknowledgement an upload writes, so they reconstruct on reload. Null
     // for ordinary typed turns. `set null` keeps the append-only transcript turn

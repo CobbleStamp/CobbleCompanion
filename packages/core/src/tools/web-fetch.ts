@@ -49,6 +49,10 @@ export function createWebFetchTool(options: WebFetchOptions): Tool {
       additionalProperties: false,
     },
     effectful: false,
+    stepSummary(args): string {
+      const url = readHttpUrlArg(args, 'url');
+      return url !== null ? `Read ${displayHost(url)}` : 'Read a web page';
+    },
     async run(rawArgs, ctx): Promise<ToolResult> {
       const url = readHttpUrlArg(rawArgs, 'url');
       if (url === null) {
@@ -135,4 +139,13 @@ function extractLinks(html: string, baseUrl: string): string[] {
     }
   }
   return [...seen];
+}
+
+/** The host shown in a `tool_step` line ("Read example.com"); falls back to the raw URL. */
+function displayHost(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
 }

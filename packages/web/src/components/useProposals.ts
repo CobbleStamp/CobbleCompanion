@@ -1,21 +1,21 @@
 /**
  * Polls the companion's pending approval queue (propose→approve, P3) and exposes
- * confirm/reject actions. Polls while any proposal is pending so a proposal raised
+ * the pending set, a reject action, and a manual refresh. Approving is driven by
+ * the chat surface (it streams the companion's narration as the loop re-enters),
+ * so confirm doesn't live here. Polls while any proposal is pending so one raised
  * mid-turn (or by background work later) shows up without a refresh; stops once
  * the queue is empty. Mirrors useIngestionJobs' poll-while-active loop.
  */
 
-import type { MessageDto, ProposalDto } from '@cobble/shared';
+import type { ProposalDto } from '@cobble/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { confirmProposal, listProposals, rejectProposal } from '../api/client.js';
+import { listProposals, rejectProposal } from '../api/client.js';
 
 const POLL_INTERVAL_MS = 2_000;
 
 export interface UseProposals {
   readonly proposals: readonly ProposalDto[];
   readonly error: string | null;
-  /** Approve a proposal; resolves with the companion's confirmation message. */
-  readonly confirm: (proposalId: string) => Promise<MessageDto>;
   /** Decline a proposal. */
   readonly reject: (proposalId: string) => Promise<void>;
   /** Force an immediate refresh (e.g. right after a turn ends in a proposal). */
@@ -39,15 +39,6 @@ export function useProposals(companionId: string): UseProposals {
       setError(err instanceof Error ? err.message : 'Failed to load proposals');
     }
   }, [companionId]);
-
-  const confirm = useCallback(
-    async (proposalId: string): Promise<MessageDto> => {
-      const message = await confirmProposal(companionId, proposalId);
-      await refresh();
-      return message;
-    },
-    [companionId, refresh],
-  );
 
   const reject = useCallback(
     async (proposalId: string): Promise<void> => {
@@ -74,5 +65,5 @@ export function useProposals(companionId: string): UseProposals {
     };
   }, [proposals, refresh]);
 
-  return { proposals, error, confirm, reject, refresh };
+  return { proposals, error, reject, refresh };
 }

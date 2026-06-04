@@ -48,9 +48,11 @@ export function createSemanticRetrieveContext(options: SemanticRetrieveOptions):
     return {
       blocks: [
         ...semanticBlocks,
-        ...recent.map(
-          (message): ContextBlock => ({ role: message.role, content: message.content }),
-        ),
+        // Only conversational turns enter the model's context; tool-step and
+        // proposal rows are UI chrome (architecture.md §4.7).
+        ...recent
+          .filter((message) => (message.kind ?? 'message') === 'message')
+          .map((message): ContextBlock => ({ role: message.role, content: message.content })),
       ],
       usage,
     };

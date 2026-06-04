@@ -47,6 +47,8 @@ migrations under `db/`.
 | `companion_id` | uuid (FK → `companions.id`) | indexed with `seq` (`messages_companion_idx`) for recency recall |
 | `role` | text | `user` \| `assistant` \| `system` |
 | `content` | text | |
+| `kind` | text | `message` \| `tool_step` \| `proposal` — `$type<MessageKind>()`, default `message` (P3). What the row *is*, so the rich conversation (grounded answers, read-only look-ups, held actions) reconstructs identically on reload. **Only `message` rows enter the LLM-context projection** (`getMessagesSince` and the recency window filter to `kind='message'`); `tool_step`/`proposal` are UI chrome — never re-fed to the model nor consolidated into episodes |
+| `metadata` | jsonb | nullable `MessageMetadata` (P3): `citations` on a grounded `message`; `toolName` on a `tool_step`; `toolName`+`proposalId` on a `proposal` (the id wires the row to the live approval queue). Lets the surface re-render the row faithfully |
 | `source_id` | uuid (FK → `sources.id`, **`ON DELETE SET NULL`**) | nullable; set on a file upload's attachment chip (a `user` turn) and its acknowledgement (an `assistant` turn) so the chat reconstructs the 📎 chip + "View status →" link on reload. `SET NULL` (not cascade): deleting a source must never delete an append-only transcript turn — it just drops the link |
 | `created_at` | timestamptz | episodic memory (P2) builds on these timestamped turns |
 
@@ -292,9 +294,20 @@ replayed into the message array in the OpenAI wire shape.
   no tools registered, `toolCalls` is empty → the inner loop exits after one turn (the P0 path).
 - **P3 inner loop:** when a turn returns tool calls, each is run through `beforeToolCall` — a read-only
   call dispatches via `dispatchTool` and its result re-enters as a `tool`-role message for the next
-  turn; an **effectful** call is BLOCKED (the gate enqueues a `proposals` row) and the loop EXITs with
-  a `proposal` stream event. `afterToolCall` logs every executed call. The model response **streams**
-  to the client throughout; usage accrues across all turns and is debited once at exit.
+  turn; an **effectful** call is BLOCKED. **All** effectful calls in a turn are collected (not just the
+  first) and each enqueues a `proposals` row; the loop then EXITs. `afterToolCall` logs every executed
+  call. The model response **streams** throughout; usage accrues across all turns, debited once at exit.
+- **Transcript fidelity (P3):** the loop persists what the user sees so it survives reload — a grounded
+  answer carries its `citations` in `metadata`; each read-only call writes a friendly `tool_step` row
+  (`Tool.stepSummary`) and emits a `tool_step` stream event; each held action writes a `proposal` row
+  and emits a `proposal` event. `ChatStreamEvent` therefore spans `token` / `citations` / `tool_step` /
+  `proposal` / `done` / `error`. The web reconciles against the transcript after any turn that produced
+  tool-step/proposal rows (live == reload).
+- **Approval re-entry:** the confirm route resolves the proposal exactly once, executes + logs the held
+  call, writes its outcome as a `tool_step` row, then calls `Harness.continueAfterApproval` — which
+  retrieves recent context, injects the outcome as an **ephemeral** observation (the persisted row is
+  UI-only and filtered from context), and runs the loop so the companion narrates and continues. No new
+  user message is persisted; the response **streams** back over SSE like a normal turn.
 - **Streamed tool calls:** the OpenRouter gateway accumulates `choices[].delta.tool_calls` fragments
   by `index` (the first carries id+name+partial args, later frames append arg-string pieces) and
   `JSON.parse`s the assembled arguments at `[DONE]`; malformed args degrade to `{}` (failures are

@@ -1,5 +1,12 @@
-import type { ChatStreamEvent, Citation, CompanionDto, ProposalDto } from '@cobble/shared';
+import type {
+  ChatStreamEvent,
+  Citation,
+  CompanionDto,
+  MessageDto,
+  ProposalDto,
+} from '@cobble/shared';
 import type { LlmGateway, LlmMessage } from '../llm/gateway.js';
+import { toolStepSummary } from '../tools/tool.js';
 import { consoleLogger, type Logger } from '../logging.js';
 import type { MemoryStore } from '../memory/store.js';
 import type { TokenQuotaStore } from '../quota/store.js';
@@ -60,6 +67,22 @@ export interface RunTurnParams {
   readonly signal?: AbortSignal;
 }
 
+/** Resume after an approved action (continueAfterApproval). */
+export interface ContinueParams {
+  readonly companion: CompanionDto;
+  readonly ownerId?: string;
+  /** The completed action's result line, injected so the model knows it's done. */
+  readonly outcome: string;
+  readonly signal?: AbortSignal;
+}
+
+/** The assembled prompt + retrieval results shared by both loop entry points. */
+interface PreparedTurn {
+  readonly messages: LlmMessage[];
+  readonly citations: readonly Citation[];
+  readonly retrievalUsage: TokenUsage;
+}
+
 /**
  * The agent loop (architecture.md §4). Phase 0 exercises only the trivial path:
  * the tool set is empty, so the inner loop turns exactly once — context → one
@@ -104,139 +127,177 @@ export class Harness {
     const { companion, userContent, ownerId, signal } = params;
     try {
       await this.memory.appendMessage(companion.id, 'user', userContent);
-
-      const { blocks: history, usage: retrievalUsage } = await this.retrieveContext({
-        companionId: companion.id,
-        userContent,
-      });
-      const messages = assembleContext(companion, history);
-
-      // Citations are retrieval-time data: surface the grounding sources as
-      // soon as they are known, before (and independent of) the token stream.
-      const citations = dedupeCitations(history.flatMap((block) => block.provenance ?? []));
-      if (citations.length > 0) {
-        yield { type: 'citations', citations };
-      }
-
-      // Meter every LLM call in the run: the wrapper deposits each call's usage
-      // into `acc`, so a multi-turn tool run is debited once, at exit.
-      const acc = createUsageAccumulator();
-      const llm = meteredLlmGateway(this.gateway, acc.sink);
-      const ctx: TurnCtx = { companionId: companion.id, ownerId: ownerId ?? '' };
-      const toolDefs = this.registry.list();
-
-      // The inner loop (§4.1/§4.2): each turn streams, then either ends (no tool
-      // calls) or runs the tools it requested and turns again. Two ceilings guard
-      // a dead loop → exit-to-user-with-partial.
-      let lastText = '';
-      for (let iteration = 0; ; iteration++) {
-        if (this.exhausted(iteration, acc.total())) {
-          this.logger.error('turn hit its budget ceiling; exiting with partial', {
-            operation: 'harness.runTurn',
-            companionId: companion.id,
-            iteration,
-            tokens: acc.total().totalTokens,
-          });
-          yield* this.finish(
-            companion.id,
-            ownerId,
-            lastText || PARTIAL_FALLBACK,
-            retrievalUsage,
-            acc,
-          );
-          return;
-        }
-
-        let turnText = '';
-        const stream = llm.stream({
-          messages,
-          model: this.model,
-          ...(toolDefs.length > 0 ? { tools: toolDefs } : {}),
-          ...(signal ? { signal } : {}),
-        });
-        let next = await stream.next();
-        while (!next.done) {
-          turnText += next.value;
-          yield { type: 'token', value: next.value };
-          next = await stream.next();
-        }
-        const { toolCalls } = next.value;
-        lastText = turnText;
-
-        // No tool calls → this is the assistant's answer; the run EXITs (§4.1).
-        if (toolCalls.length === 0) {
-          yield* this.finish(companion.id, ownerId, turnText, retrievalUsage, acc);
-          return;
-        }
-
-        // The model wants tools. Replay its tool-call turn into the running
-        // context so the provider can correlate the results we append next.
-        messages.push({ role: 'assistant', content: turnText, toolCalls });
-
-        // Walk EVERY requested call. Read-only calls run now; each effectful
-        // call is held as its own proposal. We collect all held proposals across
-        // the turn instead of bailing on the first — otherwise a turn that asks
-        // to remember two sources (or to remember one and look up another) would
-        // silently drop everything after the first blocked call. Nothing
-        // effectful runs here regardless; held actions wait for approval.
-        const heldProposals: ProposalDto[] = [];
-        let blocked = false;
-        let blockReason = '';
-        for (const call of toolCalls) {
-          const gated = await this.beforeToolCall(call, ctx);
-          if (isBlock(gated)) {
-            blocked = true;
-            if (gated.proposal) {
-              heldProposals.push(gated.proposal);
-            } else if (blockReason === '') {
-              blockReason = gated.reason;
-            }
-            continue;
-          }
-          const result = await dispatchTool(
-            this.registry,
-            gated.name,
-            gated.args,
-            ctx,
-            this.logger,
-            call.id,
-          );
-          const logged = await this.afterToolCall(result, gated, ctx);
-          messages.push({
-            role: 'tool',
-            content: logged.content,
-            ...(call.id !== undefined ? { toolCallId: call.id } : {}),
-          });
-        }
-
-        // Any held action means the run pauses for approval: surface every
-        // proposal, record what the companion said, and EXIT. Approving a
-        // proposal re-enters through the confirm route (state lives at the home).
-        if (blocked) {
-          for (const proposal of heldProposals) {
-            yield { type: 'proposal', proposal };
-          }
-          const text =
-            turnText.trim().length > 0
-              ? turnText
-              : heldProposals.length > 0
-                ? heldProposals.map((proposal) => proposal.summary).join('\n')
-                : blockReason;
-          yield* this.finish(companion.id, ownerId, text, retrievalUsage, acc);
-          return;
-        }
-      }
+      const prep = await this.prepare(companion, userContent);
+      yield* this.runLoop(companion, ownerId, prep, signal);
     } catch (error) {
-      // Failures are data: log with context, then surface a terminal error event.
-      this.logger.error('turn failed', {
-        operation: 'harness.runTurn',
-        companionId: companion.id,
-        error,
+      yield this.failed(companion.id, error);
+    }
+  }
+
+  /**
+   * Resume the conversation after the user approves a held action. No new user
+   * message is persisted — the approval is the ENTRY. The recency window carries
+   * the original request and the companion's pre-amble; an ephemeral note tells
+   * the model the action just completed (the persisted `tool_step` row is the UI
+   * record, but it's filtered out of context), so the model narrates the outcome
+   * and continues whatever was asked ("…then summarize what you saved").
+   */
+  async *continueAfterApproval(params: ContinueParams): AsyncGenerator<ChatStreamEvent> {
+    const { companion, ownerId, outcome, signal } = params;
+    try {
+      const prep = await this.prepare(companion, '');
+      prep.messages.push({
+        role: 'user',
+        content:
+          `[Your proposed action was approved and has completed: ${outcome} ` +
+          `Continue with what the user asked — do not propose it again.]`,
       });
-      yield {
-        type: 'error',
-        message: 'Cobble hit a problem while responding. Please try again.',
-      };
+      yield* this.runLoop(companion, ownerId, prep, signal);
+    } catch (error) {
+      yield this.failed(companion.id, error);
+    }
+  }
+
+  /** Retrieve context, assemble the prompt, and collect the turn's citations. */
+  private async prepare(companion: CompanionDto, userContent: string): Promise<PreparedTurn> {
+    const { blocks: history, usage: retrievalUsage } = await this.retrieveContext({
+      companionId: companion.id,
+      userContent,
+    });
+    const messages = assembleContext(companion, history);
+    const citations = dedupeCitations(history.flatMap((block) => block.provenance ?? []));
+    return { messages, citations, retrievalUsage };
+  }
+
+  /**
+   * The inner loop (§4.1/§4.2): each turn streams, then either ends (no tool
+   * calls) or runs the tools it requested and turns again. Read-only calls run
+   * and are recorded as `tool_step` rows; effectful calls are held as proposals
+   * and the run EXITs for approval. Two ceilings guard a dead loop → exit-to-
+   * user-with-partial.
+   */
+  private async *runLoop(
+    companion: CompanionDto,
+    ownerId: string | undefined,
+    prep: PreparedTurn,
+    signal: AbortSignal | undefined,
+  ): AsyncGenerator<ChatStreamEvent> {
+    const { messages, citations, retrievalUsage } = prep;
+    // Citations are retrieval-time data: surface the grounding sources as soon
+    // as they are known, before (and independent of) the token stream.
+    if (citations.length > 0) {
+      yield { type: 'citations', citations };
+    }
+
+    // Meter every LLM call in the run: the wrapper deposits each call's usage
+    // into `acc`, so a multi-turn tool run is debited once, at exit.
+    const acc = createUsageAccumulator();
+    const llm = meteredLlmGateway(this.gateway, acc.sink);
+    const ctx: TurnCtx = { companionId: companion.id, ownerId: ownerId ?? '' };
+    const toolDefs = this.registry.list();
+
+    let lastText = '';
+    for (let iteration = 0; ; iteration++) {
+      if (this.exhausted(iteration, acc.total())) {
+        this.logger.error('turn hit its budget ceiling; exiting with partial', {
+          operation: 'harness.runLoop',
+          companionId: companion.id,
+          iteration,
+          tokens: acc.total().totalTokens,
+        });
+        yield* this.finish(
+          companion.id,
+          ownerId,
+          lastText || PARTIAL_FALLBACK,
+          citations,
+          retrievalUsage,
+          acc,
+        );
+        return;
+      }
+
+      let turnText = '';
+      const stream = llm.stream({
+        messages,
+        model: this.model,
+        ...(toolDefs.length > 0 ? { tools: toolDefs } : {}),
+        ...(signal ? { signal } : {}),
+      });
+      let next = await stream.next();
+      while (!next.done) {
+        turnText += next.value;
+        yield { type: 'token', value: next.value };
+        next = await stream.next();
+      }
+      const { toolCalls } = next.value;
+      lastText = turnText;
+
+      // No tool calls → this is the assistant's answer; the run EXITs (§4.1).
+      if (toolCalls.length === 0) {
+        yield* this.finish(companion.id, ownerId, turnText, citations, retrievalUsage, acc);
+        return;
+      }
+
+      // The model wants tools. Replay its tool-call turn into the running
+      // context so the provider can correlate the results we append next.
+      messages.push({ role: 'assistant', content: turnText, toolCalls });
+
+      // Walk EVERY requested call. Read-only calls run now; each effectful call
+      // is held as its own proposal. We collect all held proposals across the
+      // turn instead of bailing on the first — otherwise a turn that asks to
+      // remember two sources (or to remember one and look up another) would
+      // silently drop everything after the first blocked call. Nothing effectful
+      // runs here regardless; held actions wait for approval.
+      const heldProposals: ProposalDto[] = [];
+      let blocked = false;
+      let blockReason = '';
+      for (const call of toolCalls) {
+        const gated = await this.beforeToolCall(call, ctx);
+        if (isBlock(gated)) {
+          blocked = true;
+          if (gated.proposal) {
+            heldProposals.push(gated.proposal);
+          } else if (blockReason === '') {
+            blockReason = gated.reason;
+          }
+          continue;
+        }
+        const result = await dispatchTool(
+          this.registry,
+          gated.name,
+          gated.args,
+          ctx,
+          this.logger,
+          call.id,
+        );
+        const logged = await this.afterToolCall(result, gated, ctx);
+        messages.push({
+          role: 'tool',
+          content: logged.content,
+          ...(call.id !== undefined ? { toolCallId: call.id } : {}),
+        });
+        // Record a friendly one-line transcript row for the look-up so the
+        // conversation shows what the companion did (UI-only; filtered out of
+        // the model's context). Best-effort — see recordToolStep.
+        yield* this.recordToolStep(companion.id, gated.name, gated.args);
+      }
+
+      // Any held action means the run pauses for approval: persist the pre-amble
+      // and each proposal row (so they survive reload), surface the proposals,
+      // and EXIT. Approving re-enters via continueAfterApproval (confirm route).
+      if (blocked) {
+        yield* this.finishBlocked(
+          companion.id,
+          ownerId,
+          turnText,
+          heldProposals,
+          blockReason,
+          citations,
+          retrievalUsage,
+          acc,
+        );
+        return;
+      }
     }
   }
 
@@ -246,17 +307,125 @@ export class Harness {
     return this.turnTokenBudget !== undefined && used.totalTokens >= this.turnTokenBudget;
   }
 
+  /**
+   * Record + emit a `tool_step` row for a completed read-only call, so the
+   * conversation shows the look-up on reload, not just live. Best-effort: if the
+   * persist fails we emit nothing (and log it), keeping the live view and a
+   * reload identical rather than showing a step that wouldn't survive.
+   */
+  private async *recordToolStep(
+    companionId: string,
+    name: string,
+    args: Record<string, unknown>,
+  ): AsyncGenerator<ChatStreamEvent> {
+    const tool = this.registry.get(name);
+    const summary = tool ? toolStepSummary(tool, args) : `Used ${name}.`;
+    try {
+      const step = await this.memory.appendMessage(companionId, 'assistant', summary, {
+        kind: 'tool_step',
+        metadata: { toolName: name },
+      });
+      yield { type: 'tool_step', step };
+    } catch (error) {
+      this.logger.error('failed to record tool step', {
+        operation: 'harness.recordToolStep',
+        companionId,
+        tool: name,
+        error,
+      });
+    }
+  }
+
   /** Persist the assistant turn, debit the run's tokens once, and emit `done`. */
   private async *finish(
     companionId: string,
     ownerId: string | undefined,
     text: string,
+    citations: readonly Citation[],
     retrievalUsage: TokenUsage,
     acc: ReturnType<typeof createUsageAccumulator>,
   ): AsyncGenerator<ChatStreamEvent> {
-    const message = await this.memory.appendMessage(companionId, 'assistant', text);
+    const message = await this.memory.appendMessage(
+      companionId,
+      'assistant',
+      text,
+      citations.length > 0 ? { metadata: { citations } } : undefined,
+    );
     await this.debit(ownerId, addUsage(retrievalUsage, acc.total()));
     yield { type: 'done', message };
+  }
+
+  /**
+   * Exit-for-approval: persist the companion's pre-amble (if any) and one
+   * `proposal` transcript row per held action (so the propose→approve exchange
+   * survives reload), surface every proposal for the queue, debit once, and emit
+   * `done` with the last persisted row.
+   */
+  private async *finishBlocked(
+    companionId: string,
+    ownerId: string | undefined,
+    turnText: string,
+    heldProposals: readonly ProposalDto[],
+    blockReason: string,
+    citations: readonly Citation[],
+    retrievalUsage: TokenUsage,
+    acc: ReturnType<typeof createUsageAccumulator>,
+  ): AsyncGenerator<ChatStreamEvent> {
+    // The companion's spoken pre-amble (what it said before the held action),
+    // if any — this is what the streamed token bubble finalizes to.
+    let preamble: MessageDto | undefined;
+    if (turnText.trim().length > 0) {
+      preamble = await this.memory.appendMessage(
+        companionId,
+        'assistant',
+        turnText,
+        citations.length > 0 ? { metadata: { citations } } : undefined,
+      );
+    }
+    let lastProposalRow: MessageDto | undefined;
+    for (const proposal of heldProposals) {
+      try {
+        lastProposalRow = await this.memory.appendMessage(
+          companionId,
+          'assistant',
+          proposal.summary,
+          { kind: 'proposal', metadata: { proposalId: proposal.id, toolName: proposal.toolName } },
+        );
+      } catch (error) {
+        this.logger.error('failed to persist proposal row', {
+          operation: 'harness.finishBlocked',
+          companionId,
+          proposalId: proposal.id,
+          error,
+        });
+      }
+      yield { type: 'proposal', proposal };
+    }
+    // A block with neither pre-amble nor proposal (a custom gate's bare reason):
+    // keep the old behaviour of recording the reason so the turn still EXITs cleanly.
+    if (!preamble && !lastProposalRow && blockReason) {
+      preamble = await this.memory.appendMessage(companionId, 'assistant', blockReason);
+    }
+    await this.debit(ownerId, addUsage(retrievalUsage, acc.total()));
+    // `done` carries the companion's words when it spoke; otherwise the held
+    // proposal row, so the stream always terminates with a persisted message.
+    const doneMessage = preamble ?? lastProposalRow;
+    if (doneMessage) {
+      yield { type: 'done', message: doneMessage };
+    }
+  }
+
+  /** Log a turn failure and build the terminal error event (failures are data, §4.7). */
+  private failed(companionId: string, error: unknown): ChatStreamEvent {
+    this.logger.error('turn failed', {
+      operation: 'harness.runTurn',
+      companionId,
+      error,
+    });
+    return {
+      type: 'error',
+      message: 'Cobble hit a problem while responding. Please try again.',
+    };
   }
 
   /**
@@ -282,7 +451,11 @@ export class Harness {
   private defaultRetrieveContext: RetrieveContext = async ({ companionId }) => {
     const recent = await this.memory.getRecentMessages(companionId, this.recentLimit);
     return {
-      blocks: recent.map((message) => ({ role: message.role, content: message.content })),
+      // Only conversational turns enter the model's context; tool-step and
+      // proposal rows are UI chrome (architecture.md §4.7).
+      blocks: recent
+        .filter((message) => (message.kind ?? 'message') === 'message')
+        .map((message) => ({ role: message.role, content: message.content })),
       usage: ZERO_USAGE,
     };
   };
