@@ -37,6 +37,12 @@ const DEFAULT_MAX_TOOL_ITERATIONS = 6;
 const PARTIAL_FALLBACK =
   'I ran out of room to finish that just now — tell me how you’d like me to continue.';
 
+/** Last-ditch text for a held turn that spoke no pre-amble and carried no reason. */
+const HELD_TURN_FALLBACK = 'I’ve set that aside for you to confirm.';
+
+/** User-facing text when a turn can't be completed (failures are data, §4.7). */
+const TURN_ERROR_MESSAGE = 'Cobble hit a problem while responding. Please try again.';
+
 export interface HarnessOptions {
   readonly gateway: LlmGateway;
   readonly memory: MemoryStore;
@@ -401,18 +407,30 @@ export class Harness {
       }
       yield { type: 'proposal', proposal };
     }
-    // A block with neither pre-amble nor proposal (a custom gate's bare reason):
-    // keep the old behaviour of recording the reason so the turn still EXITs cleanly.
-    if (!preamble && !lastProposalRow && blockReason) {
-      preamble = await this.memory.appendMessage(companionId, 'assistant', blockReason);
-    }
     await this.debit(ownerId, addUsage(retrievalUsage, acc.total()));
-    // `done` carries the companion's words when it spoke; otherwise the held
-    // proposal row, so the stream always terminates with a persisted message.
-    const doneMessage = preamble ?? lastProposalRow;
-    if (doneMessage) {
-      yield { type: 'done', message: doneMessage };
+    // The stream MUST terminate with a persisted `done`. It carries the
+    // companion's words when it spoke, else the last held proposal row. If
+    // neither persisted — turnText was empty and every proposal-row write failed,
+    // or a custom gate blocked with only a bare reason — record one terminal row
+    // (the reason, or a proposal summary) so `done` still lands and the surface's
+    // optimistic bubble is reconciled. If even that write fails, surface `error`
+    // so a held turn never ends silently (§4.7).
+    let doneMessage = preamble ?? lastProposalRow;
+    if (!doneMessage) {
+      const fallbackText = blockReason || heldProposals[0]?.summary || HELD_TURN_FALLBACK;
+      try {
+        doneMessage = await this.memory.appendMessage(companionId, 'assistant', fallbackText);
+      } catch (error) {
+        this.logger.error('failed to persist the terminal row for a held turn', {
+          operation: 'harness.finishBlocked',
+          companionId,
+          error,
+        });
+        yield { type: 'error', message: TURN_ERROR_MESSAGE };
+        return;
+      }
     }
+    yield { type: 'done', message: doneMessage };
   }
 
   /** Log a turn failure and build the terminal error event (failures are data, §4.7). */
@@ -422,10 +440,7 @@ export class Harness {
       companionId,
       error,
     });
-    return {
-      type: 'error',
-      message: 'Cobble hit a problem while responding. Please try again.',
-    };
+    return { type: 'error', message: TURN_ERROR_MESSAGE };
   }
 
   /**

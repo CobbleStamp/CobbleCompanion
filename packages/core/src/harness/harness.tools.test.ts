@@ -455,6 +455,89 @@ describe('Harness inner loop (P3 tools)', () => {
     ).toBe(true);
   });
 
+  it('still emits a terminal done when the proposal row fails to persist', async () => {
+    const proposal: ProposalDto = {
+      id: 'p1',
+      toolName: 'ingest_source',
+      summary: 'Remember https://x.dev',
+      status: 'pending',
+      createdAt: new Date('2026-01-02').toISOString(),
+    };
+    const gate = async (c: HookToolCall): Promise<HookToolCall | Block> =>
+      'name' in c && c.name === 'ingest_source'
+        ? { blocked: true, reason: 'needs approval', proposal }
+        : c;
+    // The model emits the tool call with NO spoken pre-amble, and persisting the
+    // `proposal` row fails — so neither a pre-amble nor a proposal row lands. The
+    // turn must still terminate with a `done` (a fallback row), never silently.
+    const mem = memory();
+    const base = mem.appendMessage;
+    mem.appendMessage = async (cid, role, content, options) => {
+      if (options?.kind === 'proposal') throw new Error('db down');
+      return base(cid, role, content, options);
+    };
+    const gateway = new FakeLlmGateway([
+      { toolCalls: [call('ingest_source', { url: 'https://x.dev' })] },
+    ]);
+    const harness = new Harness({
+      gateway,
+      memory: mem,
+      model: 'm',
+      registry: new ToolRegistry([recordingTool('ingest_source', true, 'x')]),
+      beforeToolCall: gate,
+      logger: silentLogger,
+    });
+
+    const events = await collect(
+      harness.runTurn({ companion, userContent: 'save it', ownerId: 'u1' }),
+    );
+
+    const done = events.find((e) => e.type === 'done');
+    expect(done && done.type === 'done' && done.message.content).toBe('Remember https://x.dev');
+    expect(events.some((e) => e.type === 'error')).toBe(false);
+  });
+
+  it('surfaces error when even the fallback row cannot persist (never ends silently)', async () => {
+    const proposal: ProposalDto = {
+      id: 'p1',
+      toolName: 'ingest_source',
+      summary: 'Remember https://x.dev',
+      status: 'pending',
+      createdAt: new Date('2026-01-02').toISOString(),
+    };
+    const gate = async (c: HookToolCall): Promise<HookToolCall | Block> =>
+      'name' in c && c.name === 'ingest_source'
+        ? { blocked: true, reason: 'needs approval', proposal }
+        : c;
+    // Every assistant write fails — the proposal row AND the terminal fallback;
+    // only the entry user turn persists. The turn ends with `error`, not silence.
+    const mem = memory();
+    const base = mem.appendMessage;
+    mem.appendMessage = async (cid, role, content, options) => {
+      if (role === 'assistant') throw new Error('db down');
+      return base(cid, role, content, options);
+    };
+    const gateway = new FakeLlmGateway([
+      { toolCalls: [call('ingest_source', { url: 'https://x.dev' })] },
+    ]);
+    const harness = new Harness({
+      gateway,
+      memory: mem,
+      model: 'm',
+      registry: new ToolRegistry([recordingTool('ingest_source', true, 'x')]),
+      beforeToolCall: gate,
+      logger: silentLogger,
+    });
+
+    const events = await collect(
+      harness.runTurn({ companion, userContent: 'save it', ownerId: 'u1' }),
+    );
+
+    expect(events.some((e) => e.type === 'proposal')).toBe(true);
+    expect(events.some((e) => e.type === 'error')).toBe(true);
+    expect(events.some((e) => e.type === 'done')).toBe(false);
+  });
+
   // Guards the import surface used above (avoids an unused-import lint).
   it('exposes isBlock for callers', () => {
     expect(isBlock({ blocked: true, reason: 'x' })).toBe(true);
