@@ -36,7 +36,7 @@ being is proven, because they add platform cost without changing whether the cor
 |---|---|---|---|---|
 | **0** | Foundations & walking skeleton | Web | You can talk to Cobble end-to-end; stack decided | ✅ **Done** (PR #1) |
 | **1** | The knowledge organism | Web | Ingest sources → semantic memory → grounded recall ⭐ | ✅ **Done** (PR #2) |
-| **2** | Memory & continuity | Web | Episodic memory, companion identity, cloud "home" | Planned |
+| **2** | Memory & continuity | Web | Episodic memory, companion identity, cloud "home" | 🔨 **Implemented** — eval gate pending |
 | **3** | Tools, action & trust | Web | Tool/MCP use + propose→approve approval queue | Planned |
 | **4** | Proactivity engine | Web | Motivated, tunable initiative ⭐ | Planned |
 | **5** | Bond & growth | Web | Four-axis growth + visual character — the PoC complete | Planned |
@@ -117,6 +117,19 @@ declined without fabricating.
 
 **Done when:** Cobble references past conversations accurately ("last week you mentioned…") and
 its responses reflect accumulated understanding of the user.
+
+**Implemented** (this branch): the **consolidated-episode** design — a background reflection pass
+rolls spans of the one lifelong transcript into timestamped, salience-weighted **episodes**
+(pgvector + FTS hybrid, recall by topic + time) off the request path, reusing the P1
+runner/quota/sweeper pattern; episodic recall fills the same `RetrieveContext` hook as P1 (no
+loop change). **Personality evolution** re-synthesizes an `evolvedPersona` ("who I've become with
+you") from accumulated episodes and blends it into the persona prompt alongside the immutable
+seed temperament. Web adds the episode timeline + evolved persona to the memory browser; the eval
+harness gained a Phase-2 episodic config (tiny recency window + episodic recall) that
+`architecture.md` §4.3 / `companionmemory.md` §5 describe. **Gate before marking done:** run the
+live eval (episodic recall by time/topic beats recency-only without raising hallucination) and
+the manual e2e (hold a conversation across a consolidation boundary → it references the past
+episode accurately; the evolved persona reflects accumulated history).
 
 ### Phase 3 — Tools, Action & Trust
 **Goal:** Cobble can *act*, not just answer — safely.

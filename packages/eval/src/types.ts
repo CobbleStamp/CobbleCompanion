@@ -54,6 +54,15 @@ export interface MemoryConfig {
     /** A/B: prefix the Pass-2 context header onto embedding inputs. */
     readonly useContextHeader: boolean;
   };
+  /**
+   * Episodic retrieval over consolidated memories (Phase 2 memory knob). When
+   * set, the seeded transcript is consolidated into episodes before asking and
+   * the harness recalls them — so a small `recentLimit` paired with this proves
+   * episodic memory reaches facts BEYOND the recency window.
+   */
+  readonly episodic?: {
+    readonly topK: number;
+  };
 }
 
 export interface CaseResult {

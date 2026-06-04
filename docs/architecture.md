@@ -104,7 +104,10 @@ flowchart TB
 | **Ingestion Announcer** | Proactive transcript note when a read ends (P1, §4.8) | On `done`/`failed`, posts an in-character, **metered** assistant turn (canned fallback over cap / on failure); fired by the pipeline, decoupled from it |
 | **Semantic Store** | Sources (verbatim), sections (vector + FTS), fact overlay, ingestion jobs (P1) | Hybrid retrieval with provenance; contract → `ontology.md` |
 | **Ingestion Pipeline + Runner** | Two-pass source reading off the request path (P1, §4.8) | Durable status in `ingestion_jobs`; replaceable by a real worker |
-| **Identity Store** | Companion "home" record | Source of truth surfaces load from |
+| **Episodic Store** | Consolidated, time-anchored episodes (vector + FTS) + the consolidation cursor (P2) | Derived from the transcript (rebuildable); hybrid recall by topic + time (§4.3) |
+| **Consolidation Service + Runner** | Off-request reflection: transcript window → salience-weighted episodes (P2) | Mirrors the ingestion runner — coalesced, serial, quota-gated; post-turn trigger + startup/periodic sweep |
+| **Personality Evolver** | Re-synthesizes `evolvedPersona` from episodes after consolidation (P2) | Cursor-gated, metered; blended into the persona prompt beside the seed |
+| **Identity Store** | Companion "home" record (incl. P2 `evolvedPersona` + evolution/consolidation cursors) | Source of truth surfaces load from |
 | **Token Quota Store** | Per-user daily token-budget state — the cost cap (P1, §4.8) | Postgres-backed (`user_token_usage`); routes enforce it inline |
 | **Persistence** | Relational + vector storage | Postgres + `pgvector`; schemas → `implementation.md` |
 | **Eval Harness** | Offline memory-vs-performance evaluation (`packages/eval`) | Not on the serving path; live OpenRouter. See `companionmemory.md` §5 |
@@ -198,6 +201,17 @@ flowchart LR
 > provenance-carrying grounding block; the hit's citations are streamed to the client before
 > the answer. Retrieval failure degrades to recency-only — recall never breaks the
 > conversation. (Hook signature → `implementation.md` §2.1.)
+
+> **Phase 2:** the same hook gains an **episodic arm** composed ahead of the P1 semantic arm
+> (`composeRetrieveContext`, so the recency window is still appended once, last): it embeds the
+> turn, hybrid-searches the **episode store** (consolidated, time-anchored memories), and prepends
+> each as a fenced "memory from your shared history" block. The episodes themselves are formed
+> **off the request path** by a background **consolidation** pass (reflection over the transcript →
+> salience-weighted summaries, embedded; cursor-driven, idempotent, quota-gated — the P1
+> runner/sweeper shape), triggered post-turn and on a startup/periodic sweep. Consolidation also
+> drives **personality evolution**: an `evolvedPersona` re-synthesized from episodes and blended
+> into the persona prompt (input #1) beside the immutable seed temperament. Episodic recall
+> degrades to no episodic blocks on failure — recall never breaks the conversation.
 
 ### 4.4 Human-in-the-loop & propose→approve
 
