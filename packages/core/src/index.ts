@@ -100,6 +100,12 @@ export {
   type SemanticRetrieveOptions,
 } from './harness/semantic-retrieve.js';
 export {
+  createEpisodicRetrieveContext,
+  toEpisodeBlock,
+  type EpisodicRetrieveOptions,
+} from './harness/episodic-retrieve.js';
+export { composeRetrieveContext } from './harness/compose-retrieve.js';
+export {
   idleInitiator,
   isBlock,
   passthroughAfterToolCall,
