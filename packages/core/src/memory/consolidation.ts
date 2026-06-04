@@ -2,9 +2,10 @@
  * Episodic consolidation (Phase 2) — the reflection pass. Like a person turning
  * a day's experiences into a few lasting memories, a cheap LLM reads a window of
  * transcript turns and emits ONLY the moments worth keeping: a concise summary,
- * the turn range it covers, and a salience weight (filler is dropped). The
- * verbatim transcript stays canonical (invariant #6); episodes are a derived,
- * gist-level overlay the harness recalls by topic + time.
+ * the turn range it covers, and a salience weight. Filler is dropped here, by the
+ * pass omitting it — not by salience down-weighting at recall. The verbatim
+ * transcript stays canonical (invariant #6); episodes are a derived, gist-level
+ * overlay the harness recalls by topic (salience is stored/displayed, not ranked on).
  *
  * Output-bounded like the ingestion passes (input-heavy, tiny JSON out) and
  * fenced against prompt injection — transcript content is user-influenced data,

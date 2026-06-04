@@ -5,7 +5,7 @@
 > system is* (components, flows, decisions) see `architecture.md`; for *what we're building and in
 > what order* see `development-plan.md`.
 >
-> **Status: incremental.** Specifies **Phases 0–1** (`development-plan.md` §3); later phases are
+> **Status: incremental.** Specifies **Phases 0–2** (`development-plan.md` §3); later phases are
 > marked **_Deferred — Phase N_**.
 
 ## 1. Data Model (Phases 0–2)
@@ -72,11 +72,11 @@ migrations under `db/`.
 | Field | Type | Notes |
 |---|---|---|
 | `id` | uuid (PK) | |
-| `companion_id` | uuid (FK → `companions.id`, cascade) | tenancy scope; indexed `(companion_id, occurred_end)` for recall-by-time + `(companion_id, seq_end)` for the cursor |
+| `companion_id` | uuid (FK → `companions.id`, cascade) | tenancy scope; indexed `(companion_id, occurred_end)` for the time-window filter + "latest episodes" scans, and `(companion_id, seq_end)` for the cursor |
 | `summary` | text | the consolidated narrative ("you loved the ceviche in Lima…") |
 | `seq_start` / `seq_end` | bigint | transcript `seq` range this episode consolidated — idempotent, incremental rebuilds |
-| `occurred_start` / `occurred_end` | timestamptz | wall-clock span the episode covers (recall-by-time) |
-| `salience` | real, nullable | 0–1 weight (drops filler) |
+| `occurred_start` / `occurred_end` | timestamptz | wall-clock span the episode covers; rendered as the date on each recalled block. The store can also filter recall to a time window, but no recall path passes one yet (see note) |
+| `salience` | real, nullable | self-reported 0–1 weight, stored and displayed only. Filler is dropped at consolidation (the reflection pass omits it); recall ranking (RRF) does **not** use this value (see note) |
 | `embedding` | `vector(1024)`, nullable | HNSW `vector_cosine_ops`; nullable → recalled lexically until embedded |
 | `fts` | tsvector (generated from `summary`) | GIN-indexed |
 | `created_at` | timestamptz | |
@@ -84,9 +84,18 @@ migrations under `db/`.
 > **Derived, not canonical.** Episodes are a rebuildable overlay over the one transcript (no
 > session entity — invariant #6). A background **consolidation** pass reflects the
 > un-consolidated tail (`seq > companions.consolidated_through_seq`) into episodes and advances
-> the cursor atomically; recall is the same vector + FTS hybrid (RRF) as `sections`, plus a
-> wall-clock time filter (`architecture.md` §4.3, §4.8). Personality evolution reads recent
+> the cursor atomically; recall is the same vector + FTS hybrid (RRF) as `sections` —
+> **topic-only** in production (`architecture.md` §4.3, §4.8). Personality evolution reads recent
 > episodes to re-synthesize `companions.evolved_persona`.
+>
+> **Recall scope (P2).** Two episode signals exist in the store but are **not wired into recall**:
+> (1) the **wall-clock time window** — `EpisodicStore.searchEpisodes` accepts an optional
+> `after`/`before` filter (unit-tested), but neither the harness episodic arm nor the
+> `/episodes/search` API passes one (`episodeSearchSchema` has no time fields, and nothing parses
+> time from a turn), so production recall is topic-only and the `occurred_*` span is only a date
+> annotation on the rendered block; (2) **salience** is ignored by RRF — it ranks by fused
+> vector/FTS rank alone. Filler never reaches recall because the consolidation pass omits it, not
+> because salience down-weights it. Wiring either into recall is deferred.
 
 ### `sources` — Layer 0: verbatim originals (Phase 1)
 | Field | Type | Notes |

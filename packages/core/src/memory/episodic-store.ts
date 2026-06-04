@@ -4,8 +4,10 @@
  * time-anchored summaries DERIVED from the transcript by the background
  * reflection pass (see consolidation), with the same hybrid retrieval as the
  * semantic store — vector cosine + lexical FTS fused by reciprocal-rank fusion —
- * plus a wall-clock time filter so the harness can recall the right past episode
- * by topic AND time ("last July in Lima you loved that ceviche").
+ * so the harness can recall the right past episode by topic ("in Lima you loved
+ * that ceviche"). `searchEpisodes` also accepts an optional wall-clock time
+ * window, but no caller passes one yet, so production recall is topic-only; RRF
+ * likewise ignores `salience` (it ranks by fused vector/FTS rank alone).
  *
  * The transcript stays canonical (invariant #6): episodes are rebuildable from
  * it. `consolidatedThroughSeq` (a column on the companion "home") is the cursor
@@ -26,10 +28,10 @@ export interface NewEpisode {
   /** The transcript range this episode consolidated (idempotency + incrementality). */
   readonly seqStart: number;
   readonly seqEnd: number;
-  /** Wall-clock span the episode covers, for recall-by-time. */
+  /** Wall-clock span the episode covers (date display + the store's unwired time filter). */
   readonly occurredStart: Date;
   readonly occurredEnd: Date;
-  /** 0–1 weight: how much this episode matters (drops filler). */
+  /** 0–1 weight: how much this episode matters. Stored/displayed; not used at recall. */
   readonly salience?: number;
   readonly embedding?: readonly number[];
 }

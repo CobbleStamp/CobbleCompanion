@@ -111,16 +111,18 @@ export const messages = pgTable(
 /**
  * Episodic memory (Phase 2) — consolidated, time-anchored memories DERIVED from
  * the transcript, not a parallel conversation. A background reflection pass rolls
- * spans of `messages` into salience-weighted `summary` narratives ("last July in
+ * spans of `messages` into consolidated `summary` narratives ("last July in
  * Lima you loved that ceviche"), embedded + FTS-indexed so the harness can recall
- * the right past episode by topic + time. The transcript stays canonical: episodes
+ * the right past episode by topic. The transcript stays canonical: episodes
  * are rebuildable from it and never substitute for it (no session entity — the one
  * lifelong conversation is preserved, invariant #6).
  *
  * `seq_start`/`seq_end` record the transcript range consolidated, so the pass is
  * incremental (resumes past `companions.consolidated_through_seq`) and idempotent
  * (a range maps to a deterministic episode set). `occurred_*` are the wall-clock
- * span for time recall. Mirrors `sections` for the vector/FTS hybrid machinery.
+ * span (the date shown on a recalled block); the store can filter recall to a time
+ * window, but no recall path passes one yet, so production recall is topic-only.
+ * Mirrors `sections` for the vector/FTS hybrid machinery.
  */
 export const episodes = pgTable(
   'episodes',
@@ -134,10 +136,12 @@ export const episodes = pgTable(
     // The transcript range this episode consolidated (idempotency + incrementality).
     seqStart: bigint('seq_start', { mode: 'number' }).notNull(),
     seqEnd: bigint('seq_end', { mode: 'number' }).notNull(),
-    // Wall-clock span the episode covers, for recall-by-time ("last week…").
+    // Wall-clock span the episode covers — the date shown on a recalled block, and
+    // the column the store's (currently unwired) time-window filter ranges over.
     occurredStart: timestamp('occurred_start', { withTimezone: true }).notNull(),
     occurredEnd: timestamp('occurred_end', { withTimezone: true }).notNull(),
-    // Self-reported 0–1 weight: how much this episode matters (drops filler).
+    // Self-reported 0–1 weight: how much this episode matters. Stored and displayed
+    // only — recall (RRF) does not use it; filler is dropped at consolidation time.
     salience: real('salience'),
     // Nullable until the embedding pass completes (mirrors sections.embedding).
     embedding: vector('embedding', { dimensions: EMBEDDING_DIMENSIONS }),
@@ -145,7 +149,7 @@ export const episodes = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    // Recall-by-time and "latest episodes" scans.
+    // Time-window filter (store capability) and "latest episodes" scans.
     index('episodes_companion_time_idx').on(table.companionId, table.occurredEnd),
     // Cursor lookups + range-dedup on the consolidation path.
     index('episodes_companion_seq_idx').on(table.companionId, table.seqEnd),

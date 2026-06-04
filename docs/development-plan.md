@@ -119,9 +119,10 @@ declined without fabricating.
 its responses reflect accumulated understanding of the user.
 
 **Implemented** (this branch): the **consolidated-episode** design — a background reflection pass
-rolls spans of the one lifelong transcript into timestamped, salience-weighted **episodes**
-(pgvector + FTS hybrid, recall by topic + time) off the request path, reusing the P1
-runner/quota/sweeper pattern; episodic recall fills the same `RetrieveContext` hook as P1 (no
+rolls spans of the one lifelong transcript into timestamped **episodes** (each carries a wall-clock
+span and a self-reported salience) via a pgvector + FTS hybrid, recalled **by topic**, off the
+request path, reusing the P1 runner/quota/sweeper pattern; episodic recall fills the same
+`RetrieveContext` hook as P1 (no
 loop change). **Personality evolution** re-synthesizes an `evolvedPersona` ("who I've become with
 you") from accumulated episodes and blends it into the persona prompt alongside the immutable
 seed temperament. Web adds the episode timeline + evolved persona to the memory browser; the eval
@@ -131,9 +132,16 @@ harness gained a Phase-2 episodic config (tiny recency window + episodic recall)
 window of **2**) recalling **100%** of buried facts at **0% hallucination** vs **33%** for
 `window-2` with the same window — episodic memory reaching beyond the recency window, the Phase 2
 differentiator. The manual e2e passed against the live stack: a conversation crossed the
-consolidation boundary → episodes formed (the key fact at salience 0.8), episodic search returned
-it top-ranked, the `evolvedPersona` reflected the accumulated history, and a recall question whose
-source turn was beyond the 20-message recency window was answered accurately from episodic memory.
+consolidation boundary → episodes formed (the key fact recorded at salience 0.8), the topic-match
+hybrid returned it top-ranked, the `evolvedPersona` reflected the accumulated history, and a recall
+question whose source turn was beyond the 20-message recency window was answered accurately from
+episodic memory.
+
+> **Recall scope.** Episodic recall is **topic-only** (vector + FTS, RRF). The episode's wall-clock
+> span and salience are stored and displayed but **do not steer recall**: the store offers a
+> time-window filter that no recall path passes yet, and RRF ignores salience (filler is dropped at
+> consolidation, not at recall). The `"last week you mentioned…"` goal above is met by topic match,
+> not by a time filter; wiring time/salience into recall is deferred (`implementation.md` §1).
 
 ### Phase 3 — Tools, Action & Trust
 **Goal:** Cobble can *act*, not just answer — safely.

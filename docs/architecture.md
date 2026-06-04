@@ -104,8 +104,8 @@ flowchart TB
 | **Ingestion Announcer** | Proactive transcript note when a read ends (P1, §4.8) | On `done`/`failed`, posts an in-character, **metered** assistant turn (canned fallback over cap / on failure); fired by the pipeline, decoupled from it |
 | **Semantic Store** | Sources (verbatim), sections (vector + FTS), fact overlay, ingestion jobs (P1) | Hybrid retrieval with provenance; contract → `ontology.md` |
 | **Ingestion Pipeline + Runner** | Two-pass source reading off the request path (P1, §4.8) | Durable status in `ingestion_jobs`; replaceable by a real worker |
-| **Episodic Store** | Consolidated, time-anchored episodes (vector + FTS) + the consolidation cursor (P2) | Derived from the transcript (rebuildable); hybrid recall by topic + time (§4.3) |
-| **Consolidation Service + Runner** | Off-request reflection: transcript window → salience-weighted episodes (P2) | Mirrors the ingestion runner — coalesced, serial, quota-gated; post-turn trigger + startup/periodic sweep |
+| **Episodic Store** | Consolidated, time-anchored episodes (vector + FTS) + the consolidation cursor (P2) | Derived from the transcript (rebuildable); hybrid recall by topic (§4.3). A time-window filter exists on the store but is not yet wired into recall |
+| **Consolidation Service + Runner** | Off-request reflection: transcript window → consolidated episodes, filler dropped (P2) | Mirrors the ingestion runner — coalesced, serial, quota-gated; post-turn trigger + startup/periodic sweep |
 | **Personality Evolver** | Re-synthesizes `evolvedPersona` from episodes after consolidation (P2) | Cursor-gated, metered; blended into the persona prompt beside the seed |
 | **Identity Store** | Companion "home" record (incl. P2 `evolvedPersona` + evolution/consolidation cursors) | Source of truth surfaces load from |
 | **Token Quota Store** | Per-user daily token-budget state — the cost cap (P1, §4.8) | Postgres-backed (`user_token_usage`); routes enforce it inline |
@@ -205,10 +205,14 @@ flowchart LR
 > **Phase 2:** the same hook gains an **episodic arm** composed ahead of the P1 semantic arm
 > (`composeRetrieveContext`, so the recency window is still appended once, last): it embeds the
 > turn, hybrid-searches the **episode store** (consolidated, time-anchored memories), and prepends
-> each as a fenced "memory from your shared history" block. The episodes themselves are formed
+> each as a fenced "memory from your shared history" block. Episodic recall is **topic-only**: the
+> same vector + FTS hybrid (RRF) as the semantic arm. Episodes carry a wall-clock span (rendered as
+> the block's date) and a self-reported salience, but **neither steers recall** — the store offers a
+> time-window filter that no recall path passes yet, and RRF ignores salience (filler is dropped at
+> consolidation, not down-weighted at recall). The episodes themselves are formed
 > **off the request path** by a background **consolidation** pass (reflection over the transcript →
-> salience-weighted summaries, embedded; cursor-driven, idempotent, quota-gated — the P1
-> runner/sweeper shape), triggered post-turn and on a startup/periodic sweep. Consolidation also
+> consolidated summaries with filler dropped, embedded; cursor-driven, idempotent, quota-gated — the
+> P1 runner/sweeper shape), triggered post-turn and on a startup/periodic sweep. Consolidation also
 > drives **personality evolution**: an `evolvedPersona` re-synthesized from episodes and blended
 > into the persona prompt (input #1) beside the immutable seed temperament. Episodic recall
 > degrades to no episodic blocks on failure — recall never breaks the conversation.
