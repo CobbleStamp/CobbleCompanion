@@ -10,9 +10,7 @@ export type RequireAuth = (request: FastifyRequest, reply: FastifyReply) => Prom
  * expected churn rather than an error worth a full stack trace.
  */
 function isExpiredTokenError(error: unknown): boolean {
-  return (
-    error instanceof Error && (error as { code?: unknown }).code === 'ERR_JWT_EXPIRED'
-  );
+  return error instanceof Error && (error as { code?: unknown }).code === 'ERR_JWT_EXPIRED';
 }
 
 /**

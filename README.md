@@ -4,7 +4,7 @@ A personal AI companion you name, raise, and bond with — one continuous, cloud
 that learns you and your world, acts on your behalf, and is **proactive** rather than passive.
 For the full product vision see [`docs/product-overview.md`](./docs/product-overview.md).
 
-> **Status: Phase 1 (knowledge organism) — implemented, eval gate pending.** On top of the
+> **Status: Phase 1 (knowledge organism) — done.** On top of the
 > Phase 0 walking skeleton (Google sign-in, companion creation, persisted streamed chat),
 > the companion now ingests sources (PDF / note / link) into semantic memory and grounds
 > its answers with citations. A TypeScript monorepo (`packages/{shared,core,api,web}` +
