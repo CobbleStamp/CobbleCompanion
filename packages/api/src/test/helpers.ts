@@ -27,6 +27,7 @@ import {
   DrizzleToolCallLog,
   FakeEmbeddingGateway,
   FakeLlmGateway,
+  type FakeTurn,
   Harness,
   IngestionPipeline,
   IngestionRunner,
@@ -101,7 +102,7 @@ export interface TestAppOptions {
 }
 
 export async function makeTestApp(
-  chunks: readonly string[] = ['Hi', ' there'],
+  chunks: readonly string[] | readonly FakeTurn[] = ['Hi', ' there'],
   logger: Logger = silentLogger,
   options: TestAppOptions = {},
 ): Promise<TestApp> {

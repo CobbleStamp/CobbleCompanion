@@ -5,7 +5,7 @@
 > `product-overview.md`; for *scope & priorities* see `development-plan.md`; for *internal
 > mechanisms* (data models, schemas, config, security implementation) see `implementation.md`.
 >
-> **Status: incremental.** Built up phase by phase; currently specifies **Phases 0–2**
+> **Status: incremental.** Built up phase by phase; currently specifies **Phases 0–3**
 > (`development-plan.md` §3). Content for later phases is marked **_Deferred — Phase N_**. The
 > **Architectural Invariants** (§2) are the exception — load-bearing boundaries fixed now.
 
@@ -19,11 +19,14 @@ in as clients. **Phase 0** delivered the smallest end-to-end slice: a user creat
 **Phase 1** adds the knowledge organism: sources are ingested into **semantic memory** (§4.8) and
 chat answers ground themselves in them with citations. **Phase 2** adds memory & continuity: a
 background pass consolidates the transcript into **episodic memory** (recalled by topic, §4.3) and
-the companion's **personality evolves** from those episodes.
+the companion's **personality evolves** from those episodes. **Phase 3** adds tools, action & trust:
+the loop gains a real **inner loop** that calls tools (§4.1–4.2), and the **propose→approve** gate
+holds every effectful action in an **approval queue** for one-tap confirmation (§4.4); a **lead
+inventory** (reading list) and a **procedural-memory** seed land as the body the Phase 4 will drives.
 
-**Non-goals / scope boundaries (Phases 0–2):** no tools/MCP or approval queue (Phase 3), no
-proactivity (Phase 4), no growth/visual system (Phase 5), no native surfaces or OS tools
-(Phase 6–7). See `development-plan.md`.
+**Non-goals / scope boundaries (Phases 0–3):** no proactivity / motivation engine (Phase 4 — the
+`Initiator` seam is reserved but idle, §4.5), no growth/visual system (Phase 5), no native surfaces
+or OS tools (Phase 6–7). See `development-plan.md`.
 
 ## 2. Architectural Invariants (design decisions)
 
@@ -113,10 +116,15 @@ flowchart TB
 | **Token Quota Store** | Per-user daily token-budget state — the cost cap (P1, §4.8) | Postgres-backed (`user_token_usage`); routes enforce it inline |
 | **Persistence** | Relational + vector storage | Postgres + `pgvector`; schemas → `implementation.md` |
 | **Eval Harness** | Offline memory-vs-performance evaluation (`packages/eval`) | Not on the serving path; live OpenRouter. See `companionmemory.md` §5 |
+| **Tool Registry + Tools (P3)** | The tools a turn advertises + dispatches (`core/tools/`): `web_fetch`, `memory_search` (read-only), `ingest_source` (effectful) | Read-only tools run freely; the gate holds effectful ones (§4.4). `web_fetch` reuses the link resolver; `ingest_source` reuses the P1 pipeline |
+| **Approval Queue + Gate (P3)** | The `beforeToolCall` gate + the `proposals` store — holds effectful calls for one-tap approval, resolved exactly once | The mechanical realization of propose→approve (§4.4); confirm executes via `dispatchTool` |
+| **Tool-Call Log (P3)** | Append-only audit of every executed tool call (`tool_calls`) | The `afterToolCall` hook records all calls — the DoD's "every tool call is logged" |
+| **Lead Inventory (P3)** | The companion's reading list (`leads`) — discovered-but-unread URLs | Populated by `web_fetch` link harvest; worked on command in P3 (`/explore`), by the motivation engine on idle in P4 (§4.5) |
+| **Procedural Store (P3)** | Learned, reusable workflows seeded from approved actions (`procedural_memories`) | Browse-only seed; retrieval-as-hint deferred to P5 |
 
-**_Deferred — later phases:_** Tool Registry / MCP & Approval Queue (P3),
-Proactivity Scheduler & Motivation Engine (P4), Growth/Progression service (P5), Mobile/Desktop
-clients, OS-tool bridges & Sync Courier (P6–7).
+**_Deferred — later phases:_** Proactivity Scheduler & Motivation Engine (P4, fills the reserved
+`Initiator` seam, §4.5), Growth/Progression service (P5), Mobile/Desktop clients, OS-tool bridges &
+Sync Courier (P6–7).
 
 ## 4. The Agent Loop & Harness
 
@@ -160,7 +168,10 @@ flowchart TD
 ```
 
 > **Phase 0:** the tool set is empty, so `tool calls? → no` always holds — the inner loop turns once
-> and exits. The loop shape is unchanged when tools (P3) and proactive entries (P4) arrive.
+> and exits. **Phase 3 ✅:** the inner loop is real — the model may call tools, each runs (read-only)
+> or is held by the gate (effectful), the result re-enters as the next turn, bounded by a
+> max-iteration + token ceiling (§4.7). The loop shape is unchanged; proactive entries (P4) arrive
+> the same way.
 
 ### 4.2 The turn (the primitive)
 
@@ -181,8 +192,10 @@ flowchart TD
     TR -->|next turn| CTX
 ```
 
-> **Phase 0:** no tools, so every turn is `context → LLM → message → EXIT`. The right-hand branch is
-> wired (typed hooks) but never taken until P3.
+> **Phase 0:** no tools, so every turn is `context → LLM → message → EXIT`. **Phase 3 ✅:** the
+> right-hand branch is live — `validate args → beforeToolCall (gate) → execute → afterToolCall (log)`;
+> tool calls/results are replayed to the provider in the OpenAI tool-call wire shape, and the gateway
+> accumulates streamed `tool_calls` fragments (`implementation.md` §2).
 
 ### 4.3 Context assembly (what enters each turn)
 
@@ -238,9 +251,11 @@ flowchart TD
     DEC -->|reject| DROP["drop proposal"]
 ```
 
-> **Generalized invariant (stated now so the architecture is correct by construction):** the
-> companion never executes a consequential, outward action without explicit user approval. The gate
-> arrives in P3; the rule holds from the start.
+> **Generalized invariant (P3 ✅):** the companion never executes a consequential, outward action
+> without explicit user approval. Realized as the `beforeToolCall` gate: an effectful tool call is
+> written to the `proposals` queue and the loop EXITs; the confirm route resolves it **exactly once**
+> (a conditional `pending→approved` claim) and runs the held call. Reject drops it. Data model +
+> exactly-once mechanics → `implementation.md` §`proposals`.
 
 ### 4.5 Proactive initiation (Phase 4)
 
@@ -335,9 +350,9 @@ sequenceDiagram
 
 ### 4.7 Loop invariants
 
-- **Termination.** *Normal:* the model stops calling tools, or a gate forces an exit (approve, P3).
-  *Abnormal — a no-progress dead loop:* guarded later (P3+) by a progress meter and a per-run budget
-  ceiling, ending in **exit-to-user-with-partial**. (Not needed in P0: one turn always terminates.)
+- **Termination.** *Normal:* the model stops calling tools, or the gate forces an exit (a held
+  proposal, P3). *Abnormal — a no-progress dead loop:* guarded (P3 ✅) by a **max tool-iteration
+  count + a per-run token budget**; hitting either ends in **exit-to-user-with-partial** (logged).
 - **Failures are data.** A provider error or a tool throw becomes an ordinary turn outcome (an error
   message / an error result) that re-enters the loop — uniform recovery, and gaps are surfaced, never
   fabricated.
@@ -497,7 +512,7 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
   with one embodiment active at a time there is no cross-surface state to reconcile (invariants
   #4, #5).
 
-## 7. Folder Structure (Phases 0–2)
+## 7. Folder Structure (Phases 0–3)
 
 ```
 /                      repo root
@@ -509,11 +524,12 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
       embedding/       provider-agnostic embedding gateway (P1; request-path memoizing wrapper P2)
       ingestion/       parse → segment → enrich → embed pipeline + runner + deferred-job sweeper (P1, §4.8)
       memory/          MemoryStore (transcript) + SemanticMemoryStore (P1) + EpisodicMemoryStore + consolidation service/runner (P2)
+      tools/           tool framework + registry, the three tools, the approval gate, proposal/tool-call/lead/procedural stores (P3, §4.2/§4.4)
       personality/     evolvedPersona synthesis from episodes (P2)
       identity/        companion "home" model + store
       quota/           per-user daily token-cap state (P1, §4.8)
-    api/               BFF / surface boundary (Fastify); memory + source + usage routes
-    web/               React web client; chat w/ citations + ingestion-status panel, sources page, memory browser, usage badge
+    api/               BFF / surface boundary (Fastify); memory + source + usage + proposal/inventory routes (P3)
+    web/               React web client; chat w/ citations + ingestion-status panel + approval cards (P3), sources page, memory browser, usage badge
     shared/            shared TS types / contracts
     eval/              live memory-vs-performance harness (→ companionmemory.md §5)
   db/                  migrations & schema (→ implementation.md)

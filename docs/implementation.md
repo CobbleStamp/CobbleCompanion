@@ -5,10 +5,10 @@
 > system is* (components, flows, decisions) see `architecture.md`; for *what we're building and in
 > what order* see `development-plan.md`.
 >
-> **Status: incremental.** Specifies **Phases 0–2** (`development-plan.md` §3); later phases are
+> **Status: incremental.** Specifies **Phases 0–3** (`development-plan.md` §3); later phases are
 > marked **_Deferred — Phase N_**.
 
-## 1. Data Model (Phases 0–2)
+## 1. Data Model (Phases 0–3)
 
 Postgres (with `pgvector` available for later phases). Multi-tenant: every row is scoped by owner
 (`architecture.md` §2, invariant #5). Field types are indicative; authoritative DDL lives in
@@ -172,8 +172,54 @@ Optional metadata filters: `source_id`, and `entity` (an EXISTS over the fact ov
 subject/object — how a section whose text only says "he" is still found by "Pizarro"). Every
 hit carries provenance (source title, chapter, topic, para/page range) + the verbatim text.
 
-**_Deferred:_** episodic indices (P2); procedural/skill records + approval-queue tables (P3).
-Added via new migrations.
+### `proposals` — approval queue (Phase 3)
+| Field | Type | Notes |
+|---|---|---|
+| `id` / `companion_id` | uuid | cascade FK |
+| `tool_name` | text | the effectful tool the companion wants to run |
+| `tool_args` | jsonb | the serialized call, run verbatim once approved |
+| `tool_call_id` | text, nullable | the provider's tool-call id (audit/correlation) |
+| `summary` | text | human-readable description shown in the approval card |
+| `status` | text `$type<ProposalStatus>` | `pending` → `approved`/`rejected` |
+| `created_at` / `resolved_at` | timestamptz (resolved nullable) | |
+
+> **Exactly-once:** confirm/reject is a conditional update `WHERE status='pending'` that returns the
+> row only to the winner (mirrors the deferred-job claim, `architecture.md` §4.8), so a double-confirm
+> cannot double-execute. Index `(companion_id, status)`.
+
+### `tool_calls` — audit log (Phase 3)
+| Field | Type | Notes |
+|---|---|---|
+| `id` / `companion_id` | uuid | cascade FK |
+| `seq` | bigserial | monotonic order (`created_at` ties within a ms) |
+| `name` / `args` / `result` | text / jsonb / text | one row per executed call — the DoD's "every tool call is logged" |
+| `created_at` | timestamptz | |
+
+### `leads` — reading-list inventory (Phase 3)
+| Field | Type | Notes |
+|---|---|---|
+| `id` / `companion_id` | uuid | cascade FK |
+| `seq` | bigserial | stable reading-list order |
+| `url` | text | unique per `(companion_id, url)` → re-discovery is idempotent |
+| `why` | text, nullable | where it was captured (the page it came from) |
+| `status` | text `$type<LeadStatus>` | `new` → `read` → `ingested`/`discarded` |
+| `created_at` | timestamptz | |
+
+> The body-then-will substrate: filled by `web_fetch` link harvest, worked on command in P3
+> (`/explore`), and by the motivation engine on idle in P4 (`architecture.md` §4.5).
+
+### `procedural_memories` — learned workflows (Phase 3 seed)
+| Field | Type | Notes |
+|---|---|---|
+| `id` / `companion_id` | uuid | cascade FK |
+| `seq` | bigserial | newest-first listing |
+| `title` | text | the approved action's summary |
+| `steps` | jsonb | ordered tool names the workflow ran |
+| `created_at` | timestamptz | |
+
+> Seeded on a successful approved action; browse-only — retrieval-as-hint is deferred to P5.
+
+**_Deferred:_** growth/progression records (P5). Added via new migrations.
 
 ## 2. Harness & Agent-Loop Internals
 
@@ -201,9 +247,12 @@ type RetrieveContext = (params: RetrieveParams) => Promise<RetrieveResult>;
 // surfaces a turn's provenance as a `citations` stream event before `done`
 interface ContextBlock { role: MessageRole; content: string; provenance?: Citation[] }
 
-// tool hooks — gate around every tool call (P3)
-type BeforeToolCall = (call: ToolCall, ctx: TurnCtx) => Promise<ToolCall | Block>; // Block → exit-to-approve
-type AfterToolCall  = (result: ToolResult, ctx: TurnCtx) => Promise<ToolResult>;   // rewrite / terminate
+// tool hooks — gate around every tool call (P3 ✅). The gate writes a pending
+// proposal + returns Block for an effectful call (→ exit-to-approve); afterToolCall
+// receives the executed call so it can log name+args+result.
+type BeforeToolCall = (call: ToolCall, ctx: TurnCtx) => Promise<ToolCall | Block>;
+type AfterToolCall  = (result: ToolResult, call: ToolCall, ctx: TurnCtx) => Promise<ToolResult>;
+// TurnCtx carries { companionId, ownerId } so tools scope tenant state + bill tokens.
 
 // initiation hook — produces a non-human ENTRY (P4)
 type Initiator = (companionId: string) => Promise<Entry | null>;                   // null → stay idle
@@ -233,19 +282,29 @@ present), **(2)** the base system prompt, **(3)** `RetrieveContext` output. The 
 `composeRetrieveContext` runs the arms in order — **P2 episodic** memory blocks (time-anchored,
 fenced), then **P1** top-K semantic grounding blocks (verbatim sections with source/para
 preambles), then the most-recent N transcript messages (the recency window, appended once by the
-semantic arm). Each arm degrades independently. The available-tools list is still empty.
+semantic arm). Each arm degrades independently. **P3:** the registry's tool list is advertised to
+the gateway via `LlmStreamParams.tools` (not the prompt text); prior tool-call/result turns are
+replayed into the message array in the OpenAI wire shape.
 
-### 2.3 Turn & loop mechanics (Phase 0)
+### 2.3 Turn & loop mechanics (Phases 0–3)
 
-- A **turn** = one streamed LLM call; its assistant message is parsed for tool calls. With no tools
-  registered, every turn yields a no-tool-call message → the inner loop exits after one turn.
-- The model response **streams** to the client (SSE/WebSocket); tokens are relayed as they arrive.
-- On exit, the turn (user message + assistant message) is appended to `messages` (the transcript /
-  episodic substrate, §1).
+- A **turn** = one streamed LLM call; the gateway returns a `StreamResult { usage, toolCalls }`. With
+  no tools registered, `toolCalls` is empty → the inner loop exits after one turn (the P0 path).
+- **P3 inner loop:** when a turn returns tool calls, each is run through `beforeToolCall` — a read-only
+  call dispatches via `dispatchTool` and its result re-enters as a `tool`-role message for the next
+  turn; an **effectful** call is BLOCKED (the gate enqueues a `proposals` row) and the loop EXITs with
+  a `proposal` stream event. `afterToolCall` logs every executed call. The model response **streams**
+  to the client throughout; usage accrues across all turns and is debited once at exit.
+- **Streamed tool calls:** the OpenRouter gateway accumulates `choices[].delta.tool_calls` fragments
+  by `index` (the first carries id+name+partial args, later frames append arg-string pieces) and
+  `JSON.parse`s the assembled arguments at `[DONE]`; malformed args degrade to `{}` (failures are
+  data) rather than throwing.
+- **Dead-loop guard (§4.7):** the loop is bounded by `MAX_TOOL_ITERATIONS` and an optional per-run
+  token budget (both `HarnessOptions`, defaults in `harness.ts`); hitting either exits-with-partial.
+- On exit, the turn is appended to `messages` (the transcript / episodic substrate, §1).
 
-**_Deferred:_** inner-loop tool iteration + `beforeToolCall` approval enqueue (P3); progress meter +
-per-run budget ceiling and the two-tier wind-down (P3+); proactive `Initiator` wiring + push (P4);
-transcript compaction when the context window fills (P-later).
+**_Deferred:_** proactive `Initiator` wiring + push (P4); transcript compaction when the context
+window fills (P-later).
 
 ## 3. Configuration
 
@@ -271,7 +330,12 @@ Loaded from environment / a secret manager; required values validated at startup
 | `TOKEN_CAP_PER_DAY` | Per-user daily token cap (LLM + embedding) — the cost guardrail across all routes; fixed daily UTC window, overage carries as clamped debt (default 1 000 000). Per-account override → `user_token_usage.cap_override` |
 | `INGESTION_QUEUE_MAX` | Backstop cap on queued+in-flight ingestion runs across all owners; submissions past it get 429 (default 100) |
 
-**_Deferred:_** worker tuning, proactivity cadence, push-notification credentials (P2+).
+**P3 tuning constants** are in-code defaults (not secrets, so not env-wired): the loop ceilings
+`MAX_TOOL_ITERATIONS` (default 6) + the optional per-run token budget (`harness.ts`,
+overridable via `HarnessOptions`), `web_fetch`'s returned-text cap (`web-fetch.ts`, default 8000
+chars) and link-harvest cap, and the `/explore` burst size (`inventory.routes.ts`, default 3).
+
+**_Deferred:_** worker tuning, proactivity cadence + intensity dial, push-notification credentials (P4+).
 
 ## 4. Error Handling
 

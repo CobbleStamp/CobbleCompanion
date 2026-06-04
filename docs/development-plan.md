@@ -37,7 +37,7 @@ being is proven, because they add platform cost without changing whether the cor
 | **0** | Foundations & walking skeleton | Web | You can talk to Cobble end-to-end; stack decided | ✅ **Done** (PR #1) |
 | **1** | The knowledge organism | Web | Ingest sources → semantic memory → grounded recall ⭐ | ✅ **Done** (PR #2) |
 | **2** | Memory & continuity | Web | Episodic memory, companion identity, cloud "home" | ✅ **Done** |
-| **3** | Tools, action & trust | Web | Tool/MCP use + propose→approve approval queue | Planned |
+| **3** | Tools, action & trust | Web | Tool/MCP use + propose→approve approval queue | ✅ **Done** |
 | **4** | Proactivity engine | Web | Motivated, tunable initiative ⭐ | Planned |
 | **5** | Bond & growth | Web | Four-axis growth + visual character — the PoC complete | Planned |
 | **6** | Mobile surface | + Mobile | Summon model, GPS recall, push, OS-as-tools | Planned |
@@ -156,6 +156,26 @@ episodic memory.
 
 **Done when:** Cobble completes a multi-step task that ends in a proposed action held for user
 approval; nothing consequential executes without confirmation; every tool call is logged.
+
+**Implemented** (this branch): the harness single-pass loop became the real **inner loop**
+(`architecture.md` §4.1–4.2) — each turn streams, then runs the tools it requested and turns again,
+guarded by a max-iteration + token ceiling (`§4.7`). A **tool framework + registry** (`core/tools/`)
+ships three tools: read-only **`web_fetch`** (reuses the SSRF-guarded link resolver + content
+parsers, and harvests outbound links into the lead inventory) and **`memory_search`** (P1 hybrid
+store), and the effectful **`ingest_source`** (commits a page to long-term memory, reusing the P1
+ingestion pipeline). **Propose→approve** is the `beforeToolCall` gate: a read-only call runs freely,
+an effectful call is **held as a pending proposal and the loop EXITs** (`§4.4`); the **approval
+queue** (`proposals` table) + confirm/reject routes resolve it **exactly once** (atomic claim) and
+execute the held call via the shared `dispatchTool`. **Every tool call is logged** (`tool_calls`).
+The **lead inventory** (`leads`) is the companion's reading list — the body-then-will substrate the
+Phase 4 motivation engine will work on idle; in Phase 3 `POST /explore` works it on command.
+**Procedural memory** is seeded: an approved workflow is recorded (`procedural_memories`) and
+browsable. Web adds one-tap approval cards, a reading-list view, and the procedural section. **Gate
+passed** (offline, deterministic — P3's differentiator is *safe action*, mechanically verifiable,
+not a recall-quality score like P1/P2): the end-to-end DoD test
+(`packages/api/src/routes/phase3-dod.test.ts`) drives a multi-step task (read → propose) to a held
+proposal, asserts **nothing executed before confirmation** and **every tool call logged**, then
+approves and asserts the action executes once + seeds a procedure. Full suite green at ≥80% coverage.
 
 ### Phase 4 — Proactivity Engine ⭐
 **Goal:** prove Cobble can usefully initiate — the second core differentiator. This is the **"will"**
