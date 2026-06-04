@@ -54,6 +54,10 @@ vi.mock('../api/client.js', () => ({
   listIngestionJobs: vi.fn(() => Promise.resolve([])),
   // The usage badge polls this; reject so it stays hidden in these tests.
   getUsage: vi.fn(() => Promise.reject(new Error('no usage'))),
+  // The approval-queue hook polls this; default to empty so no cards show.
+  listProposals: vi.fn(() => Promise.resolve([])),
+  confirmProposal: vi.fn(),
+  rejectProposal: vi.fn(),
 }));
 
 function renderChat(): void {

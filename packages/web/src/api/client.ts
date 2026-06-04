@@ -7,8 +7,11 @@ import type {
   EpisodeDto,
   EpisodeSearchResultDto,
   IngestionJobDto,
+  LeadDto,
   MemorySnapshotDto,
   MessageDto,
+  ProcedureDto,
+  ProposalDto,
   SectionDto,
   SemanticSearchResultDto,
   SourceDto,
@@ -210,6 +213,59 @@ export async function searchEpisodes(
     { method: 'POST', body: JSON.stringify({ query }) },
   );
   return body.results;
+}
+
+/** The companion's pending approval queue (propose→approve, P3). */
+export async function listProposals(companionId: string): Promise<ProposalDto[]> {
+  const body = await request<{ proposals: ProposalDto[] }>(`/companions/${companionId}/proposals`);
+  return body.proposals;
+}
+
+/** Approve a held action: it executes and the companion's confirmation is returned. */
+export async function confirmProposal(
+  companionId: string,
+  proposalId: string,
+): Promise<MessageDto> {
+  const body = await request<{ message: MessageDto }>(
+    `/companions/${companionId}/proposals/${proposalId}/confirm`,
+    { method: 'POST' },
+  );
+  return body.message;
+}
+
+/** Decline a held action (nothing executes). */
+export async function rejectProposal(companionId: string, proposalId: string): Promise<void> {
+  const auth = await authHeaders();
+  const response = await fetch(
+    `${API_URL}/companions/${companionId}/proposals/${proposalId}/reject`,
+    { method: 'POST', headers: auth },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `reject failed (${response.status})`);
+  }
+}
+
+/** The companion's reading list — leads it discovered but hasn't acted on (P3). */
+export async function listLeads(companionId: string): Promise<LeadDto[]> {
+  const body = await request<{ leads: LeadDto[] }>(`/companions/${companionId}/leads`);
+  return body.leads;
+}
+
+/** "Go through your reading list": propose remembering the next leads. */
+export async function explore(companionId: string): Promise<ProposalDto[]> {
+  const body = await request<{ proposals: ProposalDto[] }>(`/companions/${companionId}/explore`, {
+    method: 'POST',
+  });
+  return body.proposals;
+}
+
+/** The companion's learned, reusable workflows (procedural memory, P3). */
+export async function listProcedures(companionId: string): Promise<ProcedureDto[]> {
+  const body = await request<{ procedures: ProcedureDto[] }>(
+    `/companions/${companionId}/procedures`,
+  );
+  return body.procedures;
 }
 
 /** Send a message and yield streamed chat events (SSE). */

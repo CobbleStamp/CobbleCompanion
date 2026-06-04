@@ -2,8 +2,10 @@ import type {
   CompanionDto,
   EpisodeDto,
   EpisodeSearchResultDto,
+  LeadDto,
   MemorySnapshotDto,
   MessageDto,
+  ProcedureDto,
   SemanticSearchResultDto,
 } from '@cobble/shared';
 import { useEffect, useState } from 'react';
@@ -11,6 +13,8 @@ import {
   fetchMessages,
   getCompanionMemory,
   listEpisodes,
+  listLeads,
+  listProcedures,
   searchEpisodes,
   searchMemory,
 } from '../api/client.js';
@@ -146,7 +150,9 @@ export function MemoryBrowser({ companion, onBack }: MemoryBrowserProps): JSX.El
               {snapshot.procedural.procedureCount} learned workflow
               {snapshot.procedural.procedureCount === 1 ? '' : 's'}
             </p>
+            <ProceduralList companionId={companion.id} />
           </section>
+          <ReadingListSection companionId={companion.id} />
         </div>
       )}
     </main>
@@ -282,6 +288,62 @@ function SemanticSearch({ companionId }: SemanticSearchProps): JSX.Element {
         </ul>
       )}
     </div>
+  );
+}
+
+/** Lists the companion's learned workflows (procedural memory, P3). */
+function ProceduralList({ companionId }: { readonly companionId: string }): JSX.Element | null {
+  const [procedures, setProcedures] = useState<readonly ProcedureDto[]>([]);
+  useEffect(() => {
+    let mounted = true;
+    void listProcedures(companionId)
+      .then((rows) => mounted && setProcedures(rows))
+      .catch(() => undefined);
+    return () => {
+      mounted = false;
+    };
+  }, [companionId]);
+  if (procedures.length === 0) return null;
+  return (
+    <ul className="memory-list">
+      {procedures.map((procedure) => (
+        <li key={procedure.id}>
+          <span className="content">{procedure.title}</span>
+          <span className="who">{procedure.steps.join(' → ')}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** The reading list — leads the companion discovered but hasn't acted on (P3). */
+function ReadingListSection({ companionId }: { readonly companionId: string }): JSX.Element {
+  const [leads, setLeads] = useState<readonly LeadDto[]>([]);
+  useEffect(() => {
+    let mounted = true;
+    void listLeads(companionId)
+      .then((rows) => mounted && setLeads(rows))
+      .catch(() => undefined);
+    return () => {
+      mounted = false;
+    };
+  }, [companionId]);
+  return (
+    <section className="memory-section">
+      <h2>Reading list — discovered, not yet read</h2>
+      {leads.length === 0 ? (
+        <p className="who">Nothing waiting — Cobble collects links here as it reads.</p>
+      ) : (
+        <ul className="memory-list">
+          {leads.map((lead) => (
+            <li key={lead.id}>
+              <span className="content">{lead.url}</span>
+              {lead.why && <span className="who">{lead.why}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 

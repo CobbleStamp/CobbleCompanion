@@ -1,0 +1,78 @@
+/**
+ * Polls the companion's pending approval queue (propose→approve, P3) and exposes
+ * confirm/reject actions. Polls while any proposal is pending so a proposal raised
+ * mid-turn (or by background work later) shows up without a refresh; stops once
+ * the queue is empty. Mirrors useIngestionJobs' poll-while-active loop.
+ */
+
+import type { MessageDto, ProposalDto } from '@cobble/shared';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { confirmProposal, listProposals, rejectProposal } from '../api/client.js';
+
+const POLL_INTERVAL_MS = 2_000;
+
+export interface UseProposals {
+  readonly proposals: readonly ProposalDto[];
+  readonly error: string | null;
+  /** Approve a proposal; resolves with the companion's confirmation message. */
+  readonly confirm: (proposalId: string) => Promise<MessageDto>;
+  /** Decline a proposal. */
+  readonly reject: (proposalId: string) => Promise<void>;
+  /** Force an immediate refresh (e.g. right after a turn ends in a proposal). */
+  readonly refresh: () => Promise<void>;
+}
+
+export function useProposals(companionId: string): UseProposals {
+  const [proposals, setProposals] = useState<readonly ProposalDto[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const pollRef = useRef<number | null>(null);
+  const mountedRef = useRef(true);
+
+  const refresh = useCallback(async (): Promise<void> => {
+    try {
+      const next = await listProposals(companionId);
+      if (!mountedRef.current) return;
+      setProposals(next);
+      setError(null);
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setError(err instanceof Error ? err.message : 'Failed to load proposals');
+    }
+  }, [companionId]);
+
+  const confirm = useCallback(
+    async (proposalId: string): Promise<MessageDto> => {
+      const message = await confirmProposal(companionId, proposalId);
+      await refresh();
+      return message;
+    },
+    [companionId, refresh],
+  );
+
+  const reject = useCallback(
+    async (proposalId: string): Promise<void> => {
+      await rejectProposal(companionId, proposalId);
+      await refresh();
+    },
+    [companionId, refresh],
+  );
+
+  useEffect(() => {
+    mountedRef.current = true;
+    void refresh();
+    return () => {
+      mountedRef.current = false;
+    };
+  }, [refresh]);
+
+  // Poll while anything is pending; stop when the queue empties.
+  useEffect(() => {
+    if (proposals.length === 0) return;
+    pollRef.current = window.setTimeout(() => void refresh(), POLL_INTERVAL_MS);
+    return () => {
+      if (pollRef.current !== null) window.clearTimeout(pollRef.current);
+    };
+  }, [proposals, refresh]);
+
+  return { proposals, error, confirm, reject, refresh };
+}

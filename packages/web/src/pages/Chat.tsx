@@ -21,8 +21,10 @@ import { fetchMessages, sendMessage, uploadFileSource } from '../api/client.js';
 import { IngestionPanel } from '../components/IngestionPanel.js';
 import { IngestionStatusButton } from '../components/IngestionStatusButton.js';
 import { Modal } from '../components/Modal.js';
+import { ProposalCard } from '../components/ProposalCard.js';
 import { UsageBadge } from '../components/UsageBadge.js';
 import { useIngestionJobs } from '../components/useIngestionJobs.js';
+import { useProposals } from '../components/useProposals.js';
 
 interface ChatProps {
   readonly companion: CompanionDto;
@@ -91,6 +93,9 @@ export function Chat({
   const prevJobStatus = useRef<Map<string, IngestionStatus>>(new Map());
   // One poll for the whole chat surface, shared by the header badge and panel.
   const ingestion = useIngestionJobs(companion.id);
+  // The pending approval queue (propose→approve, P3) — surfaced as cards below
+  // the transcript; a turn that ends in a proposal triggers an immediate refresh.
+  const proposalsCtl = useProposals(companion.id);
 
   // While a send is streaming or a file is uploading, the composer is locked so
   // the two intake paths never overlap.
@@ -167,6 +172,10 @@ export function Chat({
           // The authoritative persisted reply (server id + final content) replaces
           // whatever the token deltas built, and gives the line a stable key.
           setLines((prev) => finalizeLast(prev, event_.message));
+        } else if (event_.type === 'proposal') {
+          // The turn EXITed proposing an effectful action; pull it into the queue
+          // (rendered as an approval card below the transcript).
+          void proposalsCtl.refresh();
         } else if (event_.type === 'error') {
           // A streamed failure is data: surface it inline on the assistant line.
           setLines((prev) => appendToLast(prev, `\n[${event_.message}]`));
@@ -226,6 +235,12 @@ export function Chat({
     } finally {
       setAttaching(false);
     }
+  }
+
+  /** Approve a held action; the companion's confirmation lands in the transcript. */
+  async function onConfirmProposal(proposalId: string): Promise<void> {
+    const message = await proposalsCtl.confirm(proposalId);
+    setLines((prev) => [...prev, messageToLine(message)]);
   }
 
   function onDragOver(event: React.DragEvent): void {
@@ -300,6 +315,18 @@ export function Chat({
           </li>
         ))}
       </ul>
+      {proposalsCtl.proposals.length > 0 && (
+        <div className="proposal-queue">
+          {proposalsCtl.proposals.map((proposal) => (
+            <ProposalCard
+              key={proposal.id}
+              proposal={proposal}
+              onConfirm={onConfirmProposal}
+              onReject={proposalsCtl.reject}
+            />
+          ))}
+        </div>
+      )}
       <Modal open={statusOpen} title="Reading status" onClose={() => setStatusOpen(false)}>
         <IngestionPanel jobs={ingestion.jobs} />
       </Modal>

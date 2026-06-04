@@ -55,6 +55,8 @@ vi.mock('../api/client.js', () => ({
   searchMemory: vi.fn(),
   listEpisodes: vi.fn(),
   searchEpisodes: vi.fn(),
+  listProcedures: vi.fn(() => Promise.resolve([])),
+  listLeads: vi.fn(() => Promise.resolve([])),
   // The usage badge polls this; reject so it stays hidden in these tests.
   getUsage: vi.fn(() => Promise.reject(new Error('no usage'))),
 }));
