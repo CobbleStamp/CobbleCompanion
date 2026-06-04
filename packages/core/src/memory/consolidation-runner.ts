@@ -25,6 +25,8 @@ export class ConsolidationRunner {
   /** companionIds queued OR in flight — the coalescing + cap set. */
   private readonly active = new Set<string>();
   private draining: Promise<void> | null = null;
+  /** Once true, request() is a no-op so a draining queue can settle for shutdown. */
+  private stopping = false;
 
   constructor(
     private readonly target: ConsolidationTarget,
@@ -44,6 +46,11 @@ export class ConsolidationRunner {
    * continues in the background.
    */
   request(companionId: string): void {
+    if (this.stopping) {
+      // Shutting down: drop quietly. The startup sweep re-requests any pending
+      // tail on the next boot (reflection is idempotent), so nothing is lost.
+      return;
+    }
     if (this.active.has(companionId)) {
       return;
     }
@@ -66,6 +73,17 @@ export class ConsolidationRunner {
     while (this.draining) {
       await this.draining;
     }
+  }
+
+  /**
+   * Stop accepting new requests, then resolve once the in-flight drain settles.
+   * Idempotent. After this, request() is a no-op — so a concurrent request can't
+   * start work that a graceful shutdown would fail to await. Any dropped tail is
+   * recovered by the startup sweep on the next boot (reflection is idempotent).
+   */
+  async close(): Promise<void> {
+    this.stopping = true;
+    await this.whenIdle();
   }
 
   private async drain(): Promise<void> {

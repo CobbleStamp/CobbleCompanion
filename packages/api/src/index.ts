@@ -216,6 +216,25 @@ async function main(): Promise<void> {
   }, CONSOLIDATION_SWEEP_INTERVAL_MS);
   consolidationTimer.unref();
 
+  // Graceful shutdown: stop the catch-up timers and drain in-flight background
+  // work before exit so nothing is killed mid-write. Fastify runs onClose after
+  // it has stopped accepting requests, so no new turns trigger work past here.
+  app.addHook('onClose', async () => {
+    clearInterval(sweepTimer);
+    clearInterval(consolidationTimer);
+    await ingestion.whenIdle();
+    await consolidation.close();
+  });
+  for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+    process.once(signal, () => {
+      consoleLogger.info('shutting down', { signal });
+      void app.close().catch((error: unknown) => {
+        consoleLogger.error('graceful shutdown failed', { signal, error });
+        process.exitCode = 1;
+      });
+    });
+  }
+
   await app.listen({ port: config.port, host: '0.0.0.0' });
   consoleLogger.info('api listening', { port: config.port });
 }
