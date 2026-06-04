@@ -95,17 +95,22 @@ export function registerProposalRoutes(
         });
       }
       // Seed procedural memory: a successfully approved action becomes a learned,
-      // reusable workflow (Phase 3 seed — browse-only; retrieval is Phase 5).
+      // reusable workflow (Phase 3 seed — browse-only; retrieval is Phase 5). Only
+      // a real success counts — failures are surfaced as data (busy queue, bad
+      // args), so seeding on `result.isError` would teach a workflow for an action
+      // that never happened (§4.7).
       // Best-effort: a failure here must not fail the action (logging.md).
-      try {
-        await procedural.record(companion.id, proposal.summary, [proposal.toolName]);
-      } catch (error) {
-        logger.error('failed to record procedural memory', {
-          operation: 'proposals.confirm.procedural',
-          companionId: companion.id,
-          proposalId,
-          error,
-        });
+      if (!result.isError) {
+        try {
+          await procedural.record(companion.id, proposal.summary, [proposal.toolName]);
+        } catch (error) {
+          logger.error('failed to record procedural memory', {
+            operation: 'proposals.confirm.procedural',
+            companionId: companion.id,
+            proposalId,
+            error,
+          });
+        }
       }
       // The approved action's outcome becomes a friendly transcript row (a UI
       // record, filtered out of the model's context), then the agent loop

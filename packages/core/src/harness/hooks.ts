@@ -26,6 +26,14 @@ export interface ToolResult {
   readonly content: string;
   /** Correlates this result to the {@link ToolCall} it answers (the call's id). */
   readonly toolCallId?: string;
+  /**
+   * True when `content` is a failure surfaced as data (failures are data, §4.7):
+   * an unknown tool, a thrown error, or a tool's own validation/busy refusal.
+   * Lets callers tell a real outcome from a failure they can't see inside the
+   * string — e.g. the confirm route only seeds procedural memory (a "learned
+   * workflow") when the approved action actually succeeded. Absent = success.
+   */
+  readonly isError?: boolean;
 }
 
 export interface TurnCtx {

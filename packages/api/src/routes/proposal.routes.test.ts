@@ -66,6 +66,8 @@ describe('proposal routes', () => {
     // The action executed: a source + ingestion job now exist.
     const sources = await ctx.deps.semantic.listSources(companionId);
     expect(sources).toHaveLength(1);
+    // A successful approved action seeds a procedural memory (the learned workflow).
+    expect(await ctx.deps.procedural.count(companionId)).toBe(1);
     // Every tool call is logged (the DoD).
     const logged = await ctx.deps.toolCallLog.list(companionId, 10);
     expect(logged.map((r) => r.name)).toEqual(['ingest_source']);
@@ -77,6 +79,26 @@ describe('proposal routes', () => {
     const contents = transcript.map((m) => m.content);
     expect(contents.some((c) => /Started reading https:\/\/x\.dev\/post/.test(c))).toBe(true);
     expect(contents).toContain('Hi there');
+  });
+
+  it('does not seed procedural memory when the approved action fails', async () => {
+    // A proposal whose held call fails as data (bad url → ingest_source refuses).
+    // The user approved it, but the action never happened — so no "learned
+    // workflow" should be recorded (it would teach a procedure for a no-op).
+    const id = await seedProposal('not-a-url');
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/proposals/${id}/confirm`,
+      headers: auth,
+    });
+    // Confirm still resolves and narrates the (failed) outcome.
+    expect(res.headers['content-type']).toContain('text/event-stream');
+    // Nothing was ingested, and crucially no procedural memory was seeded.
+    expect(await ctx.deps.semantic.listSources(companionId)).toHaveLength(0);
+    expect(await ctx.deps.procedural.count(companionId)).toBe(0);
+    // The failure is still logged as a tool call (the DoD: every call is logged).
+    const logged = await ctx.deps.toolCallLog.list(companionId, 10);
+    expect(logged.map((r) => r.name)).toEqual(['ingest_source']);
   });
 
   it('a second confirm is a no-op (exactly-once) and does not re-execute', async () => {

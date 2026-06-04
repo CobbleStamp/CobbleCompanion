@@ -51,7 +51,11 @@ export function createMemorySearchTool(options: MemorySearchOptions): Tool {
     async run(rawArgs, ctx): Promise<ToolResult> {
       const query = readStringArg(rawArgs, 'query');
       if (query === null) {
-        return { name: 'memory_search', content: 'Error: memory_search needs a "query".' };
+        return {
+          name: 'memory_search',
+          content: 'Error: memory_search needs a "query".',
+          isError: true,
+        };
       }
       // Degrade, don't fail: an embedding outage falls back to lexical-only
       // search (an empty vector skips the vector arm in the store).

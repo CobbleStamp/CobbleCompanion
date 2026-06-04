@@ -47,7 +47,11 @@ describe('dispatchTool', () => {
 
   it('turns an unknown tool into an error result (never a silent block)', async () => {
     const result = await dispatchTool(new ToolRegistry(), 'mystery', {}, ctx, silentLogger);
-    expect(result).toEqual({ name: 'mystery', content: 'Error: unknown tool "mystery".' });
+    expect(result).toEqual({
+      name: 'mystery',
+      content: 'Error: unknown tool "mystery".',
+      isError: true,
+    });
   });
 
   it('turns a thrown tool into an error result and logs it (failures are data)', async () => {
@@ -74,7 +78,7 @@ describe('dispatchTool', () => {
       logger,
     );
 
-    expect(result).toEqual({ name: 'ingest_source', content: 'Error: boom' });
+    expect(result).toEqual({ name: 'ingest_source', content: 'Error: boom', isError: true });
     // The failure is logged with enough context to debug (logging.md).
     expect(logged).toHaveLength(1);
     expect(logged[0]?.context).toMatchObject({
@@ -109,6 +113,7 @@ describe('dispatchTool', () => {
       name: 'mystery',
       content: 'Error: unknown tool "mystery".',
       toolCallId: 'call_7',
+      isError: true,
     });
   });
 
@@ -134,6 +139,7 @@ describe('dispatchTool', () => {
       name: 'ingest_source',
       content: 'Error: boom',
       toolCallId: 'call_9',
+      isError: true,
     });
   });
 

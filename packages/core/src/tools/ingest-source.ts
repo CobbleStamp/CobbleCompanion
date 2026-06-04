@@ -58,13 +58,18 @@ export function createIngestSourceTool(options: IngestSourceOptions): Tool {
     async run(rawArgs, ctx): Promise<ToolResult> {
       const url = readHttpUrlArg(rawArgs, 'url');
       if (url === null) {
-        return { name: 'ingest_source', content: 'Error: ingest_source needs a valid "url".' };
+        return {
+          name: 'ingest_source',
+          content: 'Error: ingest_source needs a valid "url".',
+          isError: true,
+        };
       }
       const title = readStringArg(rawArgs, 'title') ?? undefined;
       if (options.ingestion.isFull()) {
         return {
           name: 'ingest_source',
           content: 'Cobble is busy reading other sources right now — try again shortly.',
+          isError: true,
         };
       }
       try {
@@ -100,6 +105,7 @@ export function createIngestSourceTool(options: IngestSourceOptions): Tool {
           content: busy
             ? 'Cobble is busy reading other sources right now — try again shortly.'
             : `Error remembering ${url}: ${toolErrorMessage(error)}`,
+          isError: true,
         };
       }
     },

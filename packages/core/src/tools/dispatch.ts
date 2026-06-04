@@ -23,7 +23,7 @@ export async function dispatchTool(
     toolCallId !== undefined ? { ...result, toolCallId } : result;
   const tool = registry.get(name);
   if (!tool) {
-    return withId({ name, content: `Error: unknown tool "${name}".` });
+    return withId({ name, content: `Error: unknown tool "${name}".`, isError: true });
   }
   try {
     return withId(await tool.run(args, ctx));
@@ -34,6 +34,6 @@ export async function dispatchTool(
       tool: name,
       error,
     });
-    return withId({ name, content: `Error: ${toolErrorMessage(error)}` });
+    return withId({ name, content: `Error: ${toolErrorMessage(error)}`, isError: true });
   }
 }

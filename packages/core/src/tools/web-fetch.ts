@@ -56,7 +56,11 @@ export function createWebFetchTool(options: WebFetchOptions): Tool {
     async run(rawArgs, ctx): Promise<ToolResult> {
       const url = readHttpUrlArg(rawArgs, 'url');
       if (url === null) {
-        return { name: 'web_fetch', content: 'Error: web_fetch needs a valid absolute "url".' };
+        return {
+          name: 'web_fetch',
+          content: 'Error: web_fetch needs a valid absolute "url".',
+          isError: true,
+        };
       }
       try {
         const content = await options.resolver.resolve(url);
@@ -87,6 +91,7 @@ export function createWebFetchTool(options: WebFetchOptions): Tool {
         return {
           name: 'web_fetch',
           content: `Error fetching ${url}: ${toolErrorMessage(error)}`,
+          isError: true,
         };
       }
     },
