@@ -302,6 +302,56 @@ describe('Harness inner loop (P3 tools)', () => {
     expect(events.some((e) => e.type === 'done')).toBe(true);
   });
 
+  it('exits with a partial when the token budget is exhausted (second dead-loop guard)', async () => {
+    const tool = recordingTool('web_fetch', false, 'more');
+    // Every turn requests the tool again; the iteration ceiling is generous, so
+    // only the token budget can stop the loop. The fake meters real tokens, so the
+    // first turn's usage already exceeds this tiny budget → the next iteration's
+    // exhausted() check trips on tokens, not iterations.
+    const gateway = new FakeLlmGateway([{ chunks: ['loop'], toolCalls: [call('web_fetch')] }]);
+    const harness = new Harness({
+      gateway,
+      memory: memory(),
+      model: 'm',
+      registry: new ToolRegistry([tool]),
+      maxToolIterations: 100,
+      turnTokenBudget: 1,
+      logger: silentLogger,
+    });
+
+    const events = await collect(harness.runTurn({ companion, userContent: 'go', ownerId: 'u1' }));
+
+    // The first turn ran (budget was still zero at iteration 0); the second
+    // iteration saw the spent tokens exceed the budget and exited — well short of
+    // the 100-iteration ceiling, proving the token guard, not the count, stopped it.
+    expect(tool.calls).toHaveLength(1);
+    const done = events.find((e) => e.type === 'done');
+    // Carries the last spoken text as the partial (not the bare fallback).
+    expect(done && done.type === 'done' && done.message.content).toBe('loop');
+  });
+
+  it('exits immediately with the partial fallback when the budget is zero', async () => {
+    // A zero budget trips exhausted() on the very first iteration (0 >= 0), before
+    // any model turn — there is no last text yet, so the partial fallback stands in.
+    const gateway = new FakeLlmGateway([{ chunks: ['unused'], toolCalls: [call('web_fetch')] }]);
+    const tool = recordingTool('web_fetch', false, 'x');
+    const harness = new Harness({
+      gateway,
+      memory: memory(),
+      model: 'm',
+      registry: new ToolRegistry([tool]),
+      turnTokenBudget: 0,
+      logger: silentLogger,
+    });
+
+    const events = await collect(harness.runTurn({ companion, userContent: 'go', ownerId: 'u1' }));
+
+    expect(gateway.calls).toHaveLength(0); // never reached the model
+    expect(tool.calls).toEqual([]);
+    const done = events.find((e) => e.type === 'done');
+    expect(done && done.type === 'done' && done.message.content).toContain('ran out of room');
+  });
+
   it('turns a thrown tool into an error result and keeps going (failures are data)', async () => {
     const throwing: Tool = {
       name: 'web_fetch',

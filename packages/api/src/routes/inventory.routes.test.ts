@@ -56,6 +56,79 @@ describe('inventory routes', () => {
     expect(await ctx.deps.semantic.listSources(companionId)).toHaveLength(0);
   });
 
+  it('explore proposes at most EXPLORE_BURST (3) leads, leaving the rest new', async () => {
+    for (const url of ['https://a.dev', 'https://b.dev', 'https://c.dev', 'https://d.dev']) {
+      await ctx.deps.leads.record(companionId, url);
+    }
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/explore`,
+      headers: auth,
+    });
+    expect(res.statusCode).toBe(200);
+    // Only the bounded burst is proposed/advanced — the 4th lead stays unread.
+    expect(res.json().proposals).toHaveLength(3);
+    expect(await ctx.deps.proposals.listPending(companionId)).toHaveLength(3);
+    expect(await ctx.deps.leads.listByStatus(companionId, ['new'])).toHaveLength(1);
+  });
+
+  it('repeated explore advances through the list without re-proposing read leads', async () => {
+    for (const url of ['https://a.dev', 'https://b.dev', 'https://c.dev', 'https://d.dev']) {
+      await ctx.deps.leads.record(companionId, url);
+    }
+
+    const first = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/explore`,
+      headers: auth,
+    });
+    expect(first.json().proposals).toHaveLength(3);
+
+    // The next explore takes the remaining new lead only — no double-proposing.
+    const second = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/explore`,
+      headers: auth,
+    });
+    expect(second.json().proposals).toHaveLength(1);
+    expect(await ctx.deps.leads.listByStatus(companionId, ['new'])).toHaveLength(0);
+    // Four distinct proposals total — every lead proposed exactly once.
+    expect(await ctx.deps.proposals.listPending(companionId)).toHaveLength(4);
+
+    // A further explore with nothing new proposes nothing (idempotent tail).
+    const third = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/explore`,
+      headers: auth,
+    });
+    expect(third.json().proposals).toHaveLength(0);
+  });
+
+  it('404s when another owner triggers explore (tenancy)', async () => {
+    await ctx.deps.leads.record(companionId, 'https://a.dev');
+    const otherAuth = ctx.bearerFor('intruder@example.com');
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/explore`,
+      headers: otherAuth,
+    });
+    expect(res.statusCode).toBe(404);
+    // Nothing was proposed or advanced for the intruder's request.
+    expect(await ctx.deps.proposals.listPending(companionId)).toHaveLength(0);
+    expect(await ctx.deps.leads.listByStatus(companionId, ['new'])).toHaveLength(1);
+  });
+
+  it('404s when another owner lists procedures (tenancy)', async () => {
+    const otherAuth = ctx.bearerFor('intruder@example.com');
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: `/companions/${companionId}/procedures`,
+      headers: otherAuth,
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
   it('lists learned procedures (recorded after an approved action)', async () => {
     await ctx.deps.procedural.record(companionId, 'Remember a.dev', ['ingest_source']);
     const res = await ctx.app.inject({

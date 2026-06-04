@@ -101,6 +101,23 @@ describe('createApprovalGate', () => {
     }
   });
 
+  it('falls back to a generic summary when the effectful tool defines none', async () => {
+    const proposals = fakeProposals();
+    // No proposalSummary on the tool → the gate synthesizes `Run "<name>"`.
+    const gate = createApprovalGate(
+      proposals,
+      new ToolRegistry([tool('ingest_source', true)]),
+      silentLogger,
+    );
+    const result = await gate(aCall('ingest_source', { url: 'https://x.dev' }), ctx);
+    expect(isBlock(result)).toBe(true);
+    expect(proposals.created[0]?.summary).toBe('Run "ingest_source"');
+    if (isBlock(result)) {
+      expect(result.reason).toBe('Run "ingest_source"');
+      expect((result.proposal as ProposalDto).summary).toBe('Run "ingest_source"');
+    }
+  });
+
   it('passes an unknown tool through (dispatch turns it into an error result)', async () => {
     const gate = createApprovalGate(fakeProposals(), new ToolRegistry(), silentLogger);
     expect(isBlock(await gate(aCall('mystery'), ctx))).toBe(false);

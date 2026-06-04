@@ -108,6 +108,19 @@ describe('proposal routes', () => {
     expect(await ctx.deps.proposals.listPending(companionId)).toHaveLength(0);
   });
 
+  it("404s when rejecting another owner's companion (tenancy)", async () => {
+    const id = await seedProposal();
+    const otherAuth = ctx.bearerFor('intruder@example.com');
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/proposals/${id}/reject`,
+      headers: otherAuth,
+    });
+    expect(res.statusCode).toBe(404);
+    // The proposal is untouched — still pending for its real owner.
+    expect(await ctx.deps.proposals.listPending(companionId)).toHaveLength(1);
+  });
+
   it("404s when confirming another owner's companion (tenancy)", async () => {
     const id = await seedProposal();
     const otherAuth = ctx.bearerFor('intruder@example.com');

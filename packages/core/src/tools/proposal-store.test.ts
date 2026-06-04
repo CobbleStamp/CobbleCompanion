@@ -67,6 +67,27 @@ describe('DrizzleProposalStore', () => {
     expect(await store.listPending(companionId)).toHaveLength(0);
   });
 
+  it('resolves exactly once under a concurrent race (two confirms at once)', async () => {
+    const created = await store.create(companionId, {
+      toolName: 'ingest_source',
+      toolArgs: { url: 'https://x.dev' },
+      summary: 'Remember it',
+    });
+
+    // Two confirms fired together — the atomic claim (UPDATE … WHERE status =
+    // 'pending') must let exactly one win, so the action can never double-execute.
+    const [a, b] = await Promise.all([
+      store.markResolved(companionId, created.id, 'approved'),
+      store.markResolved(companionId, created.id, 'approved'),
+    ]);
+
+    const winners = [a, b].filter((row) => row !== null);
+    expect(winners).toHaveLength(1);
+    expect(winners[0]?.status).toBe('approved');
+    expect(winners[0]?.resolvedAt).toBeInstanceOf(Date);
+    expect(await store.listPending(companionId)).toHaveLength(0);
+  });
+
   it('scopes get/resolve to the owning companion (tenancy)', async () => {
     const created = await store.create(companionId, {
       toolName: 'ingest_source',
