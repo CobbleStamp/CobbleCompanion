@@ -12,6 +12,8 @@ import JSZip from 'jszip';
 import mammoth from 'mammoth';
 import { extractText, getDocumentProxy } from 'unpdf';
 
+import { sanitizeText } from '../text/sanitize.js';
+
 /** One atomic paragraph of a parsed source, with its position and PDF page. */
 export interface Paragraph {
   /** 1-based paragraph ordinal within the source — the provenance unit. */
@@ -31,7 +33,7 @@ export interface ParsedDocument {
 function splitParagraphs(text: string): readonly string[] {
   return text
     .split(/\n\s*\n/)
-    .map((paragraph) => paragraph.replace(/\s+/g, ' ').trim())
+    .map((paragraph) => sanitizeText(paragraph).replace(/\s+/g, ' ').trim())
     .filter((paragraph) => paragraph.length > 0);
 }
 
@@ -127,7 +129,7 @@ export async function parsePptx(bytes: Uint8Array): Promise<ParsedDocument> {
     const runs = [...xml.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map((match) =>
       decodeXmlEntities(match[1] ?? ''),
     );
-    const text = runs.join(' ').replace(/\s+/g, ' ').trim();
+    const text = sanitizeText(runs.join(' ')).replace(/\s+/g, ' ').trim();
     if (text.length > 0) {
       // `page` is the real slide number from the filename, not the loop
       // position, so a deck with gaps or empty slides still cites correctly.

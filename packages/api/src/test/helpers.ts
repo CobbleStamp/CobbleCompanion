@@ -16,6 +16,7 @@ import {
   Harness,
   IngestionPipeline,
   IngestionRunner,
+  LlmIngestionAnnouncer,
   TranscriptMemoryStore,
   type Logger,
 } from '@cobble/core';
@@ -91,6 +92,7 @@ export async function makeTestApp(
 ): Promise<TestApp> {
   const config: AppConfig = { ...testConfig, ...options.config };
   const { db, close: closeDb } = await createTestDatabase();
+  const identity = new DrizzleIdentityStore(db);
   const memory = new TranscriptMemoryStore(db);
   const semantic = new DrizzleSemanticMemoryStore(db);
   const quota = new DrizzleTokenQuotaStore(db, { defaultCapTokens: config.tokenCapPerDay });
@@ -111,12 +113,20 @@ export async function makeTestApp(
         useContextHeader: config.useContextHeader,
         quota,
         logger: silentLogger,
+        announcer: new LlmIngestionAnnouncer({
+          identity,
+          memory,
+          llm: llmGateway,
+          model: config.ingestionModel,
+          quota,
+          logger: silentLogger,
+        }),
       }),
       silentLogger,
       config.ingestionQueueMax,
     );
   const deps: AppDeps = {
-    identity: new DrizzleIdentityStore(db),
+    identity,
     memory,
     semantic,
     embeddings,

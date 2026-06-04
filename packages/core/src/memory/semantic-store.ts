@@ -12,6 +12,7 @@ import { companions, facts, ingestionJobs, sections, sources, type Database } fr
 import type { IngestionStatus, SourceKind } from '@cobble/shared';
 import { and, count, desc, eq, notInArray, sql } from 'drizzle-orm';
 import type { ParsedDocument } from '../ingestion/parser.js';
+import { stripNul } from '../text/sanitize.js';
 
 export interface CreateSourceInput {
   readonly kind: SourceKind;
@@ -220,9 +221,9 @@ export class DrizzleSemanticMemoryStore implements SemanticMemoryStore {
       .values({
         companionId,
         kind: input.kind,
-        title: input.title,
-        origin: input.origin ?? null,
-        rawText: input.rawText,
+        title: stripNul(input.title),
+        origin: input.origin == null ? null : stripNul(input.origin),
+        rawText: stripNul(input.rawText),
         byteSize: input.byteSize ?? null,
       })
       .returning();
@@ -233,7 +234,10 @@ export class DrizzleSemanticMemoryStore implements SemanticMemoryStore {
   }
 
   async setSourceText(sourceId: string, rawText: string): Promise<void> {
-    await this.db.update(sources).set({ rawText }).where(eq(sources.id, sourceId));
+    await this.db
+      .update(sources)
+      .set({ rawText: stripNul(rawText) })
+      .where(eq(sources.id, sourceId));
   }
 
   async getSourceText(companionId: string, sourceId: string): Promise<string | null> {
@@ -279,9 +283,9 @@ export class DrizzleSemanticMemoryStore implements SemanticMemoryStore {
           newSections.map((section) => ({
             companionId,
             sourceId,
-            chapterTitle: section.chapterTitle ?? null,
-            topicTitle: section.topicTitle,
-            originalText: section.originalText,
+            chapterTitle: section.chapterTitle == null ? null : stripNul(section.chapterTitle),
+            topicTitle: stripNul(section.topicTitle),
+            originalText: stripNul(section.originalText),
             paraStart: section.paraStart,
             paraEnd: section.paraEnd,
             pageStart: section.pageStart ?? null,
@@ -307,7 +311,10 @@ export class DrizzleSemanticMemoryStore implements SemanticMemoryStore {
   }
 
   async setSectionContextHeader(sectionId: string, contextHeader: string): Promise<void> {
-    await this.db.update(sections).set({ contextHeader }).where(eq(sections.id, sectionId));
+    await this.db
+      .update(sections)
+      .set({ contextHeader: stripNul(contextHeader) })
+      .where(eq(sections.id, sectionId));
   }
 
   async setSectionEmbedding(sectionId: string, embedding: readonly number[]): Promise<void> {
@@ -324,9 +331,9 @@ export class DrizzleSemanticMemoryStore implements SemanticMemoryStore {
         companionId,
         sectionId: fact.sectionId,
         factType: fact.factType,
-        subject: fact.subject,
-        predicate: fact.predicate ?? null,
-        object: fact.object,
+        subject: stripNul(fact.subject),
+        predicate: fact.predicate == null ? null : stripNul(fact.predicate),
+        object: stripNul(fact.object),
         confidence: fact.confidence ?? null,
       })),
     );

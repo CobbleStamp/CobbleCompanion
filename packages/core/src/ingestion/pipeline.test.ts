@@ -15,6 +15,7 @@ import type { Logger } from '../logging.js';
 import { DrizzleSemanticMemoryStore } from '../memory/semantic-store.js';
 import type { TokenQuotaStore, UsageSnapshot } from '../quota/store.js';
 import { estimateUsage, type TokenUsage } from '../usage.js';
+import type { IngestionAnnouncer, IngestionOutcome } from './announcer.js';
 import { createHttpLinkResolver } from './link-resolver.js';
 import { IngestionPipeline } from './pipeline.js';
 import { createSourceParser } from './source-parser.js';
@@ -110,6 +111,7 @@ describe('IngestionPipeline', () => {
     llm: LlmGateway,
     useContextHeader = false,
     quota?: TokenQuotaStore,
+    announcer?: IngestionAnnouncer,
   ): IngestionPipeline {
     return new IngestionPipeline({
       semantic,
@@ -121,6 +123,7 @@ describe('IngestionPipeline', () => {
       useContextHeader,
       logger: silentLogger,
       ...(quota ? { quota } : {}),
+      ...(announcer ? { announcer } : {}),
     });
   }
 
@@ -455,6 +458,98 @@ describe('IngestionPipeline', () => {
     const [job] = await semantic.listJobs(companionId);
     expect(job?.status).toBe('failed');
     expect(job?.error).toMatch(/could not finish reading/);
+  });
+
+  it('announces done — before flipping the job — on a successful run', async () => {
+    const seen: { outcome: string; jobStatusThen: string | undefined }[] = [];
+    const announcer: IngestionAnnouncer = {
+      async announce(o: IngestionOutcome): Promise<void> {
+        const [job] = await semantic.listJobs(companionId);
+        seen.push({ outcome: o.outcome, jobStatusThen: job?.status });
+      },
+    };
+    const llm = new ScriptedLlmGateway([SEGMENT_RESPONSE, ENRICH_CONQUEST, ENRICH_CUISINE]);
+    const { sourceId, jobId } = await seedSourceAndJob();
+
+    await makePipeline(llm, false, undefined, announcer).run({
+      companionId,
+      sourceId,
+      jobId,
+      sourceTitle: 'Peru notes',
+      payload: { kind: 'note', text: NOTE_TEXT },
+    });
+
+    expect(seen).toEqual([{ outcome: 'done', jobStatusThen: 'embedding' }]);
+    const [job] = await semantic.listJobs(companionId);
+    expect(job?.status).toBe('done');
+  });
+
+  it('announces failed when a run fails', async () => {
+    const outcomes: string[] = [];
+    const announcer: IngestionAnnouncer = {
+      async announce(o: IngestionOutcome): Promise<void> {
+        outcomes.push(o.outcome);
+      },
+    };
+    const llm = new ScriptedLlmGateway([SEGMENT_RESPONSE]);
+    const { sourceId, jobId } = await seedSourceAndJob();
+
+    await makePipeline(llm, false, undefined, announcer).run({
+      companionId,
+      sourceId,
+      jobId,
+      sourceTitle: 'Broken PDF',
+      payload: { kind: 'pdf', bytes: new TextEncoder().encode('not a pdf') },
+    });
+
+    expect(outcomes).toEqual(['failed']);
+    expect((await semantic.listJobs(companionId))[0]?.status).toBe('failed');
+  });
+
+  it('does not announce a deferred (non-terminal) run', async () => {
+    const outcomes: string[] = [];
+    const announcer: IngestionAnnouncer = {
+      async announce(o: IngestionOutcome): Promise<void> {
+        outcomes.push(o.outcome);
+      },
+    };
+    const quota = new StubQuota();
+    quota.over = true;
+    const llm = new ScriptedLlmGateway([SEGMENT_RESPONSE, ENRICH_CONQUEST, ENRICH_CUISINE]);
+    const { sourceId, jobId } = await seedSourceAndJob();
+
+    await makePipeline(llm, false, quota, announcer).run({
+      companionId,
+      ownerId: 'owner',
+      sourceId,
+      jobId,
+      sourceTitle: 'Peru notes',
+      payload: { kind: 'note', text: NOTE_TEXT },
+    });
+
+    expect((await semantic.listJobs(companionId))[0]?.status).toBe('deferred');
+    expect(outcomes).toEqual([]);
+  });
+
+  it('still records the outcome when the announcer throws', async () => {
+    const throwingAnnouncer: IngestionAnnouncer = {
+      async announce(): Promise<void> {
+        throw new Error('announcer boom');
+      },
+    };
+    const llm = new ScriptedLlmGateway([SEGMENT_RESPONSE, ENRICH_CONQUEST, ENRICH_CUISINE]);
+    const { sourceId, jobId } = await seedSourceAndJob();
+
+    await makePipeline(llm, false, undefined, throwingAnnouncer).run({
+      companionId,
+      sourceId,
+      jobId,
+      sourceTitle: 'Peru notes',
+      payload: { kind: 'note', text: NOTE_TEXT },
+    });
+
+    // A notification failure must never change the recorded job outcome.
+    expect((await semantic.listJobs(companionId))[0]?.status).toBe('done');
   });
 
   async function embedText(text: string): Promise<readonly number[]> {

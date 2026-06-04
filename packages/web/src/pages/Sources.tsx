@@ -15,6 +15,7 @@ import {
   uploadFileSource,
 } from '../api/client.js';
 import { UsageBadge } from '../components/UsageBadge.js';
+import { isActiveJob, jobStatusLabel } from '../lib/ingestionStatus.js';
 
 interface SourcesProps {
   readonly companionName: string;
@@ -23,15 +24,6 @@ interface SourcesProps {
 }
 
 const POLL_INTERVAL_MS = 1_500;
-
-/**
- * Job states that still change on their own — keep polling while any source is
- * in one. `deferred` is excluded: it waits (possibly hours) for the daily token
- * allowance to reset, so fast polling would be wasteful.
- */
-function isActive(job: IngestionJobDto): boolean {
-  return job.status !== 'done' && job.status !== 'failed' && job.status !== 'deferred';
-}
 
 export function Sources({ companionName, companionId, onBack }: SourcesProps): JSX.Element {
   const [sources, setSources] = useState<SourceDto[]>([]);
@@ -67,7 +59,7 @@ export function Sources({ companionName, companionId, onBack }: SourcesProps): J
 
   // Poll while any job is still reading; stop as soon as everything settles.
   useEffect(() => {
-    if (!jobs.some(isActive)) return;
+    if (!jobs.some(isActiveJob)) return;
     pollRef.current = window.setTimeout(() => void refresh(), POLL_INTERVAL_MS);
     return () => {
       if (pollRef.current !== null) window.clearTimeout(pollRef.current);
@@ -123,16 +115,7 @@ export function Sources({ companionName, companionId, onBack }: SourcesProps): J
               >
                 Delete
               </button>
-              {job && (
-                <p className="who">
-                  {job.status === 'done' && `read · ${job.sectionsTotal} sections`}
-                  {job.status === 'failed' && `failed: ${job.error ?? 'unknown error'}`}
-                  {job.status === 'deferred' &&
-                    'waiting for your daily allowance to reset, then Cobble finishes reading it'}
-                  {isActive(job) &&
-                    `${job.status}… ${job.sectionsDone}/${job.sectionsTotal || '?'} sections`}
-                </p>
-              )}
+              {job && <p className="who">{jobStatusLabel(job)}</p>}
             </li>
           );
         })}

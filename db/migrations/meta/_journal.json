@@ -43,6 +43,13 @@
       "when": 1780500000003,
       "tag": "0005_icy_whizzer",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1780500000004,
+      "tag": "0006_wonderful_tyger_tiger",
+      "breakpoints": true
     }
   ]
 }

@@ -126,6 +126,23 @@ describe('parseNote', () => {
   it('drops whitespace-only paragraphs', () => {
     expect(parseNote('one\n\n   \n\ntwo').paragraphs).toHaveLength(2);
   });
+
+  it('strips NUL and other control characters from text and rawText', () => {
+    // NUL would otherwise reach Postgres and throw "invalid byte sequence ...
+    // 0x00"; constructed via fromCharCode so no control byte lives in source.
+    const nul = String.fromCharCode(0x00);
+    const unitSeparator = String.fromCharCode(0x1f);
+    const document = parseNote(`hel${nul}lo${unitSeparator} world.\n\nsecond${nul} para`);
+    const hasControl = (text: string): boolean =>
+      [...text].some((ch) => {
+        const code = ch.charCodeAt(0);
+        return code === 0x00 || code === 0x1f;
+      });
+    expect(hasControl(document.rawText)).toBe(false);
+    expect(document.paragraphs.every((p) => !hasControl(p.text))).toBe(true);
+    expect(document.rawText).toContain('hello world.');
+    expect(document.rawText).toContain('second para');
+  });
 });
 
 describe('parseLinkHtml', () => {
@@ -272,6 +289,14 @@ describe('parsePptx', () => {
   it('decodes XML entities in slide text', async () => {
     const document = await parsePptx(await buildTestPptx([['Salt &amp; pepper &lt;here&gt;']]));
     expect(document.paragraphs[0]!.text).toBe('Salt & pepper <here>');
+  });
+
+  it('strips NUL from slide text (the non-splitParagraphs path)', async () => {
+    const nul = String.fromCharCode(0x00);
+    const document = await parsePptx(await buildTestPptx([[`Cevi${nul}che`, `lime${nul}`]]));
+    expect(document.paragraphs[0]!.text).toBe('Ceviche lime');
+    expect(document.paragraphs[0]!.text.includes(nul)).toBe(false);
+    expect(document.rawText.includes(nul)).toBe(false);
   });
 
   it('throws when the file contains no slides', async () => {

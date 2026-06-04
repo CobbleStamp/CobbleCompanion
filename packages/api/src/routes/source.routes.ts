@@ -8,8 +8,10 @@
 import {
   createLinkSourceSchema,
   createNoteSourceSchema,
+  fileSourceAcknowledgement,
   uploadKindForFilename,
   type IngestionJobDto,
+  type MessageDto,
   type SectionDto,
   type SourceDto,
   type UploadSourceKind,
@@ -83,7 +85,7 @@ export function registerSourceRoutes(
   deps: AppDeps,
   requireAuth: RequireAuth,
 ): void {
-  const { identity, semantic, ingestion } = deps;
+  const { identity, memory, semantic, ingestion, logger } = deps;
   // Intake routes share the auth preHandler; over-cap uploads are accepted and
   // deferred by the pipeline rather than rejected up front (architecture.md §4.8).
   const ingestPreHandlers = [requireAuth];
@@ -173,7 +175,34 @@ export function registerSourceRoutes(
         },
         { kind, bytes: new Uint8Array(bytes) },
       );
-      return reply.code(202).send(result);
+      // Record the attachment + acknowledgement as real transcript turns so they
+      // survive a reload (architecture.md §4.7). Best-effort: the file is already
+      // being read, so a transcript-write hiccup must not fail the upload — it is
+      // logged and the upload still returns 202 (failures are data).
+      let messages: MessageDto[] = [];
+      try {
+        const attachment = await memory.appendMessage(
+          companion.id,
+          'user',
+          filename,
+          result.source.id,
+        );
+        const acknowledgement = await memory.appendMessage(
+          companion.id,
+          'assistant',
+          fileSourceAcknowledgement(filename),
+          result.source.id,
+        );
+        messages = [attachment, acknowledgement];
+      } catch (error) {
+        logger.error('failed to append upload turns to transcript', {
+          operation: 'sources.file.appendTranscript',
+          companionId: companion.id,
+          sourceId: result.source.id,
+          error,
+        });
+      }
+      return reply.code(202).send({ ...result, messages });
     },
   );
 

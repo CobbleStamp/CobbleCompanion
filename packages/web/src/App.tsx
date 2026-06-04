@@ -3,6 +3,7 @@ import type { CompanionDto } from '@cobble/shared';
 import { useEffect, useState } from 'react';
 import { fetchCurrentUser, listCompanions, setAccessTokenGetter } from './api/client.js';
 import type { AuthMode } from './auth/config.js';
+import { clearStoredToken, loadStoredToken, storeToken } from './auth/session.js';
 import { Chat } from './pages/Chat.js';
 import { CreateCompanion } from './pages/CreateCompanion.js';
 import { MemoryBrowser } from './pages/MemoryBrowser.js';
@@ -23,16 +24,27 @@ export function App({ authMode }: AppProps): JSX.Element {
 
 /**
  * google mode: gate the companion flow behind Google Sign-In. The ID token from
- * the <GoogleLogin> credential is held in memory and sent as the bearer on every
- * request (stateless — the API verifies it against Google's JWKS).
+ * the <GoogleLogin> credential is sent as the bearer on every request (stateless
+ * — the API verifies it against Google's JWKS). It is persisted to
+ * `sessionStorage` so a page refresh restores the session instead of bouncing
+ * back to the sign-in gate; an expired token is dropped on load (see
+ * ./auth/session.ts). The lazy initializer wires the token getter synchronously
+ * on first render, before <CompanionFlow> mounts and calls fetchCurrentUser.
  */
 function GoogleApp(): JSX.Element {
-  const [idToken, setIdToken] = useState<string | null>(null);
+  const [idToken, setIdToken] = useState<string | null>(() => {
+    const restored = loadStoredToken();
+    if (restored !== null) {
+      setAccessTokenGetter(async () => restored);
+    }
+    return restored;
+  });
 
   if (!idToken) {
     return (
       <SignIn
         onCredential={(token) => {
+          storeToken(token);
           setAccessTokenGetter(async () => token);
           setIdToken(token);
         }}
@@ -43,6 +55,7 @@ function GoogleApp(): JSX.Element {
     <CompanionFlow
       onSignOut={() => {
         googleLogout();
+        clearStoredToken();
         setAccessTokenGetter(async () => null);
         setIdToken(null);
       }}

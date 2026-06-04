@@ -26,6 +26,7 @@ const transcript: MessageDto[] = [
   {
     id: 'm1',
     companionId: companion.id,
+    sourceId: null,
     role: 'user',
     content: 'hello there',
     createdAt: '2026-01-03T00:00:01.000Z',
@@ -33,6 +34,7 @@ const transcript: MessageDto[] = [
   {
     id: 'm2',
     companionId: companion.id,
+    sourceId: null,
     role: 'assistant',
     content: 'hi yourself',
     createdAt: '2026-01-03T00:00:02.000Z',

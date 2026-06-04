@@ -11,7 +11,17 @@ import { count, desc, eq } from 'drizzle-orm';
  * without changing callers.
  */
 export interface MemoryStore {
-  appendMessage(companionId: string, role: MessageRole, content: string): Promise<MessageDto>;
+  /**
+   * Append a turn to the transcript. `sourceId` links the turn to a source it is
+   * about (an upload's attachment chip / acknowledgement); omit it for ordinary
+   * turns.
+   */
+  appendMessage(
+    companionId: string,
+    role: MessageRole,
+    content: string,
+    sourceId?: string,
+  ): Promise<MessageDto>;
   /** Most recent `limit` messages, returned oldest-first for prompt assembly. */
   getRecentMessages(companionId: string, limit: number): Promise<readonly MessageDto[]>;
   /** Number of transcript messages the companion holds. */
@@ -25,8 +35,12 @@ export class TranscriptMemoryStore implements MemoryStore {
     companionId: string,
     role: MessageRole,
     content: string,
+    sourceId?: string,
   ): Promise<MessageDto> {
-    const [row] = await this.db.insert(messages).values({ companionId, role, content }).returning();
+    const [row] = await this.db
+      .insert(messages)
+      .values({ companionId, role, content, sourceId: sourceId ?? null })
+      .returning();
     if (!row) {
       throw new Error('failed to append message');
     }
@@ -62,6 +76,7 @@ function toMessageDto(row: typeof messages.$inferSelect): MessageDto {
     companionId: row.companionId,
     role: row.role,
     content: row.content,
+    sourceId: row.sourceId,
     createdAt: row.createdAt.toISOString(),
   };
 }

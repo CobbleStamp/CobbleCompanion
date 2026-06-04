@@ -8,6 +8,7 @@
  */
 
 import type { EmbeddingGateway } from '../embedding/gateway.js';
+import type { IngestionAnnouncer } from './announcer.js';
 import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import type { NewSection, SectionRecord, SemanticMemoryStore } from '../memory/semantic-store.js';
@@ -48,6 +49,11 @@ export interface IngestionPipelineOptions {
   readonly sourceParser?: SourceParser;
   /** Debits the run's tokens against the owner's daily cap; omitted = no metering. */
   readonly quota?: TokenQuotaStore;
+  /**
+   * Posts a proactive transcript note when a run reaches a terminal state
+   * (`done`/`failed`); omitted = silent (e.g. tests that don't assert on it).
+   */
+  readonly announcer?: IngestionAnnouncer;
 }
 
 export interface IngestionRunParams {
@@ -116,6 +122,9 @@ export class IngestionPipeline {
       await semantic.updateJob(jobId, { status: 'embedding' });
       await this.embedSections(sections, headers, usage);
 
+      // Announce before flipping the job to `done`, so the note is already in
+      // the transcript by the time a client polls the terminal status.
+      await this.announce(params, 'done');
       await semantic.updateJob(jobId, { status: 'done' });
       await this.debit(params.ownerId, usage);
     } catch (error) {
@@ -126,10 +135,38 @@ export class IngestionPipeline {
         jobId,
         error,
       });
+      await this.announce(params, 'failed');
       await semantic.updateJob(jobId, {
         status: 'failed',
         error: 'Cobble could not finish reading this source. Please try again.',
         parsedDoc: null,
+      });
+    }
+  }
+
+  /**
+   * Ask the announcer to post a proactive note about a terminal outcome. The
+   * announcer never throws, but guard anyway: a notification must never change
+   * the job's recorded outcome. `deferred` is not terminal, so it never announces.
+   */
+  private async announce(params: IngestionRunParams, outcome: 'done' | 'failed'): Promise<void> {
+    if (!this.options.announcer) {
+      return;
+    }
+    try {
+      await this.options.announcer.announce({
+        companionId: params.companionId,
+        ...(params.ownerId !== undefined ? { ownerId: params.ownerId } : {}),
+        sourceTitle: params.sourceTitle,
+        outcome,
+      });
+    } catch (error) {
+      this.options.logger.error('failed to announce ingestion outcome', {
+        operation: 'ingestion.pipeline.announce',
+        companionId: params.companionId,
+        sourceId: params.sourceId,
+        jobId: params.jobId,
+        error,
       });
     }
   }

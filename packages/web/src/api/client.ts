@@ -93,6 +93,15 @@ export interface SourceIntake {
   readonly job: IngestionJobDto;
 }
 
+/**
+ * A file-upload intake response. Unlike note/link sources, a file upload also
+ * writes the attachment chip + acknowledgement to the transcript and returns
+ * them, so the chat can show id-bearing (reload-safe) lines immediately.
+ */
+export interface FileSourceIntake extends SourceIntake {
+  readonly messages: readonly MessageDto[];
+}
+
 /** Add a plain-text note to the companion's knowledge base. */
 export async function createNoteSource(
   companionId: string,
@@ -116,7 +125,7 @@ export async function createLinkSource(
 }
 
 /** Upload a document file (PDF/txt/md/docx/pptx); reading happens in the background. */
-export async function uploadFileSource(companionId: string, file: File): Promise<SourceIntake> {
+export async function uploadFileSource(companionId: string, file: File): Promise<FileSourceIntake> {
   const auth = await authHeaders();
   const form = new FormData();
   form.append('file', file);
@@ -129,7 +138,7 @@ export async function uploadFileSource(companionId: string, file: File): Promise
     const body = (await response.json().catch(() => ({}))) as { error?: string };
     throw new Error(body.error ?? `upload failed (${response.status})`);
   }
-  return (await response.json()) as SourceIntake;
+  return (await response.json()) as FileSourceIntake;
 }
 
 /** The companion's sources, newest first. */

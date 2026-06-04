@@ -26,7 +26,36 @@ export interface MessageDto {
   readonly companionId: string;
   readonly role: MessageRole;
   readonly content: string;
+  /**
+   * The source this turn is about, when it was written by an upload (the
+   * attachment chip and its acknowledgement). Null for ordinary typed turns.
+   * Lets the chat surface reconstruct the 📎 chip and "View status →" link on
+   * reload rather than losing them with the page (architecture.md §4.7).
+   */
+  readonly sourceId: string | null;
   readonly createdAt: string;
+}
+
+/**
+ * The acknowledgement the companion posts the moment a file is attached, before
+ * it has read it. Single-sourced here so the optimistic client line and the
+ * persisted transcript turn are byte-for-byte identical (no drift across reload).
+ */
+export function fileSourceAcknowledgement(filename: string): string {
+  return `Got it — I'm reading through "${filename}" now. I'll be able to reference it once I've finished.`;
+}
+
+/**
+ * Canned proactive notes used when an in-character LLM note can't be generated
+ * (owner over their daily token cap, generation failed, or persona unavailable).
+ * The companion always tells the user how a read ended — it never goes silent.
+ */
+export function ingestionDoneFallback(sourceTitle: string): string {
+  return `By the way — I've finished reading "${sourceTitle}". Ask me anything about it.`;
+}
+
+export function ingestionFailedFallback(sourceTitle: string): string {
+  return `I ran into trouble reading "${sourceTitle}" and couldn't finish. You may want to try uploading it again.`;
 }
 
 // --- Sources & ingestion (Phase 1 semantic memory) ---

@@ -176,6 +176,23 @@ describe('DrizzleSemanticMemoryStore', () => {
     expect(await store.getSourceText(otherCompanionId, source.id)).toBeNull();
   });
 
+  it('strips NUL from source text so the write does not fail (last-line DB guard)', async () => {
+    // Reproduces the PDF-ingestion failure: a NUL byte in extracted text makes
+    // Postgres reject the write with "invalid byte sequence ... 0x00". The
+    // store's stripNul guard must let the write succeed with the NUL removed.
+    const nul = String.fromCharCode(0x00);
+    const source = await store.createSource(companionId, {
+      kind: 'pdf',
+      title: 'Reinforcement Learning',
+      rawText: `chapter${nul} one${nul}`,
+    });
+    expect(await store.getSourceText(companionId, source.id)).toBe('chapter one');
+
+    // setSourceText (the exact failing call in the original report) is guarded too.
+    await store.setSourceText(source.id, `chapter${nul} two`);
+    expect(await store.getSourceText(companionId, source.id)).toBe('chapter two');
+  });
+
   it('stores sections verbatim with provenance fields and enrichment updates', async () => {
     const { sourceId, sectionId } = await seedSection('Pizarro founded Lima in 1535.');
     await store.setSectionContextHeader(sectionId, '[Peru history, ch. 3 — the conquest]');

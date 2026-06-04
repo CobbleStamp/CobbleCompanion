@@ -44,7 +44,16 @@ migrations under `db/`.
 | `companion_id` | uuid (FK → `companions.id`) | indexed with `seq` (`messages_companion_idx`) for recency recall |
 | `role` | text | `user` \| `assistant` \| `system` |
 | `content` | text | |
+| `source_id` | uuid (FK → `sources.id`, **`ON DELETE SET NULL`**) | nullable; set on a file upload's attachment chip (a `user` turn) and its acknowledgement (an `assistant` turn) so the chat reconstructs the 📎 chip + "View status →" link on reload. `SET NULL` (not cascade): deleting a source must never delete an append-only transcript turn — it just drops the link |
 | `created_at` | timestamptz | episodic memory (P2) builds on these timestamped turns |
+
+> **Proactive ingestion notes.** A successful or failed read appends a single `assistant` turn
+> here via the **Ingestion Announcer** (`packages/core/src/ingestion/announcer.ts`): an
+> in-character note generated through the metered LLM gateway (debited to the owner's daily cap),
+> with a single-sourced **canned fallback** (`@cobble/shared`) when the owner is over cap, when
+> generation throws, or when no persona is available. It is appended *before* the job's terminal
+> status flip, and an announcement failure is logged but never alters the job outcome
+> (`architecture.md` §4.8). These notes carry no `source_id` (no chip/link — just a message).
 
 > **One conversation per companion.** There is deliberately **no `conversations`/session
 > table** (`architecture.md` invariant): a companion has exactly one continuous, lifelong
@@ -249,7 +258,18 @@ Implements the trust-model boundaries in `architecture.md` §8.
   (issuer `accounts.google.com`, audience = `GOOGLE_CLIENT_ID`, expiry, `jose`), requires
   `email_verified === true`, and JIT-provisions the user from the verified `email` claim.
   `AUTH_MODE=dev_bypass` skips all of this for local dev/tests. (ID tokens last ~1h; an app-issued
-  session JWT is a documented future upgrade.)
+  session JWT is a documented future upgrade.) An **expired** token is an expected client condition,
+  not a server fault: the API guard classifies `jose`'s `ERR_JWT_EXPIRED` and logs it at `info`
+  (no stack), reserving `error`-level logs for genuine verification anomalies (bad signature, wrong
+  audience, missing claims).
+- **Client session persistence** — the SPA persists the ID token to **`sessionStorage`**
+  (`packages/web/src/auth/session.ts`) so a page refresh restores the session instead of bouncing to
+  the sign-in gate. On load the token is restored synchronously before the first authenticated
+  request; its `exp` is decoded client-side (no verification — the API remains the authority) and an
+  already-expired token is dropped rather than sent. `sessionStorage` (not `localStorage`) is a
+  deliberate posture: the credential survives refresh and in-tab navigation but clears on tab/browser
+  close. Because the ID token lives ~1h with no refresh token, this only restores a session within
+  that window; full silent refresh / 401-driven re-auth is a future upgrade.
 - **Transport** — HTTPS/TLS for client traffic; secure (TLS) Postgres connections.
 - **Tenancy** — every query filtered by `owner_id`/`companion_id`; authorization checked at the
   API boundary before reaching the core.

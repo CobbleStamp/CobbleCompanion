@@ -95,12 +95,13 @@ flowchart TB
 
 | Component | Owns | Notes |
 |---|---|---|
-| **Web Client** | Chat UI (incl. citations), create-a-companion, auth flows, sources page, memory browser + search | Thin client over the API (invariant #1) |
+| **Web Client** | Chat UI (incl. citations, in-chat ingestion-status panel, persisted upload turns + live proactive notes), create-a-companion, auth flows, sources page, memory browser + search | Thin client over the API (invariant #1) |
 | **API / BFF** | Auth, sessions, routing, response streaming, source intake (multipart), memory routes | The only thing surfaces talk to |
 | **Harness** | The agent loop; defines memory/tool/initiation hooks | See §4; P1 fills the memory hook with semantic recall |
 | **LLM Gateway** | Provider-agnostic chat-model access | Default OpenRouter; provider pluggable |
 | **Embedding Gateway** | Provider-agnostic embedding access (P1) | OpenRouter `/embeddings`; deterministic fake for tests |
-| **MemoryStore** | Boundary for the transcript (episodic substrate) | The companion's single transcript (`messages`), keyed by `companion_id` |
+| **MemoryStore** | Boundary for the transcript (episodic substrate) | The companion's single transcript (`messages`), keyed by `companion_id`; a turn may carry an optional `source_id` (an upload's attachment + acknowledgement) so the chat reconstructs them on reload |
+| **Ingestion Announcer** | Proactive transcript note when a read ends (P1, §4.8) | On `done`/`failed`, posts an in-character, **metered** assistant turn (canned fallback over cap / on failure); fired by the pipeline, decoupled from it |
 | **Semantic Store** | Sources (verbatim), sections (vector + FTS), fact overlay, ingestion jobs (P1) | Hybrid retrieval with provenance; contract → `ontology.md` |
 | **Ingestion Pipeline + Runner** | Two-pass source reading off the request path (P1, §4.8) | Durable status in `ingestion_jobs`; replaceable by a real worker |
 | **Identity Store** | Companion "home" record | Source of truth surfaces load from |
@@ -321,6 +322,16 @@ Design rules (the "improved staged hybrid"; memory guide → `companionmemory.md
   worker with no schema or API change (§8). It also makes restart recovery clean: interrupted
   in-flight jobs are failed on startup (re-upload), while `deferred` jobs keep their parse and
   resume.
+- **The companion speaks up when a read ends.** On a terminal outcome (`done`/`failed`, never
+  `deferred`), the pipeline asks the **Ingestion Announcer** to post a short, in-character
+  assistant turn to the transcript ("By the way — I've finished reading X…"). It is generated in
+  the companion's voice through the metered gateway (so its tokens count against the daily cap)
+  and **falls back to a canned line** when the owner is over cap, generation fails, or there is no
+  persona — the user is always told, the companion never goes silent. The note is appended **before**
+  the job flips to its terminal status, so a client polling the job sees the note already in the
+  transcript; an announcement failure is logged and never changes the job's recorded outcome.
+  Surfacing: the upload's own attachment + acknowledgement turns are persisted (`messages.source_id`)
+  too, and the open chat pulls the proactive note in live off the ingestion-status poll.
 - **Re-running a source is idempotent.** A run writes a source's whole section set in one call,
   *replacing* (not appending to) any prior sections for that source — so a re-run never duplicates
   sections/facts or inflates counts (orphaned facts cascade with their sections). This holds
@@ -374,7 +385,12 @@ the paragraph model doesn't fit rows), and binary link content with no recognize
 video, archives). `.docx`/`.pptx` share the zip `PK` magic, so the extension (upload) or MIME
 header (link) is the discriminator; the parser confirms the inner structure. The decoupled
 design lives in `content-parser.ts` (registry), `source-parser.ts` (payload → document facade
-the pipeline depends on), and `link-resolver.ts` (fetch + detect).
+the pipeline depends on), and `link-resolver.ts` (fetch + detect). Every parser's output is
+control-character-sanitized at the boundary (`text/sanitize.ts`): extracted text routes through
+`sanitizeText`, which drops NUL and other C0/C1 control characters (PDF/pdf.js extraction is the
+common source of embedded NUL) so the canonical `raw_text` and everything derived from it is safe
+for the Postgres `text` store — a NUL would otherwise abort the write. The persistence layer also
+applies a NUL-only guard on write as a last line of defense.
 
 > **Daily-cap deferral.** Parsing is free (no tokens); the **AI passes** (segment/enrich/embed)
 > are the cost. When the owner is over their daily token cap, the pipeline parses the source,
@@ -402,7 +418,7 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
 | Data access | Type-safe query layer (Drizzle) | Explicit types end-to-end; no raw SQL by default |
 | LLM access | **Provider-agnostic gateway, default OpenRouter** | Swap models/providers without touching the harness |
 | Embeddings | **Provider-agnostic gateway, OpenRouter `/embeddings`** — default `perplexity/pplx-embed-v1-0.6b` | Single vendor with the LLM gateway; dimensions pinned to the vector column (`implementation.md` §3) |
-| Auth | **Google Sign-In (OIDC)** | The SPA gets a Google ID token (Google Identity Services); the API verifies it against Google's JWKS (`aud=GOOGLE_CLIENT_ID`, `email_verified`) and JIT-provisions users by email. No third-party auth service, no tenant, no extra Pulumi stack. `dev_bypass` mode for local/tests |
+| Auth | **Google Sign-In (OIDC)** | The SPA gets a Google ID token (Google Identity Services); the API verifies it against Google's JWKS (`aud=GOOGLE_CLIENT_ID`, `email_verified`) and JIT-provisions users by email. The token is persisted client-side in `sessionStorage` so it survives a page refresh (mechanism + expiry handling in `implementation.md` §5). No third-party auth service, no tenant, no extra Pulumi stack. `dev_bypass` mode for local/tests |
 
 ## 6. Interactions, Boundary & State
 
@@ -435,7 +451,7 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
       identity/        companion "home" model + store
       quota/           per-user daily token-cap state (P1, §4.8)
     api/               BFF / surface boundary (Fastify); memory + source + usage routes
-    web/               React web client; chat w/ citations, sources page, memory browser, usage badge
+    web/               React web client; chat w/ citations + ingestion-status panel, sources page, memory browser, usage badge
     shared/            shared TS types / contracts
     eval/              live memory-vs-performance harness (→ companionmemory.md §5)
   db/                  migrations & schema (→ implementation.md)

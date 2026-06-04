@@ -209,6 +209,58 @@ describe('source routes', () => {
     expect(progress.json().jobs[0].status).toBe('done');
   });
 
+  it('writes the attachment chip + acknowledgement to the transcript on a file upload', async () => {
+    const upload = multipartFile('Ceviche is cured in lime.', 'peru-notes.txt');
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/sources/file`,
+      headers: { ...auth, ...upload.headers },
+      payload: upload.payload,
+    });
+
+    expect(res.statusCode).toBe(202);
+    const { source, messages } = res.json();
+    // The upload returns its two persisted turns, both linked to the source.
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toMatchObject({
+      role: 'user',
+      content: 'peru-notes.txt',
+      sourceId: source.id,
+    });
+    expect(messages[1].role).toBe('assistant');
+    expect(messages[1].content).toMatch(/reading through "peru-notes\.txt" now/);
+    expect(messages[1].sourceId).toBe(source.id);
+
+    // They are real, reload-safe transcript turns (fetched back by id).
+    const transcript = await ctx.app.inject({
+      method: 'GET',
+      url: `/companions/${companionId}/messages`,
+      headers: auth,
+    });
+    const ids = transcript.json().messages.map((m: { id: string }) => m.id);
+    expect(ids).toContain(messages[0].id);
+    expect(ids).toContain(messages[1].id);
+  });
+
+  it('does not write an attachment turn for a note source', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/sources/note`,
+      headers: auth,
+      payload: { title: 'Peru notes', text: 'Ceviche is cured with lime.' },
+    });
+
+    expect(res.statusCode).toBe(202);
+    // The note route returns only the source + job — no transcript pair.
+    expect(res.json().messages).toBeUndefined();
+    // And a note never writes a user-role attachment turn (the completion
+    // announcement, if any, is an assistant turn — never a user one).
+    const userTurns = (await ctx.deps.memory.getRecentMessages(companionId, 50)).filter(
+      (m) => m.role === 'user',
+    );
+    expect(userTurns).toHaveLength(0);
+  });
+
   it('detects .md and .pptx kinds from the filename', async () => {
     const md = multipartFile('# Heading\n\nBody.', 'trip.md');
     const mdRes = await ctx.app.inject({

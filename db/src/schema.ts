@@ -81,6 +81,11 @@ export const messages = pgTable(
       .references(() => companions.id, { onDelete: 'cascade' }),
     role: text('role').$type<MessageRole>().notNull(),
     content: text('content').notNull(),
+    // Optional link to the source a turn is about — set on the attachment chip
+    // and acknowledgement an upload writes, so they reconstruct on reload. Null
+    // for ordinary typed turns. `set null` keeps the append-only transcript turn
+    // even if the source is later deleted.
+    sourceId: uuid('source_id').references(() => sources.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index('messages_companion_idx').on(table.companionId, table.seq)],

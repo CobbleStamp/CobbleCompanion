@@ -138,6 +138,12 @@ export {
   type IngestionPipelineOptions,
   type IngestionRunParams,
 } from './ingestion/pipeline.js';
+export {
+  LlmIngestionAnnouncer,
+  type IngestionAnnouncer,
+  type IngestionOutcome,
+  type LlmIngestionAnnouncerOptions,
+} from './ingestion/announcer.js';
 export { resumeDeferredJobs, type DeferredSweepDeps } from './ingestion/deferred-sweeper.js';
 
 // Logging
