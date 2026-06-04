@@ -7,7 +7,12 @@
 import { EMBEDDING_DIMENSIONS } from '@cobble/db';
 import { createTestDatabase } from '@cobble/db/testing';
 import {
+  composeRetrieveContext,
+  ConsolidationRunner,
+  ConsolidationService,
+  createEpisodicRetrieveContext,
   createSemanticRetrieveContext,
+  DrizzleEpisodicMemoryStore,
   DrizzleIdentityStore,
   DrizzleSemanticMemoryStore,
   DrizzleTokenQuotaStore,
@@ -95,6 +100,7 @@ export async function makeTestApp(
   const identity = new DrizzleIdentityStore(db);
   const memory = new TranscriptMemoryStore(db);
   const semantic = new DrizzleSemanticMemoryStore(db);
+  const episodic = new DrizzleEpisodicMemoryStore(db);
   const quota = new DrizzleTokenQuotaStore(db, { defaultCapTokens: config.tokenCapPerDay });
   const embeddings = new FakeEmbeddingGateway();
   const llmGateway = new FakeLlmGateway(chunks);
@@ -125,26 +131,52 @@ export async function makeTestApp(
       silentLogger,
       config.ingestionQueueMax,
     );
+  const consolidation = new ConsolidationRunner(
+    new ConsolidationService({
+      episodic,
+      memory,
+      identity,
+      llm: llmGateway,
+      embeddings,
+      consolidationModel: config.ingestionModel,
+      embeddingModel: config.embeddingModel,
+      embeddingDimensions: config.embeddingDimensions,
+      quota,
+      logger: silentLogger,
+    }),
+    silentLogger,
+  );
   const deps: AppDeps = {
     identity,
     memory,
     semantic,
+    episodic,
     embeddings,
     ingestion,
+    consolidation,
     harness: new Harness({
       gateway: llmGateway,
       memory,
       model: 'test-model',
       quota,
       logger: silentLogger,
-      retrieveContext: createSemanticRetrieveContext({
-        memory,
-        semantic,
-        embeddings,
-        embeddingModel: config.embeddingModel,
-        embeddingDimensions: config.embeddingDimensions,
-        logger: silentLogger,
-      }),
+      retrieveContext: composeRetrieveContext(
+        createEpisodicRetrieveContext({
+          episodic,
+          embeddings,
+          embeddingModel: config.embeddingModel,
+          embeddingDimensions: config.embeddingDimensions,
+          logger: silentLogger,
+        }),
+        createSemanticRetrieveContext({
+          memory,
+          semantic,
+          embeddings,
+          embeddingModel: config.embeddingModel,
+          embeddingDimensions: config.embeddingDimensions,
+          logger: silentLogger,
+        }),
+      ),
     }),
     quota,
     tokenVerifier,
@@ -167,6 +199,7 @@ export async function makeTestApp(
     bearerFor,
     close: async () => {
       await ingestion.whenIdle();
+      await consolidation.whenIdle();
       await app.close();
       await closeDb();
     },

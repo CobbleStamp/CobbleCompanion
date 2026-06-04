@@ -18,6 +18,7 @@ const snapshot: MemorySnapshotDto = {
   episodic: {
     status: 'available',
     messageCount: 2,
+    episodeCount: 1,
   },
   semantic: { status: 'available', sourceCount: 3, sectionCount: 12, factCount: 7, jobs: [] },
   procedural: { status: 'not_implemented', plannedPhase: 'Phase 3' },
@@ -119,7 +120,7 @@ describe('MemoryBrowser', () => {
   it('hides the transcript control for a companion with no messages', async () => {
     vi.mocked(getCompanionMemory).mockResolvedValue({
       ...snapshot,
-      episodic: { status: 'available', messageCount: 0 },
+      episodic: { status: 'available', messageCount: 0, episodeCount: 0 },
     });
 
     render(<MemoryBrowser companion={companion} onBack={() => {}} />);

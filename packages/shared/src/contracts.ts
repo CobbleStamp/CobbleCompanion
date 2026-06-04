@@ -185,6 +185,26 @@ export interface SemanticSearchResultDto {
   readonly score: number;
 }
 
+/**
+ * A consolidated episodic memory (Phase 2) — a time-anchored summary derived
+ * from the transcript. Surfaced in the memory browser's episode timeline and as
+ * a recall result.
+ */
+export interface EpisodeDto {
+  readonly id: string;
+  readonly summary: string;
+  readonly occurredStart: string;
+  readonly occurredEnd: string;
+  /** 0–1 salience weight, or null if the reflection pass omitted it. */
+  readonly salience: number | null;
+}
+
+/** One episodic-recall result for the memory browser (episode + fused score). */
+export interface EpisodeSearchResultDto {
+  readonly episode: EpisodeDto;
+  readonly score: number;
+}
+
 // --- Memory snapshot (the read-only memory browser, companionmemory.md) ---
 
 /**
@@ -206,6 +226,8 @@ export interface PlannedMemorySection {
 export interface EpisodicMemorySection {
   readonly status: 'available';
   readonly messageCount: number;
+  /** Consolidated episodes formed from the transcript so far (Phase 2). */
+  readonly episodeCount: number;
 }
 
 /** The semantic memory section — what the companion has read (Phase 1). */
@@ -259,6 +281,12 @@ export const semanticSearchSchema = z.object({
   topK: z.number().int().min(1).max(20).default(8),
 });
 export type SemanticSearchBody = z.infer<typeof semanticSearchSchema>;
+
+export const episodeSearchSchema = z.object({
+  query: z.string().trim().min(1).max(1_000),
+  topK: z.number().int().min(1).max(20).default(5),
+});
+export type EpisodeSearchBody = z.infer<typeof episodeSearchSchema>;
 
 // --- Provenance (Phase 1 grounded recall, docs/companionmemory.md) ---
 

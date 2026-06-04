@@ -6,10 +6,15 @@
 
 import { createPgDatabase, EMBEDDING_DIMENSIONS } from '@cobble/db';
 import {
+  composeRetrieveContext,
+  ConsolidationRunner,
+  ConsolidationService,
   consoleLogger,
+  createEpisodicRetrieveContext,
   createHttpLinkResolver,
   createSemanticRetrieveContext,
   createSourceParser,
+  DrizzleEpisodicMemoryStore,
   DrizzleIdentityStore,
   DrizzleSemanticMemoryStore,
   DrizzleTokenQuotaStore,
@@ -19,9 +24,11 @@ import {
   IngestionPipeline,
   IngestionRunner,
   LlmIngestionAnnouncer,
+  LlmPersonalityEvolver,
   OpenRouterEmbeddingGateway,
   OpenRouterGateway,
   resumeDeferredJobs,
+  sweepConsolidation,
   TranscriptMemoryStore,
   type EmbeddingGateway,
   type LlmGateway,
@@ -68,6 +75,7 @@ async function main(): Promise<void> {
   const identity = new DrizzleIdentityStore(db);
   const memory = new TranscriptMemoryStore(db);
   const semantic = new DrizzleSemanticMemoryStore(db);
+  const episodic = new DrizzleEpisodicMemoryStore(db);
   const quota = new DrizzleTokenQuotaStore(db, { defaultCapTokens: config.tokenCapPerDay });
   const llmGateway = createGateway(config);
   const embeddings = createEmbeddingGateway(config);
@@ -105,22 +113,62 @@ async function main(): Promise<void> {
     model: config.llmModel,
     quota,
     logger: consoleLogger,
-    retrieveContext: createSemanticRetrieveContext({
-      memory,
-      semantic,
-      embeddings,
-      embeddingModel: config.embeddingModel,
-      embeddingDimensions: config.embeddingDimensions,
-      logger: consoleLogger,
-    }),
+    // The memory-retrieval hook (invariant #3): episodic recall (P2) first, then
+    // semantic recall (P1) which appends the recency transcript window last — so
+    // a turn carries persona + memories + grounding + recent transcript, in order.
+    retrieveContext: composeRetrieveContext(
+      createEpisodicRetrieveContext({
+        episodic,
+        embeddings,
+        embeddingModel: config.embeddingModel,
+        embeddingDimensions: config.embeddingDimensions,
+        logger: consoleLogger,
+      }),
+      createSemanticRetrieveContext({
+        memory,
+        semantic,
+        embeddings,
+        embeddingModel: config.embeddingModel,
+        embeddingDimensions: config.embeddingDimensions,
+        logger: consoleLogger,
+      }),
+    ),
   });
+
+  // Episodic consolidation (P2): a metered reflection pass turns the transcript
+  // into episodes off the request path, and personality evolution grows the
+  // companion from them. The cheap ingestion model handles both reading passes.
+  const evolver = new LlmPersonalityEvolver({
+    identity,
+    episodic,
+    llm: llmGateway,
+    model: config.ingestionModel,
+    quota,
+    logger: consoleLogger,
+  });
+  const consolidationService = new ConsolidationService({
+    episodic,
+    memory,
+    identity,
+    llm: llmGateway,
+    embeddings,
+    consolidationModel: config.ingestionModel,
+    embeddingModel: config.embeddingModel,
+    embeddingDimensions: config.embeddingDimensions,
+    quota,
+    logger: consoleLogger,
+    evolver,
+  });
+  const consolidation = new ConsolidationRunner(consolidationService, consoleLogger);
 
   const app = await buildApp({
     identity,
     memory,
     semantic,
+    episodic,
     embeddings,
     ingestion,
+    consolidation,
     harness,
     quota,
     tokenVerifier: createTokenVerifier(config),
@@ -147,12 +195,28 @@ async function main(): Promise<void> {
   }, DEFERRED_SWEEP_INTERVAL_MS);
   sweepTimer.unref();
 
+  // Episodic consolidation catch-up: on startup and on a timer, request a
+  // reflection for any companion whose un-consolidated transcript tail is long
+  // enough (the runner coalesces + the service re-checks the threshold/cap). This
+  // also recovers companions whose post-turn trigger was lost to a restart.
+  const consolidationSweepDeps = { episodic, runner: consolidation, logger: consoleLogger };
+  await sweepConsolidation(consolidationSweepDeps);
+  const consolidationTimer = setInterval(() => {
+    void sweepConsolidation(consolidationSweepDeps).catch((error: unknown) => {
+      consoleLogger.error('consolidation sweep failed', { error });
+    });
+  }, CONSOLIDATION_SWEEP_INTERVAL_MS);
+  consolidationTimer.unref();
+
   await app.listen({ port: config.port, host: '0.0.0.0' });
   consoleLogger.info('api listening', { port: config.port });
 }
 
 /** How often to resume deferred ingestion jobs (cheap; just a status scan). */
 const DEFERRED_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+
+/** How often to catch up episodic consolidation (cheap; a pending-tail scan). */
+const CONSOLIDATION_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 main().catch((error: unknown) => {
   consoleLogger.error('api failed to start', { error });

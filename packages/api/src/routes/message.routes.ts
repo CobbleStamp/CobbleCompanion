@@ -19,7 +19,7 @@ export function registerMessageRoutes(
   deps: AppDeps,
   requireAuth: RequireAuth,
 ): void {
-  const { identity, memory, harness, quota, logger } = deps;
+  const { identity, memory, harness, quota, consolidation, logger } = deps;
 
   // Read the companion's transcript (oldest-first).
   app.get(
@@ -66,6 +66,12 @@ export function registerMessageRoutes(
         }),
         logger,
       );
+
+      // The turn's user + assistant messages are now persisted. Nudge the
+      // background reflection pass (coalesced + cap-gated + serial in the runner;
+      // it only consolidates once enough new turns accrue). Fire-and-forget: the
+      // response is already streamed, so this must never affect the turn.
+      consolidation.request(companion.id);
     },
   );
 }

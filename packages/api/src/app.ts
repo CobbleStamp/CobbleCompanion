@@ -1,5 +1,7 @@
 import type {
+  ConsolidationRunner,
   EmbeddingGateway,
+  EpisodicMemoryStore,
   Harness,
   IdentityStore,
   IngestionRunner,
@@ -20,6 +22,7 @@ import type { TokenVerifier } from './auth/jwt-verifier.js';
 import type { AppConfig } from './config.js';
 import { registerAuthRoutes } from './routes/auth.routes.js';
 import { registerCompanionRoutes } from './routes/companion.routes.js';
+import { registerEpisodeRoutes } from './routes/episode.routes.js';
 import { registerMemoryRoutes } from './routes/memory.routes.js';
 import { registerMessageRoutes } from './routes/message.routes.js';
 import { registerSourceRoutes } from './routes/source.routes.js';
@@ -36,8 +39,11 @@ export interface AppDeps {
   readonly identity: IdentityStore;
   readonly memory: MemoryStore;
   readonly semantic: SemanticMemoryStore;
+  readonly episodic: EpisodicMemoryStore;
   readonly embeddings: EmbeddingGateway;
   readonly ingestion: IngestionRunner;
+  /** Off-request episodic reflection — the message route requests it post-turn. */
+  readonly consolidation: ConsolidationRunner;
   readonly harness: Harness;
   readonly quota: TokenQuotaStore;
   readonly tokenVerifier: TokenVerifier;
@@ -121,6 +127,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerCompanionRoutes(app, deps, requireAuth);
   registerMessageRoutes(app, deps, requireAuth);
   registerMemoryRoutes(app, deps, requireAuth);
+  registerEpisodeRoutes(app, deps, requireAuth);
   registerSourceRoutes(app, deps, requireAuth);
   registerUsageRoutes(app, deps, requireAuth);
 
