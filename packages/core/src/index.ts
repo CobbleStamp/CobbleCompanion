@@ -8,6 +8,7 @@ export {
 
 // Memory
 export { TranscriptMemoryStore, type MemoryStore } from './memory/store.js';
+export { reciprocalRankFusion, RRF_K } from './memory/rrf.js';
 export {
   combineHits,
   DrizzleSemanticMemoryStore,
@@ -24,6 +25,14 @@ export {
   type SemanticSearchParams,
   type SourceRecord,
 } from './memory/semantic-store.js';
+export {
+  DrizzleEpisodicMemoryStore,
+  type EpisodeRecord,
+  type EpisodeSearchHit,
+  type EpisodeSearchParams,
+  type EpisodicMemoryStore,
+  type NewEpisode,
+} from './memory/episodic-store.js';
 
 // LLM gateway
 export {

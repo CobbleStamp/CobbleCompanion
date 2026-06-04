@@ -13,6 +13,7 @@ import type { IngestionStatus, SourceKind } from '@cobble/shared';
 import { and, count, desc, eq, notInArray, sql } from 'drizzle-orm';
 import type { ParsedDocument } from '../ingestion/parser.js';
 import { stripNul } from '../text/sanitize.js';
+import { reciprocalRankFusion } from './rrf.js';
 
 export interface CreateSourceInput {
   readonly kind: SourceKind;
@@ -183,33 +184,20 @@ interface RankedSection {
 }
 
 /**
- * Fuse the vector and lexical result lists with reciprocal-rank fusion
- * (score = Σ 1/(K + rank)) — scale-free, so cosine distances and ts_rank
- * scores never need calibrating against each other. Pure computation,
- * separated from the SQL orchestration for direct unit testing.
+ * Fuse the vector and lexical result lists with reciprocal-rank fusion — see
+ * {@link reciprocalRankFusion}. Section-specific wrapper (keyed by sectionId)
+ * kept exported for its direct unit tests.
  */
 export function combineHits(
   vectorRanked: readonly RankedSection[],
   lexicalRanked: readonly RankedSection[],
   topK: number,
 ): readonly SemanticSearchHit[] {
-  const RRF_K = 60;
-  const fused = new Map<string, { hit: Omit<SemanticSearchHit, 'score'>; score: number }>();
-  for (const list of [vectorRanked, lexicalRanked]) {
-    list.forEach(({ hit }, rank) => {
-      const existing = fused.get(hit.sectionId);
-      const increment = 1 / (RRF_K + rank + 1);
-      if (existing) {
-        fused.set(hit.sectionId, { hit: existing.hit, score: existing.score + increment });
-      } else {
-        fused.set(hit.sectionId, { hit, score: increment });
-      }
-    });
-  }
-  return [...fused.values()]
-    .sort((a, b) => b.score - a.score)
-    .slice(0, topK)
-    .map(({ hit, score }) => ({ ...hit, score }));
+  return reciprocalRankFusion(
+    [vectorRanked.map((r) => r.hit), lexicalRanked.map((r) => r.hit)],
+    (hit) => hit.sectionId,
+    topK,
+  ).map(({ item, score }) => ({ ...item, score }));
 }
 
 export class DrizzleSemanticMemoryStore implements SemanticMemoryStore {
