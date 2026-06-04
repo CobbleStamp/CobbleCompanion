@@ -4,13 +4,14 @@ A personal AI companion you name, raise, and bond with — one continuous, cloud
 that learns you and your world, acts on your behalf, and is **proactive** rather than passive.
 For the full product vision see [`docs/product-overview.md`](./docs/product-overview.md).
 
-> **Status: Phase 1 (knowledge organism) — done.** On top of the
-> Phase 0 walking skeleton (Google sign-in, companion creation, persisted streamed chat),
-> the companion now ingests sources (PDF / note / link) into semantic memory and grounds
-> its answers with citations. A TypeScript monorepo (`packages/{shared,core,api,web}` +
-> `db/`) with the agent-loop harness, provider-agnostic LLM and embedding gateways, and
-> an ≥80%-coverage test suite. Cloud Run deployment lives in `infra/` (Pulumi).
-> See `docs/development-plan.md` §3.
+> **Status: Phase 2 (memory & continuity) — done.** On top of the Phase 0 walking skeleton
+> (Google sign-in, companion creation, persisted streamed chat) and the Phase 1 knowledge
+> organism (sources → semantic memory → grounded, cited answers), the companion now forms
+> **episodic memory**: a background pass consolidates the conversation into time-anchored
+> episodes it recalls by topic + time, and its **personality evolves** from them. A TypeScript
+> monorepo (`packages/{shared,core,api,web}` + `db/`) with the agent-loop harness,
+> provider-agnostic LLM and embedding gateways, and an ≥80%-coverage test suite. Cloud Run
+> deployment lives in `infra/` (Pulumi). See `docs/development-plan.md` §3.
 
 ## Documentation
 

@@ -36,7 +36,7 @@ being is proven, because they add platform cost without changing whether the cor
 |---|---|---|---|---|
 | **0** | Foundations & walking skeleton | Web | You can talk to Cobble end-to-end; stack decided | ✅ **Done** (PR #1) |
 | **1** | The knowledge organism | Web | Ingest sources → semantic memory → grounded recall ⭐ | ✅ **Done** (PR #2) |
-| **2** | Memory & continuity | Web | Episodic memory, companion identity, cloud "home" | 🔨 **Implemented** — eval gate pending |
+| **2** | Memory & continuity | Web | Episodic memory, companion identity, cloud "home" | ✅ **Done** |
 | **3** | Tools, action & trust | Web | Tool/MCP use + propose→approve approval queue | Planned |
 | **4** | Proactivity engine | Web | Motivated, tunable initiative ⭐ | Planned |
 | **5** | Bond & growth | Web | Four-axis growth + visual character — the PoC complete | Planned |
@@ -126,10 +126,14 @@ loop change). **Personality evolution** re-synthesizes an `evolvedPersona` ("who
 you") from accumulated episodes and blends it into the persona prompt alongside the immutable
 seed temperament. Web adds the episode timeline + evolved persona to the memory browser; the eval
 harness gained a Phase-2 episodic config (tiny recency window + episodic recall) that
-`architecture.md` §4.3 / `companionmemory.md` §5 describe. **Gate before marking done:** run the
-live eval (episodic recall by time/topic beats recency-only without raising hallucination) and
-the manual e2e (hold a conversation across a consolidation boundary → it references the past
-episode accurately; the evolved persona reflects accumulated history).
+`architecture.md` §4.3 / `companionmemory.md` §5 describe. **Gate passed** (2026-06-04,
+`docs/eval/phase2-eval-20260604.txt`): the live eval shows the `episodic` config (recency
+window of **2**) recalling **100%** of buried facts at **0% hallucination** vs **33%** for
+`window-2` with the same window — episodic memory reaching beyond the recency window, the Phase 2
+differentiator. The manual e2e passed against the live stack: a conversation crossed the
+consolidation boundary → episodes formed (the key fact at salience 0.8), episodic search returned
+it top-ranked, the `evolvedPersona` reflected the accumulated history, and a recall question whose
+source turn was beyond the 20-message recency window was answered accurately from episodic memory.
 
 ### Phase 3 — Tools, Action & Trust
 **Goal:** Cobble can *act*, not just answer — safely.
