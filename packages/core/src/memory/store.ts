@@ -1,6 +1,19 @@
 import type { MessageDto, MessageRole } from '@cobble/shared';
 import { type Database, messages } from '@cobble/db';
-import { count, desc, eq } from 'drizzle-orm';
+import { and, count, desc, eq, gt } from 'drizzle-orm';
+
+/**
+ * A transcript turn with its monotonic `seq` and raw `createdAt` Date — the unit
+ * the episodic consolidation pass (Phase 2) reflects over. Distinct from
+ * `MessageDto` (the surface-facing shape, ISO-string time, no seq): consolidation
+ * needs the seq to advance its cursor and the Date to time-anchor episodes.
+ */
+export interface TranscriptEntry {
+  readonly seq: number;
+  readonly role: MessageRole;
+  readonly content: string;
+  readonly createdAt: Date;
+}
 
 /**
  * MemoryStore boundary (architecture.md invariant #2). The Phase 0 implementation
@@ -24,6 +37,16 @@ export interface MemoryStore {
   ): Promise<MessageDto>;
   /** Most recent `limit` messages, returned oldest-first for prompt assembly. */
   getRecentMessages(companionId: string, limit: number): Promise<readonly MessageDto[]>;
+  /**
+   * Transcript turns with `seq > afterSeq`, oldest-first, capped at `limit` — the
+   * window the episodic consolidation pass reflects over (Phase 2). Carries the
+   * `seq` cursor unit and the raw `createdAt` Date for episode time-anchoring.
+   */
+  getMessagesSince(
+    companionId: string,
+    afterSeq: number,
+    limit: number,
+  ): Promise<readonly TranscriptEntry[]>;
   /** Number of transcript messages the companion holds. */
   countMessages(companionId: string): Promise<number>;
 }
@@ -59,6 +82,25 @@ export class TranscriptMemoryStore implements MemoryStore {
       .slice()
       .sort((a, b) => a.seq - b.seq)
       .map(toMessageDto);
+  }
+
+  async getMessagesSince(
+    companionId: string,
+    afterSeq: number,
+    limit: number,
+  ): Promise<readonly TranscriptEntry[]> {
+    const rows = await this.db
+      .select()
+      .from(messages)
+      .where(and(eq(messages.companionId, companionId), gt(messages.seq, afterSeq)))
+      .orderBy(messages.seq)
+      .limit(limit);
+    return rows.map((row) => ({
+      seq: row.seq,
+      role: row.role,
+      content: row.content,
+      createdAt: row.createdAt,
+    }));
   }
 
   async countMessages(companionId: string): Promise<number> {

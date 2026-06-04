@@ -7,7 +7,13 @@ export {
 } from './identity/store.js';
 
 // Memory
-export { TranscriptMemoryStore, type MemoryStore } from './memory/store.js';
+export { TranscriptMemoryStore, type MemoryStore, type TranscriptEntry } from './memory/store.js';
+export {
+  consolidateWindow,
+  parseEpisodes,
+  type ConsolidationCandidate,
+  type PersonaSummary,
+} from './memory/consolidation.js';
 export { reciprocalRankFusion, RRF_K } from './memory/rrf.js';
 export {
   combineHits,
