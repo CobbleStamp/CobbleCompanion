@@ -254,9 +254,7 @@ describe('Harness inner loop (P3 tools)', () => {
       logger: silentLogger,
     });
 
-    const events = await collect(
-      harness.runTurn({ companion, userContent: 'go', ownerId: 'u1' }),
-    );
+    const events = await collect(harness.runTurn({ companion, userContent: 'go', ownerId: 'u1' }));
 
     expect(remember.calls).toEqual([]); // effectful held, not run
     expect(lookup.calls).toEqual([{ url: 'https://b.dev' }]); // read-only ran anyway
