@@ -187,7 +187,7 @@ export class Harness {
             this.logger,
             call.id,
           );
-          const logged = await this.afterToolCall(result, ctx);
+          const logged = await this.afterToolCall(result, gated, ctx);
           messages.push({
             role: 'tool',
             content: logged.content,

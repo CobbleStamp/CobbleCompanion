@@ -27,7 +27,7 @@ export function registerProposalRoutes(
   deps: AppDeps,
   requireAuth: RequireAuth,
 ): void {
-  const { identity, memory, proposals, tools, toolCallLog, quota, logger } = deps;
+  const { identity, memory, proposals, tools, toolCallLog, procedural, quota, logger } = deps;
 
   // The pending approval queue (the surface polls this while any are pending).
   app.get(
@@ -82,6 +82,19 @@ export function registerProposalRoutes(
       } catch (error) {
         logger.error('failed to log approved tool call', {
           operation: 'proposals.confirm.log',
+          companionId: companion.id,
+          proposalId,
+          error,
+        });
+      }
+      // Seed procedural memory: a successfully approved action becomes a learned,
+      // reusable workflow (Phase 3 seed — browse-only; retrieval is Phase 5).
+      // Best-effort: a failure here must not fail the action (logging.md).
+      try {
+        await procedural.record(companion.id, proposal.summary, [proposal.toolName]);
+      } catch (error) {
+        logger.error('failed to record procedural memory', {
+          operation: 'proposals.confirm.procedural',
           companionId: companion.id,
           proposalId,
           error,

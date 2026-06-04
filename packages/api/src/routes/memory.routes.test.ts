@@ -23,7 +23,7 @@ describe('memory routes', () => {
     await ctx.close();
   });
 
-  it('returns a sectioned snapshot with episodic, semantic, and planned sections', async () => {
+  it('returns a sectioned snapshot with episodic, semantic, and procedural sections', async () => {
     await ctx.deps.memory.appendMessage(companionId, 'user', 'hello');
     await ctx.deps.memory.appendMessage(companionId, 'assistant', 'hi');
 
@@ -40,7 +40,8 @@ describe('memory routes', () => {
     expect(memory.semantic.status).toBe('available');
     expect(memory.semantic.sourceCount).toBe(0);
     expect(memory.semantic.jobs).toEqual([]);
-    expect(memory.procedural.status).toBe('not_implemented');
+    expect(memory.procedural.status).toBe('available');
+    expect(memory.procedural.procedureCount).toBe(0);
   });
 
   it('reflects ingested sources in the semantic section and searches them', async () => {

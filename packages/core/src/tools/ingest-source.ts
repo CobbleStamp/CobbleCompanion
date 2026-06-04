@@ -51,6 +51,10 @@ export function createIngestSourceTool(options: IngestSourceOptions): Tool {
       additionalProperties: false,
     },
     effectful: true,
+    proposalSummary(args): string {
+      const url = readHttpUrlArg(args, 'url');
+      return url ? `Read ${url} into long-term memory` : 'Read a page into long-term memory';
+    },
     async run(rawArgs, ctx): Promise<ToolResult> {
       const url = readHttpUrlArg(rawArgs, 'url');
       if (url === null) {

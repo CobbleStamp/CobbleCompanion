@@ -140,10 +140,13 @@ export function MemoryBrowser({ companion, onBack }: MemoryBrowserProps): JSX.El
             </p>
             {snapshot.semantic.sectionCount > 0 && <SemanticSearch companionId={companion.id} />}
           </section>
-          <PlannedSection
-            title="Procedural — learned skills & workflows"
-            phase={snapshot.procedural.plannedPhase}
-          />
+          <section className="memory-section">
+            <h2>Procedural — learned skills & workflows</h2>
+            <p className="who">
+              {snapshot.procedural.procedureCount} learned workflow
+              {snapshot.procedural.procedureCount === 1 ? '' : 's'}
+            </p>
+          </section>
         </div>
       )}
     </main>
@@ -279,21 +282,6 @@ function SemanticSearch({ companionId }: SemanticSearchProps): JSX.Element {
         </ul>
       )}
     </div>
-  );
-}
-
-interface PlannedSectionProps {
-  readonly title: string;
-  readonly phase: string;
-}
-
-/** A designed-but-unbuilt memory kind, shown so the full shape is visible. */
-function PlannedSection({ title, phase }: PlannedSectionProps): JSX.Element {
-  return (
-    <section className="memory-section planned">
-      <h2>{title}</h2>
-      <p className="who">Coming soon · planned for {phase}</p>
-    </section>
   );
 }
 

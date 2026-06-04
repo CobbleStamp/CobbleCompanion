@@ -72,7 +72,12 @@ export type RetrieveContext = (params: RetrieveParams) => Promise<RetrieveResult
 
 // tool hooks — gate around every tool call (P3)
 export type BeforeToolCall = (call: ToolCall, ctx: TurnCtx) => Promise<ToolCall | Block>;
-export type AfterToolCall = (result: ToolResult, ctx: TurnCtx) => Promise<ToolResult>;
+// `call` is the executed call (name + args), so the after-hook can log it.
+export type AfterToolCall = (
+  result: ToolResult,
+  call: ToolCall,
+  ctx: TurnCtx,
+) => Promise<ToolResult>;
 
 // initiation hook — produces a non-human ENTRY (P4)
 export type Initiator = (companionId: string) => Promise<Entry | null>;

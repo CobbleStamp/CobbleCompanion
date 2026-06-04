@@ -64,6 +64,13 @@
       "when": 1780581739779,
       "tag": "0008_curly_scourge",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1780581987171,
+      "tag": "0009_worthless_doctor_octopus",
+      "breakpoints": true
     }
   ]
 }

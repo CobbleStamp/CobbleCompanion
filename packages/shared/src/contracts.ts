@@ -208,17 +208,6 @@ export interface EpisodeSearchResultDto {
 // --- Memory snapshot (the read-only memory browser, companionmemory.md) ---
 
 /**
- * A memory section that is designed but not yet built. The browser renders these
- * as "coming soon" panels so the full knowledge-base shape is visible before the
- * stores exist (procedural = P3). See companionmemory.md.
- */
-export interface PlannedMemorySection {
-  readonly status: 'not_implemented';
-  /** Phase that introduces this memory kind, for the browser to surface. */
-  readonly plannedPhase: string;
-}
-
-/**
  * The episodic memory section — the companion's single continuous transcript
  * (implementation.md §1). One companion holds one lifelong conversation, so
  * this is a single message stream, not a list.
@@ -239,6 +228,38 @@ export interface SemanticMemorySection {
   readonly jobs: readonly IngestionJobDto[];
 }
 
+/** The procedural memory section — learned workflows the companion can reuse (Phase 3). */
+export interface ProceduralMemorySection {
+  readonly status: 'available';
+  readonly procedureCount: number;
+}
+
+/** A learned, reusable workflow recorded after a successful action (Phase 3 seed). */
+export interface ProcedureDto {
+  readonly id: string;
+  readonly title: string;
+  /** The ordered tool steps the workflow ran. */
+  readonly steps: readonly string[];
+  readonly createdAt: string;
+}
+
+/** Lifecycle of a discovered lead in the companion's reading list (Phase 3). */
+export type LeadStatus = 'new' | 'read' | 'ingested' | 'discarded';
+
+/**
+ * A discovered-but-unread lead in the companion's reading list (Phase 3) — e.g.
+ * a URL spotted while reading. The persistent substrate the Phase 4 motivation
+ * engine will work through on idle; in Phase 3 it is worked on the user's command.
+ */
+export interface LeadDto {
+  readonly id: string;
+  readonly url: string;
+  /** Why it was captured (the page/topic it came from). */
+  readonly why: string | null;
+  readonly status: LeadStatus;
+  readonly createdAt: string;
+}
+
 /**
  * A read-only snapshot of everything a companion "holds", grouped by memory kind
  * so new kinds slot in without reshaping the client (architecture.md invariant #2).
@@ -247,7 +268,7 @@ export interface MemorySnapshotDto {
   readonly identity: CompanionDto;
   readonly episodic: EpisodicMemorySection;
   readonly semantic: SemanticMemorySection;
-  readonly procedural: PlannedMemorySection;
+  readonly procedural: ProceduralMemorySection;
 }
 
 // --- Request bodies (validated at the API boundary) ---

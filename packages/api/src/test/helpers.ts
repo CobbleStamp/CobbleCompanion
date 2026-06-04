@@ -12,11 +12,15 @@ import {
   ConsolidationService,
   createEpisodicRetrieveContext,
   createMemoizingEmbeddingGateway,
+  createApprovalGate,
   createIngestSourceTool,
+  createLoggingAfterToolCall,
   createMemorySearchTool,
   createSemanticRetrieveContext,
   DrizzleEpisodicMemoryStore,
   DrizzleIdentityStore,
+  DrizzleLeadStore,
+  DrizzleProceduralStore,
   DrizzleProposalStore,
   DrizzleSemanticMemoryStore,
   DrizzleTokenQuotaStore,
@@ -170,6 +174,8 @@ export async function makeTestApp(
   ]);
   const proposals = new DrizzleProposalStore(db);
   const toolCallLog = new DrizzleToolCallLog(db);
+  const leads = new DrizzleLeadStore(db);
+  const procedural = new DrizzleProceduralStore(db);
   const deps: AppDeps = {
     identity,
     memory,
@@ -181,12 +187,17 @@ export async function makeTestApp(
     tools,
     proposals,
     toolCallLog,
+    leads,
+    procedural,
     harness: new Harness({
       gateway: llmGateway,
       memory,
       model: 'test-model',
       quota,
       logger: silentLogger,
+      registry: tools,
+      beforeToolCall: createApprovalGate(proposals, tools, silentLogger),
+      afterToolCall: createLoggingAfterToolCall(toolCallLog, silentLogger),
       retrieveContext: composeRetrieveContext(
         silentLogger,
         createEpisodicRetrieveContext({

@@ -4,11 +4,19 @@ export { ToolRegistry } from './tools/registry.js';
 export { dispatchTool } from './tools/dispatch.js';
 export {
   DrizzleProposalStore,
+  toProposalDto,
   type CreateProposalInput,
   type ProposalRecord,
   type ProposalStore,
 } from './tools/proposal-store.js';
 export { DrizzleToolCallLog, type ToolCallLog, type ToolCallRecord } from './tools/tool-call-log.js';
+export { createApprovalGate, createLoggingAfterToolCall } from './tools/gate.js';
+export { DrizzleLeadStore, type LeadRecord, type LeadStore } from './tools/lead-store.js';
+export {
+  DrizzleProceduralStore,
+  type ProceduralStore,
+  type ProcedureRecord,
+} from './tools/procedural-store.js';
 export { createWebFetchTool, type WebFetchOptions } from './tools/web-fetch.js';
 export {
   createMemorySearchTool,

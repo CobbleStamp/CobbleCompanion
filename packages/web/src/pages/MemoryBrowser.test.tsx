@@ -27,7 +27,7 @@ const snapshot: MemorySnapshotDto = {
     episodeCount: 1,
   },
   semantic: { status: 'available', sourceCount: 3, sectionCount: 12, factCount: 7, jobs: [] },
-  procedural: { status: 'not_implemented', plannedPhase: 'Phase 3' },
+  procedural: { status: 'available', procedureCount: 0 },
 };
 
 const transcript: MessageDto[] = [
@@ -67,7 +67,7 @@ describe('MemoryBrowser', () => {
     vi.mocked(searchEpisodes).mockReset().mockResolvedValue([]);
   });
 
-  it('renders identity, the episodic transcript, semantic counts, and planned sections', async () => {
+  it('renders identity, the episodic transcript, semantic counts, and procedural memory', async () => {
     render(<MemoryBrowser companion={companion} onBack={() => {}} />);
 
     await waitFor(() => expect(screen.getByText(/Episodic — conversation/)).toBeTruthy());
@@ -75,8 +75,8 @@ describe('MemoryBrowser', () => {
     expect(screen.getByText(/2 messages in one continuous conversation/)).toBeTruthy();
     // The semantic store surfaces what the companion has read.
     expect(screen.getByText(/3 sources · 12 sections · 7 facts/)).toBeTruthy();
-    // Designed-but-unbuilt sections surface their planned phase.
-    expect(screen.getByText(/planned for Phase 3/)).toBeTruthy();
+    // Procedural memory surfaces its learned-workflow count (Phase 3).
+    expect(screen.getByText(/0 learned workflows/)).toBeTruthy();
   });
 
   it('toggles the one continuous transcript, loading it keyed by companion alone', async () => {

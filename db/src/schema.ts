@@ -1,4 +1,10 @@
-import type { IngestionStatus, MessageRole, ProposalStatus, SourceKind } from '@cobble/shared';
+import type {
+  IngestionStatus,
+  LeadStatus,
+  MessageRole,
+  ProposalStatus,
+  SourceKind,
+} from '@cobble/shared';
 import { sql } from 'drizzle-orm';
 import {
   bigint,
@@ -11,6 +17,7 @@ import {
   real,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
   vector,
 } from 'drizzle-orm/pg-core';
@@ -343,6 +350,53 @@ export const toolCalls = pgTable(
   (table) => [index('tool_calls_companion_idx').on(table.companionId, table.seq)],
 );
 
+/**
+ * Lead inventory (Phase 3) — the companion's reading list: URLs discovered but
+ * not yet read (e.g. links spotted while reading a page). The durable substrate
+ * the Phase 4 motivation engine works through on idle; in Phase 3 it is worked on
+ * the user's command. `(companion_id, url)` is unique so re-discovering a link is
+ * idempotent. `seq` gives a stable order; `status` tracks new→read→ingested.
+ */
+export const leads = pgTable(
+  'leads',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    seq: bigserial('seq', { mode: 'number' }).notNull(),
+    companionId: uuid('companion_id')
+      .notNull()
+      .references(() => companions.id, { onDelete: 'cascade' }),
+    url: text('url').notNull(),
+    // Why it was captured — the page/topic it came from. Null for user-added.
+    why: text('why'),
+    status: text('status').$type<LeadStatus>().notNull().default('new'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('leads_companion_url_uniq').on(table.companionId, table.url),
+    index('leads_companion_status_idx').on(table.companionId, table.status),
+  ],
+);
+
+/**
+ * Procedural memory (Phase 3 seed) — a learned, reusable workflow recorded after
+ * a successful action (`steps` = the ordered tool names it ran). Browsable now;
+ * retrieval-as-hint is deferred to the growth system (Phase 5).
+ */
+export const proceduralMemories = pgTable(
+  'procedural_memories',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    seq: bigserial('seq', { mode: 'number' }).notNull(),
+    companionId: uuid('companion_id')
+      .notNull()
+      .references(() => companions.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    steps: jsonb('steps').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('procedural_companion_idx').on(table.companionId, table.seq)],
+);
+
 export const userTokenUsage = pgTable('user_token_usage', {
   userId: uuid('user_id')
     .primaryKey()
@@ -364,5 +418,7 @@ export const schema = {
   facts,
   proposals,
   toolCalls,
+  leads,
+  proceduralMemories,
   userTokenUsage,
 };

@@ -6,7 +6,7 @@
  */
 
 import { proposals, type Database } from '@cobble/db';
-import type { ProposalStatus } from '@cobble/shared';
+import type { ProposalDto, ProposalStatus } from '@cobble/shared';
 import { and, desc, eq } from 'drizzle-orm';
 
 export interface CreateProposalInput {
@@ -103,6 +103,17 @@ export class DrizzleProposalStore implements ProposalStore {
       .returning();
     return row ? toRecord(row) : null;
   }
+}
+
+/** Project a stored proposal to the wire DTO (shared by the gate and the routes). */
+export function toProposalDto(proposal: ProposalRecord): ProposalDto {
+  return {
+    id: proposal.id,
+    toolName: proposal.toolName,
+    summary: proposal.summary,
+    status: proposal.status,
+    createdAt: proposal.createdAt.toISOString(),
+  };
 }
 
 type ProposalRow = typeof proposals.$inferSelect;

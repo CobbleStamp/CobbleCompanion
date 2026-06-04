@@ -21,6 +21,12 @@ export interface Tool {
   readonly effectful: boolean;
   /** Execute the call. Must resolve (errors become an error {@link ToolResult}). */
   run(args: Record<string, unknown>, ctx: TurnCtx): Promise<ToolResult>;
+  /**
+   * A short, user-facing description of what approving this call will do, shown
+   * in the approval card. Only meaningful for effectful tools; a generic summary
+   * is used when omitted.
+   */
+  proposalSummary?(args: Record<string, unknown>): string;
 }
 
 /** Project a tool to the wire shape the LLM gateway advertises to the provider. */
