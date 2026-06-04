@@ -12,6 +12,7 @@ import {
   consoleLogger,
   createEpisodicRetrieveContext,
   createHttpLinkResolver,
+  createMemoizingEmbeddingGateway,
   createSemanticRetrieveContext,
   createSourceParser,
   DrizzleEpisodicMemoryStore,
@@ -79,6 +80,10 @@ async function main(): Promise<void> {
   const quota = new DrizzleTokenQuotaStore(db, { defaultCapTokens: config.tokenCapPerDay });
   const llmGateway = createGateway(config);
   const embeddings = createEmbeddingGateway(config);
+  // Shared by the retrieve-context arms only: collapses each turn's duplicate
+  // query embedding into one provider call. Ingestion keeps the raw gateway —
+  // it embeds distinct chunks, so a one-entry memo would only ever miss.
+  const retrievalEmbeddings = createMemoizingEmbeddingGateway(embeddings);
 
   const ingestion = new IngestionRunner(
     new IngestionPipeline({
@@ -119,7 +124,9 @@ async function main(): Promise<void> {
     retrieveContext: composeRetrieveContext(
       createEpisodicRetrieveContext({
         episodic,
-        embeddings,
+        // Both arms embed the same query; a shared one-entry memo collapses the
+        // duplicate into one provider round-trip (the arms run sequentially).
+        embeddings: retrievalEmbeddings,
         embeddingModel: config.embeddingModel,
         embeddingDimensions: config.embeddingDimensions,
         logger: consoleLogger,
@@ -127,7 +134,7 @@ async function main(): Promise<void> {
       createSemanticRetrieveContext({
         memory,
         semantic,
-        embeddings,
+        embeddings: retrievalEmbeddings,
         embeddingModel: config.embeddingModel,
         embeddingDimensions: config.embeddingDimensions,
         logger: consoleLogger,

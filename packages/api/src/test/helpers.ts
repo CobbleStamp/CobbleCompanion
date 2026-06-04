@@ -11,6 +11,7 @@ import {
   ConsolidationRunner,
   ConsolidationService,
   createEpisodicRetrieveContext,
+  createMemoizingEmbeddingGateway,
   createSemanticRetrieveContext,
   DrizzleEpisodicMemoryStore,
   DrizzleIdentityStore,
@@ -103,6 +104,9 @@ export async function makeTestApp(
   const episodic = new DrizzleEpisodicMemoryStore(db);
   const quota = new DrizzleTokenQuotaStore(db, { defaultCapTokens: config.tokenCapPerDay });
   const embeddings = new FakeEmbeddingGateway();
+  // Retrieval arms share a memoizing gateway (mirrors index.ts); ingestion and
+  // consolidation use the raw fake.
+  const retrievalEmbeddings = createMemoizingEmbeddingGateway(embeddings);
   const llmGateway = new FakeLlmGateway(chunks);
   const tokenVerifier = new FakeTokenVerifier();
   // Queue cap comes from config, mirroring production wiring (index.ts).
@@ -163,7 +167,7 @@ export async function makeTestApp(
       retrieveContext: composeRetrieveContext(
         createEpisodicRetrieveContext({
           episodic,
-          embeddings,
+          embeddings: retrievalEmbeddings,
           embeddingModel: config.embeddingModel,
           embeddingDimensions: config.embeddingDimensions,
           logger: silentLogger,
@@ -171,7 +175,7 @@ export async function makeTestApp(
         createSemanticRetrieveContext({
           memory,
           semantic,
-          embeddings,
+          embeddings: retrievalEmbeddings,
           embeddingModel: config.embeddingModel,
           embeddingDimensions: config.embeddingDimensions,
           logger: silentLogger,

@@ -11,9 +11,12 @@ import type { EmbeddingGateway, EmbeddingParams, EmbeddingResult } from './gatew
 
 export class FakeEmbeddingGateway implements EmbeddingGateway {
   lastParams: EmbeddingParams | null = null;
+  /** Number of times embed() actually ran — lets tests assert call dedup. */
+  calls = 0;
 
   async embed(params: EmbeddingParams): Promise<EmbeddingResult> {
     this.lastParams = params;
+    this.calls++;
     const promptTokens = estimateTokens(params.input.join('\n'));
     return {
       vectors: params.input.map((text) => hashToUnitVector(text, params.dimensions)),

@@ -12,6 +12,7 @@ import {
   composeRetrieveContext,
   ConsolidationService,
   createEpisodicRetrieveContext,
+  createMemoizingEmbeddingGateway,
   createSemanticRetrieveContext,
   DrizzleEpisodicMemoryStore,
   DrizzleIdentityStore,
@@ -169,12 +170,15 @@ async function main(): Promise<void> {
  * sources were ingested) and prepend the episodic arm — recency appears once.
  */
 function makeHarness(deps: EvalDeps, config: MemoryConfig): Harness {
+  // Mirror production: the two retrieval arms share one memoizing gateway so the
+  // turn's duplicate query embedding is a single live call (compose-retrieve.ts).
+  const retrievalEmbeddings = createMemoizingEmbeddingGateway(deps.embeddings);
   const semanticArm =
     config.semantic || config.episodic
       ? createSemanticRetrieveContext({
           memory: deps.memory,
           semantic: deps.semantic,
-          embeddings: deps.embeddings,
+          embeddings: retrievalEmbeddings,
           embeddingModel: deps.embeddingModel,
           embeddingDimensions: EMBEDDING_DIMENSIONS,
           topK: config.semantic?.topK ?? SEMANTIC_TOP_K,
@@ -187,7 +191,7 @@ function makeHarness(deps: EvalDeps, config: MemoryConfig): Harness {
     arms.push(
       createEpisodicRetrieveContext({
         episodic: deps.episodic,
-        embeddings: deps.embeddings,
+        embeddings: retrievalEmbeddings,
         embeddingModel: deps.embeddingModel,
         embeddingDimensions: EMBEDDING_DIMENSIONS,
         topK: config.episodic.topK,

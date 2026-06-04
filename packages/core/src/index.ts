@@ -91,6 +91,7 @@ export {
   type OpenRouterEmbeddingConfig,
 } from './embedding/openrouter.js';
 export { FakeEmbeddingGateway, hashToUnitVector } from './embedding/fake.js';
+export { createMemoizingEmbeddingGateway } from './embedding/memoizing.js';
 
 // Harness (the agent loop)
 export { Harness, type HarnessOptions, type RunTurnParams } from './harness/harness.js';
