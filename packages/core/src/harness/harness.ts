@@ -1,4 +1,4 @@
-import type { ChatStreamEvent, Citation, CompanionDto } from '@cobble/shared';
+import type { ChatStreamEvent, Citation, CompanionDto, ProposalDto } from '@cobble/shared';
 import type { LlmGateway, LlmMessage } from '../llm/gateway.js';
 import { consoleLogger, type Logger } from '../logging.js';
 import type { MemoryStore } from '../memory/store.js';
@@ -173,18 +173,25 @@ export class Harness {
         // context so the provider can correlate the results we append next.
         messages.push({ role: 'assistant', content: turnText, toolCalls });
 
+        // Walk EVERY requested call. Read-only calls run now; each effectful
+        // call is held as its own proposal. We collect all held proposals across
+        // the turn instead of bailing on the first — otherwise a turn that asks
+        // to remember two sources (or to remember one and look up another) would
+        // silently drop everything after the first blocked call. Nothing
+        // effectful runs here regardless; held actions wait for approval.
+        const heldProposals: ProposalDto[] = [];
+        let blocked = false;
+        let blockReason = '';
         for (const call of toolCalls) {
           const gated = await this.beforeToolCall(call, ctx);
           if (isBlock(gated)) {
-            // Propose→approve: the action is held, not run. Record what the
-            // companion said (or the proposal summary), surface the proposal, EXIT.
-            const text =
-              turnText.trim().length > 0 ? turnText : (gated.proposal?.summary ?? gated.reason);
+            blocked = true;
             if (gated.proposal) {
-              yield { type: 'proposal', proposal: gated.proposal };
+              heldProposals.push(gated.proposal);
+            } else if (blockReason === '') {
+              blockReason = gated.reason;
             }
-            yield* this.finish(companion.id, ownerId, text, retrievalUsage, acc);
-            return;
+            continue;
           }
           const result = await dispatchTool(
             this.registry,
@@ -200,6 +207,23 @@ export class Harness {
             content: logged.content,
             ...(call.id !== undefined ? { toolCallId: call.id } : {}),
           });
+        }
+
+        // Any held action means the run pauses for approval: surface every
+        // proposal, record what the companion said, and EXIT. Approving a
+        // proposal re-enters through the confirm route (state lives at the home).
+        if (blocked) {
+          for (const proposal of heldProposals) {
+            yield { type: 'proposal', proposal };
+          }
+          const text =
+            turnText.trim().length > 0
+              ? turnText
+              : heldProposals.length > 0
+                ? heldProposals.map((proposal) => proposal.summary).join('\n')
+                : blockReason;
+          yield* this.finish(companion.id, ownerId, text, retrievalUsage, acc);
+          return;
         }
       }
     } catch (error) {

@@ -174,6 +174,96 @@ describe('Harness inner loop (P3 tools)', () => {
     expect(gateway.calls).toHaveLength(1); // exited; no second model turn
   });
 
+  it('holds every effectful call in a turn as its own proposal (no dropped calls)', async () => {
+    const tool = recordingTool('ingest_source', true, 'ingested');
+    // A gate that blocks every effectful call, minting a distinct proposal per
+    // call so we can assert both survive (not just the first).
+    const gate = async (c: HookToolCall, _ctx: TurnCtx): Promise<HookToolCall | Block> => {
+      if (!('args' in c)) return c;
+      const url = (c.args as { url?: string }).url ?? '';
+      const proposal: ProposalDto = {
+        id: `p-${url}`,
+        toolName: c.name,
+        summary: `Remember ${url}`,
+        status: 'pending',
+        createdAt: new Date('2026-01-02').toISOString(),
+      };
+      return { blocked: true, reason: 'needs approval', proposal };
+    };
+    const gateway = new FakeLlmGateway([
+      {
+        chunks: ['Let me save both. '],
+        toolCalls: [
+          call('ingest_source', { url: 'https://a.dev' }),
+          call('ingest_source', { url: 'https://b.dev' }),
+        ],
+      },
+    ]);
+    const harness = new Harness({
+      gateway,
+      memory: memory(),
+      model: 'm',
+      registry: new ToolRegistry([tool]),
+      beforeToolCall: gate,
+      logger: silentLogger,
+    });
+
+    const events = await collect(
+      harness.runTurn({ companion, userContent: 'save both', ownerId: 'u1' }),
+    );
+
+    expect(tool.calls).toEqual([]); // still nothing executed
+    const proposals = events
+      .filter((e) => e.type === 'proposal')
+      .map((e) => (e.type === 'proposal' ? e.proposal.summary : ''));
+    // Both calls became proposals — the second is no longer silently dropped.
+    expect(proposals).toEqual(['Remember https://a.dev', 'Remember https://b.dev']);
+    expect(gateway.calls).toHaveLength(1); // exited once, after collecting both
+  });
+
+  it('still runs a read-only call that follows a blocked effectful call', async () => {
+    const lookup = recordingTool('web_fetch', false, 'PAGE TEXT');
+    const remember = recordingTool('ingest_source', true, 'ingested');
+    const proposal: ProposalDto = {
+      id: 'p1',
+      toolName: 'ingest_source',
+      summary: 'Remember https://a.dev',
+      status: 'pending',
+      createdAt: new Date('2026-01-02').toISOString(),
+    };
+    const gate = async (c: HookToolCall, _ctx: TurnCtx): Promise<HookToolCall | Block> =>
+      'name' in c && c.name === 'ingest_source'
+        ? { blocked: true, reason: 'needs approval', proposal }
+        : c;
+    // The effectful call comes FIRST; the read-only one must still run.
+    const gateway = new FakeLlmGateway([
+      {
+        chunks: ['Working on it. '],
+        toolCalls: [
+          call('ingest_source', { url: 'https://a.dev' }),
+          call('web_fetch', { url: 'https://b.dev' }),
+        ],
+      },
+    ]);
+    const harness = new Harness({
+      gateway,
+      memory: memory(),
+      model: 'm',
+      registry: new ToolRegistry([lookup, remember]),
+      beforeToolCall: gate,
+      logger: silentLogger,
+    });
+
+    const events = await collect(
+      harness.runTurn({ companion, userContent: 'go', ownerId: 'u1' }),
+    );
+
+    expect(remember.calls).toEqual([]); // effectful held, not run
+    expect(lookup.calls).toEqual([{ url: 'https://b.dev' }]); // read-only ran anyway
+    expect(events.some((e) => e.type === 'proposal')).toBe(true);
+    expect(events.some((e) => e.type === 'done')).toBe(true);
+  });
+
   it('logs every tool call via afterToolCall', async () => {
     const tool = recordingTool('web_fetch', false, 'TEXT');
     const logged: string[] = [];
