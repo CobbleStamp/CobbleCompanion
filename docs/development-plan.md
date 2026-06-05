@@ -194,15 +194,16 @@ deterministic tests; the will only by measurement — so it lands on a trusted f
 - **Presence-aware behaviour.** The engine reads its environment — chiefly a **presence spectrum**
   (active / attentive / away / absent, from a client heartbeat + activity recency) — and picks a
   fitting expression: engage you when present, do solo work when you're away (surfaced on return),
-  and **stay idle** when nothing is worth doing. *(Phase 4 v1 expresses this through autonomous
-  proposals only; engaging you with unprompted messages is deferred — see below.)*
+  and **stay idle** when nothing is worth doing. *(Phase 4.1 expresses solo work by **reading** leads
+  into memory and posting one report note; unprompted conversation beyond that is deferred — below.)*
 - **Lazy, web-appropriate trigger.** Proactive turns fire on user activity + on return + a periodic
   sweep — not an always-on per-companion drain. The companion **works its lead inventory** — the
   same exploration loop Phase 3 ran on command, now self-triggered. *(Genuine work **while you're
   away** — continuous between-visit activity — is **deferred to Phase 6**, where push gives it an
   audience.)*
 - **Cheap arbitration, then a burst.** A token-free heuristic gate (drive × salience) decides
-  *whether* to act; only on commit does an LLM burst run the move. "Idle is a valid outcome."
+  *whether* to act; only on commit does the burst spend real tokens (reading leads into memory, **no
+  approval**), sized to what energy affords. "Idle is a valid outcome."
 - **Attention model (the "creature"):** each initiation is a **bounded burst**, not a full drain
   of the inventory — designed to be shaped by personality parameters **focus length**, **boredom**
   (interest decays without payoff), and **distractibility** (a higher-salience lead preempts).
@@ -213,48 +214,52 @@ deterministic tests; the will only by measurement — so it lands on a trusted f
   **stamina** (user-initiated work) and **energy** (the engine's self-initiated work) — so autonomy
   can never starve conversation (`architecture.md` §4.8). Phase 4 ships the mechanism plus a
   **simple meter + manual top-up**; the full feeding/"food" game economy is **Phase 5**.
-- **Reinforcement (v1).** Hard approval signals (approved / rejected / dismissed / ignored) update
-  interpretable per-drive weights, so the companion learns what lands — and a Cobble, starting
-  **neutral**, is *raised* into its personality rather than born with one. *(The LLM-critic
-  feeling-score and a deeper policy are deferred with conversational proactivity.)*
+- **Reinforcement (sentiment).** The companion learns from **conversation**: after it reads, it
+  posts a report note, and an LLM critic reads the **sentiment** of the user's reaction (valence
+  −1..1) → an EMA nudge to interpretable per-drive weights. No approve/reject button; neutral
+  reactions don't shift personality. A Cobble starting **neutral** is *raised* into its personality.
+  *(A deeper contextual-bandit policy is deferred.)*
 - Tunable frequency/intensity controls (a per-companion off/gentle/active dial).
 
 Full mechanism (drive taxonomy, arbitration, seeding, learning, examples) →
 `companion-motivation.md`.
 
-**Done when:** on opening the app with no prompt, Cobble offers genuinely relevant **proposals**
-(from working its reading list); users can dial it down; energy is consumed and, when exhausted,
-initiation stops while chat keeps working; reward is captured to track helpful-vs-annoying.
+**Done when:** on opening the app with no prompt, Cobble **reads** genuinely relevant leads from its
+list on its own and reports back in one note; users can dial it down; energy is consumed and, when
+exhausted, initiation stops while chat keeps working; the user's reaction to the note is read as
+sentiment and shifts the drive weight (helpful-vs-annoying, learned from conversation).
 
 **Key risk:** annoyance. Gate behind tunability + the energy budget, and measure
 engagement/dismissal (the reinforcement signal) from day one.
 
-**Deferred (designed here, built later):** **unprompted conversation** (tips/questions/check-ins) +
-the LLM-critic + a sense of **purpose/agenda** → a later phase (Phase 4 v1 is proposal-only);
-continuous work-while-away → Phase 6 (needs push); the stamina/energy **game economy** (food types,
-feeding, store, rich meters) → Phase 5; deeper RL beyond the v1 weight update.
+**Deferred (designed here, built later):** **unprompted conversation** beyond the report note
+(tips/questions/check-ins) + a sense of **purpose/agenda** → a later phase; continuous
+work-while-away → Phase 6 (needs push); the stamina/energy **game economy** (food types, feeding,
+store, rich meters) → Phase 5; deeper RL beyond the EMA weight update; **approval for outward/
+irreversible tools** (when such tools exist — autonomous reads are internal + energy-bounded today).
 
-**Implemented** (this branch): the reserved `Initiator` seam is filled by a **motivation engine**
-(`packages/core/src/motivation/`) that fills it on a **lazy trigger** — `motivation.request` on a
-sent turn + on opening the transcript (return), plus a periodic `sweepMotivation`, all coalesced off
-the request path by a `MotivationRunner` (mirrors the consolidation runner). Each tick reads
-**drives × presence** and either stays idle (token-free) or runs a **bounded explore burst**: a
-**presence spectrum** (`presence.ts`, fed by a heartbeat) gates self-initiation; a token-free
-**arbitration** gate (`arbitration.ts`: `pressure = level × weight` vs the dial threshold) decides;
-when it commits, `runExploreBurst` turns the **lead inventory** into **autonomous ingest proposals**
-(the extracted P3 `/explore` path, now self-triggered). **Stamina/energy** split the old daily cap
-into two pools — chat draws stamina, the engine draws **energy** (`companion_energy`), so autonomy
-can never starve interaction; out of energy → the engine idles while chat runs on. The
-propose→approve gate now stamps proposal **origin** (`chat|explore|autonomous`); confirm re-enters
-the loop only for `chat` (the §4.4 open note, resolved). **Reinforcement v1**: each initiation logs a
-`proactive_outcomes` row; approval/rejection applies a hard-signal reward that nudges the served
-**drive weight** (EMA, neutral start), so a Cobble is *raised* into its disposition. Web adds a
-two-pool **vitality meter** + one-tap feed and an **off/gentle/active** dial. **Gate passed**
-(offline, deterministic — P4's differentiator is *safe, tunable, learning proactivity*, mechanically
-verifiable): the DoD test (`packages/api/src/routes/phase4-dod.test.ts`) proves open-app→relevant
-autonomous proposal, energy consumed, out-of-energy/dial-off → no initiation, and approval →
-reward + weight shift without re-entering chat. Full suite green at ≥80% coverage. Canonical
-mechanism: `docs/companion-motivation.md`.
+**Implemented** (Phase 4.1, this branch): the reserved `Initiator` seam is filled by a **motivation
+engine** (`packages/core/src/motivation/`) on a **lazy trigger** — `motivation.request` on a sent
+turn + on opening the transcript (return), plus a periodic `sweepMotivation`, all coalesced off the
+request path by a `MotivationRunner` (mirrors the consolidation runner). Each tick reads **drives ×
+presence** and either stays idle (token-free) or runs a **bounded autonomous burst**: a **presence
+spectrum** (`presence.ts`, fed by a heartbeat) gates self-initiation; a token-free **arbitration**
+gate (`arbitration.ts`: `pressure = level × weight` vs the dial threshold, burst sized to what energy
+affords) decides; when it commits, `runAutonomousBurst` **reads** the next leads into the companion's
+own memory **with no approval** (the shared ingestion pipeline, real tokens billed to energy via a
+per-run **meter override**) and posts **one in-character report note**. **Stamina/energy** split the
+old daily cap into two pools — chat draws stamina, the engine's reads draw **energy**
+(`companion_energy`), so autonomy can never starve interaction; out of energy → the engine idles
+while chat runs on. **Reinforcement = sentiment**: the burst logs a `proactive_outcomes` row linked
+to the note (migration `0014`); the user's next message is the reaction, and an **LLM critic**
+(`sentiment-reward.ts`) reads its valence (−1..1) → an EMA nudge to the served **drive weight**
+(neutral start, neutral reactions don't shift it), so a Cobble is *raised* into its disposition from
+conversation. The approval gate is kept for **chat** effectful calls + the user-initiated `/explore`
+command (which still proposes). Web adds a two-pool **vitality meter** + one-tap feed and an
+**off/gentle/active** dial. **Gate passed** (offline, deterministic): the DoD test
+(`packages/api/src/routes/phase4-dod.test.ts`) proves open-app→autonomous read + report note + energy
+consumed, out-of-energy/dial-off → no initiation, and reaction-to-note → sentiment reward + weight
+shift. Full suite green at ≥80% coverage. Canonical mechanism: `docs/companion-motivation.md`.
 
 ### Phase 5 — Bond & Growth (PoC complete)
 **Goal:** make Cobble feel raised, not used — closing the PoC loop.

@@ -246,10 +246,11 @@ The schema the motivation engine uses (full mechanism → `companion-motivation.
 - **`companion_energy`** (new) — the **energy** pool (self-initiated work), mirroring
   `user_token_usage` (which becomes the **stamina** pool) but keyed per **companion**: window reset,
   used tokens, a manual top-up grant. Separate counters so autonomy can't starve interaction (§4.8).
-- **`proactive_outcomes`** (new) — one row per initiation for the reinforcement loop: `origin`,
-  move kind, linked `proposal_id`, a drive snapshot at initiation, and the **reward** once resolved
-  (**Phase 4 v1: hard signals only** — approve/reject/dismiss/ignore; the LLM-critic feeling-score
-  is deferred with conversational proactivity). Doubles as the helpful-vs-annoying measurement.
+- **`proactive_outcomes`** (new) — one row per initiation for the reinforcement loop: the served
+  drive, a drive snapshot at initiation, the linked **`note_message_id`** (the report note the user
+  reacts to — migration `0014`), and the **reward** once resolved. **Phase 4.1: the reward is the
+  sentiment** of the user's reaction to the note (an LLM critic, valence −1..1), not approve/reject.
+  Doubles as the helpful-vs-annoying measurement. (`proposal_id` is retained nullable for legacy rows.)
 
 Presence is **not** a table — it is a volatile, heartbeat-fed in-memory signal (§4.5).
 

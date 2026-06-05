@@ -147,9 +147,10 @@ assigned a role**. It adapts to its master.
   Web-crawling and OS access are just two such tools.
 - **Acts, doesn't just answer:** it can carry out multi-step tasks (research → plan → execute),
   e.g. find a hotel, book a ticket, set a reminder.
-- **Propose → approve trust model:** anything with cost, commitment, or external side-effects
-  is **proposed** and held in an approval queue for your one-tap confirmation. Trust is earned,
-  never assumed.
+- **Propose → approve trust model:** anything with **commitment or external side-effects** (book ·
+  send · pay) is **proposed** and held in an approval queue for your one-tap confirmation. Trust is
+  earned, never assumed. *(The companion's own self-initiated work — reading things into its memory —
+  isn't gated this way; it's bounded by its **energy** budget instead, §5.6.)*
 
 ### 5.4 Proactivity (the heart of the product)
 Cobble has **motivations** and acts on them — the difference between a creature and a tool. Its
@@ -236,7 +237,8 @@ threat model: `architecture.md` / `implementation.md`.)
 - **Not multiple simultaneous embodiments** — one being, one active room at a time.
 - **Not a multi-session chatbot** — one continuous, lifelong conversation per companion, never
   separate chat threads/sessions to manage (§2.1).
-- **Not fully autonomous** — high-stakes/cost actions always route through your approval.
+- **Not fully autonomous** — outward/irreversible actions (book · send · pay) always route through
+  your approval; the companion's self-initiated work is bounded by its energy budget instead (§5.6).
 
 > **Open questions & roadmap** are owned by [`development-plan.md`](./development-plan.md) §5 —
 > not duplicated here (single-source rule).

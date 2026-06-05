@@ -24,13 +24,14 @@ the loop gains a real **inner loop** that calls tools (§4.1–4.2), and the **p
 holds every effectful action in an **approval queue** for one-tap confirmation (§4.4); a **lead
 inventory** (reading list) and a **procedural-memory** seed land as the body the Phase 4 will drives.
 **Phase 4** adds the **will**: a **motivation engine** fills the `Initiator` seam (§4.5) and, on a
-lazy idle/return tick, works the lead inventory into **autonomous proposals** shaped by drives ×
-presence; a **stamina/energy** two-pool budget (§4.8) and a **reinforcement** loop that learns
-per-drive weights round it out (full mechanism → `companion-motivation.md`).
+lazy idle/return tick, **reads the lead inventory into memory on its own** (no approval — autonomy is
+autonomy), spending real tokens against a **stamina/energy** two-pool budget (§4.8), then posts an
+in-character report note; a **reinforcement** loop learns per-drive weights from the user's
+**sentiment** reaction to that note (full mechanism → `companion-motivation.md`).
 
 **Non-goals / scope boundaries (Phases 0–4):** no growth/visual system or stamina/energy game economy
-(Phase 5), no unprompted conversation / LLM-critic reward (a later phase — P4 v1 is proposal-only),
-no native surfaces or OS tools (Phase 6–7). See `development-plan.md`.
+(Phase 5), no unprompted conversation beyond the autonomous report note (a later phase), no native
+surfaces or OS tools (Phase 6–7). See `development-plan.md`.
 
 ## 2. Architectural Invariants (design decisions)
 
@@ -133,8 +134,8 @@ the §4.8 two-pool budget), **Motivation Runner + Sweep** (off-request ticks, mi
 and the **Reinforcement** outcome store + EMA weight update.
 
 **_Deferred — later phases:_** Growth/Progression service incl. the **stamina/energy game economy**
-+ onboarding personality seed (P5), unprompted conversation + LLM-critic reward (a later phase),
-Mobile/Desktop clients, OS-tool bridges & Sync Courier (P6–7).
++ onboarding personality seed (P5), unprompted conversation beyond the autonomous report note (a
+later phase), Mobile/Desktop clients, OS-tool bridges & Sync Courier (P6–7).
 
 ## 4. The Agent Loop & Harness
 
@@ -263,28 +264,21 @@ When the proposal is **explore-origin** (it carries the originating `lead_id`), 
 closes that lead's lifecycle — confirm→`ingested`, reject→`discarded` — so a worked lead leaves the
 reading list instead of being stranded at `read` (best-effort; never fails the user's action).
 
-> **Decided (Phase 4 design) — who decides "what next" after an approved action (resolves with the
-> motivation engine, §4.5).** Re-entry on approval is right for **chat**: a conversational partner is present, so
-> even when the approved action *was* the whole request ("remember this page"), a natural
-> confirmation or follow-up reads as companion-like — and a multi-step ask ("remember it **and**
-> summarize it") *requires* the continuation. Crucially, **terminality is not knowable at propose
-> time**: the model often can't summarize until the page is actually read, so it proposes the ingest
-> alone and only decides whether to continue once it sees the result. So the model must get the
-> post-approval turn and decide for itself — we don't try to predict it.
+> **Approval gates *consequence*, not *cost* (Phase 4.1).** The gate exists to stop the companion
+> taking a **consequential, outward** action (book · send · pay) without sign-off. It is **not** what
+> bounds *cost* — that is the energy/stamina budget (§4.8). So **autonomous work is not gated**: the
+> motivation engine (§4.5) **reads** leads into the companion's own memory on its own, bounded by
+> energy, with no proposal — autonomy is autonomy. The approval queue remains for **chat**-origin
+> effectful calls and the user-initiated **`/explore`** command; it would also catch any future
+> outward/irreversible tool, which don't exist yet (revisited when they do).
 >
-> Today the confirm route re-enters for **every** approval, including **explore**-origin proposals
-> (the reading-list "go through your list" action, §4.5). That is the part to revisit here: for a
-> **self-directed** origin there is no conversational task to continue, and choosing the companion's
-> *own* next move is **agenda-setting — the motivation engine's job (§4.5), not a confirm-route
-> reflex**. Per-approval re-entry is also the wrong *granularity* for a batch: explore approves N
-> proposals through N queue cards → N disjoint mini-turns, each blind to the others. Keep the two
-> concerns apart: *reacting to the person who just approved* is conversational (fine — ideally
-> **once** per batch); *deciding the next self-directed action* belongs to the outer loop. **The
-> Phase 4 resolution:** stamp each proposal with its origin (a `chat` | `explore` | `autonomous`
-> marker on the `proposals` row), have confirm re-enter the loop only for `chat`, and let the
-> motivation engine (§4.5) pick up post-action "what next" for the rest from the full updated state
-> on its own cadence (a brief in-character acknowledgement to whoever approved is still fine).
-> *(Until Phase 4 ships this, P3 simply re-enters on every approval — the known wart above.)*
+> **Post-approval "what next" (chat vs explore).** On a **chat**-origin approval the confirm route
+> re-enters the loop so the companion narrates the result and continues the ask ("remember it **and**
+> summarize it") — terminality isn't knowable at propose time, so the model must get the post-approval
+> turn. On an **explore**-origin approval (the user-initiated reading-list command) there is no
+> conversational task to continue, so confirm executes + advances the lead and returns without
+> re-entering. The `proposals.origin` marker (`chat` | `explore` | `autonomous`) carries this; the
+> legacy `autonomous` value is retained for old rows but the engine no longer creates proposals.
 
 ```mermaid
 flowchart TD
@@ -322,31 +316,28 @@ flowchart LR
     class USER human;
 ```
 
-> **Phase 4 ✅ — implemented (v1, proposal-only).** The motivation engine
+> **Phase 4.1 ✅ — implemented (autonomous reads, no approval; sentiment reward).** The motivation engine
 > (`packages/core/src/motivation/`) fills the `Initiator` hook (architecture.md invariant #3). It is
 > the **"will"** of a deliberate **body-then-will split**: Phase 3 builds the *body*
 > — the tools, the propose→approve gate (§4.4), the tool-call audit log, and the **lead inventory**
 > (a persistent frontier of discovered-but-unread leads, e.g. URLs spotted while reading) — and
 > Phase 4 builds the *will* that drives that body on its own. The ordering is a safety
 > precondition, not a convenience: an autonomous, exploring, token-*spending* companion is only
-> acceptable because **every consequential act already routes through the approval gate and every
-> tool call is logged** (the §4.4 generalized invariant). The body is verifiable with deterministic
-> tests; the will only by measurement over time (its named risk is annoyance, `development-plan.md`
-> §3), so it lands on a foundation already trusted. The exploration loop is *identical* whether a
-> human or the motivation engine triggers it — Phase 3 works the inventory **on the user's command**
-> ("go through your reading list"); Phase 4 works it **on an idle tick**.
+> acceptable because its self-initiated work is **inherently bounded** — it only **reads into its own
+> memory** (nothing outward), **every tool call is logged**, and **energy caps how much it can do**
+> (§4.8). Outward/irreversible acts still route through the approval gate (§4.4); none exist yet. The
+> body is verifiable with deterministic tests; the will only by measurement over time (its named risk
+> is annoyance, `development-plan.md` §3), so it lands on a foundation already trusted. The read loop
+> is *identical* whether a human or the engine triggers it — Phase 3 works the inventory **on the
+> user's command** ("go through your reading list", which still proposes for review); Phase 4 reads it
+> **on an idle tick**, freely.
 
-> **This engine owns post-action "what next" for self-directed work (paired with §4.4).** When an
-> approved action did not come from a live conversation — an `explore`/idle-tick ingest rather than a
-> chat ask — the question "what should I do now that this is done?" is *agenda-setting*, and that is
-> precisely this engine's job, not the confirm route's. It sees the **full** updated state (the new
-> memory, the remaining lead frontier) at once, runs on the creature's own cadence, and surfaces
-> proactively — so it can react **once** to a finished batch instead of N times mid-approval. The
-> confirm route should therefore **defer** here: re-enter the loop only for `chat`-origin approvals
-> (a present partner to reply to, §4.4) and leave self-directed continuation to this engine. A brief
-> in-character acknowledgement to *whoever approved* a proactive proposal is still fine — that is
-> conversational, and distinct from deciding the next move. Until this engine exists, Phase 3 simply
-> re-enters on every approval (the known wart called out in §4.4).
+> **The reward is conversational (paired with §4.4).** After the engine reads, it posts **one
+> in-character report note** ("here's what I read"); the user's next message is the **reaction**, and
+> an LLM sentiment critic turns it into the reward that nudges the served drive's weight (§4.5
+> reinforcement). There is no approval round-trip for autonomous work to "continue" from — the engine
+> sees the **full** updated state on its own cadence and decides the next move itself. (The confirm
+> route still re-enters for `chat`-origin approvals — a present partner to reply to, §4.4.)
 
 **Full mechanism — the drive taxonomy, the arbitration math, seeding from temperament, the learning
 loop, and worked examples — is canonical in `companion-motivation.md`.** This section is the
@@ -374,9 +365,9 @@ The engine's parts (each additive, no loop change):
   contact) + pending work/opportunities + an **approval/reinforcement** drive learned from feedback
   (below) (`product-overview.md` §5.4).
 - **Arbitration (cheap gate, then a burst)** — a **token-free heuristic gate** scores candidate
-  actions by drive × salience (against presence, the dial, energy, and the personality knobs) and
-  decides *whether* to act — so **"idle" is a valid, free outcome**. Only when it commits does an
-  **LLM burst** run the chosen move (the only token spend).
+  actions by drive × salience (against presence, the dial, and remaining energy) and decides
+  *whether* to act — so **"idle" is a valid, free outcome**. Only when it commits does the burst run
+  the chosen move (the only token spend), **bounded by what energy can afford** (§4.8).
 - **Attention model (the "creature")** — each initiation is a **bounded burst**, never a full drain
   of the inventory. Personality parameters are designed to shape it: **focus length** (burst size
   before re-deciding), **boredom** (interest on a thread decays without payoff), **distractibility**
@@ -385,28 +376,29 @@ The engine's parts (each additive, no loop change):
   is live (the explore-burst limit); boredom and distractibility are persisted but inert until the
   multi-step / multi-behaviour loop ships (`companion-motivation.md` §6, §10) — they are the dynamics
   behind a tenacious deep-reader vs. a magpie that flits, once that loop lands.
-- **Budget (stamina & energy)** — self-initiated work draws the **energy** pool (§4.8); when energy
-  is exhausted the engine stops initiating (the gate idles) while chat still runs on **stamina**, so
-  autonomy can never starve interaction. The per-run ceiling (§4.7) is parameterized by the
-  personality knobs and the tunability dial.
-- **Reinforcement (learning what lands)** — after a proactive action the engine computes a **reward**
-  and a simple update (EMA) nudges the per-companion **drive weights**, so the companion leans into
-  what's appreciated. **Phase 4 v1 uses hard signals only** (proposal approved = strong+,
-  rejected/dismissed = −, ignored = mild−). Weights are interpretable and seed the Phase 5
-  relationship-growth axis. *(Deferred with conversational proactivity: an LLM-critic feeling-score
-  blended in; and a deeper contextual-bandit policy.)*
-- **Output** — **Phase 4 v1 ships the proposal path only**: a **proposal awaiting approval**
-  (`origin = autonomous`, §4.4), delivered via the in-app approval queue. *(Unprompted
-  messages/questions — and the transcript-poll delivery they need — are deferred,
-  `companion-motivation.md` §10.)* Consequential acts still pass the §4.4 gate.
+- **Budget (stamina & energy)** — self-initiated work spends **real tokens** drawn from the
+  **energy** pool (§4.8); each autonomous read is billed to energy via a per-run meter override on
+  the shared ingestion pipeline. When energy is exhausted the engine stops initiating (the gate
+  idles) while chat still runs on **stamina**, so autonomy can never starve interaction. The burst is
+  **energy-aware**: it plans no more reads than energy can afford (`min(focus length, ⌊energy /
+  est-read-cost⌋)`).
+- **Reinforcement (learning what lands)** — the companion learns from **conversation**, like a
+  person: after it reads, it posts a report note; the user's next message is the reaction, and an
+  **LLM sentiment critic** rates its valence (−1..1) → an EMA nudge to the served **drive weights**.
+  No approve/reject button; neutral reactions don't shift personality. Weights are interpretable and
+  seed the Phase 5 relationship-growth axis. *(Deferred: a deeper contextual-bandit policy.)*
+- **Output (Phase 4.1)** — the engine **reads** the next leads into the companion's own memory
+  **with no approval** (autonomy is autonomy, §4.4), then posts **one in-character report note** to
+  the transcript. *(Unprompted tips/questions beyond the report note are deferred,
+  `companion-motivation.md` §10.)* Outward/irreversible acts (none exist yet) would still pass the
+  §4.4 gate.
 - **Tunability** — a per-companion **frequency/intensity dial** (off / gentle / active) scaling
   initiation rate and energy spend (Phase 4 DoD).
 
-**Phase 3 built the substrate** the engine plugs into: the **lead inventory**, the `Initiator`
-contract, and the **burst-budget knob** (the §4.7 per-run ceiling that Phase 4 parameterizes by
-personality). **Documented here, built later:** unprompted conversation + the LLM-critic + a sense
-of purpose/agenda → a later phase (Phase 4 v1 is **proposal-only**); continuous work-while-away →
-Phase 6; the stamina/energy **game economy** (food/feeding, store, rich meters) → Phase 5; deeper RL.
+**Phase 3 built the substrate** the engine plugs into: the **lead inventory** and the `Initiator`
+contract. **Documented here, built later:** unprompted conversation beyond the report note + a sense
+of purpose/agenda → a later phase; continuous work-while-away → Phase 6; the stamina/energy **game
+economy** (food/feeding, store, rich meters) → Phase 5; deeper RL.
 
 ### 4.6 Phase 0 realization (end-to-end)
 
@@ -540,9 +532,14 @@ Design rules (the "improved staged hybrid"; memory guide → `companionmemory.md
     engine stops initiating (`Initiator` idles, §4.5) while chat keeps running on stamina. The user
     **provisions** both — a visible meter + manual top-up replace the hard-coded daily cap as the
     spend control (the food/feeding **game economy** that grows this is P5, `development-plan.md`).
-    Each pool still rolls on a fixed window; the engine's per-run ceiling (§4.7) is parameterized by
-    the personality knobs (§4.5). Effectful work is billed to the pool matching the proposal's
-    `origin` — `chat`→stamina, `explore`/`autonomous`→energy.
+    Each pool still rolls on a fixed window. **Autonomous reads spend real tokens** billed to energy
+    via a per-run **meter override** on the shared ingestion pipeline (`pipeline.ts`: the run carries
+    `meter = { quota: energyAdapter, accountId: companionId }`, and skips deferral — the engine gates
+    on energy itself, per-lead). The burst is **energy-aware** — it plans `min(focus length, ⌊energy /
+    est-read-cost⌋)` reads (§4.5) — so the companion scopes its work to its means, not just stopping
+    at zero. The sentiment critic that reads the user's reaction rides on the chat turn, so it draws
+    **stamina**. User-initiated work (chat, `/explore` approvals) draws stamina; the engine's
+    self-initiated reads draw energy.
 
 #### Supported source formats (acceptance contract)
 
