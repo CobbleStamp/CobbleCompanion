@@ -105,13 +105,13 @@ export {
   type EmbeddingResult,
 } from './embedding/gateway.js';
 
-// Token quota (per-user daily cap state)
+// Stamina quota (per-user daily cap state)
 export {
   DrizzleTokenQuotaStore,
   type DrizzleTokenQuotaStoreOptions,
   type TokenQuotaStore,
   type UsageSnapshot,
-} from './quota/store.js';
+} from './quota/stamina-store.js';
 
 // Companion energy (per-companion self-initiated pool — the motivation engine's fuel, Phase 4)
 export {

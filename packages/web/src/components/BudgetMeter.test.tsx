@@ -49,6 +49,29 @@ describe('BudgetMeter', () => {
     expect(topUpBudget).toHaveBeenCalledWith('c1', 'energy', expect.any(Number));
   });
 
+  it('fires only one top-up when the feed button is double-tapped', async () => {
+    vi.mocked(fetchBudget).mockResolvedValue(budget(20, 90));
+    // Hold the top-up open so the second tap lands while the first is in flight.
+    let resolveFeed: (b: StaminaEnergyDto) => void = () => {};
+    vi.mocked(topUpBudget).mockReturnValue(
+      new Promise<StaminaEnergyDto>((resolve) => {
+        resolveFeed = resolve;
+      }),
+    );
+    render(<BudgetMeter companionId="c1" />);
+    await waitFor(() => expect(screen.getByText(/90%/)).toBeTruthy());
+
+    const feedButton = screen.getByLabelText('Feed energy');
+    fireEvent.click(feedButton);
+    fireEvent.click(feedButton); // re-entrant tap while the first is pending
+    expect(feedButton).toHaveProperty('disabled', true);
+    expect(topUpBudget).toHaveBeenCalledTimes(1);
+
+    resolveFeed(budget(20, 45));
+    await waitFor(() => expect(screen.getByText(/45%/)).toBeTruthy());
+    expect(feedButton).toHaveProperty('disabled', false);
+  });
+
   it('renders nothing when the poll fails', async () => {
     vi.mocked(fetchBudget).mockRejectedValue(new Error('down'));
     const { container } = render(<BudgetMeter companionId="c1" />);

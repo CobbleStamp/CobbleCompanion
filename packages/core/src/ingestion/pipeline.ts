@@ -12,7 +12,7 @@ import type { IngestionAnnouncer } from './announcer.js';
 import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import type { NewSection, SectionRecord, SemanticMemoryStore } from '../memory/semantic-store.js';
-import type { TokenQuotaStore } from '../quota/store.js';
+import type { TokenQuotaStore } from '../quota/stamina-store.js';
 import { createUsageAccumulator, meteredLlmGateway, type UsageAccumulator } from '../usage.js';
 import { buildEmbeddingInput } from './embedder.js';
 import { enrichSection } from './enricher.js';

@@ -434,6 +434,16 @@ export const proceduralMemories = pgTable(
   (table) => [index('procedural_companion_idx').on(table.companionId, table.seq)],
 );
 
+/**
+ * Per-user STAMINA budget (the daily cap for user-initiated work). The effective
+ * cap is `(cap_override ?? default) + top_up_tokens`: `cap_override` is a fixed
+ * per-account ceiling, `top_up_tokens` is the user's manual feed grant (the simple
+ * top-up control — the food/feeding economy is Phase 5) and persists across window
+ * rolls. Keeping the grant in its own column (rather than folding it into
+ * `cap_override`) means a later change to the configured default still reaches
+ * fed users, and lets the top-up be an atomic SQL increment — mirrors
+ * `companion_energy` exactly (the energy pool is the per-companion twin).
+ */
 export const userTokenUsage = pgTable('user_token_usage', {
   userId: uuid('user_id')
     .primaryKey()
@@ -441,6 +451,7 @@ export const userTokenUsage = pgTable('user_token_usage', {
   windowResetAt: timestamp('window_reset_at', { withTimezone: true }).notNull(),
   usedTokens: bigint('used_tokens', { mode: 'number' }).notNull().default(0),
   capOverride: integer('cap_override'),
+  topUpTokens: bigint('top_up_tokens', { mode: 'number' }).notNull().default(0),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

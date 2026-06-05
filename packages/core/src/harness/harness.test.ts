@@ -6,7 +6,7 @@ import { FakeEmbeddingGateway } from '../embedding/fake.js';
 import { FakeLlmGateway } from '../llm/fake.js';
 import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
-import type { TokenQuotaStore } from '../quota/store.js';
+import type { TokenQuotaStore } from '../quota/stamina-store.js';
 import { DrizzleIdentityStore } from '../identity/store.js';
 import { DrizzleSemanticMemoryStore } from '../memory/semantic-store.js';
 import { TranscriptMemoryStore } from '../memory/store.js';

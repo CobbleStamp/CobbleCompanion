@@ -20,6 +20,9 @@ function poolDetail(label: string, pool: UsageDto): string {
 
 export function BudgetMeter({ companionId }: { companionId: string }): JSX.Element | null {
   const [budget, setBudget] = useState<StaminaEnergyDto | null>(null);
+  // Which pool (if any) has a feed request in flight — disables that button so a
+  // double-tap can't fire two concurrent top-ups.
+  const [feeding, setFeeding] = useState<'stamina' | 'energy' | null>(null);
   const mountedRef = useRef(true);
 
   const refresh = useCallback(async (): Promise<void> => {
@@ -43,14 +46,19 @@ export function BudgetMeter({ companionId }: { companionId: string }): JSX.Eleme
 
   const feed = useCallback(
     async (pool: 'stamina' | 'energy'): Promise<void> => {
+      // Ignore re-entrant taps while this pool's feed is still in flight.
+      if (feeding) return;
+      setFeeding(pool);
       try {
         const next = await topUpBudget(companionId, pool, TOPUP_AMOUNT);
         if (mountedRef.current) setBudget(next);
       } catch {
         // Best-effort; the next poll reconciles.
+      } finally {
+        if (mountedRef.current) setFeeding(null);
       }
     },
-    [companionId],
+    [companionId, feeding],
   );
 
   if (!budget) return null;
@@ -63,6 +71,7 @@ export function BudgetMeter({ companionId }: { companionId: string }): JSX.Eleme
           type="button"
           className="budget-meter__feed"
           onClick={() => void feed('stamina')}
+          disabled={feeding !== null}
           aria-label="Feed stamina"
         >
           +
@@ -74,6 +83,7 @@ export function BudgetMeter({ companionId }: { companionId: string }): JSX.Eleme
           type="button"
           className="budget-meter__feed"
           onClick={() => void feed('energy')}
+          disabled={feeding !== null}
           aria-label="Feed energy"
         >
           +

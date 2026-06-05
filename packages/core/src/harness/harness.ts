@@ -11,7 +11,7 @@ import { consoleLogger, type Logger } from '../logging.js';
 import type { MemoryStore } from '../memory/store.js';
 import { senseAffect, type AffectReading } from '../motivation/affect.js';
 import type { CompanionAffectStore } from '../motivation/affect-store.js';
-import type { TokenQuotaStore } from '../quota/store.js';
+import type { TokenQuotaStore } from '../quota/stamina-store.js';
 import { dispatchTool } from '../tools/dispatch.js';
 import { ToolRegistry } from '../tools/registry.js';
 import {

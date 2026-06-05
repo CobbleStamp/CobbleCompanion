@@ -20,7 +20,7 @@
 
 import type { LlmGateway, StreamResult, ToolDef } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
-import type { TokenQuotaStore } from '../quota/store.js';
+import type { TokenQuotaStore } from '../quota/stamina-store.js';
 import { createUsageAccumulator, meteredLlmGateway } from '../usage.js';
 
 /** A single read of the user's emotional state. */

@@ -6,7 +6,7 @@ import { FakeLlmGateway } from '../llm/fake.js';
 import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import { TranscriptMemoryStore } from '../memory/store.js';
-import type { TokenQuotaStore } from '../quota/store.js';
+import type { TokenQuotaStore } from '../quota/stamina-store.js';
 import { LlmIngestionAnnouncer } from './announcer.js';
 
 const silentLogger: Logger = {

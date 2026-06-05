@@ -5,8 +5,8 @@
  * pointed at the companion's ENERGY pool instead, with no change to their code.
  *
  * The two stores are structurally identical (used/cap/reset, record, exhausted,
- * top-up); the only difference is *who* is billed — stamina is per-user
- * (user-initiated work), energy is per-companion (self-initiated work,
+ * and an atomic top-up grant); the only difference is *who* is billed — stamina
+ * is per-user (user-initiated work), energy is per-companion (self-initiated work,
  * `architecture.md` §4.8). When the motivation engine runs an autonomous burst it
  * wraps the energy store in this adapter and passes the companion id as the
  * `ownerId`, so every token the burst spends is debited to energy and the same
@@ -16,7 +16,7 @@
  */
 
 import type { CompanionEnergyStore } from './energy-store.js';
-import type { TokenQuotaStore, UsageSnapshot } from './store.js';
+import type { TokenQuotaStore, UsageSnapshot } from './stamina-store.js';
 
 /**
  * Wrap a `CompanionEnergyStore` as a `TokenQuotaStore`. The `id` passed to each

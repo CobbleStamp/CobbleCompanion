@@ -131,11 +131,14 @@ migrations under `db/`.
 | `window_reset_at` | timestamptz | when the current fixed-daily (UTC) window rolls; overage carries as debt clamped to one cap |
 | `used_tokens` | bigint | tokens spent in the current window (LLM + embedding) |
 | `cap_override` | integer, nullable | per-account cap; null → the `TOKEN_CAP_PER_DAY` default |
+| `top_up_tokens` | bigint, default 0 | manual feed grant; effective cap = `(cap_override ?? default) + top_up_tokens`. Added by an atomic SQL increment (concurrent feeds can't lose an update), persists across window rolls, and — being separate from `cap_override` — keeps tracking later changes to the default. Mirrors `companion_energy` exactly. |
 | `updated_at` | timestamptz | |
 
 > Postgres-backed so the cap is correct across replicas. Routes enforce it inline: chat/search
 > 429 over cap, ingestion defers (`architecture.md` §4.8). `GET /usage` exposes the standing for
-> the web client's live indicator.
+> the web client's live indicator. The manual top-up (`POST /companions/:id/budget/topup`, the Feed control)
+> raises `top_up_tokens`; the per-user stamina store is the structural twin of the per-companion
+> energy store (`packages/core/src/quota/stamina-store.ts` ↔ `energy-store.ts`).
 
 ### `sections` — Layer 1: retrieval units (Phase 1)
 | Field | Type | Notes |

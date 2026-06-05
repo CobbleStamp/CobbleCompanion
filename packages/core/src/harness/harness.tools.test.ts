@@ -15,7 +15,7 @@ import { FakeLlmGateway, type FakeTurn } from '../llm/fake.js';
 import type { LlmGateway, StreamResult, ToolCall } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import type { AppendOptions, MemoryStore, TranscriptEntry } from '../memory/store.js';
-import type { TokenQuotaStore } from '../quota/store.js';
+import type { TokenQuotaStore } from '../quota/stamina-store.js';
 import { ToolRegistry } from '../tools/registry.js';
 import type { Tool } from '../tools/tool.js';
 import { Harness } from './harness.js';

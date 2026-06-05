@@ -11,7 +11,7 @@ import { DrizzleIdentityStore } from '../identity/store.js';
 import { FakeLlmGateway } from '../llm/fake.js';
 import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../ingestion/untrusted.js';
 import { DrizzleEpisodicMemoryStore, type NewEpisode } from '../memory/episodic-store.js';
-import type { TokenQuotaStore, UsageSnapshot } from '../quota/store.js';
+import type { TokenQuotaStore, UsageSnapshot } from '../quota/stamina-store.js';
 import { LlmPersonalityEvolver, type PersonalityEvolverOptions } from './evolve.js';
 
 const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn() };

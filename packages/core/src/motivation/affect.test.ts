@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { FakeLlmGateway } from '../llm/fake.js';
 import type { ToolCall } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
-import type { TokenQuotaStore } from '../quota/store.js';
+import type { TokenQuotaStore } from '../quota/stamina-store.js';
 import { coerceReading, NEUTRAL_AFFECT, senseAffect } from './affect.js';
 
 const silent: Logger = { error: () => {}, warn: () => {}, info: () => {} };

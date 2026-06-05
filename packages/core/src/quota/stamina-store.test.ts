@@ -1,7 +1,8 @@
 /**
- * Token quota store tests against the real PGlite database: accrual, the
- * over-cap predicate, fixed-daily window roll with clamped debt, and the
- * per-account cap override.
+ * Stamina quota store tests against the real PGlite database: accrual, the
+ * over-cap predicate, fixed-daily window roll with clamped debt, the per-account
+ * cap override, and the manual top-up grant (atomic, concurrency-safe, persists
+ * across rolls, and tracks the configured default).
  */
 
 import { type Database, userTokenUsage } from '@cobble/db';
@@ -9,7 +10,7 @@ import { createTestDatabase } from '@cobble/db/testing';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DrizzleIdentityStore } from '../identity/store.js';
-import { DrizzleTokenQuotaStore } from './store.js';
+import { DrizzleTokenQuotaStore } from './stamina-store.js';
 
 const DEFAULT_CAP = 1000;
 
@@ -133,5 +134,54 @@ describe('DrizzleTokenQuotaStore', () => {
     expect(usage.capTokens).toBe(5000);
     await quota.recordUsage(userId, 4000); // 4100 total, under the override
     expect(await quota.isOverCap(userId)).toBe(false);
+  });
+
+  it('top-up raises the effective cap and revives a capped-out user', async () => {
+    const quota = store();
+    await quota.recordUsage(userId, DEFAULT_CAP); // exactly at the cap
+    expect(await quota.isOverCap(userId)).toBe(true);
+
+    await quota.topUp(userId, 500); // feed it
+    const usage = await quota.getUsage(userId);
+    expect(usage.capTokens).toBe(DEFAULT_CAP + 500);
+    expect(await quota.isOverCap(userId)).toBe(false);
+  });
+
+  it('ignores non-positive top-up amounts', async () => {
+    const quota = store();
+    await quota.topUp(userId, 0);
+    await quota.topUp(userId, -10);
+    expect((await quota.getUsage(userId)).capTokens).toBe(DEFAULT_CAP);
+  });
+
+  it('does not lose a grant when two top-up calls interleave', async () => {
+    const quota = store();
+    await quota.recordUsage(userId, 1); // create the row up front
+    await Promise.all([quota.topUp(userId, 400), quota.topUp(userId, 300)]);
+    // Atomic SQL increment: both feeds land regardless of interleaving (a
+    // read-modify-write on the cap would have lost one).
+    expect((await quota.getUsage(userId)).capTokens).toBe(DEFAULT_CAP + 700);
+  });
+
+  it('preserves the top-up grant across a window roll', async () => {
+    const quota = store();
+    await quota.topUp(userId, 2000); // user fed it; cap → 3000
+    await quota.recordUsage(userId, 3500); // 500 over the fed cap
+
+    clock = new Date('2026-06-04T00:00:01.000Z');
+    const usage = await quota.getUsage(userId);
+    expect(usage.capTokens).toBe(DEFAULT_CAP + 2000); // grant survives the roll
+    expect(usage.usedTokens).toBe(500); // carried debt under the fed cap
+  });
+
+  it('keeps tracking the configured default after a top-up', async () => {
+    // A fed user must still pick up a later change to the default cap — the grant
+    // lives in its own column, not folded into cap_override.
+    await store().topUp(userId, 500);
+    const bigger = new DrizzleTokenQuotaStore(db, {
+      defaultCapTokens: 2000,
+      now: () => clock,
+    });
+    expect((await bigger.getUsage(userId)).capTokens).toBe(2000 + 500);
   });
 });

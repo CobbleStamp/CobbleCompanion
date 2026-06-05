@@ -13,7 +13,7 @@ import { DrizzleIdentityStore } from '../identity/store.js';
 import type { LlmGateway, LlmStreamParams, StreamResult } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import { DrizzleSemanticMemoryStore } from '../memory/semantic-store.js';
-import type { TokenQuotaStore, UsageSnapshot } from '../quota/store.js';
+import type { TokenQuotaStore, UsageSnapshot } from '../quota/stamina-store.js';
 import { estimateUsage } from '../usage.js';
 import type { IngestionAnnouncer, IngestionOutcome } from './announcer.js';
 import { createHttpLinkResolver } from './link-resolver.js';
