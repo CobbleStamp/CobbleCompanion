@@ -20,7 +20,11 @@ import type { Tool } from '../tools/tool.js';
 import { Harness } from './harness.js';
 import { type Block, isBlock, type ToolCall as HookToolCall, type TurnCtx } from './hooks.js';
 
-const silentLogger: Logger = { error: () => undefined, info: () => undefined };
+const silentLogger: Logger = {
+  error: () => undefined,
+  warn: () => undefined,
+  info: () => undefined,
+};
 
 const companion: CompanionDto = {
   id: 'c1',

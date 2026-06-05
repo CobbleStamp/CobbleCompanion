@@ -227,7 +227,7 @@ function buildToolCalls(buffers: Map<number, ToolCallBuffer>, logger: Logger): r
     const buffer = buffers.get(index)!;
     if (!buffer.name) {
       if (buffer.id !== undefined || buffer.argsText.length > 0) {
-        logger.info('dropping a streamed tool call that never received a function name', {
+        logger.warn('dropping a streamed tool call that never received a function name', {
           operation: 'openrouter.buildToolCalls',
           index,
           id: buffer.id,

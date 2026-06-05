@@ -9,7 +9,11 @@ import type { SemanticSearchHit, SemanticSearchParams } from '../memory/semantic
 import { createMemorySearchTool, type SemanticSearchPort } from './memory-search.js';
 
 const ctx: TurnCtx = { companionId: 'c1', ownerId: 'u1' };
-const silentLogger: Logger = { error: () => undefined, info: () => undefined };
+const silentLogger: Logger = {
+  error: () => undefined,
+  warn: () => undefined,
+  info: () => undefined,
+};
 
 function hit(overrides: Partial<SemanticSearchHit> = {}): SemanticSearchHit {
   return {

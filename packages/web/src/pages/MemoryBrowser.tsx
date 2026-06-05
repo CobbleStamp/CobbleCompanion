@@ -294,15 +294,22 @@ function SemanticSearch({ companionId }: SemanticSearchProps): JSX.Element {
 /** Lists the companion's learned workflows (procedural memory, P3). */
 function ProceduralList({ companionId }: { readonly companionId: string }): JSX.Element | null {
   const [procedures, setProcedures] = useState<readonly ProcedureDto[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   useEffect(() => {
     let mounted = true;
     void listProcedures(companionId)
-      .then((rows) => mounted && setProcedures(rows))
-      .catch(() => undefined);
+      .then((rows) => {
+        if (mounted) setProcedures(rows);
+      })
+      .catch((err: unknown) => {
+        console.error('failed to load procedural memory', { companionId, error: err });
+        if (mounted) setLoadError(err instanceof Error ? err.message : 'Failed to load workflows');
+      });
     return () => {
       mounted = false;
     };
   }, [companionId]);
+  if (loadError) return <p className="error">{loadError}</p>;
   if (procedures.length === 0) return null;
   return (
     <ul className="memory-list">
@@ -319,11 +326,18 @@ function ProceduralList({ companionId }: { readonly companionId: string }): JSX.
 /** The reading list — leads the companion discovered but hasn't acted on (P3). */
 function ReadingListSection({ companionId }: { readonly companionId: string }): JSX.Element {
   const [leads, setLeads] = useState<readonly LeadDto[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   useEffect(() => {
     let mounted = true;
     void listLeads(companionId)
-      .then((rows) => mounted && setLeads(rows))
-      .catch(() => undefined);
+      .then((rows) => {
+        if (mounted) setLeads(rows);
+      })
+      .catch((err: unknown) => {
+        console.error('failed to load reading list', { companionId, error: err });
+        if (mounted)
+          setLoadError(err instanceof Error ? err.message : 'Failed to load reading list');
+      });
     return () => {
       mounted = false;
     };
@@ -331,7 +345,9 @@ function ReadingListSection({ companionId }: { readonly companionId: string }): 
   return (
     <section className="memory-section">
       <h2>Reading list — discovered, not yet read</h2>
-      {leads.length === 0 ? (
+      {loadError ? (
+        <p className="error">{loadError}</p>
+      ) : leads.length === 0 ? (
         <p className="who">Nothing waiting — Cobble collects links here as it reads.</p>
       ) : (
         <ul className="memory-list">

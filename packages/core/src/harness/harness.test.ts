@@ -13,7 +13,7 @@ import { TranscriptMemoryStore } from '../memory/store.js';
 import { Harness } from './harness.js';
 import { createSemanticRetrieveContext } from './semantic-retrieve.js';
 
-const silentLogger: Logger = { error: () => {}, info: () => {} };
+const silentLogger: Logger = { error: () => {}, warn: () => {}, info: () => {} };
 
 /** Records every debit so a test can assert what a turn billed (or didn't). */
 class RecordingQuota implements TokenQuotaStore {

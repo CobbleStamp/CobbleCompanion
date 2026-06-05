@@ -228,16 +228,16 @@ describe('OpenRouterGateway', () => {
       'fetch',
       vi.fn(async () => new Response(body, { status: 200 })),
     );
-    const info = vi.fn();
-    const logger: Logger = { error: vi.fn(), info };
+    const warn = vi.fn();
+    const logger: Logger = { error: vi.fn(), warn, info: vi.fn() };
 
     const gateway = new OpenRouterGateway({ apiKey: 'test-key', logger });
     const { result } = await collectWithResult(
       gateway.stream({ messages: [{ role: 'user', content: 'go' }], model: 'm' }),
     );
     expect(result.toolCalls).toEqual([]);
-    expect(info).toHaveBeenCalledTimes(1);
-    expect(info).toHaveBeenCalledWith(
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
       expect.stringContaining('never received a function name'),
       expect.objectContaining({ index: 0, id: 'orphan', argsLength: expect.any(Number) }),
     );

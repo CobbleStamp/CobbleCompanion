@@ -10,7 +10,11 @@ import type { Logger } from '../logging.js';
 import { enrichSection, parseEnrichment } from './enricher.js';
 import { MAX_INGESTION_PROMPT_CHARS, UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from './untrusted.js';
 
-const silentLogger: Logger = { error: () => undefined, info: () => undefined };
+const silentLogger: Logger = {
+  error: () => undefined,
+  warn: () => undefined,
+  info: () => undefined,
+};
 
 const sectionInput = {
   sourceTitle: 'Peru: A History',

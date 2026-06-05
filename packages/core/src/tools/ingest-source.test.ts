@@ -12,7 +12,11 @@ import {
 } from './ingest-source.js';
 
 const ctx: TurnCtx = { companionId: 'c1', ownerId: 'u1' };
-const silentLogger: Logger = { error: () => undefined, info: () => undefined };
+const silentLogger: Logger = {
+  error: () => undefined,
+  warn: () => undefined,
+  info: () => undefined,
+};
 
 /** Records created sources/jobs so the test can assert what was registered. */
 function fakeStore(): SourceRegistrationPort & {

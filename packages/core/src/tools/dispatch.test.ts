@@ -13,7 +13,11 @@ import { ToolRegistry } from './registry.js';
 import type { Tool } from './tool.js';
 
 const ctx: TurnCtx = { companionId: 'c1', ownerId: 'u1' };
-const silentLogger: Logger = { error: () => undefined, info: () => undefined };
+const silentLogger: Logger = {
+  error: () => undefined,
+  warn: () => undefined,
+  info: () => undefined,
+};
 
 /** A tool that records its args and returns a fixed result. */
 function recordingTool(name: string, reply: string): Tool & { calls: unknown[] } {
@@ -67,6 +71,7 @@ describe('dispatchTool', () => {
     const logged: Array<{ message: string; context: Record<string, unknown> }> = [];
     const logger: Logger = {
       error: (message, context) => logged.push({ message, context: context ?? {} }),
+      warn: () => undefined,
       info: () => undefined,
     };
 

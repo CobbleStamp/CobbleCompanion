@@ -46,7 +46,7 @@ function out(line = ''): void {
   process.stdout.write(`${line}\n`);
 }
 
-const silentLogger: Logger = { error: () => {}, info: () => {} };
+const silentLogger: Logger = { error: () => {}, warn: () => {}, info: () => {} };
 
 interface EvalDeps {
   readonly identity: DrizzleIdentityStore;

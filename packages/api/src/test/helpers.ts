@@ -41,7 +41,7 @@ import { buildApp, type AppDeps } from '../app.js';
 import type { TokenVerifier, VerifiedClaims } from '../auth/jwt-verifier.js';
 import type { AppConfig } from '../config.js';
 
-export const silentLogger: Logger = { error: () => {}, info: () => {} };
+export const silentLogger: Logger = { error: () => {}, warn: () => {}, info: () => {} };
 
 /**
  * Token verifier for tests: maps a known token string to claims, throwing on

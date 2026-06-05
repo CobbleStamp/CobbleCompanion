@@ -12,7 +12,11 @@ import type { Paragraph } from './parser.js';
 import { parseBoundaries, segmentParagraphs } from './segmenter.js';
 import { MAX_INGESTION_PROMPT_CHARS, UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from './untrusted.js';
 
-const silentLogger: Logger = { error: () => undefined, info: () => undefined };
+const silentLogger: Logger = {
+  error: () => undefined,
+  warn: () => undefined,
+  info: () => undefined,
+};
 
 function paragraphs(count: number): readonly Paragraph[] {
   return Array.from({ length: count }, (_, i) => ({ ord: i + 1, text: `Paragraph ${i + 1}.` }));

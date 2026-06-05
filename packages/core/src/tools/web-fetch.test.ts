@@ -10,7 +10,11 @@ import type { LeadRecord, LeadStore } from './lead-store.js';
 import { createWebFetchTool } from './web-fetch.js';
 
 const ctx: TurnCtx = { companionId: 'c1', ownerId: 'u1' };
-const silentLogger: Logger = { error: () => undefined, info: () => undefined };
+const silentLogger: Logger = {
+  error: () => undefined,
+  warn: () => undefined,
+  info: () => undefined,
+};
 
 /** A resolver that returns the given text as a plain-text body (the note parser). */
 function textResolver(text: string): LinkResolver {

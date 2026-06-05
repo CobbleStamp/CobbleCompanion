@@ -1,10 +1,12 @@
 import type { CompanionDto, MemorySnapshotDto, MessageDto } from '@cobble/shared';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   fetchMessages,
   getCompanionMemory,
   listEpisodes,
+  listLeads,
+  listProcedures,
   searchEpisodes,
   searchMemory,
 } from '../api/client.js';
@@ -67,6 +69,12 @@ describe('MemoryBrowser', () => {
     vi.mocked(fetchMessages).mockReset().mockResolvedValue(transcript);
     vi.mocked(listEpisodes).mockReset().mockResolvedValue([]);
     vi.mocked(searchEpisodes).mockReset().mockResolvedValue([]);
+    vi.mocked(listProcedures).mockReset().mockResolvedValue([]);
+    vi.mocked(listLeads).mockReset().mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('renders identity, the episodic transcript, semantic counts, and procedural memory', async () => {
@@ -195,5 +203,64 @@ describe('MemoryBrowser', () => {
 
     await waitFor(() => expect(screen.getByText(/0 messages in one continuous/)).toBeTruthy());
     expect(screen.queryByRole('button', { name: 'View transcript' })).toBeNull();
+  });
+
+  it('lists learned workflows when procedural memory is populated', async () => {
+    vi.mocked(listProcedures).mockResolvedValue([
+      {
+        id: 'proc1',
+        title: 'Summarise a long read',
+        steps: ['fetch', 'segment', 'summarise'],
+        createdAt: '2026-02-01T00:00:00.000Z',
+      },
+    ]);
+
+    render(<MemoryBrowser companion={companion} onBack={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText('Summarise a long read')).toBeTruthy());
+    expect(screen.getByText('fetch → segment → summarise')).toBeTruthy();
+  });
+
+  it('logs and surfaces an error when procedural memory fails to load', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.mocked(listProcedures).mockRejectedValue(new Error('procedures unreachable'));
+
+    render(<MemoryBrowser companion={companion} onBack={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText('procedures unreachable')).toBeTruthy());
+    expect(consoleError).toHaveBeenCalledWith(
+      'failed to load procedural memory',
+      expect.objectContaining({ companionId: companion.id, error: expect.any(Error) }),
+    );
+  });
+
+  it('lists discovered leads when the reading list is populated', async () => {
+    vi.mocked(listLeads).mockResolvedValue([
+      {
+        id: 'lead1',
+        url: 'https://lima-eats.example',
+        why: 'follow-up on ceviche',
+        status: 'new',
+        createdAt: '2026-02-01T00:00:00.000Z',
+      },
+    ]);
+
+    render(<MemoryBrowser companion={companion} onBack={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText('https://lima-eats.example')).toBeTruthy());
+    expect(screen.getByText('follow-up on ceviche')).toBeTruthy();
+  });
+
+  it('logs and surfaces an error when the reading list fails to load', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.mocked(listLeads).mockRejectedValue(new Error('leads unreachable'));
+
+    render(<MemoryBrowser companion={companion} onBack={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText('leads unreachable')).toBeTruthy());
+    expect(consoleError).toHaveBeenCalledWith(
+      'failed to load reading list',
+      expect.objectContaining({ companionId: companion.id, error: expect.any(Error) }),
+    );
   });
 });

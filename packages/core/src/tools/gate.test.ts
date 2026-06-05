@@ -12,7 +12,11 @@ import type { Tool } from './tool.js';
 import type { ToolCallLog, ToolCallRecord } from './tool-call-log.js';
 
 const ctx: TurnCtx = { companionId: 'c1', ownerId: 'u1' };
-const silentLogger: Logger = { error: () => undefined, info: () => undefined };
+const silentLogger: Logger = {
+  error: () => undefined,
+  warn: () => undefined,
+  info: () => undefined,
+};
 
 function tool(name: string, effectful: boolean, summary?: string): Tool {
   return {

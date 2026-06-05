@@ -7,7 +7,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ConsolidationRunner, type ConsolidationTarget } from './consolidation-runner.js';
 
-const logger = { error: vi.fn(), info: vi.fn() };
+const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn() };
 
 /** Let queued microtasks (drain loop advancing to the next run) settle. */
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));

@@ -33,6 +33,38 @@ describe('ProposalCard', () => {
     await waitFor(() => expect(onReject).toHaveBeenCalledWith('p1'));
   });
 
+  it('re-enables both buttons after a successful action (no permanently dead card)', async () => {
+    const onConfirm = vi.fn().mockResolvedValue(undefined);
+    render(<ProposalCard proposal={proposal} onConfirm={onConfirm} onReject={vi.fn()} />);
+    const approve = screen.getByText('Approve') as HTMLButtonElement;
+    const decline = screen.getByText('Decline') as HTMLButtonElement;
+
+    fireEvent.click(approve);
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledWith('p1'));
+    // The success path clears `busy`: the card may still be mounted (e.g. the
+    // parent's refresh failed), and must not be stuck with dead buttons.
+    await waitFor(() => expect(approve.disabled).toBe(false));
+    expect(decline.disabled).toBe(false);
+  });
+
+  it('disables both buttons while a choice is in flight, guarding double-submit', async () => {
+    let resolve: () => void = () => {};
+    const onConfirm = vi.fn().mockReturnValue(new Promise<void>((r) => (resolve = r)));
+    render(<ProposalCard proposal={proposal} onConfirm={onConfirm} onReject={vi.fn()} />);
+    const approve = screen.getByText('Approve') as HTMLButtonElement;
+    const decline = screen.getByText('Decline') as HTMLButtonElement;
+
+    fireEvent.click(approve);
+    await waitFor(() => expect(approve.disabled).toBe(true));
+    expect(decline.disabled).toBe(true);
+    // A second tap while in flight is inert — disabled buttons fire no handler.
+    fireEvent.click(approve);
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+
+    resolve();
+    await waitFor(() => expect(approve.disabled).toBe(false));
+  });
+
   it('surfaces an error if the action fails', async () => {
     const onConfirm = vi.fn().mockRejectedValue(new Error('over your daily limit'));
     render(<ProposalCard proposal={proposal} onConfirm={onConfirm} onReject={vi.fn()} />);

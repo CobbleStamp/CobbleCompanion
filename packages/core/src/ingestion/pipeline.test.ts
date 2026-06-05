@@ -29,7 +29,11 @@ function linkSourceParser(fetchFn: typeof fetch, maxBytes?: number) {
   });
 }
 
-const silentLogger: Logger = { error: () => undefined, info: () => undefined };
+const silentLogger: Logger = {
+  error: () => undefined,
+  warn: () => undefined,
+  info: () => undefined,
+};
 
 /** LLM fake returning one scripted response per call, in order (we own the seam). */
 class ScriptedLlmGateway implements LlmGateway {

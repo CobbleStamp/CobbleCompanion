@@ -10,7 +10,7 @@ import { ZERO_USAGE } from '../usage.js';
 import { composeRetrieveContext } from './compose-retrieve.js';
 import type { RetrieveContext } from './hooks.js';
 
-const logger = { error: vi.fn(), info: vi.fn() };
+const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn() };
 
 describe('composeRetrieveContext', () => {
   it('concatenates blocks in order and sums usage across arms', async () => {

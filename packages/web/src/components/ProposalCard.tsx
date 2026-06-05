@@ -25,6 +25,11 @@ export function ProposalCard({ proposal, onConfirm, onReject }: ProposalCardProp
       await fn(proposal.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong');
+    } finally {
+      // Always re-enable, even on the success path. A resolved action usually
+      // unmounts this card (the parent drops it from the queue), in which case
+      // this is a harmless no-op; but if that follow-up refresh fails the card
+      // lingers, and it must not linger with both buttons permanently dead.
       setBusy(false);
     }
   };
