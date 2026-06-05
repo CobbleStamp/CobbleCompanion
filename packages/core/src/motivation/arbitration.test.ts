@@ -2,7 +2,12 @@
 
 import type { ProactivityDial } from '@cobble/shared';
 import { describe, expect, it } from 'vitest';
-import { type ArbitrationInput, DEFAULT_KNOBS, decideMove } from './arbitration.js';
+import {
+  type ArbitrationInput,
+  DEFAULT_KNOBS,
+  ESTIMATED_READ_COST_TOKENS,
+  decideMove,
+} from './arbitration.js';
 import { DEFAULT_DRIVE_WEIGHTS, type DriveLevels } from './drives.js';
 import type { PresenceState } from './presence.js';
 
@@ -21,7 +26,8 @@ function input(overrides: Partial<ArbitrationInput> = {}): ArbitrationInput {
     weights: DEFAULT_DRIVE_WEIGHTS,
     presence: 'attentive' as PresenceState,
     dial: 'gentle' as ProactivityDial,
-    energyExhausted: false,
+    // Plenty of energy for a full focus-length burst by default.
+    energyRemaining: ESTIMATED_READ_COST_TOKENS * (DEFAULT_KNOBS.focusLength + 2),
     knobs: DEFAULT_KNOBS,
     ...overrides,
   };
@@ -39,8 +45,15 @@ describe('decideMove', () => {
     expect(decideMove(input({ dial: 'off' }))).toBeNull();
   });
 
-  it('idles when energy is exhausted', () => {
-    expect(decideMove(input({ energyExhausted: true }))).toBeNull();
+  it('idles when energy cannot afford even one read', () => {
+    expect(decideMove(input({ energyRemaining: 0 }))).toBeNull();
+    expect(decideMove(input({ energyRemaining: ESTIMATED_READ_COST_TOKENS - 1 }))).toBeNull();
+  });
+
+  it('caps the burst to what remaining energy can afford (self-regulation)', () => {
+    // Only enough energy for 2 reads, though focus length is 3.
+    const move = decideMove(input({ energyRemaining: ESTIMATED_READ_COST_TOKENS * 2 }));
+    expect(move?.limit).toBe(2);
   });
 
   it('idles while the user is active (do not self-initiate)', () => {

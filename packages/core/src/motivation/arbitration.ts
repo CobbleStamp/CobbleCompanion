@@ -45,6 +45,15 @@ const DIAL_THRESHOLD: Record<ProactivityDial, number> = {
   active: 0.15,
 };
 
+/**
+ * Rough energy a single autonomous read costs (the two ingestion passes + embed +
+ * a share of the report note). Used only to size the burst against remaining
+ * energy so the companion self-regulates — it scopes its plan to what it can
+ * afford rather than only stopping when the pool hits zero. Real spend is metered
+ * exactly; this is a planning estimate, deliberately on the high side.
+ */
+export const ESTIMATED_READ_COST_TOKENS = 1500;
+
 /** The chosen proactive move. v1 only ever explores the reading list. */
 export interface ExploreMove {
   readonly kind: 'explore';
@@ -62,7 +71,8 @@ export interface ArbitrationInput {
   readonly weights: DriveWeights;
   readonly presence: PresenceState;
   readonly dial: ProactivityDial;
-  readonly energyExhausted: boolean;
+  /** Tokens of energy left in the current window — sizes the burst (§8). */
+  readonly energyRemaining: number;
   readonly knobs: PersonalityKnobs;
 }
 
@@ -75,7 +85,10 @@ export function decideMove(input: ArbitrationInput): Move | null {
   if (input.dial === 'off') {
     return null;
   }
-  if (input.energyExhausted) {
+  // Out of energy → idle (chat still runs on stamina). Below one read's worth,
+  // there's nothing it can afford, so treat that as exhausted too.
+  const affordable = Math.floor(input.energyRemaining / ESTIMATED_READ_COST_TOKENS);
+  if (affordable < 1) {
     return null;
   }
   // Don't wander into solo work while the user is mid-interaction (§4).
@@ -89,6 +102,9 @@ export function decideMove(input: ArbitrationInput): Move | null {
     return null;
   }
 
-  const limit = Math.max(1, Math.round(input.knobs.focusLength));
+  // Energy-aware planning: dwell up to focus length, but never plan more reads
+  // than the remaining energy can pay for (self-regulation, §6/§8).
+  const focus = Math.max(1, Math.round(input.knobs.focusLength));
+  const limit = Math.min(focus, affordable);
   return { kind: 'explore', limit, drive: 'curiosity', pressure };
 }

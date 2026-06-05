@@ -97,7 +97,8 @@ export class MotivationEngine {
         : 'absent_long';
       const newLeads = await leads.listByStatus(companionId, ['new']);
       const levels = computeDrives({ newLeadCount: newLeads.length });
-      const energyExhausted = await energy.isExhausted(companionId);
+      const snapshot = await energy.getEnergy(companionId);
+      const energyRemaining = Math.max(0, snapshot.capTokens - snapshot.usedTokens);
       const weights = resolveWeights(companion.driveWeights);
 
       const move = decideMove({
@@ -105,15 +106,16 @@ export class MotivationEngine {
         weights,
         presence: presenceState,
         dial: companion.proactivityDial,
-        energyExhausted,
+        energyRemaining,
         knobs: companion.personalityKnobs ?? DEFAULT_KNOBS,
       });
       if (!move) {
         return IDLE; // idle is free — no energy spent
       }
 
-      // Measure real spend as the energy delta across the burst (reads + note).
-      const before = (await energy.getEnergy(companionId)).usedTokens;
+      // Measure real spend as the energy delta across the burst (reads + note);
+      // nothing spent between sensing and here, so the snapshot is the baseline.
+      const before = snapshot.usedTokens;
       const result = await runAutonomousBurst(
         {
           leads,
