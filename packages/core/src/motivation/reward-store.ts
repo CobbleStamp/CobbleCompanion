@@ -79,12 +79,7 @@ export class DrizzleProactiveOutcomeStore implements ProactiveOutcomeStore {
     await this.db
       .update(proactiveOutcomes)
       .set({ reward, resolvedAt: new Date() })
-      .where(
-        and(
-          eq(proactiveOutcomes.companionId, companionId),
-          eq(proactiveOutcomes.id, id),
-        ),
-      );
+      .where(and(eq(proactiveOutcomes.companionId, companionId), eq(proactiveOutcomes.id, id)));
   }
 
   async list(companionId: string, limit: number): Promise<readonly ProactiveOutcomeRecord[]> {

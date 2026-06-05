@@ -1,9 +1,4 @@
-import type {
-  CompanionDto,
-  DriveWeights,
-  PersonalityKnobs,
-  ProactivityDial,
-} from '@cobble/shared';
+import type { CompanionDto, DriveWeights, PersonalityKnobs, ProactivityDial } from '@cobble/shared';
 import { companions, type Database, users } from '@cobble/db';
 import { and, eq } from 'drizzle-orm';
 
@@ -149,10 +144,7 @@ export class DrizzleIdentityStore implements IdentityStore {
   }
 
   async updateDriveWeights(companionId: string, driveWeights: DriveWeights): Promise<void> {
-    await this.db
-      .update(companions)
-      .set({ driveWeights })
-      .where(eq(companions.id, companionId));
+    await this.db.update(companions).set({ driveWeights }).where(eq(companions.id, companionId));
   }
 }
 

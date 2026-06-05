@@ -177,7 +177,12 @@ export function registerProposalRoutes(
       // Reinforcement (P4): an approved self-directed proposal is positive
       // feedback — attribute the reward and nudge the served drive's weight.
       // No-op for chat-origin proposals (they recorded no outcome); best-effort.
-      await applyProposalReward({ rewards, identity, logger }, companion.id, proposalId, 'approved');
+      await applyProposalReward(
+        { rewards, identity, logger },
+        companion.id,
+        proposalId,
+        'approved',
+      );
 
       // Post-approval "what next" depends on the proposal's ORIGIN (§4.4/§4.5):
       // - chat: a present conversational partner — RE-ENTER the loop so the
@@ -222,7 +227,12 @@ export function registerProposalRoutes(
       // and is never re-proposed (it was stranded at 'read' otherwise — M2).
       await advanceLead(companion.id, proposal.leadId, 'discarded', proposalId);
       // Reinforcement (P4): a rejected self-directed proposal is negative feedback.
-      await applyProposalReward({ rewards, identity, logger }, companion.id, proposalId, 'rejected');
+      await applyProposalReward(
+        { rewards, identity, logger },
+        companion.id,
+        proposalId,
+        'rejected',
+      );
       return reply.code(204).send();
     },
   );

@@ -20,9 +20,19 @@ describe('updateDriveWeights', () => {
   });
 
   it('clamps to the ceiling and the floor', () => {
-    const high = updateDriveWeights({ ...DEFAULT_DRIVE_WEIGHTS, curiosity: 0.99 }, 'curiosity', 1, 1);
+    const high = updateDriveWeights(
+      { ...DEFAULT_DRIVE_WEIGHTS, curiosity: 0.99 },
+      'curiosity',
+      1,
+      1,
+    );
     expect(high.curiosity).toBe(WEIGHT_CEILING);
-    const low = updateDriveWeights({ ...DEFAULT_DRIVE_WEIGHTS, curiosity: 0.06 }, 'curiosity', -1, 1);
+    const low = updateDriveWeights(
+      { ...DEFAULT_DRIVE_WEIGHTS, curiosity: 0.06 },
+      'curiosity',
+      -1,
+      1,
+    );
     expect(low.curiosity).toBe(WEIGHT_FLOOR); // never dies to zero (exploration floor)
   });
 

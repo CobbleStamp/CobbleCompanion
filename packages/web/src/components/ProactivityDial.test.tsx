@@ -14,7 +14,9 @@ describe('ProactivityDial', () => {
 
   it('marks the initial level as active', () => {
     render(<ProactivityDial companionId="c1" initial="gentle" />);
-    expect(screen.getByRole('button', { name: 'gentle' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'gentle' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    );
   });
 
   it('switches the dial and persists the choice', async () => {

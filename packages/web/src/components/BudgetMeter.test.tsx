@@ -15,7 +15,12 @@ const FAR_FUTURE = '2999-01-01T00:00:00.000Z';
 
 function budget(staminaPct: number, energyPct: number): StaminaEnergyDto {
   return {
-    stamina: { usedTokens: staminaPct, capTokens: 100, percentUsed: staminaPct, resetsAt: FAR_FUTURE },
+    stamina: {
+      usedTokens: staminaPct,
+      capTokens: 100,
+      percentUsed: staminaPct,
+      resetsAt: FAR_FUTURE,
+    },
     energy: { usedTokens: energyPct, capTokens: 100, percentUsed: energyPct, resetsAt: FAR_FUTURE },
   };
 }

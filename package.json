@@ -18,11 +18,17 @@
     "dev": "pnpm -r --parallel run dev",
     "db:generate": "pnpm --filter @cobble/db run generate",
     "db:migrate": "pnpm --filter @cobble/db run migrate",
-    "eval": "pnpm --filter @cobble/eval run start"
+    "eval": "pnpm --filter @cobble/eval run start",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,json}": "prettier --write"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
     "@vitest/coverage-v8": "^3.0.5",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.0.7",
     "prettier": "^3.4.2",
     "typescript": "^5.7.3",
     "vite": "^6.0.7",

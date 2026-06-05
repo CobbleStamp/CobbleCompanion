@@ -223,13 +223,7 @@ export type ProactivityDial = z.infer<typeof proactivityDialSchema>;
  * closed; only the per-companion weights over it change — and those are learned,
  * starting neutral.
  */
-export type Drive =
-  | 'curiosity'
-  | 'bond'
-  | 'understanding'
-  | 'approval'
-  | 'helpfulness'
-  | 'upkeep';
+export type Drive = 'curiosity' | 'bond' | 'understanding' | 'approval' | 'helpfulness' | 'upkeep';
 
 /** Per-companion learned disposition: how much this Cobble cares about each drive. */
 export type DriveWeights = Record<Drive, number>;

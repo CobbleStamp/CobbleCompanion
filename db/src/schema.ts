@@ -91,10 +91,7 @@ export const companions = pgTable(
     // Phase 4 — proactivity. The user-facing intensity dial (off/gentle/active):
     // scales how readily the motivation engine initiates and how much energy it
     // spends; `off` never initiates (companion-motivation.md §5).
-    proactivityDial: text('proactivity_dial')
-      .$type<ProactivityDial>()
-      .notNull()
-      .default('gentle'),
+    proactivityDial: text('proactivity_dial').$type<ProactivityDial>().notNull().default('gentle'),
     // The "creature" burst constants (focus/boredom/distractibility). Default
     // constants in the PoC (null → defaults); personalized via onboarding later.
     personalityKnobs: jsonb('personality_knobs').$type<PersonalityKnobs>(),

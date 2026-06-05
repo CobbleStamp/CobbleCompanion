@@ -51,7 +51,12 @@ describe('applyProposalReward', () => {
   });
 
   it('approval sets a positive reward and raises the served drive weight', async () => {
-    await applyProposalReward({ rewards, identity, logger: silent }, companionId, proposalId, 'approved');
+    await applyProposalReward(
+      { rewards, identity, logger: silent },
+      companionId,
+      proposalId,
+      'approved',
+    );
 
     const outcome = await rewards.findByProposal(companionId, proposalId);
     expect(outcome?.reward).toBe(1);
@@ -62,7 +67,12 @@ describe('applyProposalReward', () => {
   });
 
   it('rejection sets a negative reward and lowers the served drive weight', async () => {
-    await applyProposalReward({ rewards, identity, logger: silent }, companionId, proposalId, 'rejected');
+    await applyProposalReward(
+      { rewards, identity, logger: silent },
+      companionId,
+      proposalId,
+      'rejected',
+    );
 
     expect((await rewards.findByProposal(companionId, proposalId))?.reward).toBe(-1);
     const companion = await identity.getCompanionById(companionId);
@@ -77,7 +87,12 @@ describe('applyProposalReward', () => {
       toolArgs: { url: 'https://y.dev' },
       summary: 'Remember https://y.dev',
     });
-    await applyProposalReward({ rewards, identity, logger: silent }, companionId, chat.id, 'approved');
+    await applyProposalReward(
+      { rewards, identity, logger: silent },
+      companionId,
+      chat.id,
+      'approved',
+    );
     // No weights were learned (still null → neutral).
     const companion = await identity.getCompanionById(companionId);
     expect(companion?.driveWeights).toBeNull();

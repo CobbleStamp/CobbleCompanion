@@ -216,10 +216,10 @@ export async function setProactivityDial(
   companionId: string,
   dial: ProactivityDial,
 ): Promise<ProactivityDial> {
-  const body = await request<{ dial: ProactivityDial }>(
-    `/companions/${companionId}/proactivity`,
-    { method: 'PATCH', body: JSON.stringify({ dial }) },
-  );
+  const body = await request<{ dial: ProactivityDial }>(`/companions/${companionId}/proactivity`, {
+    method: 'PATCH',
+    body: JSON.stringify({ dial }),
+  });
   return body.dial;
 }
 
