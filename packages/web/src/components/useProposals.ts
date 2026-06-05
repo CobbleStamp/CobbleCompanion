@@ -5,6 +5,10 @@
  * so confirm doesn't live here. Polls while any proposal is pending so one raised
  * mid-turn (or by background work later) shows up without a refresh; stops once
  * the queue is empty. Mirrors useIngestionJobs' poll-while-active loop.
+ *
+ * The poll re-arms off a tick that bumps after every refresh settles — including
+ * failures — so a transient poll error doesn't permanently kill the loop while
+ * proposals are still pending; it just retries on the next interval.
  */
 
 import type { ProposalDto } from '@cobble/shared';
@@ -25,6 +29,8 @@ export interface UseProposals {
 export function useProposals(companionId: string): UseProposals {
   const [proposals, setProposals] = useState<readonly ProposalDto[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // Bumps after every refresh settles (success or failure) to re-arm the poll.
+  const [pollTick, setPollTick] = useState(0);
   const pollRef = useRef<number | null>(null);
   const mountedRef = useRef(true);
 
@@ -36,7 +42,10 @@ export function useProposals(companionId: string): UseProposals {
       setError(null);
     } catch (err) {
       if (!mountedRef.current) return;
+      console.error('proposal poll failed', { companionId, error: err });
       setError(err instanceof Error ? err.message : 'Failed to load proposals');
+    } finally {
+      if (mountedRef.current) setPollTick((tick) => tick + 1);
     }
   }, [companionId]);
 
@@ -56,14 +65,16 @@ export function useProposals(companionId: string): UseProposals {
     };
   }, [refresh]);
 
-  // Poll while anything is pending; stop when the queue empties.
+  // Poll while anything is pending; stop when the queue empties. Re-arming keys
+  // off pollTick (bumped on every settle), so a failed poll still schedules the
+  // next attempt instead of silently ending the loop.
   useEffect(() => {
     if (proposals.length === 0) return;
     pollRef.current = window.setTimeout(() => void refresh(), POLL_INTERVAL_MS);
     return () => {
       if (pollRef.current !== null) window.clearTimeout(pollRef.current);
     };
-  }, [proposals, refresh]);
+  }, [proposals, refresh, pollTick]);
 
   return { proposals, error, reject, refresh };
 }
