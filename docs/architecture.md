@@ -343,8 +343,9 @@ flowchart LR
 > **The reward is conversational (paired with §4.4), and sensed in the loop (Phase 4.2).** After the
 > engine reads, it posts **one in-character report note** ("here's what I read"). The harness senses
 > the user's mood on **every** turn (`perceiveAndLearn`); when a note is awaiting a reaction, the
-> **change** in mood across that reaction is the reward that nudges the served drive's weight (§4.5
-> reinforcement) — no separate critic call, no approve/reject button. There is no approval round-trip
+> **change** in mood across that reaction is the reward that nudges the served drive's weight
+> (reinforcement mechanism → `companion-motivation.md` §7) — no separate critic call, no
+> approve/reject button. There is no approval round-trip
 > for autonomous work to "continue" from — the engine sees the **full** updated state on its own
 > cadence and decides the next move itself. (The confirm route still re-enters for `chat`-origin
 > approvals — a present partner to reply to, §4.4.)

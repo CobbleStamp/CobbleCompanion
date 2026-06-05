@@ -184,6 +184,29 @@ describe('runAutonomousBurst — best-effort per lead', () => {
     expect(await tinyEnergy.isExhausted(companionId)).toBe(true);
   });
 
+  it('returns nothing for a non-positive limit: no reads, no spend, no note, leads untouched', async () => {
+    // The arbitration layer can hand the burst limit 0 (no affordable/focus budget).
+    // It must short-circuit before touching leads, energy, or the transcript.
+    await leads.record(companionId, 'https://a.dev');
+
+    const result = await runAutonomousBurst(deps(new FlakyReadPipeline(semantic, new Set())), {
+      companionId,
+      companion: VOICE,
+      drive: 'curiosity',
+      weights: DEFAULT_DRIVE_WEIGHTS,
+      limit: 0,
+    });
+
+    expect(result.read).toHaveLength(0);
+    expect(result.noteMessageId).toBeNull();
+    expect((await energy.getEnergy(companionId)).usedTokens).toBe(0);
+    expect(await assistantNotes()).toHaveLength(0);
+    // The lead is left exactly as it was — still `new`, nothing parked.
+    expect(await leads.listByStatus(companionId, ['new'])).toHaveLength(1);
+    expect(await leads.listByStatus(companionId, ['read'])).toHaveLength(0);
+    expect(await rewards.list(companionId, 10)).toHaveLength(0);
+  });
+
   it('when every lead fails: no note, no spend, and all leads parked (no re-bill loop)', async () => {
     await leads.record(companionId, 'https://x.dev');
     await leads.record(companionId, 'https://y.dev');

@@ -103,6 +103,59 @@ describe('DrizzleProactiveOutcomeStore', () => {
     expect(found?.reward).toBeNull();
   });
 
+  it("a real companion cannot claim or read another's pending outcome (tenancy isolation)", async () => {
+    // The zero-UUID case above only proves "an id owning no rows matches nothing".
+    // This proves the actual invariant the companion-scope fix protects: with TWO
+    // real companions each holding a pending outcome, A's reaction can neither
+    // claim nor surface B's outcome, and vice versa.
+    const identity = new DrizzleIdentityStore(db);
+    const owner = await identity.ensureUserByEmail('owner@example.com');
+    const other = await identity.createCompanion(owner.id, {
+      name: 'Moss',
+      form: 'cat',
+      temperament: 'calm',
+    });
+    const otherNote = await memory.appendMessage(other.id, 'assistant', 'Moss read something.');
+
+    const mine = await rewards.record(companionId, {
+      noteMessageId: await noteId(),
+      drive: 'curiosity',
+    });
+    const theirs = await rewards.record(other.id, {
+      noteMessageId: otherNote.id,
+      drive: 'bond',
+    });
+
+    // A's reaction must not claim B's pending outcome…
+    expect(await rewards.setReward(companionId, theirs.id, 1)).toBe(false);
+    // …and each companion only ever sees its own pending outcome.
+    expect((await rewards.findLatestUnresolved(companionId))?.id).toBe(mine.id);
+    expect((await rewards.findLatestUnresolved(other.id))?.id).toBe(theirs.id);
+    // B's own reaction still claims it, leaving A's untouched.
+    expect(await rewards.setReward(other.id, theirs.id, 1)).toBe(true);
+    expect((await rewards.findLatestUnresolved(companionId))?.reward).toBeNull();
+  });
+
+  it('claims atomically under a true concurrent race — exactly one winner', async () => {
+    // The sequential test above proves "the second call sees reward already set".
+    // This races the two reactions with Promise.all: exactly one setReward must
+    // win and the stored reward must be one contender's value, never summed or
+    // clobbered.
+    const outcome = await rewards.record(companionId, {
+      noteMessageId: await noteId(),
+      drive: 'curiosity',
+    });
+    const results = await Promise.all([
+      rewards.setReward(companionId, outcome.id, 0.7),
+      rewards.setReward(companionId, outcome.id, -0.9),
+    ]);
+    expect(results.filter(Boolean)).toHaveLength(1); // exactly one winner
+    const [listed] = await rewards.list(companionId, 1);
+    const reward = listed!.reward!;
+    const isContender = Math.abs(reward - 0.7) < 1e-6 || Math.abs(reward + 0.9) < 1e-6;
+    expect(isContender).toBe(true);
+  });
+
   it('lists outcomes newest-first', async () => {
     await rewards.record(companionId, { noteMessageId: await noteId('a'), drive: 'curiosity' });
     await rewards.record(companionId, { noteMessageId: await noteId('b'), drive: 'bond' });

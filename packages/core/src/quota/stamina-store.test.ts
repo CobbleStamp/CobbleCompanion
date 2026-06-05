@@ -183,6 +183,20 @@ describe('DrizzleTokenQuotaStore', () => {
     expect((await quota.getUsage(userId)).capTokens).toBe(DEFAULT_CAP + 700);
   });
 
+  it('rolls at the reset instant inclusively, not a millisecond before', async () => {
+    // The roll condition is `now >= windowResetAt` — inclusive. Pin both sides of
+    // the boundary so the >= vs > choice (which fixes "resets at 00:00 UTC") can't
+    // silently regress.
+    const quota = store();
+    await quota.recordUsage(userId, 1300); // 300 over the cap, this window
+
+    clock = new Date('2026-06-03T23:59:59.999Z'); // one ms before the reset
+    expect((await quota.getUsage(userId)).usedTokens).toBe(1300); // not yet rolled
+
+    clock = new Date('2026-06-04T00:00:00.000Z'); // the reset instant itself
+    expect((await quota.getUsage(userId)).usedTokens).toBe(300); // rolled, debt carried
+  });
+
   it('preserves the top-up grant across a window roll', async () => {
     const quota = store();
     await quota.topUp(userId, 2000); // user fed it; cap → 3000

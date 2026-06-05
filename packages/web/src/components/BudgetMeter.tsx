@@ -20,9 +20,9 @@ function poolDetail(label: string, pool: UsageDto): string {
 
 export function BudgetMeter({ companionId }: { companionId: string }): JSX.Element | null {
   const [budget, setBudget] = useState<StaminaEnergyDto | null>(null);
-  // Which pool (if any) has a feed request in flight — disables that button so a
-  // double-tap can't fire two concurrent top-ups.
-  const [feeding, setFeeding] = useState<'stamina' | 'energy' | null>(null);
+  // True while any feed request is in flight — disables both feed buttons so a
+  // double-tap (or a tap on the other pool) can't fire concurrent top-ups.
+  const [feeding, setFeeding] = useState(false);
   const mountedRef = useRef(true);
 
   const refresh = useCallback(async (): Promise<void> => {
@@ -46,16 +46,16 @@ export function BudgetMeter({ companionId }: { companionId: string }): JSX.Eleme
 
   const feed = useCallback(
     async (pool: 'stamina' | 'energy'): Promise<void> => {
-      // Ignore re-entrant taps while this pool's feed is still in flight.
+      // Ignore re-entrant taps while any feed is still in flight.
       if (feeding) return;
-      setFeeding(pool);
+      setFeeding(true);
       try {
         const next = await topUpBudget(companionId, pool, TOPUP_AMOUNT);
         if (mountedRef.current) setBudget(next);
       } catch {
         // Best-effort; the next poll reconciles.
       } finally {
-        if (mountedRef.current) setFeeding(null);
+        if (mountedRef.current) setFeeding(false);
       }
     },
     [companionId, feeding],
@@ -71,7 +71,7 @@ export function BudgetMeter({ companionId }: { companionId: string }): JSX.Eleme
           type="button"
           className="budget-meter__feed"
           onClick={() => void feed('stamina')}
-          disabled={feeding !== null}
+          disabled={feeding}
           aria-label="Feed stamina"
         >
           +
@@ -83,7 +83,7 @@ export function BudgetMeter({ companionId }: { companionId: string }): JSX.Eleme
           type="button"
           className="budget-meter__feed"
           onClick={() => void feed('energy')}
-          disabled={feeding !== null}
+          disabled={feeding}
           aria-label="Feed energy"
         >
           +

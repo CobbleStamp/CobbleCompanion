@@ -94,4 +94,20 @@ describe('usePresenceHeartbeat', () => {
     rerender({ id: 'c2' });
     expect(sendHeartbeat).toHaveBeenLastCalledWith('c2', true);
   });
+
+  it('tears down the old interval when the companion id changes (no leak)', () => {
+    // Re-subscribing must also stop the PREVIOUS id's interval. Without the effect
+    // cleanup, the old 'c1' timer would keep beating alongside 'c2'.
+    const { rerender } = renderHook(({ id }) => usePresenceHeartbeat(id), {
+      initialProps: { id: 'c1' },
+    });
+    rerender({ id: 'c2' });
+    vi.mocked(sendHeartbeat).mockClear();
+
+    vi.advanceTimersByTime(INTERVAL_MS);
+    // Only the live id beats; the torn-down 'c1' interval never fires again.
+    expect(sendHeartbeat).toHaveBeenCalledTimes(1);
+    expect(sendHeartbeat).toHaveBeenCalledWith('c2', true);
+    expect(sendHeartbeat).not.toHaveBeenCalledWith('c1', expect.anything());
+  });
 });

@@ -126,6 +126,30 @@ describe('DrizzleCompanionEnergyStore', () => {
     expect((await energy.getEnergy(companionId)).usedTokens).toBe(701);
   });
 
+  it('does not lose a grant when two top-up calls interleave', async () => {
+    // Energy's top-up is the pool that "must never starve stamina", so its atomic
+    // SQL increment deserves the same regression net as stamina: both feeds land
+    // regardless of interleaving (a read-modify-write on the cap would lose one).
+    const energy = store();
+    await energy.recordSpend(companionId, 1); // create the row up front
+    await Promise.all([energy.topUp(companionId, 400), energy.topUp(companionId, 300)]);
+    expect((await energy.getEnergy(companionId)).capTokens).toBe(DEFAULT_CAP + 700);
+  });
+
+  it('rolls at the reset instant inclusively, not a millisecond before', async () => {
+    // The roll condition is `now >= windowResetAt` — inclusive. Pin both sides of
+    // the boundary so the >= vs > choice (which fixes "resets at 00:00 UTC") can't
+    // silently regress.
+    const energy = store();
+    await energy.recordSpend(companionId, 1300); // 300 over the cap, this window
+
+    clock = new Date('2026-06-03T23:59:59.999Z'); // one ms before the reset
+    expect((await energy.getEnergy(companionId)).usedTokens).toBe(1300); // not yet rolled
+
+    clock = new Date('2026-06-04T00:00:00.000Z'); // the reset instant itself
+    expect((await energy.getEnergy(companionId)).usedTokens).toBe(300); // rolled, debt carried
+  });
+
   it('re-reads instead of double-rolling when two callers race across midnight', async () => {
     // Spend over the cap, then advance the clock past the window reset so the next
     // calls must roll. Two interleaved callers race: one wins the guarded roll

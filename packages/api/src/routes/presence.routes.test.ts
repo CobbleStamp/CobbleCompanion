@@ -45,6 +45,25 @@ describe('presence routes', () => {
     expect(ctx.deps.presence.get(companionId)?.tabVisible).toBe(true);
   });
 
+  // A heartbeat records presence but is deliberately NOT a motivation trigger
+  // (the triggers are: sent turn + transcript open + periodic sweep). Pinning the
+  // negative guards against a future change that turns every poll into a nudge —
+  // which would make the engine fire on the presence cadence (a trigger storm).
+  it('does NOT nudge the motivation engine (heartbeat is not a trigger)', async () => {
+    const requested: string[] = [];
+    ctx.deps.motivation.request = (id: string): void => {
+      requested.push(id);
+    };
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/heartbeat`,
+      headers: auth,
+      payload: { tabVisible: true },
+    });
+    expect(res.statusCode).toBe(204);
+    expect(requested).toHaveLength(0);
+  });
+
   it('404s for a companion the caller does not own', async () => {
     const otherAuth = ctx.bearerFor('intruder@example.com');
     const res = await ctx.app.inject({

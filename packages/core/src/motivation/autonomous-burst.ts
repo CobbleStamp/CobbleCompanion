@@ -4,7 +4,8 @@
  * few reading-list leads into the companion's own memory, spending real tokens
  * billed to the ENERGY pool (`architecture.md` §4.8), then posts ONE in-character
  * "here's what I read" note to the transcript. That note is the surface the user
- * reacts to — their reaction is the reward signal (sentiment, not approve/reject;
+ * reacts to — the reward signal is the **change** in their mood across that
+ * reaction (change-as-reward, not sentiment and not approve/reject;
  * `companion-motivation.md` §7), so the burst records a pending outcome linked to
  * the note for later attribution.
  *

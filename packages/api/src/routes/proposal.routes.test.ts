@@ -149,6 +149,54 @@ describe('proposal routes', () => {
     expect(transcript.map((m) => m.content)).not.toContain('Hi there');
   });
 
+  it('confirm of a CHAT proposal debits the owner stamina (the re-entry turn spends)', async () => {
+    // Confirm is a real spend route: a chat-origin approval re-enters the loop and
+    // runs an LLM turn, billed to the owner's stamina (the message route has the
+    // equivalent assertion; the confirm debit branch was untested).
+    const id = await seedProposal(); // create() defaults origin to 'chat'
+    const owner = await ctx.deps.identity.ensureUserByEmail('owner@example.com');
+    expect((await ctx.deps.quota.getUsage(owner.id)).usedTokens).toBe(0);
+
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/proposals/${id}/confirm`,
+      headers: auth,
+    });
+
+    expect((await ctx.deps.quota.getUsage(owner.id)).usedTokens).toBeGreaterThan(0);
+  });
+
+  it('streams an empty SSE (no done event) when the outcome row fails to persist', async () => {
+    // Self-directed confirm path: if the friendly outcome row can't be written,
+    // outcomeStream(null) yields nothing — the client falls back to a transcript
+    // refresh. The held action must still have executed; the response is a valid
+    // (empty) event-stream, not a 500.
+    await ctx.deps.leads.record(companionId, 'https://auto.dev');
+    const [lead] = await ctx.deps.leads.listByStatus(companionId, ['new']);
+    const proposal = await ctx.deps.proposals.create(companionId, {
+      toolName: 'ingest_source',
+      toolArgs: { url: 'https://auto.dev' },
+      summary: 'Remember https://auto.dev',
+      leadId: lead!.id,
+      origin: 'autonomous',
+    });
+    // Make the outcome-row persist throw (the route catches it → outcomeRow=null).
+    ctx.deps.memory.appendMessage = async (): Promise<never> => {
+      throw new Error('transcript write is down');
+    };
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/proposals/${proposal.id}/confirm`,
+      headers: auth,
+    });
+
+    expect(res.headers['content-type']).toContain('text/event-stream');
+    expect(res.body).not.toContain('"type":"done"'); // empty stream — null outcome
+    // The action still executed despite the row failure.
+    expect(await ctx.deps.semantic.listSources(companionId)).toHaveLength(1);
+  });
+
   it('confirm of a CHAT proposal invokes the harness continuation EXACTLY once', async () => {
     // The complement of the autonomous case: a chat-origin proposal IS a live
     // ask, so confirming it must re-enter the loop exactly once to narrate the
