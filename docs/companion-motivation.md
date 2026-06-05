@@ -24,6 +24,14 @@ The engine fills the reserved `Initiator` seam: an outer-loop ENTRY can be gener
 not only by a human (`architecture.md` §4.5). Each invocation it either emits a proactive turn or
 **stays idle** — idleness is a first-class, free outcome.
 
+> **Phase 4 v1 scope.** The mechanism below is the *full* design. The first build is deliberately
+> **proposal-only**: on an idle tick the engine works the **lead inventory** into autonomous
+> **ingest proposals** (reusing the Phase 3 explore path), learning from **hard approval signals**.
+> Unprompted **conversation** (tips / questions / check-ins), the **LLM-critic** reward, and a
+> stronger sense of **purpose/agenda** are designed here but **deferred to a later phase** (§10) —
+> they're where the social drives (bond, understanding-the-user) begin to fire, and they need the
+> conversational-proactivity surface.
+
 ## 2. Vocabulary (four distinct things)
 
 Keeping these separate is what makes the design tractable:
@@ -31,7 +39,7 @@ Keeping these separate is what makes the design tractable:
 | Term | What it is | Lifetime |
 |---|---|---|
 | **Drive** | An intrinsic axis of "what it wants" (curiosity, bond, …) | **Fixed taxonomy** (hard-coded enum) |
-| **Weight** | How much *this* Cobble cares about a drive — its disposition / personality | **Persisted per-companion; seeded at creation; evolves** via learning |
+| **Weight** | How much *this* Cobble cares about a drive — its disposition / personality | **Persisted per-companion; starts neutral (PoC); evolves** via learning |
 | **Level (need)** | How *unsatisfied* a drive is right now | **Dynamic** — recomputed each tick from environment + memory (mostly derived, not stored) |
 | **Behaviour** | A concrete move the engine can take (offer-tip, explore-lead, idle, …) | A fixed set of archetypes; each *targets* live content from memory |
 
@@ -119,29 +127,32 @@ without any special-case code.
 
 - **Fixed forever:** the drive *taxonomy* (§3); the **temperament seed** (already immutable by
   product rule, `product-overview.md` §5.5).
-- **Seeded at creation, then learned:** the **drive weights**. At companion creation a one-time
-  **metered LLM call** maps the free-text temperament (+ name/form) onto an initial weight vector
-  over the fixed axes, with a **deterministic neutral fallback** (equal weights) when over budget,
-  on failure, or with no temperament — mirroring the `evolvedPersona` pattern (`architecture.md`
-  §4.3). Persisted in `companions.drive_weights`.
+- **Starts neutral, then learned:** the **drive weights**. For the PoC a new companion starts at
+  **neutral** (equal weights) and is *raised* into its disposition by the reinforcement loop below —
+  personality **emerges from interaction** rather than being born fixed. Persisted in
+  `companions.drive_weights` (null → neutral). *(Deferred: a richer **initial seed from the user's
+  onboarding selection**, designed with the game mechanics — `product-overview.md` §5.6.)*
 - **Learned over time:** the weights **evolve** via the reinforcement loop below — this *is* the
   relationship-growth axis surfaced in Phase 5 (`product-overview.md` §5.5).
 - **Dynamic, not "evolved":** drive **levels** are recomputed each tick (bond from message
   recency, curiosity from lead count, approval from recent reward history) — mostly derived, so
   almost nothing extra is stored.
-- **Fixed at creation (PoC):** the personality **knobs** (§6). They *could* drift later; that's
-  deferred (§10).
+- **Default constants in the PoC:** the personality **knobs** (§6) ship at shared defaults so the
+  *mechanism* works; per-companion personalization (alongside the weight seed) comes from onboarding
+  later, and they could also drift via learning post-PoC. Deferred (§10).
 
 ### Reinforcement (v1)
 
-After a proactive turn, the engine computes a **blended reward**:
+After a proactive action, the engine computes a **reward**. **Phase 4 v1 uses hard signals only** —
+they're unambiguous and free, and because v1 is proposal-only *every* action is an approvable
+proposal, so the signal is clean:
 
-- **Hard signals** (unambiguous): proposal **approved** → strong `+`; **rejected / dismissed** →
-  `−`; **ignored** after N ticks → mild `−`; explicit **appreciation** ("thanks, that's useful") →
-  `+`.
-- **LLM-critic feeling-score**: a cheap metered call reads the user's reaction and returns a scalar
-  in `[-1, +1]` (debited to energy).
-- `reward = blend(hard, critic)`.
+- **Hard signals**: proposal **approved** → strong `+`; **rejected / dismissed** → `−`; **ignored**
+  after N ticks → mild `−`.
+
+*(Deferred with conversational proactivity: an **LLM-critic feeling-score** of the user's reaction to
+a message, blended with the hard signals — needed once tips/questions ship, since a message has no
+approve/reject signal of its own.)*
 
 A simple **EMA update** nudges the weights of the drives that behaviour served:
 `w ← w + α · (reward − w)`, clamped. The weights stay **interpretable** ("Cobble has learned you
@@ -166,6 +177,10 @@ model, `architecture.md` §4.8). Consequences:
   dial, so a burst is bounded.
 
 ## 9. Worked examples
+
+> Examples **B and C are Phase 4 v1** (proposal-only). **A and D** illustrate the *full* design
+> including the deferred conversational behaviours (unprompted tips, learning from message
+> reactions) — shown so the mechanism reads end-to-end.
 
 **A — Present & attentive, a juicy lead.** You've gone quiet with the tab open (Attentive).
 Curiosity level is high (three unread leads, one closely matching a known interest); your Cobble
@@ -192,18 +207,29 @@ research partner — *raised, not configured.*
 **Decided (this doc):**
 1. **Fixed drive taxonomy** of six axes (§3); no runtime drive-kind invention.
 2. **Two-level granularity** — coarse weighted axes × live fine-grained targets from memory.
-3. **Weights** are persisted per-companion, **seeded from temperament via a one-time LLM call**
-   (neutral fallback), and **evolve** via reinforcement.
+3. **Weights** start **neutral** per-companion in the PoC and **evolve** via reinforcement — a Cobble
+   is *raised* into its personality; a richer **onboarding-driven initial seed** is deferred to the
+   game-mechanics phase.
 4. **Homeostatic-need × learned-weight** arbitration with a **token-free heuristic gate**; the LLM
    only *executes* the chosen behaviour.
-5. **Knobs fixed at creation** for the PoC; **taxonomy + temperament immutable**; **levels dynamic**.
-6. **Reinforcement v1** = blended reward (LLM-critic + hard signals) → EMA weight update.
+5. **Knobs ship at default constants** in the PoC (personalized via onboarding later); **taxonomy +
+   temperament immutable**; **levels dynamic**.
+6. **Phase 4 v1 is proposal-only** — the engine works the lead inventory into autonomous ingest
+   proposals; unprompted conversation (tips/questions/check-ins) is deferred.
+7. **Reinforcement v1 = hard signals only** (approve / reject / dismiss / ignore) → EMA weight
+   update; the LLM-critic feeling-score is deferred with conversational proactivity.
 
 **Deferred (designed elsewhere, built later):**
+- **Unprompted conversation** (tips, questions, check-ins) + the **LLM-critic** reward + a stronger
+  sense of **purpose/agenda** (goals the companion pursues and raises on its own) → a later phase.
+  This is where the **bond** and **understanding-the-user** drives begin to fire and learn; Phase 4
+  v1 is proposal-only.
 - Continuous **work-while-away** (eager between-visit activity) → Phase 6 (needs push for an
   audience; `architecture.md` §4.5).
 - The stamina/energy **game economy** (food types, feeding, store, rich meters) → Phase 5
   (`product-overview.md` §5.6).
+- A richer **initial personality seed from the onboarding selection** (weights + knobs), designed
+  with the game mechanics → Phase 5.
 - **Deeper RL** (contextual bandit / richer policy) and **evolving knobs** → post-PoC.
 
 ## 11. See also

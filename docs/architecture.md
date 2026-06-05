@@ -372,28 +372,31 @@ The engine's parts (each additive, no loop change):
 - **Attention model (the "creature")** — each initiation is a **bounded burst**, never a full drain
   of the inventory. Personality parameters shape it: **focus length** (steps before re-deciding),
   **boredom** (interest on a thread decays without payoff), **distractibility** (a higher-salience
-  lead can preempt). Per-companion constants seeded at creation (from temperament) — a tenacious
-  deep-reader vs. a magpie that flits.
+  lead can preempt). **Default constants in the PoC** (per-companion personalization deferred to
+  onboarding, `companion-motivation.md` §7) — the dynamics behind a tenacious deep-reader vs. a
+  magpie that flits.
 - **Budget (stamina & energy)** — self-initiated work draws the **energy** pool (§4.8); when energy
   is exhausted the engine stops initiating (the gate idles) while chat still runs on **stamina**, so
   autonomy can never starve interaction. The per-run ceiling (§4.7) is parameterized by the
   personality knobs and the tunability dial.
-- **Reinforcement (learning what lands)** — after a proactive turn the engine computes a **blended
-  reward**: an LLM-critic feeling-score of the user's reaction + hard signals (proposal approved =
-  strong+, rejected/dismissed = −, ignored = mild−, appreciation = +). A simple update (EMA) nudges
-  the per-companion **drive weights**, so the companion leans into what's appreciated. Weights are
-  interpretable and seed the Phase 5 relationship-growth axis. *(A deeper contextual-bandit policy
-  is deferred.)*
-- **Output** — a proactive turn → a message/question, or a **proposal awaiting approval**
-  (`origin = autonomous`, §4.4). Delivered in-app on web (the approval queue + a transcript poll);
-  sparing push when away in Phase 6. Consequential acts still pass the §4.4 gate.
+- **Reinforcement (learning what lands)** — after a proactive action the engine computes a **reward**
+  and a simple update (EMA) nudges the per-companion **drive weights**, so the companion leans into
+  what's appreciated. **Phase 4 v1 uses hard signals only** (proposal approved = strong+,
+  rejected/dismissed = −, ignored = mild−). Weights are interpretable and seed the Phase 5
+  relationship-growth axis. *(Deferred with conversational proactivity: an LLM-critic feeling-score
+  blended in; and a deeper contextual-bandit policy.)*
+- **Output** — **Phase 4 v1 ships the proposal path only**: a **proposal awaiting approval**
+  (`origin = autonomous`, §4.4), delivered via the in-app approval queue. *(Unprompted
+  messages/questions — and the transcript-poll delivery they need — are deferred,
+  `companion-motivation.md` §10.)* Consequential acts still pass the §4.4 gate.
 - **Tunability** — a per-companion **frequency/intensity dial** (off / gentle / active) scaling
   initiation rate and energy spend (Phase 4 DoD).
 
 **Phase 3 built the substrate** the engine plugs into: the **lead inventory**, the `Initiator`
 contract, and the **burst-budget knob** (the §4.7 per-run ceiling that Phase 4 parameterizes by
-personality). **Documented here, built later:** continuous work-while-away → Phase 6; the
-stamina/energy **game economy** (food/feeding, store, rich meters) → Phase 5; deeper RL.
+personality). **Documented here, built later:** unprompted conversation + the LLM-critic + a sense
+of purpose/agenda → a later phase (Phase 4 v1 is **proposal-only**); continuous work-while-away →
+Phase 6; the stamina/energy **game economy** (food/feeding, store, rich meters) → Phase 5; deeper RL.
 
 ### 4.6 Phase 0 realization (end-to-end)
 

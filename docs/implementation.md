@@ -239,16 +239,17 @@ lands with the Phase 4 migrations; captured here so the design is single-sourced
   confirm route re-enter the loop only for `chat`-origin proposals (the §4.4 resolution) and bill
   effectful work to the right budget pool (chat→stamina, explore/autonomous→energy).
 - **`companions`** gains: `proactivity_dial` (`off | gentle | active`, default `gentle` — the
-  tunability dial); `personality_knobs` (jsonb `{focusLength, boredom, distractibility}`, seeded at
-  creation from temperament — the "creature" constants); `drive_weights` (jsonb — per-drive EMA
-  weights the reinforcement loop updates; null → neutral defaults).
+  tunability dial); `personality_knobs` (jsonb `{focusLength, boredom, distractibility}` — the
+  "creature" constants; **default constants in the PoC**, personalized via onboarding later, null →
+  defaults); `drive_weights` (jsonb — per-drive EMA weights the reinforcement loop updates; **starts
+  neutral**, null → neutral defaults).
 - **`companion_energy`** (new) — the **energy** pool (self-initiated work), mirroring
   `user_token_usage` (which becomes the **stamina** pool) but keyed per **companion**: window reset,
   used tokens, a manual top-up grant. Separate counters so autonomy can't starve interaction (§4.8).
 - **`proactive_outcomes`** (new) — one row per initiation for the reinforcement loop: `origin`,
-  move kind, linked `proposal_id`/message `seq`, a drive snapshot at initiation, and the **blended
-  reward** (LLM-critic feeling-score + hard signals) once resolved. Doubles as the
-  helpful-vs-annoying measurement.
+  move kind, linked `proposal_id`, a drive snapshot at initiation, and the **reward** once resolved
+  (**Phase 4 v1: hard signals only** — approve/reject/dismiss/ignore; the LLM-critic feeling-score
+  is deferred with conversational proactivity). Doubles as the helpful-vs-annoying measurement.
 
 Presence is **not** a table — it is a volatile, heartbeat-fed in-memory signal (§4.5).
 

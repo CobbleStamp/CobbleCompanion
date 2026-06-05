@@ -194,7 +194,8 @@ deterministic tests; the will only by measurement — so it lands on a trusted f
 - **Presence-aware behaviour.** The engine reads its environment — chiefly a **presence spectrum**
   (active / attentive / away / absent, from a client heartbeat + activity recency) — and picks a
   fitting expression: engage you when present, do solo work when you're away (surfaced on return),
-  and **stay idle** when nothing is worth doing.
+  and **stay idle** when nothing is worth doing. *(Phase 4 v1 expresses this through autonomous
+  proposals only; engaging you with unprompted messages is deferred — see below.)*
 - **Lazy, web-appropriate trigger.** Proactive turns fire on user activity + on return + a periodic
   sweep — not an always-on per-companion drain. The companion **works its lead inventory** — the
   same exploration loop Phase 3 ran on command, now self-triggered. *(Genuine work **while you're
@@ -210,21 +211,26 @@ deterministic tests; the will only by measurement — so it lands on a trusted f
   **stamina** (user-initiated work) and **energy** (the engine's self-initiated work) — so autonomy
   can never starve conversation (`architecture.md` §4.8). Phase 4 ships the mechanism plus a
   **simple meter + manual top-up**; the full feeding/"food" game economy is **Phase 5**.
-- **Reinforcement (v1).** A blended reward — an LLM-judged feeling-score of your reaction plus hard
-  signals (approved / dismissed / ignored / appreciated) — updates interpretable per-drive weights
-  so the companion learns what lands. *(A deeper contextual-bandit policy is deferred.)*
+- **Reinforcement (v1).** Hard approval signals (approved / rejected / dismissed / ignored) update
+  interpretable per-drive weights, so the companion learns what lands — and a Cobble, starting
+  **neutral**, is *raised* into its personality rather than born with one. *(The LLM-critic
+  feeling-score and a deeper policy are deferred with conversational proactivity.)*
 - Tunable frequency/intensity controls (a per-companion off/gentle/active dial).
 
-**Done when:** on opening the app with no prompt, Cobble offers genuinely relevant proposals or
-questions; users can dial it down; energy is consumed and, when exhausted, initiation stops while
-chat keeps working; reward is captured to track helpful-vs-annoying.
+Full mechanism (drive taxonomy, arbitration, seeding, learning, examples) →
+`companion-motivation.md`.
+
+**Done when:** on opening the app with no prompt, Cobble offers genuinely relevant **proposals**
+(from working its reading list); users can dial it down; energy is consumed and, when exhausted,
+initiation stops while chat keeps working; reward is captured to track helpful-vs-annoying.
 
 **Key risk:** annoyance. Gate behind tunability + the energy budget, and measure
 engagement/dismissal (the reinforcement signal) from day one.
 
-**Deferred (designed here, built later):** continuous work-while-away → Phase 6 (needs push); the
-stamina/energy **game economy** (food types, feeding, store, rich meters) → Phase 5; deeper RL
-beyond the v1 weight update.
+**Deferred (designed here, built later):** **unprompted conversation** (tips/questions/check-ins) +
+the LLM-critic + a sense of **purpose/agenda** → a later phase (Phase 4 v1 is proposal-only);
+continuous work-while-away → Phase 6 (needs push); the stamina/energy **game economy** (food types,
+feeding, store, rich meters) → Phase 5; deeper RL beyond the v1 weight update.
 
 ### Phase 5 — Bond & Growth (PoC complete)
 **Goal:** make Cobble feel raised, not used — closing the PoC loop.
