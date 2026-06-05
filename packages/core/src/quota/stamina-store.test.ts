@@ -122,6 +122,26 @@ describe('DrizzleTokenQuotaStore', () => {
     expect((await quota.getUsage(userId)).usedTokens).toBe(701);
   });
 
+  it('re-reads instead of double-rolling when two callers race across midnight', async () => {
+    // Spend over the cap, then advance past the reset so the next calls must roll.
+    // Two interleaved callers race: one wins the guarded roll (changing
+    // windowResetAt), the other's conditional update matches 0 rows and takes the
+    // re-read path. The window must roll exactly once — debt carried once, clamped,
+    // and the racing caller's spend not lost.
+    const quota = store();
+    await quota.recordUsage(userId, 1300); // 300 over the 1000 cap
+
+    clock = new Date('2026-06-04T00:00:01.000Z'); // past the reset instant
+    await Promise.all([quota.getUsage(userId), quota.recordUsage(userId, 50)]);
+
+    const usage = await quota.getUsage(userId);
+    // Rolled once: 300 carried debt + 50 spent in the new window = 350. A
+    // double-roll would re-clamp/zero; a lost spend would read 300.
+    expect(usage.usedTokens).toBe(350);
+    expect(usage.resetsAt).toBe('2026-06-05T00:00:00.000Z');
+    expect(await quota.isOverCap(userId)).toBe(false);
+  });
+
   it('honors a per-account cap override', async () => {
     const quota = store();
     await quota.recordUsage(userId, 100); // creates the row

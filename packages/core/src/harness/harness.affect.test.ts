@@ -181,6 +181,43 @@ describe('Harness perceiveAndLearn', () => {
     expect(systemText).toContain('grumpy');
   });
 
+  it('still streams the reply when the prior-affect read throws (fast-loop best-effort)', async () => {
+    // The turn-start `priorAffect` read feeds the last mood forward into the reply
+    // prompt. If the store throws there, attunement is lost but the reply must not
+    // break — the catch returns null and streaming proceeds normally.
+    const throwingStore: HarnessAffect['store'] = {
+      get: async (): Promise<AffectReading | null> => {
+        throw new Error('store get blew up');
+      },
+      upsert: async (): Promise<void> => {},
+    };
+    const harness = harnessWith(gateway('Hello there', { valence: 0.5, note: 'calm' }), {
+      store: throwingStore,
+      model: 'cheap',
+    });
+
+    const events: string[] = [];
+    const tokens: string[] = [];
+    for await (const event of harness.runTurn({
+      companion,
+      userContent: 'hi',
+      ownerId: 'owner',
+    })) {
+      const e = event as { type: string; value?: string };
+      events.push(e.type);
+      if (e.type === 'token' && e.value) {
+        tokens.push(e.value);
+      }
+    }
+    await harness.whenIdle(); // let any background read settle.
+
+    // The thrown read did not break streaming: the reply token arrived and the
+    // turn terminated cleanly.
+    expect(tokens.join('')).toBe('Hello there');
+    expect(events).toContain('done');
+    expect(events).not.toContain('error');
+  });
+
   it('skips perception entirely when no affect deps are configured (pre-4.2 path)', async () => {
     const gw = new FakeLlmGateway([{ chunks: ['Hi'] }]);
     const harness = new Harness({ gateway: gw, memory, model: 'chat-model', logger: silent });

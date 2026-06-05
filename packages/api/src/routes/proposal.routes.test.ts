@@ -149,6 +149,82 @@ describe('proposal routes', () => {
     expect(transcript.map((m) => m.content)).not.toContain('Hi there');
   });
 
+  it('confirm of a CHAT proposal invokes the harness continuation EXACTLY once', async () => {
+    // The complement of the autonomous case: a chat-origin proposal IS a live
+    // ask, so confirming it must re-enter the loop exactly once to narrate the
+    // outcome. Counting the harness seam directly proves the LLM turn fired
+    // (stronger than asserting the scripted narration text is present).
+    const id = await seedProposal(); // create() defaults origin to 'chat'
+    const original = ctx.deps.harness.continueAfterApproval.bind(ctx.deps.harness);
+    let continued = 0;
+    ctx.deps.harness.continueAfterApproval = (params): AsyncGenerator<never> => {
+      continued += 1;
+      return original(params) as AsyncGenerator<never>;
+    };
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/proposals/${id}/confirm`,
+      headers: auth,
+    });
+
+    expect(res.headers['content-type']).toContain('text/event-stream');
+    expect(continued).toBe(1);
+  });
+
+  it('confirm of an AUTONOMOUS proposal invokes the harness continuation ZERO times', async () => {
+    // Origin-gated re-entry (architecture.md §4.4/§4.5): a self-directed proposal
+    // must NOT start an LLM narration turn. Asserting the harness seam was never
+    // called is stronger than asserting the scripted narration text is absent —
+    // it proves no gateway turn was invoked at all, not merely that none surfaced.
+    await ctx.deps.leads.record(companionId, 'https://auto.dev');
+    const [lead] = await ctx.deps.leads.listByStatus(companionId, ['new']);
+    const proposal = await ctx.deps.proposals.create(companionId, {
+      toolName: 'ingest_source',
+      toolArgs: { url: 'https://auto.dev' },
+      summary: 'Remember https://auto.dev',
+      leadId: lead!.id,
+      origin: 'autonomous',
+    });
+    let continued = 0;
+    ctx.deps.harness.continueAfterApproval = (): AsyncGenerator<never> => {
+      continued += 1;
+      return (async function* (): AsyncGenerator<never> {})();
+    };
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/proposals/${proposal.id}/confirm`,
+      headers: auth,
+    });
+
+    expect(res.headers['content-type']).toContain('text/event-stream');
+    // The held action still executed; only the LLM continuation was skipped.
+    expect(await ctx.deps.semantic.listSources(companionId)).toHaveLength(1);
+    expect(continued).toBe(0);
+  });
+
+  it('confirm of an EXPLORE proposal invokes the harness continuation ZERO times', async () => {
+    // Same origin gate via the real explore path: the lead-backed proposal carries
+    // origin 'explore', so confirming it nudges the engine and streams only the
+    // outcome — no gateway turn.
+    const { proposalId } = await seedExploreProposal();
+    let continued = 0;
+    ctx.deps.harness.continueAfterApproval = (): AsyncGenerator<never> => {
+      continued += 1;
+      return (async function* (): AsyncGenerator<never> {})();
+    };
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/proposals/${proposalId}/confirm`,
+      headers: auth,
+    });
+
+    expect(res.headers['content-type']).toContain('text/event-stream');
+    expect(continued).toBe(0);
+  });
+
   it('does not seed procedural memory when the approved action fails', async () => {
     // A proposal whose held call fails as data (bad url → ingest_source refuses).
     // The user approved it, but the action never happened — so no "learned

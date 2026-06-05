@@ -126,6 +126,27 @@ describe('DrizzleCompanionEnergyStore', () => {
     expect((await energy.getEnergy(companionId)).usedTokens).toBe(701);
   });
 
+  it('re-reads instead of double-rolling when two callers race across midnight', async () => {
+    // Spend over the cap, then advance the clock past the window reset so the next
+    // calls must roll. Two interleaved callers race: one wins the guarded roll
+    // (changing windowResetAt), the other's conditional update matches 0 rows and
+    // takes the re-read path. The window must roll exactly once — debt carried once,
+    // clamped to one cap, and the second caller's spend not lost.
+    const energy = store();
+    await energy.recordSpend(companionId, 1300); // 300 over the 1000 cap
+
+    clock = new Date('2026-06-04T00:00:01.000Z'); // past the reset instant
+    // Race a read against a spend across the boundary.
+    await Promise.all([energy.getEnergy(companionId), energy.recordSpend(companionId, 50)]);
+
+    const snapshot = await energy.getEnergy(companionId);
+    // Rolled once: 300 carried debt + the 50 spent in the new window = 350. A
+    // double-roll would have re-clamped/zeroed; a lost spend would read 300.
+    expect(snapshot.usedTokens).toBe(350);
+    expect(snapshot.resetsAt).toBe('2026-06-05T00:00:00.000Z');
+    expect(await energy.isExhausted(companionId)).toBe(false);
+  });
+
   it('honors a per-account cap override, added to the top-up grant', async () => {
     const energy = store();
     await energy.recordSpend(companionId, 100); // creates the row

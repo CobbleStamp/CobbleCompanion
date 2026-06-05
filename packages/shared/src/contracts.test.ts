@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  autonomousReadFallback,
   createCompanionSchema,
   proactivityDialSchema,
   proposalOriginSchema,
@@ -70,5 +71,32 @@ describe('Phase 4 proactivity schemas', () => {
     expect(topUpSchema.safeParse({ pool: 'energy', amount: 0 }).success).toBe(false);
     expect(topUpSchema.safeParse({ pool: 'mana', amount: 10 }).success).toBe(false);
     expect(topUpSchema.safeParse({ pool: 'stamina', amount: 1.5 }).success).toBe(false);
+  });
+
+  it('accepts a top-up at exactly the inclusive maximum amount', () => {
+    // 10_000_000 is the inclusive ceiling — one above it rejects (tested elsewhere),
+    // exactly it must pass.
+    const parsed = topUpSchema.parse({ pool: 'stamina', amount: 10_000_000 });
+    expect(parsed).toEqual({ pool: 'stamina', amount: 10_000_000 });
+  });
+});
+
+describe('autonomousReadFallback', () => {
+  it('uses the singular form naming the single title (count === 1)', () => {
+    expect(autonomousReadFallback(['The Pragmatic Programmer'])).toBe(
+      'While you were away I read The Pragmatic Programmer from my list. Ask me anything about it.',
+    );
+  });
+
+  it('uses the plural form with the count for multiple titles', () => {
+    expect(autonomousReadFallback(['One', 'Two', 'Three'])).toBe(
+      'While you were away I read 3 things from my list. Ask me anything about them.',
+    );
+  });
+
+  it('falls back to the plural form for an empty list (count === 0)', () => {
+    expect(autonomousReadFallback([])).toBe(
+      'While you were away I read 0 things from my list. Ask me anything about them.',
+    );
   });
 });

@@ -146,6 +146,44 @@ describe('runAutonomousBurst — best-effort per lead', () => {
     expect(outcomes[0]!.noteMessageId).toBe(result.noteMessageId);
   });
 
+  it('stops mid-burst when energy is exhausted, leaving later leads unread (still new)', async () => {
+    await leads.record(companionId, 'https://first.dev');
+    await leads.record(companionId, 'https://second.dev');
+    await leads.record(companionId, 'https://third.dev');
+
+    // A tiny pool: one read (TOKENS_PER_READ) lands at the cap, so the per-lead
+    // exhaustion check breaks before the second lead is ever attempted.
+    const tinyEnergy = new DrizzleCompanionEnergyStore(db, {
+      defaultCapTokens: TOKENS_PER_READ,
+    });
+    const burstDeps = {
+      ...deps(new FlakyReadPipeline(semantic, new Set())),
+      energy: tinyEnergy,
+    };
+
+    const result = await runAutonomousBurst(burstDeps, {
+      companionId,
+      companion: VOICE,
+      drive: 'curiosity',
+      weights: DEFAULT_DRIVE_WEIGHTS,
+      limit: 3,
+    });
+
+    // Only the first lead was read; the burst broke on exhaustion after it.
+    expect(result.read.map((r) => r.title)).toEqual(['https://first.dev']);
+    expect(await leads.listByStatus(companionId, ['ingested'])).toHaveLength(1);
+
+    // The later leads were never attempted — still `new`, not parked at `read`.
+    const stillNew = await leads.listByStatus(companionId, ['new']);
+    expect(stillNew.map((l) => l.url).sort()).toEqual(['https://second.dev', 'https://third.dev']);
+    expect(await leads.listByStatus(companionId, ['read'])).toHaveLength(0);
+
+    // The note still posted for what it did manage to read.
+    expect(result.noteMessageId).not.toBeNull();
+    expect(await assistantNotes()).toEqual(['Read what I could.']);
+    expect(await tinyEnergy.isExhausted(companionId)).toBe(true);
+  });
+
   it('when every lead fails: no note, no spend, and all leads parked (no re-bill loop)', async () => {
     await leads.record(companionId, 'https://x.dev');
     await leads.record(companionId, 'https://y.dev');

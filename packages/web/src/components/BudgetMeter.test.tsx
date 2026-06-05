@@ -49,6 +49,43 @@ describe('BudgetMeter', () => {
     expect(topUpBudget).toHaveBeenCalledWith('c1', 'energy', expect.any(Number));
   });
 
+  it('feeds the stamina pool and shows the updated percentage', async () => {
+    vi.mocked(fetchBudget).mockResolvedValue(budget(80, 20));
+    vi.mocked(topUpBudget).mockResolvedValue(budget(35, 20));
+    render(<BudgetMeter companionId="c1" />);
+    await waitFor(() => expect(screen.getByText(/80%/)).toBeTruthy());
+
+    fireEvent.click(screen.getByLabelText('Feed stamina'));
+    await waitFor(() => expect(screen.getByText(/35%/)).toBeTruthy());
+    expect(topUpBudget).toHaveBeenCalledWith('c1', 'stamina', expect.any(Number));
+  });
+
+  it('does not update state after unmount while a feed is in flight (mountedRef guard)', async () => {
+    vi.mocked(fetchBudget).mockResolvedValue(budget(20, 90));
+    // Hold the feed open so the component unmounts before the top-up resolves.
+    let resolveFeed: (b: StaminaEnergyDto) => void = () => {};
+    vi.mocked(topUpBudget).mockReturnValue(
+      new Promise<StaminaEnergyDto>((resolve) => {
+        resolveFeed = resolve;
+      }),
+    );
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { unmount } = render(<BudgetMeter companionId="c1" />);
+    await waitFor(() => expect(screen.getByText(/90%/)).toBeTruthy());
+
+    fireEvent.click(screen.getByLabelText('Feed energy'));
+    expect(topUpBudget).toHaveBeenCalledTimes(1);
+    // Unmount with the feed still pending, then let it resolve: the mountedRef
+    // guard must skip the setBudget/setFeeding calls so React logs no
+    // "state update on an unmounted component" warning.
+    unmount();
+    resolveFeed(budget(20, 45));
+    await Promise.resolve();
+    await waitFor(() => expect(topUpBudget).toHaveBeenCalledTimes(1));
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
   it('fires only one top-up when the feed button is double-tapped', async () => {
     vi.mocked(fetchBudget).mockResolvedValue(budget(20, 90));
     // Hold the top-up open so the second tap lands while the first is in flight.
