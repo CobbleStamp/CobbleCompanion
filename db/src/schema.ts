@@ -1,9 +1,13 @@
 import type {
+  DriveWeights,
   IngestionStatus,
   LeadStatus,
   MessageKind,
   MessageMetadata,
   MessageRole,
+  PersonalityKnobs,
+  ProactivityDial,
+  ProposalOrigin,
   ProposalStatus,
   SourceKind,
 } from '@cobble/shared';
@@ -83,6 +87,20 @@ export const companions = pgTable(
     consolidatedThroughSeq: bigint('consolidated_through_seq', { mode: 'number' })
       .notNull()
       .default(0),
+    // Phase 4 — proactivity. The user-facing intensity dial (off/gentle/active):
+    // scales how readily the motivation engine initiates and how much energy it
+    // spends; `off` never initiates (companion-motivation.md §5).
+    proactivityDial: text('proactivity_dial')
+      .$type<ProactivityDial>()
+      .notNull()
+      .default('gentle'),
+    // The "creature" burst constants (focus/boredom/distractibility). Default
+    // constants in the PoC (null → defaults); personalized via onboarding later.
+    personalityKnobs: jsonb('personality_knobs').$type<PersonalityKnobs>(),
+    // Per-drive learned weights the reinforcement loop updates; starts NEUTRAL
+    // (null → neutral defaults). A Cobble is raised into its personality
+    // (companion-motivation.md §7).
+    driveWeights: jsonb('drive_weights').$type<DriveWeights>(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index('companions_owner_idx').on(table.ownerId)],
@@ -329,6 +347,11 @@ export const proposals = pgTable(
     // proposals that never came from a lead. `set null` on lead deletion keeps
     // the proposal's audit row but drops the dangling link.
     leadId: uuid('lead_id').references(() => leads.id, { onDelete: 'set null' }),
+    // Where this proposal came from (architecture.md §4.4): `chat` re-enters the
+    // loop on approval; `explore`/`autonomous` are self-directed, so the
+    // motivation engine — not the confirm route — decides what's next. Default
+    // `chat` keeps every pre-Phase-4 proposal behaving as before.
+    origin: text('origin').$type<ProposalOrigin>().notNull().default('chat'),
     toolName: text('tool_name').notNull(),
     // The serialized tool-call arguments to run verbatim once approved.
     toolArgs: jsonb('tool_args').notNull(),
@@ -423,6 +446,26 @@ export const userTokenUsage = pgTable('user_token_usage', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * Per-companion ENERGY budget (Phase 4, architecture.md §4.8) — the self-initiated
+ * pool that fuels the motivation engine. Mirrors `user_token_usage` (the stamina
+ * pool) but keyed per COMPANION, so autonomous work can never starve interaction.
+ * The effective cap is `(cap_override ?? default) + top_up_tokens`; `top_up_tokens`
+ * is the user's manual feed grant (the simple top-up control — the food/feeding
+ * economy is Phase 5) and persists across window rolls. The daily window rolls
+ * like stamina, carrying overage forward as debt clamped to one cap.
+ */
+export const companionEnergy = pgTable('companion_energy', {
+  companionId: uuid('companion_id')
+    .primaryKey()
+    .references(() => companions.id, { onDelete: 'cascade' }),
+  windowResetAt: timestamp('window_reset_at', { withTimezone: true }).notNull(),
+  usedTokens: bigint('used_tokens', { mode: 'number' }).notNull().default(0),
+  capOverride: integer('cap_override'),
+  topUpTokens: bigint('top_up_tokens', { mode: 'number' }).notNull().default(0),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const schema = {
   users,
   companions,
@@ -437,4 +480,5 @@ export const schema = {
   leads,
   proceduralMemories,
   userTokenUsage,
+  companionEnergy,
 };

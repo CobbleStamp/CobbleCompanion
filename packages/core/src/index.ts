@@ -113,6 +113,14 @@ export {
   type UsageSnapshot,
 } from './quota/store.js';
 
+// Companion energy (per-companion self-initiated pool — the motivation engine's fuel, Phase 4)
+export {
+  type CompanionEnergyStore,
+  DrizzleCompanionEnergyStore,
+  type DrizzleCompanionEnergyStoreOptions,
+  type EnergySnapshot,
+} from './quota/energy-store.js';
+
 // Token usage / metering (per-user daily cap)
 export {
   addUsage,

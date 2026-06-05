@@ -196,6 +196,65 @@ export interface UsageDto {
   readonly resetsAt: string;
 }
 
+// --- Phase 4 — proactivity & vitality (companion-motivation.md) ---
+
+/**
+ * Where a held proposal originated, so the confirm route knows whether to
+ * re-enter the chat loop (architecture.md §4.4). `chat` — from a live
+ * conversation, so re-enter on approval. `explore` — the user ran the
+ * reading-list explore action. `autonomous` — the motivation engine initiated it
+ * on an idle tick. For `explore`/`autonomous` the engine, not the confirm route,
+ * decides "what next" (§4.5).
+ */
+export const proposalOriginSchema = z.enum(['chat', 'explore', 'autonomous']);
+export type ProposalOrigin = z.infer<typeof proposalOriginSchema>;
+
+/**
+ * The user-facing proactivity dial — scales how readily the motivation engine
+ * initiates and how much energy it spends. `off` never initiates.
+ */
+export const proactivityDialSchema = z.enum(['off', 'gentle', 'active']);
+export type ProactivityDial = z.infer<typeof proactivityDialSchema>;
+
+/**
+ * The fixed motivation-drive taxonomy (companion-motivation.md §3). The set is
+ * closed; only the per-companion weights over it change — and those are learned,
+ * starting neutral.
+ */
+export type Drive =
+  | 'curiosity'
+  | 'bond'
+  | 'understanding'
+  | 'approval'
+  | 'helpfulness'
+  | 'upkeep';
+
+/** Per-companion learned disposition: how much this Cobble cares about each drive. */
+export type DriveWeights = Record<Drive, number>;
+
+/**
+ * The "creature" constants shaping a proactive burst's dynamics
+ * (companion-motivation.md §6): how long it stays on a thread (`focusLength`),
+ * how fast interest satiates (`boredom`), and how easily a higher-pressure drive
+ * preempts (`distractibility`). Default constants in the PoC; personalized via
+ * onboarding later.
+ */
+export interface PersonalityKnobs {
+  readonly focusLength: number;
+  readonly boredom: number;
+  readonly distractibility: number;
+}
+
+/**
+ * The companion's two vitality pools (architecture.md §4.8). Stamina powers
+ * user-initiated work (chat, tasks); energy powers self-initiated work (the
+ * motivation engine). Separate pools so autonomy can never starve interaction.
+ */
+export interface StaminaEnergyDto {
+  readonly stamina: UsageDto;
+  readonly energy: UsageDto;
+}
+
 /** A retrieval section: verbatim original text plus its location in the source. */
 export interface SectionDto {
   readonly id: string;
@@ -342,6 +401,19 @@ export const episodeSearchSchema = z.object({
   topK: z.number().int().min(1).max(20).default(5),
 });
 export type EpisodeSearchBody = z.infer<typeof episodeSearchSchema>;
+
+/** Set the companion's proactivity dial (Phase 4). */
+export const setProactivityDialSchema = z.object({
+  dial: proactivityDialSchema,
+});
+export type SetProactivityDialBody = z.infer<typeof setProactivityDialSchema>;
+
+/** Manually add to a vitality pool — the simple feed control (Phase 4; the food economy is Phase 5). */
+export const topUpSchema = z.object({
+  pool: z.enum(['stamina', 'energy']),
+  amount: z.number().int().min(1).max(10_000_000),
+});
+export type TopUpBody = z.infer<typeof topUpSchema>;
 
 // --- Provenance (Phase 1 grounded recall, docs/companionmemory.md) ---
 
