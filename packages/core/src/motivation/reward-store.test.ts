@@ -53,10 +53,20 @@ describe('DrizzleProactiveOutcomeStore', () => {
     const found = await rewards.findByProposal(companionId, proposalId);
     expect(found?.id).toBe(outcome.id);
 
-    await rewards.setReward(outcome.id, 1);
+    await rewards.setReward(companionId, outcome.id, 1);
     const resolved = await rewards.findByProposal(companionId, proposalId);
     expect(resolved?.reward).toBe(1);
     expect(resolved?.resolvedAt).not.toBeNull();
+  });
+
+  it('does not set the reward for another companion (tenancy invariant)', async () => {
+    const outcome = await rewards.record(companionId, { proposalId, drive: 'curiosity' });
+
+    await rewards.setReward('00000000-0000-0000-0000-000000000000', outcome.id, 1);
+
+    const found = await rewards.findByProposal(companionId, proposalId);
+    expect(found?.reward).toBeNull();
+    expect(found?.resolvedAt).toBeNull();
   });
 
   it('returns null for a proposal with no outcome', async () => {

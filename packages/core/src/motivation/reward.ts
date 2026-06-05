@@ -43,7 +43,7 @@ export async function applyProposalReward(
       return;
     }
     const reward = REWARD_BY_SIGNAL[signal];
-    await deps.rewards.setReward(outcome.id, reward);
+    await deps.rewards.setReward(companionId, outcome.id, reward);
     const companion = await deps.identity.getCompanionById(companionId);
     if (!companion) {
       return;

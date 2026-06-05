@@ -33,8 +33,8 @@ export interface ProactiveOutcomeStore {
   record(companionId: string, input: RecordOutcomeInput): Promise<ProactiveOutcomeRecord>;
   /** The outcome a proposal produced, if any (for reward attribution on resolve). */
   findByProposal(companionId: string, proposalId: string): Promise<ProactiveOutcomeRecord | null>;
-  /** Fill in the blended reward once the user has reacted. */
-  setReward(id: string, reward: number): Promise<void>;
+  /** Fill in the blended reward once the user has reacted (companion-scoped). */
+  setReward(companionId: string, id: string, reward: number): Promise<void>;
   /** Recent outcomes, newest-first (measurement + tests). */
   list(companionId: string, limit: number): Promise<readonly ProactiveOutcomeRecord[]>;
 }
@@ -75,11 +75,16 @@ export class DrizzleProactiveOutcomeStore implements ProactiveOutcomeStore {
     return row ? toRecord(row) : null;
   }
 
-  async setReward(id: string, reward: number): Promise<void> {
+  async setReward(companionId: string, id: string, reward: number): Promise<void> {
     await this.db
       .update(proactiveOutcomes)
       .set({ reward, resolvedAt: new Date() })
-      .where(eq(proactiveOutcomes.id, id));
+      .where(
+        and(
+          eq(proactiveOutcomes.companionId, companionId),
+          eq(proactiveOutcomes.id, id),
+        ),
+      );
   }
 
   async list(companionId: string, limit: number): Promise<readonly ProactiveOutcomeRecord[]> {
