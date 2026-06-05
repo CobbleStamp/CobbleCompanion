@@ -8,6 +8,7 @@ import type {
   LeadStore,
   Logger,
   MemoryStore,
+  PresenceStore,
   ProceduralStore,
   ProposalStore,
   SemanticMemoryStore,
@@ -31,6 +32,7 @@ import { registerEpisodeRoutes } from './routes/episode.routes.js';
 import { registerMemoryRoutes } from './routes/memory.routes.js';
 import { registerMessageRoutes } from './routes/message.routes.js';
 import { registerInventoryRoutes } from './routes/inventory.routes.js';
+import { registerPresenceRoutes } from './routes/presence.routes.js';
 import { registerProposalRoutes } from './routes/proposal.routes.js';
 import { registerSourceRoutes } from './routes/source.routes.js';
 import { registerUsageRoutes } from './routes/usage.routes.js';
@@ -63,6 +65,8 @@ export interface AppDeps {
   readonly leads: LeadStore;
   /** Procedural memory — learned, reusable workflows (P3 seed). */
   readonly procedural: ProceduralStore;
+  /** Volatile presence signal per companion — the motivation engine's environment (P4). */
+  readonly presence: PresenceStore;
   readonly quota: TokenQuotaStore;
   readonly tokenVerifier: TokenVerifier;
   readonly config: AppConfig;
@@ -154,6 +158,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerSourceRoutes(app, deps, requireAuth);
   registerProposalRoutes(app, deps, requireAuth);
   registerInventoryRoutes(app, deps, requireAuth);
+  registerPresenceRoutes(app, deps, requireAuth);
   registerUsageRoutes(app, deps, requireAuth);
 
   registerSpa(app);

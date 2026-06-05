@@ -246,6 +246,17 @@ export async function rejectProposal(companionId: string, proposalId: string): P
   await send(`/companions/${companionId}/proposals/${proposalId}/reject`, { method: 'POST' });
 }
 
+/**
+ * Tell the backend the user is present (Phase 4). The motivation engine reads
+ * this volatile signal to decide whether/how to initiate. Fire-and-forget.
+ */
+export async function sendHeartbeat(companionId: string, tabVisible: boolean): Promise<void> {
+  await send(`/companions/${companionId}/heartbeat`, {
+    method: 'POST',
+    body: JSON.stringify({ tabVisible }),
+  });
+}
+
 /** The companion's reading list — leads it discovered but hasn't acted on (P3). */
 export async function listLeads(companionId: string): Promise<LeadDto[]> {
   const body = await request<{ leads: LeadDto[] }>(`/companions/${companionId}/leads`);

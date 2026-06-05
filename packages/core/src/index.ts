@@ -121,6 +121,22 @@ export {
   type EnergySnapshot,
 } from './quota/energy-store.js';
 
+// Motivation engine — presence (Phase 4)
+export {
+  classifyPresence,
+  DEFAULT_PRESENCE_THRESHOLDS,
+  PRESENCE_POSTURE,
+  type PresencePosture,
+  type PresenceSignal,
+  type PresenceState,
+  type PresenceThresholds,
+  presencePosture,
+} from './motivation/presence.js';
+export {
+  InMemoryPresenceStore,
+  type PresenceStore,
+} from './motivation/presence-store.js';
+
 // Token usage / metering (per-user daily cap)
 export {
   addUsage,

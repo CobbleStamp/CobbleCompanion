@@ -19,7 +19,7 @@ export function registerMessageRoutes(
   deps: AppDeps,
   requireAuth: RequireAuth,
 ): void {
-  const { identity, memory, harness, quota, consolidation, logger } = deps;
+  const { identity, memory, harness, quota, consolidation, presence, logger } = deps;
 
   // Read the companion's transcript (oldest-first).
   app.get(
@@ -50,6 +50,8 @@ export function registerMessageRoutes(
       if (!companion) {
         return reply.code(404).send({ error: 'companion not found' });
       }
+      // The user is here and acting — mark presence active (P4 environment signal).
+      presence.recordActivity(companion.id);
       // Daily token cap: refuse before spending, so the wall is a clean 429 (no
       // partial SSE). Turn-based chat means there's nothing in flight to outrun.
       const overCap = await overCapGuard(quota, request.userId!);

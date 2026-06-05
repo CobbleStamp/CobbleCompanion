@@ -29,6 +29,7 @@ import {
   FakeLlmGateway,
   type FakeTurn,
   Harness,
+  InMemoryPresenceStore,
   IngestionPipeline,
   IngestionRunner,
   LlmIngestionAnnouncer,
@@ -177,6 +178,7 @@ export async function makeTestApp(
   const toolCallLog = new DrizzleToolCallLog(db);
   const leads = new DrizzleLeadStore(db);
   const procedural = new DrizzleProceduralStore(db);
+  const presence = new InMemoryPresenceStore();
   const deps: AppDeps = {
     identity,
     memory,
@@ -190,6 +192,7 @@ export async function makeTestApp(
     toolCallLog,
     leads,
     procedural,
+    presence,
     harness: new Harness({
       gateway: llmGateway,
       memory,

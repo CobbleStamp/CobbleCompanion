@@ -26,6 +26,7 @@ import { Modal } from '../components/Modal.js';
 import { ProposalCard } from '../components/ProposalCard.js';
 import { UsageBadge } from '../components/UsageBadge.js';
 import { useIngestionJobs } from '../components/useIngestionJobs.js';
+import { usePresenceHeartbeat } from '../components/usePresenceHeartbeat.js';
 import { useProposals } from '../components/useProposals.js';
 
 interface ChatProps {
@@ -110,6 +111,9 @@ export function Chat({
   // The pending approval queue (propose→approve, P3) — surfaced as cards below
   // the transcript; a turn that ends in a proposal triggers an immediate refresh.
   const proposalsCtl = useProposals(companion.id);
+  // Tell the backend the user is present (P4) so the motivation engine can decide
+  // whether/how to initiate; volatile and best-effort.
+  usePresenceHeartbeat(companion.id);
 
   // While a send is streaming or a file is uploading, the composer is locked so
   // the two intake paths never overlap.

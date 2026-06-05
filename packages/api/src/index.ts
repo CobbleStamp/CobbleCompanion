@@ -31,6 +31,7 @@ import {
   FakeEmbeddingGateway,
   FakeLlmGateway,
   Harness,
+  InMemoryPresenceStore,
   IngestionPipeline,
   IngestionRunner,
   LlmIngestionAnnouncer,
@@ -128,6 +129,9 @@ async function main(): Promise<void> {
   const toolCallLog = new DrizzleToolCallLog(db);
   const leads = new DrizzleLeadStore(db);
   const procedural = new DrizzleProceduralStore(db);
+  // Volatile presence (P4) — fed by the heartbeat route and message sends; the
+  // motivation engine reads it to decide whether/how to initiate.
+  const presence = new InMemoryPresenceStore();
   const tools = new ToolRegistry([
     // web_fetch harvests outbound links into the reading list (the P4 substrate).
     createWebFetchTool({
@@ -221,6 +225,7 @@ async function main(): Promise<void> {
     toolCallLog,
     leads,
     procedural,
+    presence,
     quota,
     tokenVerifier: createTokenVerifier(config),
     config,
