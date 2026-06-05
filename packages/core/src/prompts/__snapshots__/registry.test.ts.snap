@@ -1,0 +1,42 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`prompt registry > locks prompt versions against accidental drift 1`] = `
+{
+  "affect-attunement": {
+    "contentHash": "ea10f0cfc16de9cc",
+    "semver": "1.0.0",
+  },
+  "affect-sense": {
+    "contentHash": "73b50fcb3337ecde",
+    "semver": "1.0.0",
+  },
+  "autonomous-note": {
+    "contentHash": "72667218e6f6e88a",
+    "semver": "1.0.0",
+  },
+  "consolidation": {
+    "contentHash": "a96496fa9b3fe49e",
+    "semver": "1.0.0",
+  },
+  "enricher": {
+    "contentHash": "d0da01eee187adbd",
+    "semver": "1.0.0",
+  },
+  "ingestion-announce": {
+    "contentHash": "8ad8b16bdf5db8c6",
+    "semver": "1.0.0",
+  },
+  "persona": {
+    "contentHash": "ea2b97a20a4dfb6c",
+    "semver": "1.0.0",
+  },
+  "persona-evolve": {
+    "contentHash": "f308121ccfdc2d4d",
+    "semver": "1.0.0",
+  },
+  "segmenter": {
+    "contentHash": "f40e6fb083d11a5c",
+    "semver": "1.0.0",
+  },
+}
+`;

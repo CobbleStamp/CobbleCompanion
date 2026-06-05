@@ -110,6 +110,7 @@ flowchart TB
 | **API / BFF** | Auth, sessions, routing, response streaming, source intake (multipart), memory routes | The only thing surfaces talk to |
 | **Harness** | The agent loop; defines memory/tool/initiation hooks | See §4; P1 fills the memory hook with semantic recall |
 | **LLM Gateway** | Provider-agnostic chat-model access | Default OpenRouter; provider pluggable |
+| **Prompt Registry** | Code-as-truth, versioned prompts (`core/src/prompts`) — every system/tool prompt is a typed `PromptTemplate` rendered at its call site | Single source for prompt wording; each LLM call stamps the `promptRef` (semver + content hash) that produced it. See `guide-prompts.md` |
 | **Embedding Gateway** | Provider-agnostic embedding access (P1) | OpenRouter `/embeddings`; deterministic fake for tests |
 | **MemoryStore** | Boundary for the transcript (episodic substrate) | The companion's single transcript (`messages`), keyed by `companion_id`; a turn may carry an optional `source_id` (an upload's attachment + acknowledgement) so the chat reconstructs them on reload |
 | **Ingestion Announcer** | Proactive transcript note when a read ends (P1, §4.8) | On `done`/`failed`, posts an in-character, **metered** assistant turn (canned fallback over cap / on failure); fired by the pipeline, decoupled from it |
@@ -650,6 +651,7 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
     core/              the companion (surface-agnostic) — invariant #1
       harness/         agent loop + extension hooks (§4); semantic + episodic recall (P1, P2 §4.3)
       llm/             provider-agnostic LLM gateway
+      prompts/         code-as-truth versioned prompt registry (catalog + render/version) — guide-prompts.md
       embedding/       provider-agnostic embedding gateway (P1; request-path memoizing wrapper P2)
       ingestion/       parse → segment → enrich → embed pipeline + runner + deferred-job sweeper (P1, §4.8)
       memory/          MemoryStore (transcript) + SemanticMemoryStore (P1) + EpisodicMemoryStore + consolidation service/runner (P2)

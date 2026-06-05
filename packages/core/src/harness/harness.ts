@@ -21,7 +21,7 @@ import {
   ZERO_USAGE,
   type TokenUsage,
 } from '../usage.js';
-import { assembleContext } from './context.js';
+import { assembleContext, PERSONA_REF } from './context.js';
 import {
   isBlock,
   passthroughAfterToolCall,
@@ -421,6 +421,7 @@ export class Harness {
         const stream = llm.stream({
           messages,
           model: this.model,
+          promptRef: PERSONA_REF,
           ...(toolDefs.length > 0 ? { tools: toolDefs } : {}),
           ...(signal ? { signal } : {}),
         });

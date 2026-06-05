@@ -4,6 +4,7 @@
  * OpenRouter (./openrouter.ts); tests use the FakeLlmGateway (./fake.ts).
  */
 
+import type { PromptRef } from '../prompts/types.js';
 import type { TokenUsage } from '../usage.js';
 
 export interface LlmMessage {
@@ -44,6 +45,12 @@ export interface LlmStreamParams {
   /** Tools to advertise this turn; omitted/empty = a text-only call (P0 path). */
   readonly tools?: readonly ToolDef[];
   readonly signal?: AbortSignal;
+  /**
+   * Which prompt version produced these messages (prompts/registry). Carried as
+   * metadata for metering and tracing only — never sent to the provider. Optional
+   * so ad-hoc/test calls and the FakeLlmGateway need no change.
+   */
+  readonly promptRef?: PromptRef;
 }
 
 /**

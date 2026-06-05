@@ -1,7 +1,21 @@
 import type { CompanionDto } from '@cobble/shared';
 import type { LlmMessage } from '../llm/gateway.js';
 import type { AffectReading } from '../motivation/affect.js';
+import {
+  affectAttunementTemplate,
+  personaTemplate,
+  render,
+  versionOf,
+  type PromptRef,
+} from '../prompts/index.js';
 import type { ContextBlock } from './hooks.js';
+
+/**
+ * The prompt version stamped on the main chat turn (prompts/registry). The
+ * persona is the turn's primary prompt; the attunement line co-occurs on the
+ * same call. Static — depends only on the template version, not the companion.
+ */
+export const PERSONA_REF: PromptRef = { id: 'persona', version: versionOf(personaTemplate) };
 
 /**
  * The fast-loop attunement line (Phase 4.2, companion-motivation.md §7): the
@@ -14,11 +28,7 @@ export function affectAttunementLine(affect: AffectReading | null | undefined): 
   if (!affect || affect.note.trim().length === 0) {
     return null;
   }
-  return (
-    `The user has recently seemed: ${affect.note.trim()}. ` +
-    'Attune your tone, warmth, and level of detail to this. ' +
-    'Do not mention that you are tracking their mood.'
-  );
+  return render(affectAttunementTemplate, { note: affect.note.trim() }).messages[0]!.content;
 }
 
 /**
@@ -26,19 +36,12 @@ export function affectAttunementLine(affect: AffectReading | null | undefined): 
  * (architecture.md §4.3 input #1).
  */
 export function buildPersona(companion: CompanionDto): string {
-  const parts = [
-    `You are ${companion.name}, a personal companion the user is raising and bonding with.`,
-    `Your form is "${companion.form}" and your temperament began as "${companion.temperament}".`,
-  ];
-  // Phase 2: blend in who the companion has BECOME (re-synthesized from episodes),
-  // alongside — never replacing — the immutable creation seed above.
-  if (companion.evolvedPersona && companion.evolvedPersona.trim().length > 0) {
-    parts.push(`Through your history together, you have grown: ${companion.evolvedPersona.trim()}`);
-  }
-  parts.push(
-    'Be warm, curious, and genuinely helpful. Speak as one continuous being with memory of your shared history.',
-  );
-  return parts.join(' ');
+  return render(personaTemplate, {
+    name: companion.name,
+    form: companion.form,
+    temperament: companion.temperament,
+    evolvedPersona: companion.evolvedPersona,
+  }).messages[0]!.content;
 }
 
 /**

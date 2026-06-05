@@ -28,6 +28,7 @@ read docs/product-overview.md
 | Threat model & deployment trust model | `docs/architecture.md` §1, §10 |
 | Ontology contract & governance | `docs/ontology.md`                 |
 | Proactivity & motivation mechanism | `docs/companion-motivation.md`  |
+| Prompt management & iteration | `docs/guide-prompts.md`             |
 | Local dev setup               | `README.md`                         |
 
 

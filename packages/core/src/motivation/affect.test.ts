@@ -61,13 +61,16 @@ describe('senseAffect', () => {
     expect(reading).toEqual({ valence: 0.9, note: 'delighted' });
   });
 
-  it('advertises the report_affect tool to the gateway', async () => {
+  it('advertises the report_affect tool to the gateway and stamps the prompt version', async () => {
     const llm = new FakeLlmGateway(reportAffect({ valence: 0.2, note: 'calm' }));
     await senseAffect(
       { llm, model: 'fake', logger: silent },
       { recentContext: '', userText: 'all good' },
     );
     expect(llm.lastParams?.tools?.[0]?.name).toBe('report_affect');
+    // The call carries its prompt version (prompts/registry) for metering + tracing.
+    expect(llm.lastParams?.promptRef?.id).toBe('affect-sense');
+    expect(llm.lastParams?.promptRef?.version.contentHash).toMatch(/^[0-9a-f]{16}$/);
   });
 
   it('returns null (no read) when the model declines to call the tool', async () => {
