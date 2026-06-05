@@ -328,6 +328,7 @@ async function main(): Promise<void> {
     clearInterval(consolidationTimer);
     clearInterval(motivationTimer);
     await ingestion.whenIdle();
+    await harness.whenIdle();
     await consolidation.close();
     await motivation.close();
   });

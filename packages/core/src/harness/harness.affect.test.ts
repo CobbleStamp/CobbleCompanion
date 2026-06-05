@@ -74,6 +74,7 @@ describe('Harness perceiveAndLearn', () => {
     });
 
     await drain(harness.runTurn({ companion, userContent: 'you are the best', ownerId: 'owner' }));
+    await harness.whenIdle(); // the affect read is fire-and-forget; wait for it.
 
     expect(await affectStore.get(companion.id)).toEqual({ valence: 0.8, note: 'warm' });
   });
@@ -87,6 +88,7 @@ describe('Harness perceiveAndLearn', () => {
     });
 
     await drain(harness.runTurn({ companion, userContent: 'hi', ownerId: 'owner' }));
+    await harness.whenIdle(); // the affect read is fire-and-forget; wait for it.
 
     expect(reinforce).toHaveBeenCalledTimes(1);
     expect(reinforce.mock.calls[0]![1]).toBe(0); // first turn: delta 0
@@ -99,6 +101,7 @@ describe('Harness perceiveAndLearn', () => {
       model: 'cheap',
     });
     await drain(t1.runTurn({ companion, userContent: 'whatever', ownerId: 'owner' }));
+    await t1.whenIdle(); // turn 1's read must land before turn 2 reads its baseline.
 
     const reinforce = vi.fn(async (_companionId: string, _delta: number) => {});
     const t2 = harnessWith(gateway('great', { valence: 0.6, note: 'warm' }), {
@@ -107,6 +110,7 @@ describe('Harness perceiveAndLearn', () => {
       reinforce,
     });
     await drain(t2.runTurn({ companion, userContent: 'oh that is lovely', ownerId: 'owner' }));
+    await t2.whenIdle(); // the affect read is fire-and-forget; wait for it.
 
     expect(reinforce).toHaveBeenCalledTimes(1);
     expect(reinforce.mock.calls[0]![1]).toBeCloseTo(1.1);
@@ -132,6 +136,7 @@ describe('Harness perceiveAndLearn', () => {
     })) {
       events.push((event as { type: string }).type);
     }
+    await harness.whenIdle(); // let the throwing background read settle (self-caught).
     // The reply still completed with a terminal `done` despite reinforce throwing.
     expect(events).toContain('done');
     expect(events).not.toContain('error');
@@ -144,11 +149,13 @@ describe('Harness perceiveAndLearn', () => {
       model: 'cheap',
     });
     await drain(t1.runTurn({ companion, userContent: 'ugh fine', ownerId: 'owner' }));
+    await t1.whenIdle(); // turn 1's read must land before turn 2 reads it forward.
 
     // Turn 2's reply call should carry an attunement system line built from it.
     const t2gw = gateway('better now', { valence: 0.2, note: 'neutral' });
     const t2 = harnessWith(t2gw, { store: affectStore, model: 'cheap' });
     await drain(t2.runTurn({ companion, userContent: 'hello again', ownerId: 'owner' }));
+    await t2.whenIdle(); // let turn 2's background read settle before teardown.
 
     const replyCall = t2gw.calls[0]!; // first stream() of turn 2 = the reply
     const systemText = replyCall.messages
@@ -162,6 +169,7 @@ describe('Harness perceiveAndLearn', () => {
     const gw = new FakeLlmGateway([{ chunks: ['Hi'] }]);
     const harness = new Harness({ gateway: gw, memory, model: 'chat-model', logger: silent });
     await drain(harness.runTurn({ companion, userContent: 'hello', ownerId: 'owner' }));
+    await harness.whenIdle(); // no affect deps → the background task is a no-op.
     // Only the reply call was made — no second affect read.
     expect(gw.calls).toHaveLength(1);
     expect(await affectStore.get(companion.id)).toBeNull();

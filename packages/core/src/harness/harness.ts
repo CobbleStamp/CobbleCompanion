@@ -130,6 +130,9 @@ export class Harness {
   private readonly quota: TokenQuotaStore | undefined;
   private readonly affect: HarnessAffect | undefined;
   private readonly logger: Logger;
+  /** In-flight post-turn affect reads — launched fire-and-forget, tracked so
+   *  shutdown/tests can await them settling (see {@link whenIdle}). */
+  private readonly backgroundTasks = new Set<Promise<void>>();
 
   constructor(options: HarnessOptions) {
     this.gateway = options.gateway;
@@ -158,13 +161,40 @@ export class Harness {
       await this.memory.appendMessage(companion.id, 'user', userContent);
       const prep = await this.prepare(companion, userContent);
       yield* this.runLoop(companion, ownerId, prep, signal);
-      // Perception + learning (Phase 4.2) — runs AFTER the reply has fully
-      // streamed (all tokens + `done` already yielded), so it adds zero latency
-      // to what the user sees. Best-effort; never throws.
-      await this.perceiveAndLearn(companion.id, userContent, ownerId);
+      // Perception + learning (Phase 4.2) — launched AFTER the reply has fully
+      // streamed (all tokens + `done` already yielded) and deliberately NOT
+      // awaited: the generator returns immediately so the SSE socket closes on
+      // `done` and the route's post-turn nudges fire without waiting a full
+      // affect round-trip. Awaiting bought no ordering — the client is told
+      // `done` before this runs, so the next turn already races this read either
+      // way. Self-catching (perceiveAndLearn never throws), so the floated
+      // promise can't surface as an unhandled rejection.
+      this.trackBackground(this.perceiveAndLearn(companion.id, userContent, ownerId));
     } catch (error) {
       yield this.failed(companion.id, error);
     }
+  }
+
+  /**
+   * Resolves once every in-flight post-turn affect read has settled. The reads
+   * are launched fire-and-forget from {@link runTurn} so the SSE socket can close
+   * on `done`; this lets a graceful shutdown — or a test asserting the read's
+   * effects — wait for that background work to finish (mirrors the runner idiom,
+   * consolidation-runner.ts). Never rejects: each task self-catches.
+   */
+  async whenIdle(): Promise<void> {
+    while (this.backgroundTasks.size > 0) {
+      await Promise.all([...this.backgroundTasks]);
+    }
+  }
+
+  /** Register a fire-and-forget task so {@link whenIdle} can await it, removing
+   *  it once settled. The task is already self-catching, so this never rejects. */
+  private trackBackground(task: Promise<void>): void {
+    const tracked = task.finally(() => {
+      this.backgroundTasks.delete(tracked);
+    });
+    this.backgroundTasks.add(tracked);
   }
 
   /**
