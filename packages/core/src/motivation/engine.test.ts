@@ -28,6 +28,22 @@ const silent: Logger = { error: () => {}, warn: () => {}, info: () => {} };
 const ENERGY_CAP = 10_000;
 const TOKENS_PER_READ = 100;
 
+/** Logger that captures `error` calls so a swallowed failure can be asserted. */
+interface CapturingLogger extends Logger {
+  readonly errors: { message: string; context: unknown }[];
+}
+function capturingLogger(): CapturingLogger {
+  const errors: { message: string; context: unknown }[] = [];
+  return {
+    errors,
+    error: (message: string, context?: unknown): void => {
+      errors.push({ message, context });
+    },
+    warn: () => {},
+    info: () => {},
+  };
+}
+
 /** Fake pipeline: simulate a successful read — bill the meter, flip job done. */
 class FakeReadPipeline implements IngestionTarget {
   constructor(private readonly semantic: DrizzleSemanticMemoryStore) {}
@@ -39,10 +55,18 @@ class FakeReadPipeline implements IngestionTarget {
   }
 }
 
+/** Fake pipeline that always throws — every autonomous read fails. */
+class AlwaysThrowingPipeline implements IngestionTarget {
+  async run(_params: IngestionRunParams): Promise<void> {
+    throw new Error('read blew up');
+  }
+}
+
 describe('MotivationEngine.tick', () => {
   let db: Database;
   let close: () => Promise<void>;
   let companionId: string;
+  let identity: DrizzleIdentityStore;
   let leads: DrizzleLeadStore;
   let semantic: DrizzleSemanticMemoryStore;
   let memory: TranscriptMemoryStore;
@@ -55,7 +79,7 @@ describe('MotivationEngine.tick', () => {
     const created = await createTestDatabase();
     db = created.db;
     close = created.close;
-    const identity = new DrizzleIdentityStore(db);
+    identity = new DrizzleIdentityStore(db);
     const user = await identity.ensureUserByEmail('owner@example.com');
     const companion = await identity.createCompanion(user.id, {
       name: 'Pip',
@@ -87,8 +111,8 @@ describe('MotivationEngine.tick', () => {
     await close();
   });
 
-  async function seedLeads(n: number): Promise<void> {
-    for (let i = 0; i < n; i += 1) {
+  async function seedLeads(n: number, offset = 0): Promise<void> {
+    for (let i = offset; i < offset + n; i += 1) {
       await leads.record(companionId, `https://lead-${i}.dev`);
     }
   }
@@ -134,6 +158,32 @@ describe('MotivationEngine.tick', () => {
     expect(outcomes[0]!.noteMessageId).not.toBeNull();
   });
 
+  it('does not stack a second initiation while a note awaits a reaction', async () => {
+    // One reward-bearing note waits at a time (companion-motivation.md scenario
+    // B). The per-turn affect delta attributes to a SINGLE pending outcome
+    // (reinforce.ts); a second pending row would mis-credit the user's reaction.
+    await seedLeads(4);
+    const first = await engine.tick(companionId);
+    expect(first.initiated).toBe(true);
+    expect(await rewards.list(companionId, 10)).toHaveLength(1);
+
+    // Plenty of fresh leads remain (a move WOULD be chosen) — so only the
+    // unresolved outcome, not the drive gate, can keep this tick idle.
+    await seedLeads(4, 10);
+    const second = await engine.tick(companionId);
+    expect(second.initiated).toBe(false);
+    expect(second.move).toBeNull();
+    expect(await assistantNotes()).toHaveLength(1); // still the one note
+    expect(await rewards.list(companionId, 10)).toHaveLength(1); // no second outcome
+
+    // Once the user reacts (outcome resolved), the engine is free again.
+    const [pending] = await rewards.list(companionId, 1);
+    await rewards.setReward(companionId, pending!.id, 1);
+    const third = await engine.tick(companionId);
+    expect(third.initiated).toBe(true);
+    expect(await rewards.list(companionId, 10)).toHaveLength(2);
+  });
+
   it('stays idle when the dial is off', async () => {
     await seedLeads(4);
     await db
@@ -167,5 +217,77 @@ describe('MotivationEngine.tick', () => {
     const result = await engine.tick(companionId);
     expect(result.initiated).toBe(false);
     expect(await assistantNotes()).toHaveLength(0);
+  });
+
+  it('logs and swallows a failed tick → returns idle, never throws', async () => {
+    await seedLeads(4);
+    const logger = capturingLogger();
+    // A sensing dependency throws partway through the tick.
+    const failingLeads = {
+      ...leads,
+      listByStatus: async (): Promise<never> => {
+        throw new Error('lead store down');
+      },
+    } as unknown as DrizzleLeadStore;
+    const failing = new MotivationEngine({
+      identity,
+      presence,
+      energy,
+      leads: failingLeads,
+      semantic,
+      pipeline: new FakeReadPipeline(semantic),
+      memory,
+      rewards,
+      llm: new FakeLlmGateway(['Read ', 'three things.']),
+      model: 'fake-model',
+      logger,
+    });
+
+    const result = await failing.tick(companionId);
+
+    // The failure was swallowed into the idle result — not rethrown.
+    expect(result).toEqual({
+      initiated: false,
+      move: null,
+      sourcesRead: 0,
+      energySpent: 0,
+    });
+    // And it was logged at error severity (no silent failure).
+    expect(logger.errors.map((e) => e.message)).toContain('motivation tick failed');
+    // Nothing was spent or posted.
+    expect((await energy.getEnergy(companionId)).usedTokens).toBe(0);
+    expect(await assistantNotes()).toHaveLength(0);
+  });
+
+  it('reports initiated:false with a non-null move when the burst reads nothing', async () => {
+    await seedLeads(3);
+    // The engine decides to act (leads present → a move), but every read fails,
+    // so the burst remembers nothing and posts no note.
+    const acted = new MotivationEngine({
+      identity,
+      presence,
+      energy,
+      leads,
+      semantic,
+      pipeline: new AlwaysThrowingPipeline(),
+      memory,
+      rewards,
+      llm: new FakeLlmGateway(['Read ', 'three things.']),
+      model: 'fake-model',
+      logger: silent,
+    });
+
+    const result = await acted.tick(companionId);
+
+    // It DID decide to act — the move is non-null — but nothing was read.
+    expect(result.move).not.toBeNull();
+    expect(result.move?.kind).toBe('explore');
+    expect(result.sourcesRead).toBe(0);
+    expect(result.initiated).toBe(false);
+
+    // No note posted; failed reads parked at `read` (not left `new`, no re-bill).
+    expect(await assistantNotes()).toHaveLength(0);
+    expect(await leads.listByStatus(companionId, ['new'])).toHaveLength(0);
+    expect(await rewards.list(companionId, 10)).toHaveLength(0);
   });
 });

@@ -113,6 +113,23 @@ export class MotivationEngine {
         return IDLE; // idle is free — no energy spent
       }
 
+      // One note waiting (companion-motivation.md scenario B): don't stack a
+      // second reward-bearing initiation while a prior act is still awaiting the
+      // user's reaction. The per-turn affect delta attributes to a SINGLE
+      // pending outcome (reinforce.ts); a second would mis-credit the reaction
+      // and orphan a row. Reactions only *resolve* outcomes and the runner
+      // drains serially (engine-runner.ts), so this check and the record inside
+      // the burst can't race into two pending rows. Queried only once a move is
+      // chosen, so idle ticks stay free.
+      if (await this.deps.rewards.findLatestUnresolved(companionId)) {
+        logger.info('motivation tick deferred; a note awaits the user reaction', {
+          companionId,
+          move: move.kind,
+          drive: move.drive,
+        });
+        return IDLE;
+      }
+
       // Measure real spend as the energy delta across the burst (reads + note);
       // nothing spent between sensing and here, so the snapshot is the baseline.
       const before = snapshot.usedTokens;

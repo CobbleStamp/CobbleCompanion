@@ -10,8 +10,9 @@
 >
 > **Status: implemented (Phase 4.1 ✅).** The mechanism below is built
 > (`packages/core/src/motivation/`): autonomous work runs **free** (no approval — it reads leads
-> into memory itself, billed to **energy**, then posts a **report note**), and reward is **sentiment
-> read from the conversation** (not approve/reject). Remaining scope cuts (unprompted conversation
+> into memory itself, billed to **energy**, then posts a **report note**), and it **learns from the
+> change in the user's mood** its acts produce — not from approve/reject (the 4.2 model below).
+> Remaining scope cuts (unprompted conversation
 > beyond the report note, neutral weight seed) are noted inline and in §10.
 >
 > **Status: implemented (Phase 4.2 — affective attunement & change-as-reward ✅).** §7 is now a
@@ -43,7 +44,7 @@ not only by a human (`architecture.md` §4.5). Each invocation it either emits a
 > **lead inventory**: on an idle tick the engine **reads** the next leads into the companion's own
 > memory on its own — **no approval gate; autonomy is autonomy** (§4.4) — spending real tokens
 > billed to **energy**, then posts one in-character **report note** ("here's what I read"). The
-> user's reaction to that note in conversation is the reward (**sentiment**, §7) — the companion
+> user's reaction to that note in conversation is the reward (the **change in mood** it produces, §7) — the companion
 > learns like a person, from how you respond, not from a button. Unprompted **conversation** beyond
 > the report note (tips / questions / check-ins) and a stronger sense of **purpose/agenda** are
 > designed here but **deferred to a later phase** (§10) — they're where the social drives (bond,
@@ -225,7 +226,12 @@ helpful-vs-annoying **measurement** — one mechanism, not two.
 **What the delta is attributed to (v1 scope cut).** For now the slow loop fires **only when a
 deliberate drive-serving act is awaiting a reaction** — the autonomous burst's report note (the most
 recent unresolved `proactive_outcomes` row; `note_message_id`). The delta is attributed to that act's
-drive, and `proactive_outcomes.reward` records it. Ordinary chat still **senses** every turn (so
+drive, and `proactive_outcomes.reward` records it. **At most one note waits at a time:** the engine
+tick will not start a new burst while an outcome is still unresolved (scenario B — *one* note waiting),
+so "the most recent unresolved row" is unambiguous. A scalar mood delta can attribute to a single act
+only; allowing two pending notes would mis-credit the reaction to the wrong one and orphan the other.
+Reactions only *resolve* outcomes and ticks drain serially, so the gate makes a second pending row
+impossible rather than papering over it after the fact. Ordinary chat still **senses** every turn (so
 attunement and the rolling read always work) but does **not yet move weights**: diffuse credit
 assignment across **bond / understanding-the-user / persona** is deferred (§10). This keeps learning
 well-attributed and, as a side effect, naturally **bounds reward-hacking** — weights only move on acts
@@ -264,8 +270,8 @@ model, `architecture.md` §4.8). Consequences:
 
 ## 9. Worked examples
 
-> Examples **B and C are the shipped Phase 4.1** (autonomous reads + report note + sentiment
-> reward). **A and D** illustrate the *full* design including the deferred conversational behaviours
+> Examples **B and C are the shipped behaviour** (autonomous reads + report note + change-as-reward,
+> §7). **A and D** illustrate the *full* design including the deferred conversational behaviours
 > (unprompted tips beyond the report note) — shown so the mechanism reads end-to-end.
 
 **A — Present & attentive, a juicy lead.** You've gone quiet with the tab open (Attentive).
