@@ -41,4 +41,14 @@ describe('nudgeDriveWeight (change-as-reward)', () => {
     nudgeDriveWeight(input, 'curiosity', 1, 0.1);
     expect(input.curiosity).toBe(DEFAULT_DRIVE_WEIGHTS.curiosity);
   });
+
+  it('is a no-op on a non-finite delta (clamp cannot tame NaN; one NaN weight kills a drive)', () => {
+    const before = { ...DEFAULT_DRIVE_WEIGHTS, curiosity: 0.5 };
+    for (const bad of [NaN, Infinity, -Infinity]) {
+      const after = nudgeDriveWeight(before, 'curiosity', bad, 0.1);
+      expect(Number.isFinite(after.curiosity)).toBe(true);
+      expect(after.curiosity).toBe(0.5); // weight untouched, never NaN
+      expect(after).toEqual(before);
+    }
+  });
 });

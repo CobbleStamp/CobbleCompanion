@@ -94,8 +94,8 @@ export async function senseAffect(
   deps: AffectSenseDeps,
   params: AffectSenseParams,
 ): Promise<AffectReading | null> {
+  const usage = createUsageAccumulator();
   try {
-    const usage = createUsageAccumulator();
     const llm = meteredLlmGateway(deps.llm, usage.sink);
     const system =
       'You read the emotional state of a user talking to their AI companion. ' +
@@ -125,7 +125,19 @@ export async function senseAffect(
     );
     const call = result.toolCalls.find((toolCall) => toolCall.name === REPORT_AFFECT);
 
-    // Bill best-effort for the tokens the round trip consumed — whether or not the
+    // No report_affect call → no usable read. Return null, NOT neutral: the will
+    // keeps its prior baseline rather than learning a phantom mood swing.
+    return call ? coerceReading(call.args) : null;
+  } catch (error) {
+    deps.logger.error('failed to sense user affect', {
+      operation: 'motivation.affect.sense',
+      ownerId: params.ownerId,
+      error,
+    });
+    return null; // a hard failure is no read at all — never a fake neutral
+  } finally {
+    // Bill best-effort for the tokens the round trip consumed — in `finally` so a
+    // mid-stream throw still bills what was already metered. Whether or not the
     // model reported, the read happened. A quota hiccup is our infra fault and must
     // never void the outcome (logging.md, billing-crash policy).
     if (deps.quota && params.ownerId) {
@@ -142,17 +154,6 @@ export async function senseAffect(
         }
       }
     }
-
-    // No report_affect call → no usable read. Return null, NOT neutral: the will
-    // keeps its prior baseline rather than learning a phantom mood swing.
-    return call ? coerceReading(call.args) : null;
-  } catch (error) {
-    deps.logger.error('failed to sense user affect', {
-      operation: 'motivation.affect.sense',
-      ownerId: params.ownerId,
-      error,
-    });
-    return null; // a hard failure is no read at all — never a fake neutral
   }
 }
 

@@ -32,6 +32,12 @@ function clamp(value: number): number {
  * and a **zero delta is an exact no-op** — which is why a neutral reaction needs
  * no special threshold (unlike the 4.1 EMA, where a 0 target would have pulled the
  * weight toward zero). Immutable; clamped to the floor/ceiling.
+ *
+ * A non-finite `delta` (NaN/±Infinity) is a no-op: `clamp` can't tame NaN
+ * (`Math.max(floor, NaN)` is NaN), and one NaN weight silently poisons every
+ * `pressure = level × weight` in arbitration (NaN comparisons are always false, so
+ * the drive can never win). Delta is finite in practice — it derives from clamped
+ * valences — so this only guards the learning signal against a future bad caller.
  */
 export function nudgeDriveWeight(
   current: DriveWeights,
@@ -39,6 +45,9 @@ export function nudgeDriveWeight(
   delta: number,
   alpha: number = DEFAULT_LEARNING_RATE,
 ): DriveWeights {
+  if (!Number.isFinite(delta)) {
+    return current;
+  }
   return {
     ...current,
     [drive]: clamp(current[drive] + alpha * delta),

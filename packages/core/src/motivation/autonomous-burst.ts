@@ -240,8 +240,8 @@ async function composeReportNote(
 ): Promise<string> {
   const titles = read.map((r) => r.title);
   const fallback = autonomousReadFallback(titles);
+  const usage = createUsageAccumulator();
   try {
-    const usage = createUsageAccumulator();
     const llm = meteredLlmGateway(deps.llm, usage.sink);
     const persona = companion.evolvedPersona ? ` ${companion.evolvedPersona}` : '';
     const system =
@@ -264,7 +264,6 @@ async function composeReportNote(
     })) {
       text += delta;
     }
-    await deps.energy.recordSpend(companionId, usage.total().totalTokens);
     const trimmed = text.trim();
     return trimmed.length > 0 ? trimmed : fallback;
   } catch (error) {
@@ -274,5 +273,20 @@ async function composeReportNote(
       error,
     });
     return fallback;
+  } finally {
+    // Bill ENERGY in `finally` so a mid-stream throw still spends what was already
+    // metered — otherwise the companion composes a partial note for free.
+    const total = usage.total().totalTokens;
+    if (total > 0) {
+      try {
+        await deps.energy.recordSpend(companionId, total);
+      } catch (error) {
+        deps.logger.error('failed to record autonomous note energy spend', {
+          operation: 'motivation.autonomousBurst.bill',
+          companionId,
+          error,
+        });
+      }
+    }
   }
 }
