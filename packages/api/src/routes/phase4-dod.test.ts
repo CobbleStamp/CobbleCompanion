@@ -1,19 +1,21 @@
 /**
- * Phase 4.1 Definition-of-Done — the differentiator, mechanically verified
- * offline (development-plan.md §3). Drives the real motivation engine through the
- * app's stores and asserts:
+ * Phase 4.2 Definition-of-Done — the differentiator, mechanically verified
+ * offline (development-plan.md §3). Drives the real motivation engine + the agent
+ * loop through the app's stores and asserts:
  *   1. Open the app with no prompt → Cobble READS its reading list on its own
  *      (no approval) and posts one in-character report note.
  *   2. Energy is consumed by the self-initiated work.
  *   3. Out of energy → no initiation and no further spend (chat still runs on stamina).
  *   4. Dial off → no initiation.
- *   5. The user's reaction to the report note becomes a sentiment reward that
- *      shifts the served drive's weight (added with the reward milestone).
+ *   5. The CHANGE in the user's mood (sensed in the agent loop) across the
+ *      reaction to the report note shifts the served drive's weight — no button,
+ *      no separate critic; the harness reads the mood every turn (Phase 4.2).
  *
  * Deterministic: a fake pipeline (a real read needs the network + scripted LLM
  * passes) that bills the energy meter and marks the job done, the in-memory
  * store, neutral weights + the default gentle dial, and a directly-awaited engine
- * tick (request → whenIdle).
+ * tick (request → whenIdle). The scripted LLM turns are consumed strictly in
+ * order — see the per-test call sequence in DoD 5.
  */
 
 import type { IngestionRunParams, IngestionTarget } from '@cobble/core';
@@ -34,16 +36,21 @@ function fakeReadPipeline(markDone: (jobId: string) => Promise<void>): Ingestion
   };
 }
 
-describe('Phase 4.1 DoD — proactivity engine', () => {
+describe('Phase 4.2 DoD — proactivity engine', () => {
   let ctx: TestApp;
   let auth: { authorization: string };
   let companionId: string;
 
   beforeEach(async () => {
-    // Scripted LLM turns, consumed in order: (1) the report note, (2) the
-    // sentiment critic's valence, (3) the chat reply to the reaction.
+    // Scripted LLM turns, consumed strictly in order. DoD 1–4 only ever reach the
+    // first turn (the report note). DoD 5 ticks first (turn 0 = the note), then
+    // the reaction turn streams a reply (turn 1) + the affect read (turn 2).
     ctx = await makeTestApp(
-      [{ chunks: ['I read some things.'] }, { chunks: ['0.9'] }, { chunks: ['Glad it helped!'] }],
+      [
+        { chunks: ['I read some things.'] },
+        { chunks: ['Glad it helped!'] },
+        { chunks: ['0.9\ndelighted'] },
+      ],
       undefined,
       {
         motivationPipeline: fakeReadPipeline((jobId) =>
@@ -127,15 +134,21 @@ describe('Phase 4.1 DoD — proactivity engine', () => {
     expect((await ctx.deps.energy.getEnergy(companionId)).usedTokens).toBe(0);
   });
 
-  it('learns from the reaction to its report note, shifting the drive weight (DoD 5)', async () => {
+  it('learns from the CHANGE in mood across the reaction, shifting the weight (DoD 5)', async () => {
     await seedLeads(3);
-    await tick(); // posts the report note; one outcome awaits a reaction
-    const pendingBefore = await ctx.deps.rewards.findLatestUnresolved(companionId);
-    expect(pendingBefore).not.toBeNull();
-    // Suppress the post-send background tick so the assertion is deterministic.
+    // The companion acts on its own first (before any visit marks presence active):
+    // reads the list and posts one report note that now awaits a reaction.
+    await tick();
+    expect(await ctx.deps.rewards.findLatestUnresolved(companionId)).not.toBeNull();
+    // The user was neutral before the companion acted — the baseline the change is
+    // measured against (the agent loop would have stored this on a prior turn).
+    await ctx.deps.affect.upsert(companionId, { valence: 0, note: 'neutral' });
+    // Suppress the post-send background tick so the LLM-turn order stays exact.
     ctx.deps.motivation.request = (): void => {};
 
-    // The user reacts in chat — the critic reads it as pleased (scripted 0.9).
+    // Reaction turn: the user warms up. The agent loop senses the mood in the same
+    // turn (scripted 0.9); the CHANGE (0 → 0.9) is the reward — no button, no
+    // separate critic call, sensed as part of processing the message.
     await ctx.app.inject({
       method: 'POST',
       url: `/companions/${companionId}/messages`,
@@ -143,9 +156,10 @@ describe('Phase 4.1 DoD — proactivity engine', () => {
       payload: { content: 'Oh nice — thanks for reading those!' },
     });
 
-    // The outcome is resolved with a positive reward and the curiosity weight rose.
+    // The outcome is resolved with the positive change and the curiosity weight rose.
     const [outcome] = await ctx.deps.rewards.list(companionId, 1);
     expect(outcome!.reward).toBeCloseTo(0.9);
+    expect(outcome!.resolvedAt).not.toBeNull();
     const companion = await ctx.deps.identity.getCompanionById(companionId);
     expect(companion?.driveWeights?.curiosity).toBeGreaterThan(0.5);
   });

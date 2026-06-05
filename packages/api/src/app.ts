@@ -1,4 +1,5 @@
 import type {
+  CompanionAffectStore,
   CompanionEnergyStore,
   ConsolidationRunner,
   EmbeddingGateway,
@@ -78,6 +79,8 @@ export interface AppDeps {
   readonly energy: CompanionEnergyStore;
   /** Reinforcement log — one outcome per proactive initiation (P4). */
   readonly rewards: ProactiveOutcomeStore;
+  /** The rolling read of the user's mood, sensed in the agent loop (P4.2). */
+  readonly affect: CompanionAffectStore;
   readonly tokenVerifier: TokenVerifier;
   readonly config: AppConfig;
   readonly logger: Logger;

@@ -241,16 +241,22 @@ The schema the motivation engine uses (full mechanism → `companion-motivation.
 - **`companions`** gains: `proactivity_dial` (`off | gentle | active`, default `gentle` — the
   tunability dial); `personality_knobs` (jsonb `{focusLength, boredom, distractibility}` — the
   "creature" constants; **default constants in the PoC**, personalized via onboarding later, null →
-  defaults); `drive_weights` (jsonb — per-drive EMA weights the reinforcement loop updates; **starts
+  defaults); `drive_weights` (jsonb — per-drive weights the reinforcement loop updates; **starts
   neutral**, null → neutral defaults).
 - **`companion_energy`** (new) — the **energy** pool (self-initiated work), mirroring
   `user_token_usage` (which becomes the **stamina** pool) but keyed per **companion**: window reset,
   used tokens, a manual top-up grant. Separate counters so autonomy can't starve interaction (§4.8).
+- **`companion_affect`** (new, migration `0015`, Phase 4.2) — the companion's **rolling read of the
+  user's mood**, one row per companion: `valence` ∈ [−1, 1] + a short natural-language `note`. The
+  agent loop upserts it every user turn (last-write-wins); the prior read is fed forward to attune the
+  next reply, and the turn-over-turn change is the reinforcement signal (`companion-motivation.md` §7).
 - **`proactive_outcomes`** (new) — one row per initiation for the reinforcement loop: the served
   drive, a drive snapshot at initiation, the linked **`note_message_id`** (the report note the user
-  reacts to — migration `0014`), and the **reward** once resolved. **Phase 4.1: the reward is the
-  sentiment** of the user's reaction to the note (an LLM critic, valence −1..1), not approve/reject.
-  Doubles as the helpful-vs-annoying measurement. (`proposal_id` is retained nullable for legacy rows.)
+  reacts to — migration `0014`), and the **reward** once resolved. **Phase 4.2: the reward is the
+  *change* in the user's mood** across their reaction to the note (`delta = valence_now −
+  valence_before`, sensed in the agent loop), applied as an additive nudge — not approve/reject, and
+  not the 4.1 absolute-valence critic. Doubles as the helpful-vs-annoying measurement. (`proposal_id`
+  is retained nullable for legacy rows.)
 
 Presence is **not** a table — it is a volatile, heartbeat-fed in-memory signal (§4.5).
 

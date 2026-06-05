@@ -26,8 +26,9 @@ inventory** (reading list) and a **procedural-memory** seed land as the body the
 **Phase 4** adds the **will**: a **motivation engine** fills the `Initiator` seam (§4.5) and, on a
 lazy idle/return tick, **reads the lead inventory into memory on its own** (no approval — autonomy is
 autonomy), spending real tokens against a **stamina/energy** two-pool budget (§4.8), then posts an
-in-character report note; a **reinforcement** loop learns per-drive weights from the user's
-**sentiment** reaction to that note (full mechanism → `companion-motivation.md`).
+in-character report note; a **reinforcement** loop learns per-drive weights from the **change** in the
+user's mood across their reaction to that note — sensed in the agent loop on every turn (Phase 4.2),
+which also **attunes** each reply to the user's mood (full mechanism → `companion-motivation.md`).
 
 **Non-goals / scope boundaries (Phases 0–4):** no growth/visual system or stamina/energy game economy
 (Phase 5), no unprompted conversation beyond the autonomous report note (a later phase), no native
@@ -243,6 +244,13 @@ flowchart LR
 > into the persona prompt (input #1) beside the immutable seed temperament. Episodic recall
 > degrades to no episodic blocks on failure — recall never breaks the conversation.
 
+> **Phase 4.2 (attunement):** prompt assembly (`assembleContext`) also injects a short
+> **affect-attunement** system line built from the companion's rolling read of the user's mood
+> (`companion_affect`, sensed in the loop the prior turn) — "the user has recently seemed {note};
+> attune your tone and detail." The mood *note* is surfaced; the valence number never is. Omitted
+> when there's no meaningful read, and loaded best-effort so a store hiccup costs attunement, never
+> the reply. This is the **fast loop** of the affect mechanism (§4.5, `companion-motivation.md` §7).
+
 ### 4.4 Human-in-the-loop & propose→approve
 
 There are **no dedicated "ask" or "confirm" steps** — the loop runs until it has something to say,
@@ -332,12 +340,14 @@ flowchart LR
 > user's command** ("go through your reading list", which still proposes for review); Phase 4 reads it
 > **on an idle tick**, freely.
 
-> **The reward is conversational (paired with §4.4).** After the engine reads, it posts **one
-> in-character report note** ("here's what I read"); the user's next message is the **reaction**, and
-> an LLM sentiment critic turns it into the reward that nudges the served drive's weight (§4.5
-> reinforcement). There is no approval round-trip for autonomous work to "continue" from — the engine
-> sees the **full** updated state on its own cadence and decides the next move itself. (The confirm
-> route still re-enters for `chat`-origin approvals — a present partner to reply to, §4.4.)
+> **The reward is conversational (paired with §4.4), and sensed in the loop (Phase 4.2).** After the
+> engine reads, it posts **one in-character report note** ("here's what I read"). The harness senses
+> the user's mood on **every** turn (`perceiveAndLearn`); when a note is awaiting a reaction, the
+> **change** in mood across that reaction is the reward that nudges the served drive's weight (§4.5
+> reinforcement) — no separate critic call, no approve/reject button. There is no approval round-trip
+> for autonomous work to "continue" from — the engine sees the **full** updated state on its own
+> cadence and decides the next move itself. (The confirm route still re-enters for `chat`-origin
+> approvals — a present partner to reply to, §4.4.)
 
 **Full mechanism — the drive taxonomy, the arbitration math, seeding from temperament, the learning
 loop, and worked examples — is canonical in `companion-motivation.md`.** This section is the
@@ -382,11 +392,15 @@ The engine's parts (each additive, no loop change):
   idles) while chat still runs on **stamina**, so autonomy can never starve interaction. The burst is
   **energy-aware**: it plans no more reads than energy can afford (`min(focus length, ⌊energy /
   est-read-cost⌋)`).
-- **Reinforcement (learning what lands)** — the companion learns from **conversation**, like a
-  person: after it reads, it posts a report note; the user's next message is the reaction, and an
-  **LLM sentiment critic** rates its valence (−1..1) → an EMA nudge to the served **drive weights**.
-  No approve/reject button; neutral reactions don't shift personality. Weights are interpretable and
-  seed the Phase 5 relationship-growth axis. *(Deferred: a deeper contextual-bandit policy.)*
+- **Reinforcement (learning what lands, Phase 4.2)** — the companion learns from **conversation**,
+  like a person: the harness senses the user's mood on **every** turn (`motivation/affect.ts`, in the
+  agent loop) and feeds the prior read forward to **attune** the next reply (the fast loop). After it
+  reads and posts a report note, the **change** in mood across the user's reaction (`delta =
+  valence_now − valence_before`) is the reward → an **additive nudge** to the served **drive weight**
+  (`motivation/reinforce.ts`; a zero change is a no-op, so neutrality needs no threshold). No critic
+  call, no approve/reject button. v1 learns only on such a drive-serving act; ordinary chat senses but
+  doesn't yet move weights. Weights are interpretable and seed the Phase 5 relationship-growth axis.
+  *(Deferred: ordinary-chat learning; a deeper contextual-bandit policy.)*
 - **Output (Phase 4.1)** — the engine **reads** the next leads into the companion's own memory
   **with no approval** (autonomy is autonomy, §4.4), then posts **one in-character report note** to
   the transcript. *(Unprompted tips/questions beyond the report note are deferred,
@@ -537,9 +551,9 @@ Design rules (the "improved staged hybrid"; memory guide → `companionmemory.md
     `meter = { quota: energyAdapter, accountId: companionId }`, and skips deferral — the engine gates
     on energy itself, per-lead). The burst is **energy-aware** — it plans `min(focus length, ⌊energy /
     est-read-cost⌋)` reads (§4.5) — so the companion scopes its work to its means, not just stopping
-    at zero. The sentiment critic that reads the user's reaction rides on the chat turn, so it draws
-    **stamina**. User-initiated work (chat, `/explore` approvals) draws stamina; the engine's
-    self-initiated reads draw energy.
+    at zero. The per-turn **affect read** that senses the user's mood (Phase 4.2) rides on the chat
+    turn, so it draws **stamina**. User-initiated work (chat, `/explore` approvals) draws stamina; the
+    engine's self-initiated reads draw energy.
 
 #### Supported source formats (acceptance contract)
 

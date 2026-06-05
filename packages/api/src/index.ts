@@ -270,6 +270,7 @@ async function main(): Promise<void> {
     quota,
     energy,
     rewards,
+    affect: affectStore,
     tokenVerifier: createTokenVerifier(config),
     config,
     logger: consoleLogger,

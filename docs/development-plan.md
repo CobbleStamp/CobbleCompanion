@@ -214,11 +214,14 @@ deterministic tests; the will only by measurement — so it lands on a trusted f
   **stamina** (user-initiated work) and **energy** (the engine's self-initiated work) — so autonomy
   can never starve conversation (`architecture.md` §4.8). Phase 4 ships the mechanism plus a
   **simple meter + manual top-up**; the full feeding/"food" game economy is **Phase 5**.
-- **Reinforcement (sentiment).** The companion learns from **conversation**: after it reads, it
-  posts a report note, and an LLM critic reads the **sentiment** of the user's reaction (valence
-  −1..1) → an EMA nudge to interpretable per-drive weights. No approve/reject button; neutral
-  reactions don't shift personality. A Cobble starting **neutral** is *raised* into its personality.
-  *(A deeper contextual-bandit policy is deferred.)*
+- **Reinforcement (mood change, Phase 4.2).** The companion learns from **conversation** the way a
+  person does: the agent loop senses the user's mood on **every** turn and feeds the prior read
+  forward to **attune** the next reply (the fast loop). After it reads and posts a report note, the
+  **change** in mood across the user's reaction (`delta = valence_now − valence_before`) is the reward
+  → an additive nudge to interpretable per-drive weights (a zero change is a no-op, so neutrality
+  needs no threshold). No separate critic, no approve/reject button. v1 learns only on a drive-serving
+  act; ordinary chat senses but doesn't yet move weights. A Cobble starting **neutral** is *raised*
+  into its personality. *(Deferred: ordinary-chat learning; a deeper contextual-bandit policy.)*
 - Tunable frequency/intensity controls (a per-companion off/gentle/active dial).
 
 Full mechanism (drive taxonomy, arbitration, seeding, learning, examples) →
@@ -226,17 +229,20 @@ Full mechanism (drive taxonomy, arbitration, seeding, learning, examples) →
 
 **Done when:** on opening the app with no prompt, Cobble **reads** genuinely relevant leads from its
 list on its own and reports back in one note; users can dial it down; energy is consumed and, when
-exhausted, initiation stops while chat keeps working; the user's reaction to the note is read as
-sentiment and shifts the drive weight (helpful-vs-annoying, learned from conversation).
+exhausted, initiation stops while chat keeps working; replies **attune** to the user's mood, and the
+**change** in mood across the user's reaction to the note shifts the drive weight (helpful-vs-annoying,
+learned from conversation — no button, sensed in the loop).
 
 **Key risk:** annoyance. Gate behind tunability + the energy budget, and measure
 engagement/dismissal (the reinforcement signal) from day one.
 
-**Deferred (designed here, built later):** **unprompted conversation** beyond the report note
-(tips/questions/check-ins) + a sense of **purpose/agenda** → a later phase; continuous
-work-while-away → Phase 6 (needs push); the stamina/energy **game economy** (food types, feeding,
-store, rich meters) → Phase 5; deeper RL beyond the EMA weight update; **approval for outward/
-irreversible tools** (when such tools exist — autonomous reads are internal + energy-bounded today).
+**Deferred (designed here, built later):** **ordinary-chat learning** (using the every-turn mood
+change to move bond/understanding/persona, not only on a drive-serving act); **unprompted
+conversation** beyond the report note (tips/questions/check-ins) + a sense of **purpose/agenda** → a
+later phase; continuous work-while-away → Phase 6 (needs push); the stamina/energy **game economy**
+(food types, feeding, store, rich meters) → Phase 5; deeper RL beyond the additive weight nudge;
+**approval for outward/ irreversible tools** (when such tools exist — autonomous reads are internal +
+energy-bounded today).
 
 **Implemented** (Phase 4.1, this branch): the reserved `Initiator` seam is filled by a **motivation
 engine** (`packages/core/src/motivation/`) on a **lazy trigger** — `motivation.request` on a sent
@@ -250,15 +256,18 @@ own memory **with no approval** (the shared ingestion pipeline, real tokens bill
 per-run **meter override**) and posts **one in-character report note**. **Stamina/energy** split the
 old daily cap into two pools — chat draws stamina, the engine's reads draw **energy**
 (`companion_energy`), so autonomy can never starve interaction; out of energy → the engine idles
-while chat runs on. **Reinforcement = sentiment**: the burst logs a `proactive_outcomes` row linked
-to the note (migration `0014`); the user's next message is the reaction, and an **LLM critic**
-(`sentiment-reward.ts`) reads its valence (−1..1) → an EMA nudge to the served **drive weight**
-(neutral start, neutral reactions don't shift it), so a Cobble is *raised* into its disposition from
-conversation. The approval gate is kept for **chat** effectful calls + the user-initiated `/explore`
+while chat runs on. **Reinforcement = mood change in the loop (Phase 4.2)**: the agent loop senses the
+user's mood on every turn (`motivation/affect.ts`, stored in `companion_affect`, migration `0015`) and
+feeds the prior read forward to **attune** the next reply (`context.ts`, the fast loop). The burst
+logs a `proactive_outcomes` row linked to the note (migration `0014`); when the user reacts, the
+**change** in mood (`delta`) is applied as an **additive nudge** to the served **drive weight**
+(`motivation/reinforce.ts`; neutral start, a zero change is a no-op), so a Cobble is *raised* into its
+disposition from conversation — no separate critic, no button (the 4.1 `sentiment-reward.ts` is
+removed). The approval gate is kept for **chat** effectful calls + the user-initiated `/explore`
 command (which still proposes). Web adds a two-pool **vitality meter** + one-tap feed and an
 **off/gentle/active** dial. **Gate passed** (offline, deterministic): the DoD test
 (`packages/api/src/routes/phase4-dod.test.ts`) proves open-app→autonomous read + report note + energy
-consumed, out-of-energy/dial-off → no initiation, and reaction-to-note → sentiment reward + weight
+consumed, out-of-energy/dial-off → no initiation, and reaction-to-note → mood-change reward + weight
 shift. Full suite green at ≥80% coverage. Canonical mechanism: `docs/companion-motivation.md`.
 
 ### Phase 5 — Bond & Growth (PoC complete)

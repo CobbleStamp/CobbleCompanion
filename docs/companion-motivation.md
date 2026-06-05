@@ -14,14 +14,14 @@
 > read from the conversation** (not approve/reject). Remaining scope cuts (unprompted conversation
 > beyond the report note, neutral weight seed) are noted inline and in §10.
 >
-> **Status: in progress (Phase 4.2 — affective attunement & change-as-reward).** §7 is being
-> revised from a *conditional, separate* sentiment critic to a **two-loop** model driven by one
-> perception that runs **inside the agent loop on every turn**: the companion senses the user's
-> **mood and its change**, uses it to **attune** the next reply (fast loop), and learns from the
-> **change** in mood that its acts produce (slow loop, change-as-reward). The slow loop still fires
-> only on a deliberate drive-serving act (the report note) in v1. Sections marked *(4.2)* describe
-> the model being built now; the *(4.1)* sentiment-critic text they replace is retained until the
-> code lands (see `development-plan.md` §3).
+> **Status: implemented (Phase 4.2 — affective attunement & change-as-reward ✅).** §7 is now a
+> **two-loop** model driven by one perception that runs **inside the agent loop on every turn**
+> (`harness.ts` `perceiveAndLearn` + `motivation/affect.ts`): the companion senses the user's **mood
+> and its change**, uses it to **attune** the next reply (fast loop, `context.ts`), and learns from
+> the **change** in mood its acts produce (slow loop, `motivation/reinforce.ts` — an additive nudge,
+> not the old EMA). The slow loop fires only on a deliberate drive-serving act (the report note) in
+> v1; ordinary chat senses but doesn't yet move weights. The 4.1 sentiment critic
+> (`applyConversationReward`) is **removed**. Sections marked *(4.2)* describe the shipped model.
 
 ## 1. Why this exists
 

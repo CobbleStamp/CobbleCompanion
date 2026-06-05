@@ -158,9 +158,11 @@ initiative is driven by:
 - **Your goals & well-being** — advances and checks in on what you care about.
 - **Understanding you** — asks and observes to learn your preferences, voice, and life.
 - **Its own curiosity & learning** — explores and brings back relevant discoveries.
-- **Earning your appreciation** — it *learns what lands*: a tip you valued makes it lean into
-  that; a miss makes it pull back. Helpful-vs-annoying isn't a dial it's told about — it's a
-  feeling it learns from your reactions over time.
+- **Earning your appreciation** — it *learns what lands* by **reading the room**: like a person, it
+  senses your mood every turn and notices how it *shifts* in response to what it did. Brighten after
+  it shares something and it leans into that; cool and it pulls back. It also **attunes** in the
+  moment — adjusting its tone and detail to how you seem. Helpful-vs-annoying isn't a dial it's told
+  about; it's a feeling it picks up from your reactions over time.
 - **Maintaining the bond** — remembers shared history, checks in, asks about your day.
 - **Pending work & opportunities** — unfinished tasks and time-sensitive openings (a price
   drop, a deadline).

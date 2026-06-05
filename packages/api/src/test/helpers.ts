@@ -264,6 +264,7 @@ export async function makeTestApp(
       ),
     }),
     quota,
+    affect: affectStore,
     tokenVerifier,
     config,
     logger,
