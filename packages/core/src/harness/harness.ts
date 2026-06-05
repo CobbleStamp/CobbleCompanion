@@ -296,8 +296,14 @@ export class Harness {
           });
           // Record a friendly one-line transcript row for the look-up so the
           // conversation shows what the companion did (UI-only; filtered out of
-          // the model's context). Best-effort — see recordToolStep.
-          yield* this.recordToolStep(companion.id, gated.name, gated.args);
+          // the model's context). Best-effort — see recordToolStep. A failed
+          // call (unknown tool / thrown — dispatch flags it isError) records
+          // nothing: a "Searched memory for…" row for a lookup that errored would
+          // misreport failure as success. The model still sees the error via the
+          // tool message pushed above.
+          if (result.isError !== true) {
+            yield* this.recordToolStep(companion.id, gated.name, gated.args);
+          }
         }
 
         // Any held action means the run pauses for approval: persist the pre-amble

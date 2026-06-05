@@ -415,6 +415,63 @@ describe('Harness inner loop (P3 tools)', () => {
     expect(persisted?.content).toBe('Used web_fetch.');
   });
 
+  it('records no tool_step for a failed call (would misreport failure as success)', async () => {
+    // The tool throws → dispatch returns an isError result. The model still sees
+    // the error fed back, but the UI-only "Used …" step must not appear, or a
+    // failed look-up would read as a successful one in the transcript.
+    const throwing: Tool = {
+      name: 'web_fetch',
+      description: 'x',
+      parameters: { type: 'object', properties: {} },
+      effectful: false,
+      async run() {
+        throw new Error('boom');
+      },
+    };
+    const gateway = new FakeLlmGateway([
+      { toolCalls: [call('web_fetch', { url: 'https://x.dev' })] },
+      { chunks: ['recovered'] },
+    ]);
+    const mem = memory();
+    const harness = new Harness({
+      gateway,
+      memory: mem,
+      model: 'm',
+      registry: new ToolRegistry([throwing]),
+      logger: silentLogger,
+    });
+
+    const events = await collect(harness.runTurn({ companion, userContent: 'go', ownerId: 'u1' }));
+
+    expect(events.some((e) => e.type === 'tool_step')).toBe(false);
+    expect(mem.appended.some((m) => m.kind === 'tool_step')).toBe(false);
+    // The error still reached the model as a tool message (failures are data).
+    expect(
+      gateway.calls[1]!.messages.some((m) => m.role === 'tool' && m.content.includes('boom')),
+    ).toBe(true);
+  });
+
+  it('records no tool_step for an unknown tool (dispatch flags it isError)', async () => {
+    // An unrecognised tool name is also an isError result — no success row.
+    const gateway = new FakeLlmGateway([
+      { toolCalls: [call('nope', { url: 'https://x.dev' })] },
+      { chunks: ['ok'] },
+    ]);
+    const mem = memory();
+    const harness = new Harness({
+      gateway,
+      memory: mem,
+      model: 'm',
+      registry: new ToolRegistry([]),
+      logger: silentLogger,
+    });
+
+    const events = await collect(harness.runTurn({ companion, userContent: 'go', ownerId: 'u1' }));
+
+    expect(events.some((e) => e.type === 'tool_step')).toBe(false);
+    expect(mem.appended.some((m) => m.kind === 'tool_step')).toBe(false);
+  });
+
   it('persists grounding citations onto the assistant message', async () => {
     const citation = {
       sourceId: 's1',
