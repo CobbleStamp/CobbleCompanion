@@ -6,14 +6,11 @@
  * will run on idle. Procedural memory lists learned workflows. All owner-scoped.
  */
 
-import { toProposalDto } from '@cobble/core';
-import type { LeadDto, ProcedureDto, ProposalDto } from '@cobble/shared';
+import { runExploreBurst, toProposalDto } from '@cobble/core';
+import type { LeadDto, ProcedureDto } from '@cobble/shared';
 import type { FastifyInstance } from 'fastify';
 import type { AppDeps } from '../app.js';
 import type { RequireAuth } from '../auth-guard.js';
-
-/** How many reading-list items one explore turn proposes (a bounded burst). */
-const EXPLORE_BURST = 3;
 
 interface CompanionParams {
   readonly companionId: string;
@@ -48,26 +45,13 @@ export function registerInventoryRoutes(
       if (!companion) {
         return reply.code(404).send({ error: 'companion not found' });
       }
-      const ingest = tools.get('ingest_source');
-      const next = (await leads.listByStatus(companion.id, ['new'])).slice(0, EXPLORE_BURST);
-      const created: ProposalDto[] = [];
-      for (const lead of next) {
-        const summary = ingest?.proposalSummary
-          ? ingest.proposalSummary({ url: lead.url })
-          : `Read ${lead.url} into long-term memory`;
-        const proposal = await proposals.create(companion.id, {
-          toolName: 'ingest_source',
-          toolArgs: { url: lead.url },
-          summary,
-          // Carry the lead id so resolving the proposal can close its lifecycle:
-          // approve→'ingested', reject→'discarded' (proposal.routes.ts). Without
-          // this link the lead would be stranded at 'read' forever.
-          leadId: lead.id,
-        });
-        await leads.markStatus(companion.id, lead.id, 'read');
-        created.push(toProposalDto(proposal));
-      }
-      return reply.send({ proposals: created });
+      // The same burst the Phase 4 motivation engine runs on idle — here triggered
+      // on the user's command, so the proposals are stamped `explore` origin.
+      const created = await runExploreBurst(
+        { leads, proposals, tools },
+        { companionId: companion.id, origin: 'explore' },
+      );
+      return reply.send({ proposals: created.map(toProposalDto) });
     },
   );
 

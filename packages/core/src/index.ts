@@ -136,6 +136,36 @@ export {
   InMemoryPresenceStore,
   type PresenceStore,
 } from './motivation/presence-store.js';
+// Motivation engine — drives, arbitration, explore burst, the engine (Phase 4)
+export {
+  computeDrives,
+  DEFAULT_DRIVE_WEIGHTS,
+  DRIVES,
+  type DriveContext,
+  type DriveLevels,
+  NEUTRAL_WEIGHT,
+  resolveWeights,
+} from './motivation/drives.js';
+export {
+  type ArbitrationInput,
+  DEFAULT_KNOBS,
+  decideMove,
+  type ExploreMove,
+  type Move,
+} from './motivation/arbitration.js';
+export {
+  DEFAULT_EXPLORE_BURST,
+  type ExploreBurstDeps,
+  type ExploreBurstParams,
+  runExploreBurst,
+} from './motivation/explore-burst.js';
+export {
+  DEFAULT_ENERGY_PER_PROPOSAL,
+  MotivationEngine,
+  type MotivationEngineDeps,
+  type MotivationEngineOptions,
+  type MotivationTickResult,
+} from './motivation/engine.js';
 
 // Token usage / metering (per-user daily cap)
 export {

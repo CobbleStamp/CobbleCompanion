@@ -47,6 +47,7 @@ function fakeProposals(): ProposalStore & { created: CreateProposalInput[] } {
         summary: input.summary,
         status: 'pending',
         leadId: input.leadId ?? null,
+        origin: input.origin ?? 'chat',
         createdAt: new Date('2026-01-01'),
         resolvedAt: null,
       };

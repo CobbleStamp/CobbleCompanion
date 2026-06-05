@@ -1,4 +1,9 @@
-import type { CompanionDto } from '@cobble/shared';
+import type {
+  CompanionDto,
+  DriveWeights,
+  PersonalityKnobs,
+  ProactivityDial,
+} from '@cobble/shared';
 import { companions, type Database, users } from '@cobble/db';
 import { and, eq } from 'drizzle-orm';
 
@@ -29,6 +34,12 @@ export interface CompanionRecord {
   readonly evolvedPersona: string | null;
   readonly personaUpdatedThroughSeq: number;
   readonly consolidatedThroughSeq: number;
+  // Phase 4 — proactivity state the motivation engine reads (companion-motivation.md).
+  readonly proactivityDial: ProactivityDial;
+  /** Null until personalized via onboarding (PoC uses default constants). */
+  readonly personalityKnobs: PersonalityKnobs | null;
+  /** Null → neutral defaults; learned (EMA) by the reinforcement loop. */
+  readonly driveWeights: DriveWeights | null;
   readonly createdAt: string;
 }
 
@@ -156,6 +167,9 @@ function toCompanionRecord(row: typeof companions.$inferSelect): CompanionRecord
     evolvedPersona: row.evolvedPersona,
     personaUpdatedThroughSeq: row.personaUpdatedThroughSeq,
     consolidatedThroughSeq: row.consolidatedThroughSeq,
+    proactivityDial: row.proactivityDial,
+    personalityKnobs: row.personalityKnobs,
+    driveWeights: row.driveWeights,
     createdAt: row.createdAt.toISOString(),
   };
 }
