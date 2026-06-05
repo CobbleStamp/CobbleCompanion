@@ -248,6 +248,7 @@ async function main(): Promise<void> {
     presence,
     motivation,
     quota,
+    energy,
     tokenVerifier: createTokenVerifier(config),
     config,
     logger: consoleLogger,

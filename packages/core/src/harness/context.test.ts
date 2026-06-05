@@ -8,6 +8,7 @@ const companion: CompanionDto = {
   form: 'fox',
   temperament: 'curious and gentle',
   evolvedPersona: null,
+  proactivityDial: 'gentle',
   createdAt: new Date(0).toISOString(),
 };
 

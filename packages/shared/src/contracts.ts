@@ -51,6 +51,8 @@ export interface CompanionDto {
    * shown on the identity card. Null until the first evolution pass runs.
    */
   readonly evolvedPersona: string | null;
+  /** The proactivity dial (Phase 4) — how readily the companion self-initiates. */
+  readonly proactivityDial: ProactivityDial;
   readonly createdAt: string;
 }
 

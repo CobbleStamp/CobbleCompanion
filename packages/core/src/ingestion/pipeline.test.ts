@@ -74,6 +74,7 @@ class StubQuota implements TokenQuotaStore {
   async isOverCap(): Promise<boolean> {
     return this.over;
   }
+  async topUp(): Promise<void> {}
 }
 
 const NOTE_TEXT = [

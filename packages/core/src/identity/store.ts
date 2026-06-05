@@ -73,6 +73,8 @@ export interface IdentityStore {
     evolvedPersona: string,
     personaUpdatedThroughSeq: number,
   ): Promise<void>;
+  /** Set the proactivity dial (Phase 4 tunability). Keyed by companionId. */
+  setProactivityDial(companionId: string, dial: ProactivityDial): Promise<void>;
 }
 
 export class DrizzleIdentityStore implements IdentityStore {
@@ -136,6 +138,13 @@ export class DrizzleIdentityStore implements IdentityStore {
       .set({ evolvedPersona, personaUpdatedThroughSeq })
       .where(eq(companions.id, companionId));
   }
+
+  async setProactivityDial(companionId: string, dial: ProactivityDial): Promise<void> {
+    await this.db
+      .update(companions)
+      .set({ proactivityDial: dial })
+      .where(eq(companions.id, companionId));
+  }
 }
 
 function toUserRecord(row: typeof users.$inferSelect): UserRecord {
@@ -153,6 +162,7 @@ function toCompanionDto(row: typeof companions.$inferSelect): CompanionDto {
     form: row.form,
     temperament: row.temperament,
     evolvedPersona: row.evolvedPersona,
+    proactivityDial: row.proactivityDial,
     createdAt: row.createdAt.toISOString(),
   };
 }

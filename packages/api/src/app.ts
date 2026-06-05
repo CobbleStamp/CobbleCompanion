@@ -1,4 +1,5 @@
 import type {
+  CompanionEnergyStore,
   ConsolidationRunner,
   EmbeddingGateway,
   EpisodicMemoryStore,
@@ -34,6 +35,7 @@ import { registerMemoryRoutes } from './routes/memory.routes.js';
 import { registerMessageRoutes } from './routes/message.routes.js';
 import { registerInventoryRoutes } from './routes/inventory.routes.js';
 import { registerPresenceRoutes } from './routes/presence.routes.js';
+import { registerProactivityRoutes } from './routes/proactivity.routes.js';
 import { registerProposalRoutes } from './routes/proposal.routes.js';
 import { registerSourceRoutes } from './routes/source.routes.js';
 import { registerUsageRoutes } from './routes/usage.routes.js';
@@ -71,6 +73,8 @@ export interface AppDeps {
   /** Off-request proactive ticks — routes request it on activity/return (P4). */
   readonly motivation: MotivationRunner;
   readonly quota: TokenQuotaStore;
+  /** Per-companion energy pool — the self-initiated budget, surfaced as the meter (P4). */
+  readonly energy: CompanionEnergyStore;
   readonly tokenVerifier: TokenVerifier;
   readonly config: AppConfig;
   readonly logger: Logger;
@@ -162,6 +166,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerProposalRoutes(app, deps, requireAuth);
   registerInventoryRoutes(app, deps, requireAuth);
   registerPresenceRoutes(app, deps, requireAuth);
+  registerProactivityRoutes(app, deps, requireAuth);
   registerUsageRoutes(app, deps, requireAuth);
 
   registerSpa(app);

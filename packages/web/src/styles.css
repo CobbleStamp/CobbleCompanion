@@ -167,6 +167,61 @@ button:disabled {
   background: #fee2e2;
 }
 
+/* Vitality meter (Phase 4): the two budget pools + a one-tap feed each. */
+.budget-meter {
+  display: inline-flex;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  color: #4b5563;
+  white-space: nowrap;
+}
+.budget-meter__pool {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  background: #eef2f7;
+  border-radius: 999px;
+  padding: 0.15rem 0.5rem;
+}
+.budget-meter__feed {
+  border: none;
+  background: #dbeafe;
+  color: #1e3a5f;
+  border-radius: 999px;
+  width: 1.1rem;
+  height: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.budget-meter__feed:hover {
+  background: #bfdbfe;
+}
+
+/* Proactivity dial (Phase 4 tunability): off / gentle / active. */
+.proactivity-dial {
+  display: inline-flex;
+  border: 1px solid #d1d5db;
+  border-radius: 999px;
+  overflow: hidden;
+}
+.proactivity-dial__opt {
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  font-size: 0.75rem;
+  padding: 0.15rem 0.55rem;
+  cursor: pointer;
+}
+.proactivity-dial__opt--active {
+  background: #1e3a5f;
+  color: #f8fafc;
+}
+.proactivity-dial__opt:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 /* Header indicator shown while ingestion is in flight (IngestionStatusButton). */
 .ingestion-badge {
   font-size: 0.8rem;

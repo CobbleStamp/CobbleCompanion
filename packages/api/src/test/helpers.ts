@@ -205,6 +205,7 @@ export async function makeTestApp(
     procedural,
     presence,
     motivation,
+    energy,
     harness: new Harness({
       gateway: llmGateway,
       memory,

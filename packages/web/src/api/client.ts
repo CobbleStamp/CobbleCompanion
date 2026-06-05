@@ -10,11 +10,13 @@ import type {
   LeadDto,
   MemorySnapshotDto,
   MessageDto,
+  ProactivityDial,
   ProcedureDto,
   ProposalDto,
   SectionDto,
   SemanticSearchResultDto,
   SourceDto,
+  StaminaEnergyDto,
   UsageDto,
 } from '@cobble/shared';
 
@@ -190,6 +192,35 @@ export async function deleteSource(companionId: string, sourceId: string): Promi
 export async function getUsage(): Promise<UsageDto> {
   const body = await request<{ usage: UsageDto }>(`/usage`);
   return body.usage;
+}
+
+/** The companion's two vitality pools — stamina + energy (Phase 4 meter). */
+export async function fetchBudget(companionId: string): Promise<StaminaEnergyDto> {
+  return request<StaminaEnergyDto>(`/companions/${companionId}/budget`);
+}
+
+/** Feed a vitality pool (the simple manual top-up). Returns the updated meter. */
+export async function topUpBudget(
+  companionId: string,
+  pool: 'stamina' | 'energy',
+  amount: number,
+): Promise<StaminaEnergyDto> {
+  return request<StaminaEnergyDto>(`/companions/${companionId}/budget/topup`, {
+    method: 'POST',
+    body: JSON.stringify({ pool, amount }),
+  });
+}
+
+/** Set the companion's proactivity dial (off / gentle / active). */
+export async function setProactivityDial(
+  companionId: string,
+  dial: ProactivityDial,
+): Promise<ProactivityDial> {
+  const body = await request<{ dial: ProactivityDial }>(
+    `/companions/${companionId}/proactivity`,
+    { method: 'PATCH', body: JSON.stringify({ dial }) },
+  );
+  return body.dial;
 }
 
 /** Search the companion's semantic memory (the browser's recall window). */

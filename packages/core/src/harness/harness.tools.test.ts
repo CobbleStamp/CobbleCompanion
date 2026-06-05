@@ -33,6 +33,7 @@ const companion: CompanionDto = {
   form: 'fox',
   temperament: 'curious',
   evolvedPersona: null,
+  proactivityDial: 'gentle',
   createdAt: new Date('2026-01-01').toISOString(),
 };
 
@@ -119,6 +120,7 @@ class RecordingQuota implements TokenQuotaStore {
   async isOverCap(): Promise<boolean> {
     return false;
   }
+  async topUp(): Promise<void> {}
 }
 
 describe('Harness inner loop (P3 tools)', () => {

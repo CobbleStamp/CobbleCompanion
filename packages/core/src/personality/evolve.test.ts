@@ -29,6 +29,7 @@ class FakeQuota implements TokenQuotaStore {
   async isOverCap(): Promise<boolean> {
     return this.overCap;
   }
+  async topUp(): Promise<void> {}
 }
 
 describe('LlmPersonalityEvolver', () => {

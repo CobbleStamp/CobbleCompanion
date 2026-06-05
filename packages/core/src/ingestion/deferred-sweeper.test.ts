@@ -26,6 +26,7 @@ class SetQuota implements TokenQuotaStore {
   async isOverCap(userId: string): Promise<boolean> {
     return this.overOwners.has(userId);
   }
+  async topUp(): Promise<void> {}
 }
 
 const PARSED: ParsedDocument = { rawText: 'held', paragraphs: [{ ord: 1, text: 'held' }] };

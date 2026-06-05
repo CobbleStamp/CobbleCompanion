@@ -28,6 +28,7 @@ class FakeQuota implements TokenQuotaStore {
   async isOverCap(): Promise<boolean> {
     return this.overCap;
   }
+  async topUp(): Promise<void> {}
 }
 
 /** A gateway whose stream throws, to drive the generation-failure fallback. */

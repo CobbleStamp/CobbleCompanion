@@ -27,6 +27,7 @@ class RecordingQuota implements TokenQuotaStore {
   async isOverCap(): Promise<boolean> {
     return false;
   }
+  async topUp(): Promise<void> {}
 }
 
 describe('Harness.runTurn (Phase 0 single-pass loop)', () => {

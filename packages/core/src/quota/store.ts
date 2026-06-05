@@ -33,6 +33,12 @@ export interface TokenQuotaStore {
   recordUsage(userId: string, totalTokens: number): Promise<void>;
   /** True when the user has met or exceeded their effective cap. */
   isOverCap(userId: string): Promise<boolean>;
+  /**
+   * Raise the effective cap by `amount` (the manual stamina feed control, P4).
+   * Persisted as `cap_override = (override ?? default) + amount`, so it survives
+   * window rolls. No-op for non-positive amounts.
+   */
+  topUp(userId: string, amount: number): Promise<void>;
 }
 
 export interface DrizzleTokenQuotaStoreOptions {
@@ -86,6 +92,19 @@ export class DrizzleTokenQuotaStore implements TokenQuotaStore {
   async isOverCap(userId: string): Promise<boolean> {
     const { used, cap } = await this.loadAndRoll(userId);
     return used >= cap;
+  }
+
+  async topUp(userId: string, amount: number): Promise<void> {
+    if (amount <= 0) {
+      return;
+    }
+    const { cap } = await this.loadAndRoll(userId);
+    // Raise the explicit override above the current effective cap, so a top-up
+    // works whether or not an override was already set (null → default + amount).
+    await this.db
+      .update(userTokenUsage)
+      .set({ capOverride: cap + amount, updatedAt: this.now() })
+      .where(eq(userTokenUsage.userId, userId));
   }
 
   /**
