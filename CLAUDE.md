@@ -30,6 +30,7 @@ read docs/product-overview.md
 | Proactivity & motivation mechanism | `docs/companion-motivation.md`  |
 | Prompt management & iteration | `docs/guide-prompts.md`             |
 | Running evals (offline harness) | `docs/howto-run-evals.md`         |
+| Online tracing / observability | `docs/runbook-tracing.md`          |
 | Local dev setup               | `README.md`                         |
 
 

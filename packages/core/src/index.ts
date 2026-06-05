@@ -115,6 +115,25 @@ export {
   versionOf,
 } from './prompts/index.js';
 
+// Tracing seam (online observability — runbook-tracing.md). The Langfuse adapter
+// lives in the api package; core exposes only the interface, redaction, sampling.
+export {
+  guardedTraceSink,
+  noopTraceSink,
+  type RedactionMode,
+  scrubContent,
+  shouldSample,
+  type SpanEnd,
+  type SpanHandle,
+  type SpanKind,
+  type SpanStart,
+  type TraceAttributes,
+  type TraceContent,
+  type TraceHandle,
+  type TraceSink,
+  type TraceStart,
+} from './tracing/index.js';
+
 // Embedding gateway
 export {
   type EmbeddingGateway,

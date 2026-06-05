@@ -122,7 +122,8 @@ flowchart TB
 | **Identity Store** | Companion "home" record (incl. P2 `evolvedPersona` + evolution/consolidation cursors) | Source of truth surfaces load from |
 | **Token Quota Store** | Per-user daily token-budget state — the cost cap (P1, §4.8) | Postgres-backed (`user_token_usage`); routes enforce it inline |
 | **Persistence** | Relational + vector storage | Postgres + `pgvector`; schemas → `implementation.md` |
-| **Eval Harness** | Offline memory-vs-performance evaluation (`packages/eval`) | Not on the serving path; live OpenRouter. See `companionmemory.md` §5 |
+| **Eval Harness** | Offline dataset/scorer/runner eval framework (`packages/eval`) | Not on the serving path; live OpenRouter. memory-recall + stateless + injection datasets. See `companionmemory.md` §5, `howto-run-evals.md` |
+| **Trace Sink** | Online tracing seam (`core/src/tracing`) — per-turn trace with assemble_context/llm_call/tool_call spans | No-op by default; the Langfuse Cloud adapter lives in `api/src/tracing`, sampled + redacted. See `runbook-tracing.md` |
 | **Tool Registry + Tools (P3)** | The tools a turn advertises + dispatches (`core/tools/`): `web_fetch`, `memory_search` (read-only), `ingest_source` (effectful) | Read-only tools run freely; the gate holds effectful ones (§4.4). `web_fetch` reuses the link resolver; `ingest_source` reuses the P1 pipeline |
 | **Approval Queue + Gate (P3)** | The `beforeToolCall` gate + the `proposals` store — holds effectful calls for one-tap approval, resolved exactly once | The mechanical realization of propose→approve (§4.4); confirm executes via `dispatchTool` |
 | **Tool-Call Log (P3)** | Append-only audit of every executed tool call (`tool_calls`) | The `afterToolCall` hook records all calls — the DoD's "every tool call is logged" |
@@ -652,6 +653,7 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
       harness/         agent loop + extension hooks (§4); semantic + episodic recall (P1, P2 §4.3)
       llm/             provider-agnostic LLM gateway
       prompts/         code-as-truth versioned prompt registry (catalog + render/version) — guide-prompts.md
+      tracing/         online-tracing seam (TraceSink + noop, redaction, sampling) — runbook-tracing.md
       embedding/       provider-agnostic embedding gateway (P1; request-path memoizing wrapper P2)
       ingestion/       parse → segment → enrich → embed pipeline + runner + deferred-job sweeper (P1, §4.8)
       memory/          MemoryStore (transcript) + SemanticMemoryStore (P1) + EpisodicMemoryStore + consolidation service/runner (P2)

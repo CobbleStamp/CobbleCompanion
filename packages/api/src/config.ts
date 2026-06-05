@@ -1,3 +1,4 @@
+import type { RedactionMode } from '@cobble/core';
 import { z } from 'zod';
 
 /**
@@ -38,6 +39,14 @@ export interface AppConfig {
   readonly devBypassEmail: string;
   readonly port: number;
   readonly isProduction: boolean;
+  // Online tracing (Phase C, runbook-tracing.md). Default OFF + strict + 0-rate,
+  // so enabling it (a third-party export) is always a deliberate act.
+  readonly tracingProvider: 'none' | 'langfuse';
+  readonly langfusePublicKey: string;
+  readonly langfuseSecretKey: string;
+  readonly langfuseHost: string;
+  readonly tracingSampleRate: number;
+  readonly tracingRedact: RedactionMode;
 }
 
 const envSchema = z
@@ -68,6 +77,12 @@ const envSchema = z
     DEV_BYPASS_EMAIL: z.string().email().default('dev@cobble.local'),
     PORT: z.coerce.number().int().positive().default(3000),
     NODE_ENV: z.string().default('development'),
+    TRACING_PROVIDER: z.enum(['none', 'langfuse']).default('none'),
+    LANGFUSE_PUBLIC_KEY: z.string().default(''),
+    LANGFUSE_SECRET_KEY: z.string().default(''),
+    LANGFUSE_HOST: z.string().url().default('https://cloud.langfuse.com'),
+    TRACING_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0),
+    TRACING_REDACT: z.enum(['strict', 'metadata_only', 'off']).default('strict'),
   })
   .superRefine((env, ctx) => {
     if (env.LLM_PROVIDER === 'openrouter' && env.OPENROUTER_API_KEY.length === 0) {
@@ -89,6 +104,17 @@ const envSchema = z
         code: z.ZodIssueCode.custom,
         message: 'GOOGLE_CLIENT_ID is required when AUTH_MODE=google',
         path: ['GOOGLE_CLIENT_ID'],
+      });
+    }
+    if (
+      env.TRACING_PROVIDER === 'langfuse' &&
+      (env.LANGFUSE_PUBLIC_KEY.length === 0 || env.LANGFUSE_SECRET_KEY.length === 0)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are required when TRACING_PROVIDER=langfuse',
+        path: ['LANGFUSE_SECRET_KEY'],
       });
     }
   });
@@ -115,5 +141,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     devBypassEmail: parsed.DEV_BYPASS_EMAIL,
     port: parsed.PORT,
     isProduction: parsed.NODE_ENV === 'production',
+    tracingProvider: parsed.TRACING_PROVIDER,
+    langfusePublicKey: parsed.LANGFUSE_PUBLIC_KEY,
+    langfuseSecretKey: parsed.LANGFUSE_SECRET_KEY,
+    langfuseHost: parsed.LANGFUSE_HOST,
+    tracingSampleRate: parsed.TRACING_SAMPLE_RATE,
+    tracingRedact: parsed.TRACING_REDACT,
   };
 }

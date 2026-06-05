@@ -59,6 +59,7 @@ import {
   type TokenVerifier,
 } from './auth/jwt-verifier.js';
 import { loadConfig, type AppConfig } from './config.js';
+import { createTraceSink } from './tracing/langfuse-sink.js';
 
 function createGateway(config: AppConfig): LlmGateway {
   if (config.llmProvider === 'fake') {
@@ -166,6 +167,10 @@ async function main(): Promise<void> {
     model: config.llmModel,
     quota,
     logger: consoleLogger,
+    // Phase C: online tracing. noop unless TRACING_PROVIDER=langfuse + keys set
+    // (runbook-tracing.md) — a turn trace with assemble_context/llm_call/tool_call
+    // spans, sampled + redacted before any third-party export.
+    traceSink: createTraceSink(config, consoleLogger),
     // P4.2: sense the user's mood each turn (cheap ingestion model, billed to
     // stamina), attune the next reply to it, and let the *change* nudge the served
     // drive's weight when a self-directed act is awaiting a reaction.

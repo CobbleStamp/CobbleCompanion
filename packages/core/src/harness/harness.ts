@@ -5,6 +5,7 @@ import type {
   MessageDto,
   ProposalDto,
 } from '@cobble/shared';
+import { randomUUID } from 'node:crypto';
 import type { LlmGateway, LlmMessage, StreamResult } from '../llm/gateway.js';
 import { toolStepSummary } from '../tools/tool.js';
 import { consoleLogger, type Logger } from '../logging.js';
@@ -14,6 +15,12 @@ import type { CompanionAffectStore } from '../motivation/affect-store.js';
 import type { TokenQuotaStore } from '../quota/stamina-store.js';
 import { dispatchTool } from '../tools/dispatch.js';
 import { ToolRegistry } from '../tools/registry.js';
+import {
+  guardedTraceSink,
+  noopTraceSink,
+  type TraceHandle,
+  type TraceSink,
+} from '../tracing/trace-sink.js';
 import {
   addUsage,
   createUsageAccumulator,
@@ -83,6 +90,8 @@ export interface HarnessOptions {
   readonly quota?: TokenQuotaStore;
   /** Affect perception + learning (Phase 4.2); omitted = no mood sensing. */
   readonly affect?: HarnessAffect;
+  /** Online tracing sink (Phase C); omitted = noop (tracing off). */
+  readonly traceSink?: TraceSink;
   readonly logger?: Logger;
 }
 
@@ -129,6 +138,7 @@ export class Harness {
   private readonly turnTokenBudget: number | undefined;
   private readonly quota: TokenQuotaStore | undefined;
   private readonly affect: HarnessAffect | undefined;
+  private readonly traceSink: TraceSink;
   private readonly logger: Logger;
   /** In-flight post-turn affect reads — launched fire-and-forget, tracked so
    *  shutdown/tests can await them settling (see {@link whenIdle}). */
@@ -153,6 +163,13 @@ export class Harness {
     this.turnTokenBudget = options.turnTokenBudget;
     this.quota = options.quota;
     this.affect = options.affect;
+    // Guard the sink so a misbehaving adapter can never break a turn (logging.md).
+    this.traceSink = guardedTraceSink(options.traceSink ?? noopTraceSink, (error) =>
+      this.logger.error('trace sink failed (tracing dropped for this call)', {
+        operation: 'harness.trace',
+        error,
+      }),
+    );
   }
 
   /**
@@ -162,9 +179,16 @@ export class Harness {
    */
   async *runTurn(params: RunTurnParams): AsyncGenerator<ChatStreamEvent> {
     const { companion, userContent, ownerId, signal } = params;
+    const trace = this.traceSink.startTrace({
+      traceId: randomUUID(),
+      name: 'turn',
+      companionId: companion.id,
+      ...(ownerId ? { ownerId } : {}),
+    });
+    let traceError: string | undefined;
     try {
       await this.memory.appendMessage(companion.id, 'user', userContent);
-      const prep = await this.prepare(companion, userContent);
+      const prep = await this.prepare(companion, userContent, trace);
       // Snapshot the transcript for the post-turn affect read NOW, while the user's
       // message is still the final row. Once the reply persists (end of runLoop) it
       // becomes the final row, and `affectContext` — which drops the final turn as
@@ -174,7 +198,7 @@ export class Harness {
       const affectSnapshot = this.affect
         ? await this.memory.getRecentMessages(companion.id, this.recentLimit)
         : [];
-      yield* this.runLoop(companion, ownerId, prep, signal);
+      yield* this.runLoop(companion, ownerId, prep, signal, trace);
       // Perception + learning (Phase 4.2) — launched AFTER the reply has fully
       // streamed (all tokens + `done` already yielded) and deliberately NOT
       // awaited: the generator returns immediately so the SSE socket closes on
@@ -190,7 +214,12 @@ export class Harness {
       // already taken above, so the chained read still reflects this turn.
       this.trackBackground(this.chainAffect(companion.id, affectSnapshot, userContent, ownerId));
     } catch (error) {
+      traceError = error instanceof Error ? error.message : String(error);
       yield this.failed(companion.id, error);
+    } finally {
+      // End the turn trace on EVERY exit — normal, error, or consumer abort
+      // (generator .return()), so a trace is never left open. Best-effort.
+      trace.end(traceError !== undefined ? { error: traceError } : undefined);
     }
   }
 
@@ -226,17 +255,27 @@ export class Harness {
    */
   async *continueAfterApproval(params: ContinueParams): AsyncGenerator<ChatStreamEvent> {
     const { companion, ownerId, outcome, signal } = params;
+    const trace = this.traceSink.startTrace({
+      traceId: randomUUID(),
+      name: 'turn',
+      companionId: companion.id,
+      ...(ownerId ? { ownerId } : {}),
+    });
+    let traceError: string | undefined;
     try {
-      const prep = await this.prepare(companion, '');
+      const prep = await this.prepare(companion, '', trace);
       prep.messages.push({
         role: 'user',
         content:
           `[Your proposed action was approved and has completed: ${outcome} ` +
           `Continue with what the user asked — do not propose it again.]`,
       });
-      yield* this.runLoop(companion, ownerId, prep, signal);
+      yield* this.runLoop(companion, ownerId, prep, signal, trace);
     } catch (error) {
+      traceError = error instanceof Error ? error.message : String(error);
       yield this.failed(companion.id, error);
+    } finally {
+      trace.end(traceError !== undefined ? { error: traceError } : undefined);
     }
   }
 
@@ -346,18 +385,31 @@ export class Harness {
   }
 
   /** Retrieve context, assemble the prompt, and collect the turn's citations. */
-  private async prepare(companion: CompanionDto, userContent: string): Promise<PreparedTurn> {
-    const { blocks: history, usage: retrievalUsage } = await this.retrieveContext({
-      companionId: companion.id,
-      userContent,
-    });
-    // Fast-loop attunement (Phase 4.2): the prior rolling read of the user's mood
-    // is fed forward so this reply adjusts tone/detail to where they are.
-    // Best-effort — a store hiccup must never block the reply (just lose attunement).
-    const affect = await this.priorAffect(companion.id);
-    const messages = assembleContext(companion, history, affect);
-    const citations = dedupeCitations(history.flatMap((block) => block.provenance ?? []));
-    return { messages, citations, retrievalUsage };
+  private async prepare(
+    companion: CompanionDto,
+    userContent: string,
+    trace: TraceHandle,
+  ): Promise<PreparedTurn> {
+    const span = trace.startSpan({ kind: 'assemble_context', name: 'assemble_context' });
+    try {
+      const { blocks: history, usage: retrievalUsage } = await this.retrieveContext({
+        companionId: companion.id,
+        userContent,
+      });
+      // Fast-loop attunement (Phase 4.2): the prior rolling read of the user's mood
+      // is fed forward so this reply adjusts tone/detail to where they are.
+      // Best-effort — a store hiccup must never block the reply (just lose attunement).
+      const affect = await this.priorAffect(companion.id);
+      const messages = assembleContext(companion, history, affect);
+      const citations = dedupeCitations(history.flatMap((block) => block.provenance ?? []));
+      span.end({
+        attributes: { blocks: history.length, citations: citations.length },
+      });
+      return { messages, citations, retrievalUsage };
+    } catch (error) {
+      span.end({ error: error instanceof Error ? error.message : String(error) });
+      throw error;
+    }
   }
 
   /**
@@ -372,6 +424,7 @@ export class Harness {
     ownerId: string | undefined,
     prep: PreparedTurn,
     signal: AbortSignal | undefined,
+    trace: TraceHandle,
   ): AsyncGenerator<ChatStreamEvent> {
     const { messages, citations, retrievalUsage } = prep;
     // Citations are retrieval-time data: surface the grounding sources as soon
@@ -383,7 +436,7 @@ export class Harness {
     // Meter every LLM call in the run: the wrapper deposits each call's usage
     // into `acc`, so a multi-turn tool run is debited once, at exit.
     const acc = createUsageAccumulator();
-    const llm = meteredLlmGateway(this.gateway, acc.sink);
+    const llm = meteredLlmGateway(this.gateway, acc.sink, trace);
     const ctx: TurnCtx = { companionId: companion.id, ownerId: ownerId ?? '' };
     const toolDefs = this.registry.list();
 
@@ -466,6 +519,12 @@ export class Harness {
             }
             continue;
           }
+          const toolSpan = trace.startSpan({
+            kind: 'tool_call',
+            name: gated.name,
+            attributes: { tool: gated.name },
+            content: { args: gated.args },
+          });
           const result = await dispatchTool(
             this.registry,
             gated.name,
@@ -475,6 +534,10 @@ export class Harness {
             call.id,
           );
           const logged = await this.afterToolCall(result, gated, ctx);
+          toolSpan.end({
+            attributes: { isError: result.isError === true },
+            content: { result: logged.content },
+          });
           messages.push({
             role: 'tool',
             content: logged.content,

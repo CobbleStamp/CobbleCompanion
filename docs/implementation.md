@@ -408,6 +408,19 @@ Loaded from environment / a secret manager; required values validated at startup
 | `USE_CONTEXT_HEADER` | `true` (default) \| `false` — prefix the Pass-2 context header onto embedding inputs (the eval A/B knob, `companionmemory.md` §5) |
 | `TOKEN_CAP_PER_DAY` | Per-user daily token cap (LLM + embedding) — the cost guardrail across all routes; fixed daily UTC window, overage carries as clamped debt (default 1 000 000). Per-account override → `user_token_usage.cap_override` |
 | `INGESTION_QUEUE_MAX` | Backstop cap on queued+in-flight ingestion runs across all owners; submissions past it get 429 (default 100) |
+| `TRACING_PROVIDER` | Online tracing backend: `none` (default) \| `langfuse` (`runbook-tracing.md`) |
+| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | Langfuse credentials (secret; required when `TRACING_PROVIDER=langfuse`) |
+| `LANGFUSE_HOST` | Langfuse base URL (default `https://cloud.langfuse.com`) |
+| `TRACING_SAMPLE_RATE` | Fraction of turns traced, deterministic per trace id, `0`–`1` (default `0` — nothing sent until raised) |
+| `TRACING_REDACT` | `strict` (default, metadata only — no content) \| `metadata_only` \| `off` (send PII-scrubbed content) |
+
+**Tracing seam (Phase C).** The harness opens one `TraceSink` trace per turn and nests
+`assemble_context` / `llm_call` (one per call, via `meteredLlmGateway`, stamped with the
+`promptRef` + token usage) / `tool_call` spans. `TraceSink` (`core/src/tracing`) mirrors the
+`Logger`/`UsageSink` seam — no-op by default, wrapped in `guardedTraceSink` so a sink fault never
+breaks a turn. The Langfuse Cloud adapter (`api/src/tracing/langfuse-sink.ts`) applies deterministic
+sampling + content redaction (`scrubContent`) before any third-party export. Operational + privacy
+detail: `runbook-tracing.md`.
 
 **P3 tuning constants** are in-code defaults (not secrets, so not env-wired): the loop ceilings
 `DEFAULT_MAX_TOOL_ITERATIONS` (default 6) + the optional per-run token budget (`harness.ts`,
