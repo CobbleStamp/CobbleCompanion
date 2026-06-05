@@ -11,6 +11,7 @@ import { autonomousNoteTemplate } from './catalog/autonomous-note.js';
 import { consolidationTemplate } from './catalog/consolidation.js';
 import { enricherTemplate } from './catalog/enricher.js';
 import { ingestionAnnounceTemplate } from './catalog/ingestion-announce.js';
+import { judgeTemplate } from './catalog/judge.js';
 import { personaEvolveTemplate } from './catalog/persona-evolve.js';
 import { personaTemplate } from './catalog/persona.js';
 import { segmenterTemplate } from './catalog/segmenter.js';
@@ -45,6 +46,7 @@ const ENTRIES: readonly PromptEntry[] = [
   toEntry(enricherTemplate),
   toEntry(affectSenseTemplate),
   toEntry(autonomousNoteTemplate),
+  toEntry(judgeTemplate),
 ];
 
 const REGISTRY: ReadonlyMap<PromptId, PromptEntry> = new Map(

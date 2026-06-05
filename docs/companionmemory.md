@@ -115,8 +115,12 @@ inline in `Chat.tsx`.
 ## 5. Evaluating memory vs performance
 
 The question "how does the companion's _memory_ affect its _performance_" is
-answered by the harness in **`packages/eval`** — a **live** CLI that runs a fixed
-eval set under several memory configurations and scores the answers.
+answered by the `memory-recall` dataset in **`packages/eval`** — a **live** run
+of a fixed eval set under several memory configurations, scored for recall +
+grounding. It is now one dataset in a generalized **dataset → scorer → runner**
+framework that also covers stateless per-call-site datasets (e.g. `affect-sense`)
+and a red-team `injection` dataset. **How to run any of them — including the
+deterministic CI tier vs the live nightly tier — lives in `howto-run-evals.md`.**
 
 **Run it:**
 

@@ -97,6 +97,24 @@ export {
 export { OpenRouterGateway, type OpenRouterConfig } from './llm/openrouter.js';
 export { FakeLlmGateway, type FakeTurn } from './llm/fake.js';
 
+// Prompt registry (code-as-truth, versioned prompts — guide-prompts.md)
+export {
+  type PromptBuild,
+  type PromptEntry,
+  type PromptId,
+  type PromptRef,
+  type PromptTemplate,
+  type PromptVersion,
+  type RenderedPrompt,
+  contentHash,
+  getPromptEntry,
+  judgeTemplate,
+  type JudgeInput,
+  listPrompts,
+  render,
+  versionOf,
+} from './prompts/index.js';
+
 // Embedding gateway
 export {
   type EmbeddingGateway,

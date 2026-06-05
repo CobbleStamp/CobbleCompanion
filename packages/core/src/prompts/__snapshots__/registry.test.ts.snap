@@ -26,6 +26,10 @@ exports[`prompt registry > locks prompt versions against accidental drift 1`] = 
     "contentHash": "8ad8b16bdf5db8c6",
     "semver": "1.0.0",
   },
+  "judge": {
+    "contentHash": "2b893b541709ed25",
+    "semver": "1.0.0",
+  },
   "persona": {
     "contentHash": "ea2b97a20a4dfb6c",
     "semver": "1.0.0",

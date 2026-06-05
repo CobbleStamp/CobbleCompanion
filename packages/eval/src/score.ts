@@ -1,4 +1,4 @@
-import type { LlmGateway, LlmMessage } from '@cobble/core';
+import { judgeTemplate, render, type LlmGateway } from '@cobble/core';
 import { collectText } from './llm.js';
 import type { CaseResult, EvalCase } from './types.js';
 
@@ -71,25 +71,15 @@ async function judge(
         evalCase.expectedFacts.join(', ') || '(none specified)'
       }.`;
 
-  const messages: LlmMessage[] = [
-    {
-      role: 'system',
-      content:
-        "You are a strict evaluator of an AI companion's memory. Judge ONLY against the conversation and sources provided. " +
-        'Respond with compact JSON and nothing else: {"grounding": <0..1>, "hallucinated": <true|false>, "reason": "<short>"}. ' +
-        'grounding = how well the answer is supported by the conversation/sources. ' +
-        'hallucinated = true if the answer confidently states a specific fact it could not know from the conversation/sources.',
-    },
-    {
-      role: 'user',
-      content:
-        `CONVERSATION:\n${transcript}\n\n` +
-        (sources.length > 0 ? `${sources}\n\n` : '') +
-        `QUESTION: ${evalCase.question}\n\nCOMPANION ANSWER: ${answer}\n\nEXPECTATION: ${expectation}`,
-    },
-  ];
+  const prompt = render(judgeTemplate, {
+    transcript,
+    sources,
+    question: evalCase.question,
+    answer,
+    expectation,
+  });
 
-  const raw = await collectText(gateway, messages, model);
+  const raw = await collectText(gateway, prompt.messages, model, prompt.ref);
   return parseVerdict(raw);
 }
 

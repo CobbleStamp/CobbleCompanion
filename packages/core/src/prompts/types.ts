@@ -22,7 +22,8 @@ export type PromptId =
   | 'segmenter'
   | 'enricher'
   | 'affect-sense'
-  | 'autonomous-note';
+  | 'autonomous-note'
+  | 'judge';
 
 /**
  * A prompt's version: the author-declared `semver` (the human change-intent and
