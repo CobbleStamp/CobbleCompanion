@@ -254,6 +254,7 @@ export async function makeTestApp(
       ),
     }),
     quota,
+    llm: llmGateway,
     tokenVerifier,
     config,
     logger,

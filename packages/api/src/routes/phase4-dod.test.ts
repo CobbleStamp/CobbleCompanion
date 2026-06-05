@@ -40,13 +40,18 @@ describe('Phase 4.1 DoD — proactivity engine', () => {
   let companionId: string;
 
   beforeEach(async () => {
-    // The note generation reads the scripted chunks → a deterministic note.
-    ctx = await makeTestApp(['I read ', 'some things.'], undefined, {
-      motivationPipeline: fakeReadPipeline((jobId) =>
-        // Mark the job done so the burst counts it as a successful read.
-        ctxDeps().semantic.updateJob(jobId, { status: 'done' }),
-      ),
-    });
+    // Scripted LLM turns, consumed in order: (1) the report note, (2) the
+    // sentiment critic's valence, (3) the chat reply to the reaction.
+    ctx = await makeTestApp(
+      [{ chunks: ['I read some things.'] }, { chunks: ['0.9'] }, { chunks: ['Glad it helped!'] }],
+      undefined,
+      {
+        motivationPipeline: fakeReadPipeline((jobId) =>
+          // Mark the job done so the burst counts it as a successful read.
+          ctxDeps().semantic.updateJob(jobId, { status: 'done' }),
+        ),
+      },
+    );
     auth = ctx.bearerFor('owner@example.com');
     const created = await ctx.app.inject({
       method: 'POST',
@@ -120,5 +125,28 @@ describe('Phase 4.1 DoD — proactivity engine', () => {
 
     expect(await assistantNotes()).toHaveLength(0);
     expect((await ctx.deps.energy.getEnergy(companionId)).usedTokens).toBe(0);
+  });
+
+  it('learns from the reaction to its report note, shifting the drive weight (DoD 5)', async () => {
+    await seedLeads(3);
+    await tick(); // posts the report note; one outcome awaits a reaction
+    const pendingBefore = await ctx.deps.rewards.findLatestUnresolved(companionId);
+    expect(pendingBefore).not.toBeNull();
+    // Suppress the post-send background tick so the assertion is deterministic.
+    ctx.deps.motivation.request = (): void => {};
+
+    // The user reacts in chat — the critic reads it as pleased (scripted 0.9).
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/messages`,
+      headers: auth,
+      payload: { content: 'Oh nice — thanks for reading those!' },
+    });
+
+    // The outcome is resolved with a positive reward and the curiosity weight rose.
+    const [outcome] = await ctx.deps.rewards.list(companionId, 1);
+    expect(outcome!.reward).toBeCloseTo(0.9);
+    const companion = await ctx.deps.identity.getCompanionById(companionId);
+    expect(companion?.driveWeights?.curiosity).toBeGreaterThan(0.5);
   });
 });

@@ -186,6 +186,12 @@ export {
   WEIGHT_CEILING,
   WEIGHT_FLOOR,
 } from './motivation/weights.js';
+export {
+  applyConversationReward,
+  type ConversationRewardDeps,
+  MIN_REWARD_TO_LEARN,
+  parseValence,
+} from './motivation/sentiment-reward.js';
 
 // Token usage / metering (per-user daily cap)
 export {

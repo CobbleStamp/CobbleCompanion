@@ -256,6 +256,7 @@ async function main(): Promise<void> {
     quota,
     energy,
     rewards,
+    llm: llmGateway,
     tokenVerifier: createTokenVerifier(config),
     config,
     logger: consoleLogger,

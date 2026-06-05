@@ -1,4 +1,5 @@
 import { sendMessageSchema } from '@cobble/shared';
+import { applyConversationReward } from '@cobble/core';
 import type { FastifyInstance } from 'fastify';
 import type { AppDeps } from '../app.js';
 import type { RequireAuth } from '../auth-guard.js';
@@ -19,7 +20,18 @@ export function registerMessageRoutes(
   deps: AppDeps,
   requireAuth: RequireAuth,
 ): void {
-  const { identity, memory, harness, quota, consolidation, presence, motivation, logger } = deps;
+  const {
+    identity,
+    memory,
+    harness,
+    quota,
+    consolidation,
+    presence,
+    motivation,
+    rewards,
+    llm,
+    logger,
+  } = deps;
 
   // Read the companion's transcript (oldest-first).
   app.get(
@@ -62,6 +74,16 @@ export function registerMessageRoutes(
       if (overCap) {
         return reply.code(429).send({ error: overCap });
       }
+      // The companion learns like a person: if its last self-directed act is still
+      // awaiting a reaction, THIS message is that reaction — read its sentiment and
+      // let it nudge the served drive's weight (P4.1). Run before the reply so the
+      // critic scores the reaction in isolation. Best-effort: never blocks chat.
+      await applyConversationReward(
+        { rewards, identity, memory, llm, model: deps.config.ingestionModel, quota, logger },
+        companion.id,
+        request.userId!,
+        parsed.data.content,
+      );
 
       await streamSse(
         reply,
