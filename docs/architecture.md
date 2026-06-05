@@ -378,11 +378,13 @@ The engine's parts (each additive, no loop change):
   decides *whether* to act — so **"idle" is a valid, free outcome**. Only when it commits does an
   **LLM burst** run the chosen move (the only token spend).
 - **Attention model (the "creature")** — each initiation is a **bounded burst**, never a full drain
-  of the inventory. Personality parameters shape it: **focus length** (steps before re-deciding),
-  **boredom** (interest on a thread decays without payoff), **distractibility** (a higher-salience
-  lead can preempt). **Default constants in the PoC** (per-companion personalization deferred to
-  onboarding, `companion-motivation.md` §7) — the dynamics behind a tenacious deep-reader vs. a
-  magpie that flits.
+  of the inventory. Personality parameters are designed to shape it: **focus length** (burst size
+  before re-deciding), **boredom** (interest on a thread decays without payoff), **distractibility**
+  (a higher-salience lead can preempt). **Default constants in the PoC** (per-companion
+  personalization deferred to onboarding, `companion-motivation.md` §7). **v1:** only **focus length**
+  is live (the explore-burst limit); boredom and distractibility are persisted but inert until the
+  multi-step / multi-behaviour loop ships (`companion-motivation.md` §6, §10) — they are the dynamics
+  behind a tenacious deep-reader vs. a magpie that flits, once that loop lands.
 - **Budget (stamina & energy)** — self-initiated work draws the **energy** pool (§4.8); when energy
   is exhausted the engine stops initiating (the gate idles) while chat still runs on **stamina**, so
   autonomy can never starve interaction. The per-run ceiling (§4.7) is parameterized by the

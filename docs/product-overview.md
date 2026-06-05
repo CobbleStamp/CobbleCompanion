@@ -175,7 +175,9 @@ annoying.
 Its initiative also has a **temperament**: how often it reaches out, how long it stays absorbed in
 something, and how easily it gets pulled to something new all reflect *this* Cobble's personality —
 one is a tenacious deep-diver, another a curious magpie. So proactivity feels like a creature with
-its own attention, not a scheduler.
+its own attention, not a scheduler. *(The first release expresses this through how long it stays
+absorbed; the full deep-diver↔magpie spectrum fills in as the attention loop deepens — see
+`companion-motivation.md` §6.)*
 
 **Outreach model:** rich, conversational proactivity when you're **present** (you've summoned it
 into a room); solo work while you're away that surfaces on your return; and — once mobile lands —

@@ -239,7 +239,8 @@ export type DriveWeights = Record<Drive, number>;
  * (companion-motivation.md §6): how long it stays on a thread (`focusLength`),
  * how fast interest satiates (`boredom`), and how easily a higher-pressure drive
  * preempts (`distractibility`). Default constants in the PoC; personalized via
- * onboarding later.
+ * onboarding later. v1 reads only `focusLength`; `boredom` and `distractibility`
+ * are persisted but inert until the multi-step loop ships (§6, §10).
  */
 export interface PersonalityKnobs {
   readonly focusLength: number;

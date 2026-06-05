@@ -204,9 +204,11 @@ deterministic tests; the will only by measurement — so it lands on a trusted f
 - **Cheap arbitration, then a burst.** A token-free heuristic gate (drive × salience) decides
   *whether* to act; only on commit does an LLM burst run the move. "Idle is a valid outcome."
 - **Attention model (the "creature"):** each initiation is a **bounded burst**, not a full drain
-  of the inventory — shaped by personality parameters **focus length**, **boredom** (interest
-  decays without payoff), and **distractibility** (a higher-salience lead preempts). Different
-  Cobbles run different constants (tenacious deep-reader vs. magpie), seeded at creation.
+  of the inventory — designed to be shaped by personality parameters **focus length**, **boredom**
+  (interest decays without payoff), and **distractibility** (a higher-salience lead preempts).
+  **v1 ships only focus length live** (the burst limit); boredom and distractibility are persisted
+  but inert until the multi-step / multi-behaviour loop lands (`companion-motivation.md` §6, §10).
+  Different Cobbles run different constants (tenacious deep-reader vs. magpie), seeded at creation.
 - **Stamina & energy (the budget made legible).** Reframe the per-user daily cap into two pools —
   **stamina** (user-initiated work) and **energy** (the engine's self-initiated work) — so autonomy
   can never starve conversation (`architecture.md` §4.8). Phase 4 ships the mechanism plus a

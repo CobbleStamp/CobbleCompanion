@@ -111,18 +111,28 @@ the user's single intensity control.
 
 ## 6. Personality — the "creature" knobs
 
-Three per-companion constants, **seeded at creation** (from temperament), shape the *dynamics* of
-the loop above — they are literally parameters of the tick:
+Three per-companion constants, **seeded at creation** (from temperament), are designed to shape the
+*dynamics* of the loop above:
 
-- **Focus length** — how many steps it dwells on the chosen drive/thread before re-arbitrating.
+- **Focus length** — how many leads the chosen drive works in one burst before the engine
+  re-arbitrates on the next tick. **Live in v1**: it is the explore-burst limit (`arbitration.ts`,
+  `DEFAULT_KNOBS.focusLength = 3`).
 - **Boredom** — how fast the active drive *satiates*: its contribution decays per step without
-  payoff (a discharge rate).
+  payoff (a discharge rate). **Deferred** — see below.
 - **Distractibility** — how much a higher-pressure drive can **preempt** the current thread
-  mid-burst (the margin required to switch).
+  mid-burst (the margin required to switch). **Deferred** — see below.
 
-These three numbers produce the personality spectrum: a **tenacious deep-reader** (long focus, low
-boredom, low distractibility) vs. a **magpie** (short focus, high boredom, high distractibility) —
-without any special-case code.
+> **v1 status (honest scope).** Only **focus length** is read by the tick today. **Boredom** and
+> **distractibility** are persisted in the knob shape but **inert in v1**: both describe a *multi-step
+> inner loop within a tick* (per-step decay) and *switching between competing behaviour families*
+> (mid-burst preemption), and v1 has neither — the tick is single-shot and `explore` (curiosity) is
+> the only behaviour family. They activate with the multi-behaviour loop that ships alongside
+> conversational proactivity (deferred, §10). Building decay/preemption now — with one behaviour and
+> one step — would be machinery with nothing to act on.
+
+Once that loop lands, these three numbers produce the personality spectrum: a **tenacious
+deep-reader** (long focus, low boredom, low distractibility) vs. a **magpie** (short focus, high
+boredom, high distractibility) — without any special-case code.
 
 ## 7. Seeding & evolution (what's fixed, what's learned)
 
@@ -214,7 +224,9 @@ research partner — *raised, not configured.*
 4. **Homeostatic-need × learned-weight** arbitration with a **token-free heuristic gate**; the LLM
    only *executes* the chosen behaviour.
 5. **Knobs ship at default constants** in the PoC (personalized via onboarding later); **taxonomy +
-   temperament immutable**; **levels dynamic**.
+   temperament immutable**; **levels dynamic**. Of the three knobs, only **focus length** is live in
+   v1 (the burst limit); **boredom** and **distractibility** are persisted but inert until the
+   multi-step / multi-behaviour loop exists (§6, deferred below).
 6. **Phase 4 v1 is proposal-only** — the engine works the lead inventory into autonomous ingest
    proposals; unprompted conversation (tips/questions/check-ins) is deferred.
 7. **Reinforcement v1 = hard signals only** (approve / reject / dismiss / ignore) → EMA weight
@@ -231,6 +243,10 @@ research partner — *raised, not configured.*
   (`product-overview.md` §5.6).
 - A richer **initial personality seed from the onboarding selection** (weights + knobs), designed
   with the game mechanics → Phase 5.
+- The **boredom** and **distractibility** knobs (§6) — they need a *multi-step inner loop within a
+  tick* (per-step satiation decay) and *competing behaviour families* (mid-burst preemption), both of
+  which arrive with conversational proactivity above. Until then the tick is single-shot over one
+  behaviour, so the two knobs are persisted but inert.
 - **Deeper RL** (contextual bandit / richer policy) and **evolving knobs** → post-PoC.
 
 ## 11. See also

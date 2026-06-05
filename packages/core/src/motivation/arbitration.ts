@@ -16,7 +16,18 @@ import type { DriveLevels } from './drives.js';
 import type { DriveWeights } from '@cobble/shared';
 import { PRESENCE_POSTURE, type PresenceState } from './presence.js';
 
-/** Default "creature" constants in the PoC (personalized via onboarding later). */
+/**
+ * Default "creature" constants in the PoC (personalized via onboarding later).
+ *
+ * v1 reads only `focusLength` (the explore-burst limit, below). `boredom` and
+ * `distractibility` are persisted in the knob shape but **inert in v1**: they
+ * describe per-step satiation decay and mid-burst preemption, which need a
+ * multi-step inner loop and competing behaviour families that v1 does not have
+ * (the tick is single-shot over the one `explore` behaviour). They activate with
+ * the multi-behaviour loop deferred alongside conversational proactivity — see
+ * `docs/companion-motivation.md` §6, §10. Kept here so the persisted shape and
+ * the `PersonalityKnobs` contract stay stable.
+ */
 export const DEFAULT_KNOBS: PersonalityKnobs = {
   focusLength: 3,
   boredom: 0.5,
