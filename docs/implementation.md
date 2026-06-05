@@ -368,8 +368,9 @@ replayed into the message array in the OpenAI wire shape.
   exits-with-partial.
 - On exit, the turn is appended to `messages` (the transcript / episodic substrate, §1).
 
-**_Deferred:_** proactive `Initiator` wiring + push (P4); transcript compaction when the context
-window fills (P-later).
+The proactive `Initiator` seam is now wired (P4 — the motivation engine in `motivation/`; see §1
+and `companion-motivation.md`). **_Deferred:_** push notifications (P-later) and transcript
+compaction when the context window fills (P-later).
 
 ## 3. Configuration
 
@@ -401,7 +402,13 @@ overridable via `HarnessOptions`), `web_fetch`'s returned-text cap (`web-fetch.t
 chars) and link-harvest cap (`MAX_HARVESTED_LINKS`, default 20), and the `/explore` burst size
 (`inventory.routes.ts`, default 3).
 
-**_Deferred:_** worker tuning, proactivity cadence + intensity dial, push-notification credentials (P4+).
+**P4 tuning constants** are likewise in-code: the motivation **sweep cadence**
+(`MOTIVATION_SWEEP_INTERVAL_MS`, `api/src/index.ts`) and the autonomous-burst focus length
+(`motivation/`). The per-companion **energy** pool reuses `TOKEN_CAP_PER_DAY` as its default cap
+(`api/src/index.ts`), and the post-turn **affect read** runs on `INGESTION_MODEL` (billed to
+stamina) — see §1 and `companion-motivation.md` §7–§8.
+
+**_Deferred:_** worker tuning and push-notification credentials (P-later).
 
 ## 4. Error Handling
 

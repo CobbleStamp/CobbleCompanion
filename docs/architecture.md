@@ -640,7 +640,7 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
   with one embodiment active at a time there is no cross-surface state to reconcile (invariants
   #4, #5).
 
-## 7. Folder Structure (Phases 0–3)
+## 7. Folder Structure (Phases 0–4)
 
 ```
 /                      repo root
@@ -655,9 +655,10 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
       tools/           tool framework + registry, the three tools, the approval gate, proposal/tool-call/lead/procedural stores (P3, §4.2/§4.4)
       personality/     evolvedPersona synthesis from episodes (P2)
       identity/        companion "home" model + store
-      quota/           per-user daily token-cap state (P1, §4.8)
-    api/               BFF / surface boundary (Fastify); memory + source + usage + proposal/inventory routes (P3)
-    web/               React web client; chat w/ citations + ingestion-status panel + approval cards (P3), sources page, memory browser, usage badge
+      motivation/      the "will" (P4, §4.4–§4.5): drives × presence arbitration, autonomous explore burst, engine runner/sweep, affect perception + change-as-reward reinforcement
+      quota/           two-pool token budget: per-user daily stamina (P1) + per-companion energy (P4); §4.8
+    api/               BFF / surface boundary (Fastify); memory + source + usage + proposal/inventory routes (P3); presence + proactivity (dial/energy) routes (P4)
+    web/               React web client; chat w/ citations + ingestion-status panel + approval cards (P3), sources page, memory browser, usage badge; vitality meter + proactivity dial (P4)
     shared/            shared TS types / contracts
     eval/              live memory-vs-performance harness (→ companionmemory.md §5)
   db/                  migrations & schema (→ implementation.md)
