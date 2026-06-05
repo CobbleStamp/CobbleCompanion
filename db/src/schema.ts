@@ -465,6 +465,24 @@ export const companionEnergy = pgTable('companion_energy', {
 });
 
 /**
+ * Affect — the companion's rolling read of the user's mood (Phase 4.2,
+ * companion-motivation.md §7). One row per companion, upserted on every user turn
+ * inside the agent loop: `valence` ∈ [−1, 1] (how positive the user reads) plus a
+ * short natural-language `note`. The harness feeds the *prior* read forward to
+ * attune the next reply (fast loop), and the *change* in valence its own acts
+ * produce is the reinforcement signal (slow loop). Durable so the next turn — even
+ * after a restart, hours later — can compute the change from a real baseline.
+ */
+export const companionAffect = pgTable('companion_affect', {
+  companionId: uuid('companion_id')
+    .primaryKey()
+    .references(() => companions.id, { onDelete: 'cascade' }),
+  valence: real('valence').notNull(),
+  note: text('note').notNull().default(''),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
  * Reinforcement record (Phase 4, companion-motivation.md §7) — one row per
  * proactive initiation. The motivation engine writes it when it acts (linking the
  * proposal it created and the drive it served, with a snapshot of the weights at
@@ -521,5 +539,6 @@ export const schema = {
   proceduralMemories,
   userTokenUsage,
   companionEnergy,
+  companionAffect,
   proactiveOutcomes,
 };

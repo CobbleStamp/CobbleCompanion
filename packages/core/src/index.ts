@@ -202,6 +202,10 @@ export {
   parseAffect,
   senseAffect,
 } from './motivation/affect.js';
+export {
+  type CompanionAffectStore,
+  DrizzleCompanionAffectStore,
+} from './motivation/affect-store.js';
 
 // Token usage / metering (per-user daily cap)
 export {
