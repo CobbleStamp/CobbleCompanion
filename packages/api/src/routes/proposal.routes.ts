@@ -8,7 +8,7 @@
  */
 
 import type { ChatStreamEvent, MessageDto, ProposalDto, ProposalStatus } from '@cobble/shared';
-import { dispatchTool } from '@cobble/core';
+import { applyProposalReward, dispatchTool } from '@cobble/core';
 import type { FastifyInstance } from 'fastify';
 import type { AppDeps } from '../app.js';
 import type { RequireAuth } from '../auth-guard.js';
@@ -39,6 +39,7 @@ export function registerProposalRoutes(
     procedural,
     quota,
     motivation,
+    rewards,
     logger,
   } = deps;
 
@@ -173,6 +174,11 @@ export function registerProposalRoutes(
         });
       }
 
+      // Reinforcement (P4): an approved self-directed proposal is positive
+      // feedback — attribute the reward and nudge the served drive's weight.
+      // No-op for chat-origin proposals (they recorded no outcome); best-effort.
+      await applyProposalReward({ rewards, identity, logger }, companion.id, proposalId, 'approved');
+
       // Post-approval "what next" depends on the proposal's ORIGIN (§4.4/§4.5):
       // - chat: a present conversational partner — RE-ENTER the loop so the
       //   companion narrates the result and continues the ask ("…and summarize it").
@@ -215,6 +221,8 @@ export function registerProposalRoutes(
       // A declined explore proposal discards its lead: it leaves the reading list
       // and is never re-proposed (it was stranded at 'read' otherwise — M2).
       await advanceLead(companion.id, proposal.leadId, 'discarded', proposalId);
+      // Reinforcement (P4): a rejected self-directed proposal is negative feedback.
+      await applyProposalReward({ rewards, identity, logger }, companion.id, proposalId, 'rejected');
       return reply.code(204).send();
     },
   );

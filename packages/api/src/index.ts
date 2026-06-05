@@ -24,6 +24,7 @@ import {
   DrizzleIdentityStore,
   DrizzleLeadStore,
   DrizzleProceduralStore,
+  DrizzleProactiveOutcomeStore,
   DrizzleProposalStore,
   DrizzleSemanticMemoryStore,
   DrizzleCompanionEnergyStore,
@@ -220,6 +221,7 @@ async function main(): Promise<void> {
   // user stamina pool, so autonomy can't starve chat). The runner keeps ticks off
   // the request path; routes request() it on activity/return + a periodic sweep.
   const energy = new DrizzleCompanionEnergyStore(db, { defaultCapTokens: config.tokenCapPerDay });
+  const rewards = new DrizzleProactiveOutcomeStore(db);
   const motivationEngine = new MotivationEngine({
     identity,
     presence,
@@ -227,6 +229,7 @@ async function main(): Promise<void> {
     leads,
     proposals,
     tools,
+    rewards,
     logger: consoleLogger,
   });
   const motivation = new MotivationRunner(motivationEngine, consoleLogger);
@@ -249,6 +252,7 @@ async function main(): Promise<void> {
     motivation,
     quota,
     energy,
+    rewards,
     tokenVerifier: createTokenVerifier(config),
     config,
     logger: consoleLogger,

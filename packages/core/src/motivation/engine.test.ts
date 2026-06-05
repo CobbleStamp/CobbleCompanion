@@ -16,6 +16,7 @@ import { DrizzleProposalStore } from '../tools/proposal-store.js';
 import { ToolRegistry } from '../tools/registry.js';
 import { MotivationEngine } from './engine.js';
 import { InMemoryPresenceStore } from './presence-store.js';
+import { DrizzleProactiveOutcomeStore } from './reward-store.js';
 
 const silent: Logger = { error: () => {}, warn: () => {}, info: () => {} };
 const ENERGY_CAP = 10_000;
@@ -29,6 +30,7 @@ describe('MotivationEngine.tick', () => {
   let proposals: DrizzleProposalStore;
   let energy: DrizzleCompanionEnergyStore;
   let presence: InMemoryPresenceStore;
+  let rewards: DrizzleProactiveOutcomeStore;
   let engine: MotivationEngine;
 
   beforeEach(async () => {
@@ -47,6 +49,7 @@ describe('MotivationEngine.tick', () => {
     proposals = new DrizzleProposalStore(db);
     energy = new DrizzleCompanionEnergyStore(db, { defaultCapTokens: ENERGY_CAP });
     presence = new InMemoryPresenceStore();
+    rewards = new DrizzleProactiveOutcomeStore(db);
     engine = new MotivationEngine(
       {
         identity,
@@ -55,6 +58,7 @@ describe('MotivationEngine.tick', () => {
         leads,
         proposals,
         tools: new ToolRegistry([]),
+        rewards,
         logger: silent,
       },
       { energyPerProposal: ENERGY_PER_PROPOSAL },
@@ -93,6 +97,10 @@ describe('MotivationEngine.tick', () => {
     expect(await leads.listByStatus(companionId, ['new'])).toHaveLength(1);
     // Energy spent for the burst.
     expect((await energy.getEnergy(companionId)).usedTokens).toBe(3 * ENERGY_PER_PROPOSAL);
+    // A reinforcement outcome was logged per proposal (reward still pending).
+    const outcomes = await rewards.list(companionId, 10);
+    expect(outcomes).toHaveLength(3);
+    expect(outcomes.every((o) => o.drive === 'curiosity' && o.reward === null)).toBe(true);
   });
 
   it('stays idle when the dial is off', async () => {

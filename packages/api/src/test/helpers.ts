@@ -33,6 +33,7 @@ import {
   InMemoryPresenceStore,
   IngestionPipeline,
   IngestionRunner,
+  DrizzleProactiveOutcomeStore,
   LlmIngestionAnnouncer,
   MotivationEngine,
   MotivationRunner,
@@ -183,9 +184,10 @@ export async function makeTestApp(
   const procedural = new DrizzleProceduralStore(db);
   const presence = new InMemoryPresenceStore();
   const energy = new DrizzleCompanionEnergyStore(db, { defaultCapTokens: config.tokenCapPerDay });
+  const rewards = new DrizzleProactiveOutcomeStore(db);
   const motivation = new MotivationRunner(
     new MotivationEngine(
-      { identity, presence, energy, leads, proposals, tools, logger: silentLogger },
+      { identity, presence, energy, leads, proposals, tools, rewards, logger: silentLogger },
       {},
     ),
     silentLogger,
@@ -206,6 +208,7 @@ export async function makeTestApp(
     presence,
     motivation,
     energy,
+    rewards,
     harness: new Harness({
       gateway: llmGateway,
       memory,

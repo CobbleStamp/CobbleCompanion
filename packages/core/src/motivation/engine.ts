@@ -17,6 +17,7 @@ import type { ProposalStore } from '../tools/proposal-store.js';
 import type { ToolRegistry } from '../tools/registry.js';
 import { DEFAULT_KNOBS, decideMove, type Move } from './arbitration.js';
 import { computeDrives, resolveWeights } from './drives.js';
+import type { ProactiveOutcomeStore } from './reward-store.js';
 import { classifyPresence, type PresenceThresholds } from './presence.js';
 import type { PresenceStore } from './presence-store.js';
 import { runExploreBurst } from './explore-burst.js';
@@ -35,6 +36,8 @@ export interface MotivationEngineDeps {
   readonly leads: LeadStore;
   readonly proposals: ProposalStore;
   readonly tools: ToolRegistry;
+  /** Reinforcement log — one outcome per initiation, reward filled on reaction. */
+  readonly rewards: ProactiveOutcomeStore;
   readonly logger: Logger;
 }
 
@@ -78,7 +81,7 @@ export class MotivationEngine {
    * logging); the runner ignores the return. Never throws.
    */
   async tick(companionId: string): Promise<MotivationTickResult> {
-    const { identity, presence, energy, leads, proposals, tools, logger } = this.deps;
+    const { identity, presence, energy, leads, proposals, tools, rewards, logger } = this.deps;
     try {
       const companion = await identity.getCompanionById(companionId);
       if (!companion) {
@@ -93,10 +96,11 @@ export class MotivationEngine {
       const newLeads = await leads.listByStatus(companionId, ['new']);
       const levels = computeDrives({ newLeadCount: newLeads.length });
       const energyExhausted = await energy.isExhausted(companionId);
+      const weights = resolveWeights(companion.driveWeights);
 
       const move = decideMove({
         levels,
-        weights: resolveWeights(companion.driveWeights),
+        weights,
         presence: presenceState,
         dial: companion.proactivityDial,
         energyExhausted,
@@ -110,6 +114,14 @@ export class MotivationEngine {
         { leads, proposals, tools },
         { companionId, origin: 'autonomous', limit: move.limit },
       );
+      // Log a reinforcement outcome per initiation (reward filled on reaction).
+      for (const proposal of created) {
+        await rewards.record(companionId, {
+          proposalId: proposal.id,
+          drive: move.drive,
+          driveSnapshot: weights,
+        });
+      }
       const energySpent = created.length * this.energyPerProposal;
       if (energySpent > 0) {
         await energy.recordSpend(companionId, energySpent);

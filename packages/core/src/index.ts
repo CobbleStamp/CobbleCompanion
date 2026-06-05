@@ -168,6 +168,25 @@ export {
 } from './motivation/engine.js';
 export { MotivationRunner, type MotivationTarget } from './motivation/engine-runner.js';
 export { type MotivationSweepDeps, sweepMotivation } from './motivation/engine-sweep.js';
+// Reinforcement v1 — outcome store, EMA weight update, reward attribution (Phase 4)
+export {
+  DrizzleProactiveOutcomeStore,
+  type ProactiveOutcomeRecord,
+  type ProactiveOutcomeStore,
+  type RecordOutcomeInput,
+} from './motivation/reward-store.js';
+export {
+  DEFAULT_LEARNING_RATE,
+  updateDriveWeights,
+  WEIGHT_CEILING,
+  WEIGHT_FLOOR,
+} from './motivation/weights.js';
+export {
+  applyProposalReward,
+  REWARD_BY_SIGNAL,
+  type RewardDeps,
+  type RewardSignal,
+} from './motivation/reward.js';
 
 // Token usage / metering (per-user daily cap)
 export {

@@ -75,6 +75,8 @@ export interface IdentityStore {
   ): Promise<void>;
   /** Set the proactivity dial (Phase 4 tunability). Keyed by companionId. */
   setProactivityDial(companionId: string, dial: ProactivityDial): Promise<void>;
+  /** Persist learned drive weights (Phase 4 reinforcement). Keyed by companionId. */
+  updateDriveWeights(companionId: string, driveWeights: DriveWeights): Promise<void>;
 }
 
 export class DrizzleIdentityStore implements IdentityStore {
@@ -143,6 +145,13 @@ export class DrizzleIdentityStore implements IdentityStore {
     await this.db
       .update(companions)
       .set({ proactivityDial: dial })
+      .where(eq(companions.id, companionId));
+  }
+
+  async updateDriveWeights(companionId: string, driveWeights: DriveWeights): Promise<void> {
+    await this.db
+      .update(companions)
+      .set({ driveWeights })
       .where(eq(companions.id, companionId));
   }
 }

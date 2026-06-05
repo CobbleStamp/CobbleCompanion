@@ -11,6 +11,7 @@ import type {
   MemoryStore,
   MotivationRunner,
   PresenceStore,
+  ProactiveOutcomeStore,
   ProceduralStore,
   ProposalStore,
   SemanticMemoryStore,
@@ -75,6 +76,8 @@ export interface AppDeps {
   readonly quota: TokenQuotaStore;
   /** Per-companion energy pool — the self-initiated budget, surfaced as the meter (P4). */
   readonly energy: CompanionEnergyStore;
+  /** Reinforcement log — one outcome per proactive initiation (P4). */
+  readonly rewards: ProactiveOutcomeStore;
   readonly tokenVerifier: TokenVerifier;
   readonly config: AppConfig;
   readonly logger: Logger;

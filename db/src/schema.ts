@@ -1,4 +1,5 @@
 import type {
+  Drive,
   DriveWeights,
   IngestionStatus,
   LeadStatus,
@@ -466,6 +467,40 @@ export const companionEnergy = pgTable('companion_energy', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * Reinforcement record (Phase 4, companion-motivation.md §7) — one row per
+ * proactive initiation. The motivation engine writes it when it acts (linking the
+ * proposal it created and the drive it served, with a snapshot of the weights at
+ * the time for attribution). When the user reacts, the blended `reward` is filled
+ * in (v1: hard signals only — approved/rejected) and the served drive's weight is
+ * nudged. Doubles as the helpful-vs-annoying measurement surface.
+ */
+export const proactiveOutcomes = pgTable(
+  'proactive_outcomes',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    seq: bigserial('seq', { mode: 'number' }).notNull(),
+    companionId: uuid('companion_id')
+      .notNull()
+      .references(() => companions.id, { onDelete: 'cascade' }),
+    // The proposal this initiation produced (v1 is proposal-only). `set null`
+    // keeps the outcome row for measurement even if the proposal is cleaned up.
+    proposalId: uuid('proposal_id').references(() => proposals.id, { onDelete: 'set null' }),
+    // The drive the move served (whose weight the reward nudges).
+    drive: text('drive').$type<Drive>().notNull(),
+    // The companion's drive weights at initiation (attribution/debug).
+    driveSnapshot: jsonb('drive_snapshot').$type<DriveWeights>(),
+    // The blended reward once the user reacted; null until resolved.
+    reward: real('reward'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  },
+  (table) => [
+    index('proactive_outcomes_companion_idx').on(table.companionId, table.seq),
+    index('proactive_outcomes_proposal_idx').on(table.proposalId),
+  ],
+);
+
 export const schema = {
   users,
   companions,
@@ -481,4 +516,5 @@ export const schema = {
   proceduralMemories,
   userTokenUsage,
   companionEnergy,
+  proactiveOutcomes,
 };
