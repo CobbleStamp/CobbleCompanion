@@ -182,6 +182,7 @@ export {
 } from './motivation/reward-store.js';
 export {
   DEFAULT_LEARNING_RATE,
+  nudgeDriveWeight,
   updateDriveWeights,
   WEIGHT_CEILING,
   WEIGHT_FLOOR,

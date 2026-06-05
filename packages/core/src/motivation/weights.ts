@@ -1,10 +1,14 @@
 /**
- * Drive-weight learning (Phase 4, companion-motivation.md §7) — the v1
- * reinforcement update. A blended reward in [-1, 1] nudges the served drive's
- * weight by an EMA-style step, clamped to a floor (so a drive never dies to zero —
- * the exploration floor) and a ceiling. Interpretable on purpose: the weights are
- * the visible "personality" the companion is raised into, and they seed the
- * Phase 5 relationship-growth axis.
+ * Drive-weight learning (companion-motivation.md §7) — how a reward moves the
+ * served drive's weight, clamped to a floor (so a drive never dies to zero — the
+ * exploration floor) and a ceiling. Interpretable on purpose: the weights are the
+ * visible "personality" the companion is raised into, and they seed the Phase 5
+ * relationship-growth axis.
+ *
+ * Two update rules coexist during the 4.1→4.2 transition:
+ * - {@link updateDriveWeights} (4.1) — EMA *toward* an absolute valence target.
+ * - {@link nudgeDriveWeight} (4.2) — additive nudge by a *change* signal (delta).
+ *   This is the current rule; the EMA is removed once its last caller goes (M6).
  */
 
 import type { Drive, DriveWeights } from '@cobble/shared';
@@ -35,5 +39,26 @@ export function updateDriveWeights(
   return {
     ...current,
     [drive]: clamp(current[drive] + alpha * (reward - current[drive])),
+  };
+}
+
+/**
+ * Change-as-reward update (Phase 4.2, companion-motivation.md §7). The reward is
+ * the **change** in the user's mood the companion's act produced — `delta =
+ * valence_now − valence_before` — so the weight moves by an **additive nudge**:
+ * `w ← clamp(w + α·delta)`. Positive delta raises the weight, negative lowers it,
+ * and a **zero delta is an exact no-op** — which is why a neutral reaction needs
+ * no special threshold (unlike the 4.1 EMA, where a 0 target would have pulled the
+ * weight toward zero). Immutable; clamped to the floor/ceiling.
+ */
+export function nudgeDriveWeight(
+  current: DriveWeights,
+  drive: Drive,
+  delta: number,
+  alpha: number = DEFAULT_LEARNING_RATE,
+): DriveWeights {
+  return {
+    ...current,
+    [drive]: clamp(current[drive] + alpha * delta),
   };
 }
