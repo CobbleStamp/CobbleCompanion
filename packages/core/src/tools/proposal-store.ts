@@ -6,7 +6,7 @@
  */
 
 import { proposals, type Database } from '@cobble/db';
-import type { ProposalDto, ProposalStatus } from '@cobble/shared';
+import type { ProposalDto, ProposalOrigin, ProposalStatus } from '@cobble/shared';
 import { and, desc, eq } from 'drizzle-orm';
 
 export interface CreateProposalInput {
@@ -16,6 +16,12 @@ export interface CreateProposalInput {
   readonly summary: string;
   /** The reading-list lead this proposal came from, if any (explore-origin). */
   readonly leadId?: string;
+  /**
+   * Where the proposal came from (architecture.md §4.4). `chat` (default) is a
+   * live-conversation proposal — confirm re-enters the loop; `explore`/
+   * `autonomous` are self-directed, so the motivation engine decides what's next.
+   */
+  readonly origin?: ProposalOrigin;
 }
 
 export interface ProposalRecord {
@@ -28,6 +34,8 @@ export interface ProposalRecord {
   readonly status: ProposalStatus;
   /** Originating lead id (explore-origin), or null for a chat-origin proposal. */
   readonly leadId: string | null;
+  /** Where the proposal came from — drives post-approval re-entry (§4.4). */
+  readonly origin: ProposalOrigin;
   readonly createdAt: Date;
   readonly resolvedAt: Date | null;
 }
@@ -63,6 +71,7 @@ export class DrizzleProposalStore implements ProposalStore {
         toolArgs: input.toolArgs,
         ...(input.toolCallId !== undefined ? { toolCallId: input.toolCallId } : {}),
         ...(input.leadId !== undefined ? { leadId: input.leadId } : {}),
+        ...(input.origin !== undefined ? { origin: input.origin } : {}),
         summary: input.summary,
       })
       .returning();
@@ -133,6 +142,7 @@ function toRecord(row: ProposalRow): ProposalRecord {
     summary: row.summary,
     status: row.status,
     leadId: row.leadId,
+    origin: row.origin,
     createdAt: row.createdAt,
     resolvedAt: row.resolvedAt,
   };

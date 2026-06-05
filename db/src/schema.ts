@@ -1,9 +1,14 @@
 import type {
+  Drive,
+  DriveWeights,
   IngestionStatus,
   LeadStatus,
   MessageKind,
   MessageMetadata,
   MessageRole,
+  PersonalityKnobs,
+  ProactivityDial,
+  ProposalOrigin,
   ProposalStatus,
   SourceKind,
 } from '@cobble/shared';
@@ -83,6 +88,17 @@ export const companions = pgTable(
     consolidatedThroughSeq: bigint('consolidated_through_seq', { mode: 'number' })
       .notNull()
       .default(0),
+    // Phase 4 — proactivity. The user-facing intensity dial (off/gentle/active):
+    // scales how readily the motivation engine initiates and how much energy it
+    // spends; `off` never initiates (companion-motivation.md §5).
+    proactivityDial: text('proactivity_dial').$type<ProactivityDial>().notNull().default('gentle'),
+    // The "creature" burst constants (focus/boredom/distractibility). Default
+    // constants in the PoC (null → defaults); personalized via onboarding later.
+    personalityKnobs: jsonb('personality_knobs').$type<PersonalityKnobs>(),
+    // Per-drive learned weights the reinforcement loop updates; starts NEUTRAL
+    // (null → neutral defaults). A Cobble is raised into its personality
+    // (companion-motivation.md §7).
+    driveWeights: jsonb('drive_weights').$type<DriveWeights>(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index('companions_owner_idx').on(table.ownerId)],
@@ -329,6 +345,11 @@ export const proposals = pgTable(
     // proposals that never came from a lead. `set null` on lead deletion keeps
     // the proposal's audit row but drops the dangling link.
     leadId: uuid('lead_id').references(() => leads.id, { onDelete: 'set null' }),
+    // Where this proposal came from (architecture.md §4.4): `chat` re-enters the
+    // loop on approval; `explore`/`autonomous` are self-directed, so the
+    // motivation engine — not the confirm route — decides what's next. Default
+    // `chat` keeps every pre-Phase-4 proposal behaving as before.
+    origin: text('origin').$type<ProposalOrigin>().notNull().default('chat'),
     toolName: text('tool_name').notNull(),
     // The serialized tool-call arguments to run verbatim once approved.
     toolArgs: jsonb('tool_args').notNull(),
@@ -413,6 +434,16 @@ export const proceduralMemories = pgTable(
   (table) => [index('procedural_companion_idx').on(table.companionId, table.seq)],
 );
 
+/**
+ * Per-user STAMINA budget (the daily cap for user-initiated work). The effective
+ * cap is `(cap_override ?? default) + top_up_tokens`: `cap_override` is a fixed
+ * per-account ceiling, `top_up_tokens` is the user's manual feed grant (the simple
+ * top-up control — the food/feeding economy is Phase 5) and persists across window
+ * rolls. Keeping the grant in its own column (rather than folding it into
+ * `cap_override`) means a later change to the configured default still reaches
+ * fed users, and lets the top-up be an atomic SQL increment — mirrors
+ * `companion_energy` exactly (the energy pool is the per-companion twin).
+ */
 export const userTokenUsage = pgTable('user_token_usage', {
   userId: uuid('user_id')
     .primaryKey()
@@ -420,8 +451,93 @@ export const userTokenUsage = pgTable('user_token_usage', {
   windowResetAt: timestamp('window_reset_at', { withTimezone: true }).notNull(),
   usedTokens: bigint('used_tokens', { mode: 'number' }).notNull().default(0),
   capOverride: integer('cap_override'),
+  topUpTokens: bigint('top_up_tokens', { mode: 'number' }).notNull().default(0),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Per-companion ENERGY budget (Phase 4, architecture.md §4.8) — the self-initiated
+ * pool that fuels the motivation engine. Mirrors `user_token_usage` (the stamina
+ * pool) but keyed per COMPANION, so autonomous work can never starve interaction.
+ * The effective cap is `(cap_override ?? default) + top_up_tokens`; `top_up_tokens`
+ * is the user's manual feed grant (the simple top-up control — the food/feeding
+ * economy is Phase 5) and persists across window rolls. The daily window rolls
+ * like stamina, carrying overage forward as debt clamped to one cap.
+ */
+export const companionEnergy = pgTable('companion_energy', {
+  companionId: uuid('companion_id')
+    .primaryKey()
+    .references(() => companions.id, { onDelete: 'cascade' }),
+  windowResetAt: timestamp('window_reset_at', { withTimezone: true }).notNull(),
+  usedTokens: bigint('used_tokens', { mode: 'number' }).notNull().default(0),
+  capOverride: integer('cap_override'),
+  topUpTokens: bigint('top_up_tokens', { mode: 'number' }).notNull().default(0),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Affect — the companion's rolling read of the user's mood (Phase 4.2,
+ * companion-motivation.md §7). One row per companion, upserted on every successful
+ * affect read inside the agent loop (a non-read keeps the prior baseline and
+ * writes nothing): `valence` ∈ [−1, 1] (how positive the user reads) plus a
+ * short natural-language `note`. The harness feeds the *prior* read forward to
+ * attune the next reply (fast loop), and the *change* in valence its own acts
+ * produce is the reinforcement signal (slow loop). Durable so the next turn — even
+ * after a restart, hours later — can compute the change from a real baseline.
+ */
+export const companionAffect = pgTable('companion_affect', {
+  companionId: uuid('companion_id')
+    .primaryKey()
+    .references(() => companions.id, { onDelete: 'cascade' }),
+  valence: real('valence').notNull(),
+  note: text('note').notNull().default(''),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Reinforcement record (Phase 4, companion-motivation.md §7) — one row per
+ * proactive initiation. The motivation engine writes it when it acts (linking the
+ * report note it posted — `note_message_id` — and the drive it served, with a
+ * snapshot of the weights at the time for attribution). When the user reacts to
+ * the note, `reward` is filled in: the *change* in their mood across that reaction
+ * (`delta = valence_now − valence_before`, Phase 4.2, sensed in the agent loop),
+ * applied as an additive nudge to the served drive's weight — not approve/reject,
+ * not the 4.1 absolute-valence critic. Doubles as the helpful-vs-annoying
+ * measurement surface. (`proposal_id` is retained nullable for legacy rows.)
+ */
+export const proactiveOutcomes = pgTable(
+  'proactive_outcomes',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    seq: bigserial('seq', { mode: 'number' }).notNull(),
+    companionId: uuid('companion_id')
+      .notNull()
+      .references(() => companions.id, { onDelete: 'cascade' }),
+    // The report note the user reacts to (Phase 4.1): the autonomous burst posts
+    // one in-character "what I read" turn, and the user's reaction to it is the
+    // reward signal. `set null` keeps the outcome for measurement if the message
+    // is ever removed.
+    noteMessageId: uuid('note_message_id').references(() => messages.id, {
+      onDelete: 'set null',
+    }),
+    // Legacy (pre-4.1): the proposal this initiation produced, when autonomous
+    // work surfaced as an approval card. Retained nullable for old rows; the
+    // current model surfaces a note (above), not a proposal.
+    proposalId: uuid('proposal_id').references(() => proposals.id, { onDelete: 'set null' }),
+    // The drive the move served (whose weight the reward nudges).
+    drive: text('drive').$type<Drive>().notNull(),
+    // The companion's drive weights at initiation (attribution/debug).
+    driveSnapshot: jsonb('drive_snapshot').$type<DriveWeights>(),
+    // The blended reward once the user reacted; null until resolved.
+    reward: real('reward'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  },
+  (table) => [
+    index('proactive_outcomes_companion_idx').on(table.companionId, table.seq),
+    index('proactive_outcomes_proposal_idx').on(table.proposalId),
+  ],
+);
 
 export const schema = {
   users,
@@ -437,4 +553,7 @@ export const schema = {
   leads,
   proceduralMemories,
   userTokenUsage,
+  companionEnergy,
+  companionAffect,
+  proactiveOutcomes,
 };

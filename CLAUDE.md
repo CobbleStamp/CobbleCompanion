@@ -27,6 +27,7 @@ read docs/product-overview.md
 | Memory: browsing & evaluation | `docs/companionmemory.md`           |
 | Threat model & deployment trust model | `docs/architecture.md` §1, §10 |
 | Ontology contract & governance | `docs/ontology.md`                 |
+| Proactivity & motivation mechanism | `docs/companion-motivation.md`  |
 | Local dev setup               | `README.md`                         |
 
 

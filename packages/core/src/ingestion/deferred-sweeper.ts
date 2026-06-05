@@ -9,7 +9,7 @@
 
 import type { Logger } from '../logging.js';
 import type { SemanticMemoryStore } from '../memory/semantic-store.js';
-import type { TokenQuotaStore } from '../quota/store.js';
+import type { TokenQuotaStore } from '../quota/stamina-store.js';
 import { IngestionQueueFullError, type IngestionRunner } from './runner.js';
 
 export interface DeferredSweepDeps {

@@ -12,7 +12,7 @@ import type { IngestionAnnouncer } from './announcer.js';
 import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import type { NewSection, SectionRecord, SemanticMemoryStore } from '../memory/semantic-store.js';
-import type { TokenQuotaStore } from '../quota/store.js';
+import type { TokenQuotaStore } from '../quota/stamina-store.js';
 import { createUsageAccumulator, meteredLlmGateway, type UsageAccumulator } from '../usage.js';
 import { buildEmbeddingInput } from './embedder.js';
 import { enrichSection } from './enricher.js';
@@ -63,6 +63,27 @@ export interface IngestionRunParams {
   readonly sourceTitle: string;
   /** The companion's owner — the account the run's tokens are debited to. */
   readonly ownerId?: string;
+  /**
+   * Override the metering target. When set, the run's over-cap gate and token
+   * debit use this `quota` keyed by `accountId` instead of the pipeline's default
+   * (owner stamina) keyed by `ownerId`. The motivation engine passes the
+   * energy-as-quota adapter + the companion id here so an autonomous read is
+   * billed to ENERGY, not the user's stamina (`architecture.md` §4.8).
+   */
+  readonly meter?: { readonly quota: TokenQuotaStore; readonly accountId: string };
+  /**
+   * Post the per-source terminal note (default true). Autonomous bursts suppress
+   * it (`false`) because the engine posts ONE consolidated "what I read" note for
+   * the whole burst instead of one per source (`companion-motivation.md` §5).
+   */
+  readonly announce?: boolean;
+  /**
+   * Defer the run (hold the parse, resume on reset) when over the metered cap
+   * (default true). Autonomous bursts pass `false`: the engine gates on energy
+   * per-lead up front, so a mid-run overshoot just proceeds and rollover debt
+   * absorbs it — there is no energy-aware deferred-job sweeper to resume it.
+   */
+  readonly deferOnOverCap?: boolean;
   /** Raw input for a fresh run; parsed off the request path. */
   readonly payload?: IngestionPayload;
   /**
@@ -108,7 +129,8 @@ export class IngestionPipeline {
       // Quota gate: the AI passes (segment/enrich/embed) are the token cost, so
       // gate them. Over cap → hold the parse and defer until the daily reset (the
       // sweeper resumes it). Mid-run overage is allowed; rollover debt handles it.
-      if (await this.isOverCap(params.ownerId)) {
+      // Autonomous bursts opt out of deferral (the engine gates on energy itself).
+      if (params.deferOnOverCap !== false && (await this.isOverCap(params))) {
         await semantic.updateJob(jobId, { status: 'deferred', parsedDoc: document });
         return;
       }
@@ -126,7 +148,7 @@ export class IngestionPipeline {
       // the transcript by the time a client polls the terminal status.
       await this.announce(params, 'done');
       await semantic.updateJob(jobId, { status: 'done' });
-      await this.debit(params.ownerId, usage);
+      await this.debit(params, usage);
     } catch (error) {
       logger.error('ingestion run failed', {
         operation: 'ingestion.pipeline.run',
@@ -150,7 +172,7 @@ export class IngestionPipeline {
    * the job's recorded outcome. `deferred` is not terminal, so it never announces.
    */
   private async announce(params: IngestionRunParams, outcome: 'done' | 'failed'): Promise<void> {
-    if (!this.options.announcer) {
+    if (!this.options.announcer || params.announce === false) {
       return;
     }
     try {
@@ -171,12 +193,28 @@ export class IngestionPipeline {
     }
   }
 
-  /** Whether the owner is over their daily cap (false when unmetered, e.g. tests). */
-  private async isOverCap(ownerId: string | undefined): Promise<boolean> {
-    if (!this.options.quota || !ownerId) {
+  /**
+   * Resolve who the run is billed to: the per-run `meter` override (autonomous →
+   * energy) when present, else the pipeline's default quota keyed by the owner
+   * (user → stamina). Either may be absent (unmetered, e.g. tests).
+   */
+  private meterFor(params: IngestionRunParams): {
+    quota: TokenQuotaStore | undefined;
+    accountId: string | undefined;
+  } {
+    if (params.meter) {
+      return { quota: params.meter.quota, accountId: params.meter.accountId };
+    }
+    return { quota: this.options.quota, accountId: params.ownerId };
+  }
+
+  /** Whether the metered account is over its cap (false when unmetered, e.g. tests). */
+  private async isOverCap(params: IngestionRunParams): Promise<boolean> {
+    const { quota, accountId } = this.meterFor(params);
+    if (!quota || !accountId) {
       return false;
     }
-    return this.options.quota.isOverCap(ownerId);
+    return quota.isOverCap(accountId);
   }
 
   /** Pass 1: LLM boundary marking, then slice VERBATIM paragraph ranges into rows. */
@@ -266,17 +304,18 @@ export class IngestionPipeline {
    * metering failure is logged but never fails an otherwise-successful run
    * (logging.md); runs with no owner/quota (e.g. tests) skip metering.
    */
-  private async debit(ownerId: string | undefined, usage: UsageAccumulator): Promise<void> {
+  private async debit(params: IngestionRunParams, usage: UsageAccumulator): Promise<void> {
     const total = usage.total().totalTokens;
-    if (!this.options.quota || !ownerId || total <= 0) {
+    const { quota, accountId } = this.meterFor(params);
+    if (!quota || !accountId || total <= 0) {
       return;
     }
     try {
-      await this.options.quota.recordUsage(ownerId, total);
+      await quota.recordUsage(accountId, total);
     } catch (error) {
       this.options.logger.error('failed to record ingestion token usage', {
         operation: 'ingestion.pipeline.debit',
-        ownerId,
+        accountId,
         error,
       });
     }

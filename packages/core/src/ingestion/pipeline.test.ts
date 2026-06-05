@@ -13,7 +13,7 @@ import { DrizzleIdentityStore } from '../identity/store.js';
 import type { LlmGateway, LlmStreamParams, StreamResult } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import { DrizzleSemanticMemoryStore } from '../memory/semantic-store.js';
-import type { TokenQuotaStore, UsageSnapshot } from '../quota/store.js';
+import type { TokenQuotaStore, UsageSnapshot } from '../quota/stamina-store.js';
 import { estimateUsage } from '../usage.js';
 import type { IngestionAnnouncer, IngestionOutcome } from './announcer.js';
 import { createHttpLinkResolver } from './link-resolver.js';
@@ -74,6 +74,7 @@ class StubQuota implements TokenQuotaStore {
   async isOverCap(): Promise<boolean> {
     return this.over;
   }
+  async topUp(): Promise<void> {}
 }
 
 const NOTE_TEXT = [
@@ -296,6 +297,74 @@ describe('IngestionPipeline', () => {
     const deferred = await semantic.listDeferredJobs();
     expect(deferred).toHaveLength(1);
     expect(deferred[0]!.parsedDoc.paragraphs.length).toBeGreaterThan(0);
+  });
+
+  it('bills the per-run meter override (energy), not the default quota (Phase 4.1)', async () => {
+    const defaultQuota = new StubQuota();
+    const energyQuota = new StubQuota();
+    const llm = new ScriptedLlmGateway([SEGMENT_RESPONSE, ENRICH_CONQUEST, ENRICH_CUISINE]);
+    const { sourceId, jobId } = await seedSourceAndJob();
+
+    await makePipeline(llm, false, defaultQuota).run({
+      companionId,
+      ownerId: 'owner',
+      sourceId,
+      jobId,
+      sourceTitle: 'Peru notes',
+      payload: { kind: 'note', text: NOTE_TEXT },
+      // Autonomous read: bill ENERGY (the meter override), keyed by the companion.
+      meter: { quota: energyQuota, accountId: companionId },
+    });
+
+    const [job] = await semantic.listJobs(companionId);
+    expect(job?.status).toBe('done');
+    expect(energyQuota.recorded).toBeGreaterThan(0); // energy was charged
+    expect(defaultQuota.recorded).toBe(0); // the owner's stamina was not
+  });
+
+  it('does not defer an autonomous run (deferOnOverCap false) even when the meter is over cap', async () => {
+    const energyQuota = new StubQuota();
+    energyQuota.over = true; // "low on energy" — but the engine already gated
+    const llm = new ScriptedLlmGateway([SEGMENT_RESPONSE, ENRICH_CONQUEST, ENRICH_CUISINE]);
+    const { sourceId, jobId } = await seedSourceAndJob();
+
+    await makePipeline(llm).run({
+      companionId,
+      sourceId,
+      jobId,
+      sourceTitle: 'Peru notes',
+      payload: { kind: 'note', text: NOTE_TEXT },
+      meter: { quota: energyQuota, accountId: companionId },
+      deferOnOverCap: false,
+    });
+
+    const [job] = await semantic.listJobs(companionId);
+    expect(job?.status).toBe('done'); // proceeded; rollover debt absorbs overshoot
+    expect(await semantic.listSectionsBySource(companionId, sourceId)).toHaveLength(2);
+  });
+
+  it('suppresses the per-source note when announce is false (Phase 4.1 burst)', async () => {
+    const announced: IngestionOutcome[] = [];
+    const announcer: IngestionAnnouncer = {
+      async announce(outcome): Promise<void> {
+        announced.push(outcome);
+      },
+    };
+    const llm = new ScriptedLlmGateway([SEGMENT_RESPONSE, ENRICH_CONQUEST, ENRICH_CUISINE]);
+    const { sourceId, jobId } = await seedSourceAndJob();
+
+    await makePipeline(llm, false, undefined, announcer).run({
+      companionId,
+      sourceId,
+      jobId,
+      sourceTitle: 'Peru notes',
+      payload: { kind: 'note', text: NOTE_TEXT },
+      announce: false,
+    });
+
+    const [job] = await semantic.listJobs(companionId);
+    expect(job?.status).toBe('done');
+    expect(announced).toHaveLength(0); // the engine posts one consolidated note instead
   });
 
   it('resumes a deferred job from its held parse once back under cap', async () => {

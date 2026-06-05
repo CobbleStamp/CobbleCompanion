@@ -9,7 +9,9 @@ import type { LlmGateway, LlmMessage, StreamResult } from '../llm/gateway.js';
 import { toolStepSummary } from '../tools/tool.js';
 import { consoleLogger, type Logger } from '../logging.js';
 import type { MemoryStore } from '../memory/store.js';
-import type { TokenQuotaStore } from '../quota/store.js';
+import { senseAffect, type AffectReading } from '../motivation/affect.js';
+import type { CompanionAffectStore } from '../motivation/affect-store.js';
+import type { TokenQuotaStore } from '../quota/stamina-store.js';
 import { dispatchTool } from '../tools/dispatch.js';
 import { ToolRegistry } from '../tools/registry.js';
 import {
@@ -43,6 +45,23 @@ const HELD_TURN_FALLBACK = 'I’ve set that aside for you to confirm.';
 /** User-facing text when a turn can't be completed (failures are data, §4.7). */
 const TURN_ERROR_MESSAGE = 'Cobble hit a problem while responding. Please try again.';
 
+/** Recent transcript turns to give the affect read as context (Phase 4.2). */
+const AFFECT_CONTEXT_TURNS = 6;
+
+/**
+ * Affect perception + learning wiring (Phase 4.2, companion-motivation.md §7).
+ * Optional: when present, the harness senses the user's mood each turn (storing
+ * the rolling read) and hands the *change* to `reinforce` for the will to learn
+ * from. The body senses; the will learns. Omitted = the pre-4.2 path (no affect).
+ */
+export interface HarnessAffect {
+  readonly store: CompanionAffectStore;
+  /** Cheap model for the one-shot mood read. */
+  readonly model: string;
+  /** Consumes the turn-over-turn change in mood (the slow loop). Optional. */
+  readonly reinforce?: (companionId: string, delta: number) => Promise<void>;
+}
+
 export interface HarnessOptions {
   readonly gateway: LlmGateway;
   readonly memory: MemoryStore;
@@ -62,6 +81,8 @@ export interface HarnessOptions {
   readonly turnTokenBudget?: number;
   /** Debits the turn's tokens against the owner's daily cap; omitted = no metering. */
   readonly quota?: TokenQuotaStore;
+  /** Affect perception + learning (Phase 4.2); omitted = no mood sensing. */
+  readonly affect?: HarnessAffect;
   readonly logger?: Logger;
 }
 
@@ -107,7 +128,16 @@ export class Harness {
   private readonly maxToolIterations: number;
   private readonly turnTokenBudget: number | undefined;
   private readonly quota: TokenQuotaStore | undefined;
+  private readonly affect: HarnessAffect | undefined;
   private readonly logger: Logger;
+  /** In-flight post-turn affect reads — launched fire-and-forget, tracked so
+   *  shutdown/tests can await them settling (see {@link whenIdle}). */
+  private readonly backgroundTasks = new Set<Promise<void>>();
+  /** Tail of the per-companion affect chain. The read→sense→upsert is serialized
+   *  per companion so a fast follow-up turn can't read the same stale `prior`
+   *  baseline (double-counting the mood delta) or clobber a newer reading with a
+   *  late older upsert — both failure modes of the last-write-wins store. */
+  private readonly affectChains = new Map<string, Promise<void>>();
 
   constructor(options: HarnessOptions) {
     this.gateway = options.gateway;
@@ -122,6 +152,7 @@ export class Harness {
     this.maxToolIterations = options.maxToolIterations ?? DEFAULT_MAX_TOOL_ITERATIONS;
     this.turnTokenBudget = options.turnTokenBudget;
     this.quota = options.quota;
+    this.affect = options.affect;
   }
 
   /**
@@ -134,10 +165,55 @@ export class Harness {
     try {
       await this.memory.appendMessage(companion.id, 'user', userContent);
       const prep = await this.prepare(companion, userContent);
+      // Snapshot the transcript for the post-turn affect read NOW, while the user's
+      // message is still the final row. Once the reply persists (end of runLoop) it
+      // becomes the final row, and `affectContext` — which drops the final turn as
+      // "the message being read" — would drop the reply instead, leaving the user
+      // message duplicated against `userText`. Capturing here keeps that invariant.
+      // Skipped entirely when affect is off (no extra query on the pre-4.2 path).
+      const affectSnapshot = this.affect
+        ? await this.memory.getRecentMessages(companion.id, this.recentLimit)
+        : [];
       yield* this.runLoop(companion, ownerId, prep, signal);
+      // Perception + learning (Phase 4.2) — launched AFTER the reply has fully
+      // streamed (all tokens + `done` already yielded) and deliberately NOT
+      // awaited: the generator returns immediately so the SSE socket closes on
+      // `done` and the route's post-turn nudges fire without waiting a full
+      // affect round-trip. Awaiting bought no ordering — the client is told
+      // `done` before this runs, so the next turn already races this read either
+      // way. Self-catching (perceiveAndLearn never throws), so the floated
+      // promise can't surface as an unhandled rejection.
+      //
+      // Serialize per companion: chain this read after the prior turn's so its
+      // upsert lands before the next read captures `prior` (no double-count, no
+      // clobber). `.catch` isolates a prior link's failure; the snapshot was
+      // already taken above, so the chained read still reflects this turn.
+      this.trackBackground(this.chainAffect(companion.id, affectSnapshot, userContent, ownerId));
     } catch (error) {
       yield this.failed(companion.id, error);
     }
+  }
+
+  /**
+   * Resolves once every in-flight post-turn affect read has settled. The reads
+   * are launched fire-and-forget from {@link runTurn} so the SSE socket can close
+   * on `done`; this lets a graceful shutdown — or a test asserting the read's
+   * effects — wait for that background work to finish (mirrors the runner idiom,
+   * consolidation-runner.ts). Never rejects: each task self-catches.
+   */
+  async whenIdle(): Promise<void> {
+    while (this.backgroundTasks.size > 0) {
+      await Promise.all([...this.backgroundTasks]);
+    }
+  }
+
+  /** Register a fire-and-forget task so {@link whenIdle} can await it, removing
+   *  it once settled. The task is already self-catching, so this never rejects. */
+  private trackBackground(task: Promise<void>): void {
+    const tracked = task.finally(() => {
+      this.backgroundTasks.delete(tracked);
+    });
+    this.backgroundTasks.add(tracked);
   }
 
   /**
@@ -164,13 +240,122 @@ export class Harness {
     }
   }
 
+  /**
+   * Queue a post-turn affect read behind the companion's prior one so the
+   * read→sense→upsert window can't overlap for the same companion. Each link is
+   * self-catching (perceiveAndLearn never throws); the `.catch` on the prior tail
+   * defends against any unexpected rejection so the chain can't wedge. The map
+   * entry is cleared once this read is the tail, keeping it from growing.
+   */
+  private chainAffect(
+    companionId: string,
+    recent: readonly MessageDto[],
+    userContent: string,
+    ownerId: string | undefined,
+  ): Promise<void> {
+    const prior = this.affectChains.get(companionId) ?? Promise.resolve();
+    const next = prior
+      .catch(() => undefined)
+      .then(() => this.perceiveAndLearn(companionId, userContent, recent, ownerId));
+    this.affectChains.set(companionId, next);
+    void next.finally(() => {
+      if (this.affectChains.get(companionId) === next) {
+        this.affectChains.delete(companionId);
+      }
+    });
+    return next;
+  }
+
+  /**
+   * Sense the user's mood from this turn and let the will learn from its change
+   * (Phase 4.2, companion-motivation.md §7). Loads the prior read, senses the
+   * fresh one, stores it (so the next turn has a baseline), and hands the
+   * turn-over-turn `delta` to `reinforce`. The body senses; the will decides what
+   * that teaches. Best-effort throughout — a perception hiccup must never disrupt
+   * the turn that carried it (logging.md); the reply has already streamed.
+   */
+  private async perceiveAndLearn(
+    companionId: string,
+    userContent: string,
+    recent: readonly MessageDto[],
+    ownerId: string | undefined,
+  ): Promise<void> {
+    if (!this.affect) {
+      return;
+    }
+    try {
+      // The read→sense→upsert is serialized per companion (chainAffect): this
+      // runs only after the prior turn's upsert has landed, so `prior` is never a
+      // stale baseline (no double-counted delta) and a late older upsert can't
+      // clobber a newer reading. The upsert remains last-write-wins, which is safe
+      // under this single-writer-per-companion ordering. (A second process running
+      // the same companion would reintroduce the race; out of scope for the
+      // single-instance PoC — see affect-store.ts.)
+      const prior = await this.affect.store.get(companionId);
+      const reading = await senseAffect(
+        {
+          llm: this.gateway,
+          model: this.affect.model,
+          logger: this.logger,
+          ...(this.quota ? { quota: this.quota } : {}),
+        },
+        {
+          ...(ownerId ? { ownerId } : {}),
+          recentContext: affectContext(recent),
+          userText: userContent,
+        },
+      );
+      // A non-read (provider hiccup or the model declining to report) is not
+      // evidence of a neutral mood — it's no evidence. Keep the prior baseline and
+      // learn nothing, so a transient failure can't fabricate a mood swing (and a
+      // spurious reward) on this turn or the next.
+      if (!reading) {
+        return;
+      }
+      await this.affect.store.upsert(companionId, reading);
+      // First-ever turn (no prior) has no baseline → delta 0, so nothing is
+      // learned; the reading is still stored for next time.
+      const delta = reading.valence - (prior?.valence ?? reading.valence);
+      if (this.affect.reinforce) {
+        await this.affect.reinforce(companionId, delta);
+      }
+    } catch (error) {
+      this.logger.error('failed to perceive/learn user affect', {
+        operation: 'harness.perceiveAndLearn',
+        companionId,
+        error,
+      });
+    }
+  }
+
+  /** The companion's prior rolling mood read, or null (best-effort — never throws). */
+  private async priorAffect(companionId: string): Promise<AffectReading | null> {
+    if (!this.affect) {
+      return null;
+    }
+    try {
+      return await this.affect.store.get(companionId);
+    } catch (error) {
+      this.logger.error('failed to load prior affect for attunement', {
+        operation: 'harness.priorAffect',
+        companionId,
+        error,
+      });
+      return null;
+    }
+  }
+
   /** Retrieve context, assemble the prompt, and collect the turn's citations. */
   private async prepare(companion: CompanionDto, userContent: string): Promise<PreparedTurn> {
     const { blocks: history, usage: retrievalUsage } = await this.retrieveContext({
       companionId: companion.id,
       userContent,
     });
-    const messages = assembleContext(companion, history);
+    // Fast-loop attunement (Phase 4.2): the prior rolling read of the user's mood
+    // is fed forward so this reply adjusts tone/detail to where they are.
+    // Best-effort — a store hiccup must never block the reply (just lose attunement).
+    const affect = await this.priorAffect(companion.id);
+    const messages = assembleContext(companion, history, affect);
     const citations = dedupeCitations(history.flatMap((block) => block.provenance ?? []));
     return { messages, citations, retrievalUsage };
   }
@@ -509,6 +694,21 @@ export class Harness {
       usage: ZERO_USAGE,
     };
   };
+}
+
+/**
+ * Format recent transcript turns as context for the affect read (Phase 4.2):
+ * conversational turns only (tool-step/proposal rows are UI chrome), and drop the
+ * final turn — that's the user message being read, passed separately as the
+ * subject. Capped to the last {@link AFFECT_CONTEXT_TURNS} so the read stays cheap.
+ */
+function affectContext(recent: readonly MessageDto[]): string {
+  return recent
+    .filter((message) => (message.kind ?? 'message') === 'message')
+    .slice(0, -1)
+    .slice(-AFFECT_CONTEXT_TURNS)
+    .map((message) => `${message.role}: ${message.content}`)
+    .join('\n');
 }
 
 /** Collapse repeated passages from the same source span into one citation. */

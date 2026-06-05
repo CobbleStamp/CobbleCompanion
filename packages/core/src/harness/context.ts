@@ -1,6 +1,25 @@
 import type { CompanionDto } from '@cobble/shared';
 import type { LlmMessage } from '../llm/gateway.js';
+import type { AffectReading } from '../motivation/affect.js';
 import type { ContextBlock } from './hooks.js';
+
+/**
+ * The fast-loop attunement line (Phase 4.2, companion-motivation.md §7): the
+ * companion's rolling read of the user's mood, fed *forward* so the next reply
+ * adjusts tone, warmth, and detail to where the user is. Returns null when there
+ * is no meaningful read yet (no note) so a neutral/empty mood adds nothing to the
+ * prompt. The valence number is deliberately NOT surfaced — only the human note.
+ */
+export function affectAttunementLine(affect: AffectReading | null | undefined): string | null {
+  if (!affect || affect.note.trim().length === 0) {
+    return null;
+  }
+  return (
+    `The user has recently seemed: ${affect.note.trim()}. ` +
+    'Attune your tone, warmth, and level of detail to this. ' +
+    'Do not mention that you are tracking their mood.'
+  );
+}
 
 /**
  * Build the persona system prompt from the companion "home" identity row
@@ -24,17 +43,22 @@ export function buildPersona(companion: CompanionDto): string {
 
 /**
  * Assemble the ordered prompt for a turn (architecture.md §4.3): persona system
- * prompt, then the retrieved context blocks (P0: recent transcript). The tool
- * list is empty in Phase 0.
+ * prompt, an optional affect-attunement system line (Phase 4.2), then the
+ * retrieved context blocks (P0: recent transcript). The tool list is empty in
+ * Phase 0.
  */
 export function assembleContext(
   companion: CompanionDto,
   history: readonly ContextBlock[],
+  affect?: AffectReading | null,
 ): LlmMessage[] {
-  const persona: LlmMessage = { role: 'system', content: buildPersona(companion) };
-  const turns: LlmMessage[] = history.map((block) => ({
-    role: block.role,
-    content: block.content,
-  }));
-  return [persona, ...turns];
+  const messages: LlmMessage[] = [{ role: 'system', content: buildPersona(companion) }];
+  const attunement = affectAttunementLine(affect);
+  if (attunement) {
+    messages.push({ role: 'system', content: attunement });
+  }
+  for (const block of history) {
+    messages.push({ role: block.role, content: block.content });
+  }
+  return messages;
 }

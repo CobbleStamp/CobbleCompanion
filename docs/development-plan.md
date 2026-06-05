@@ -38,7 +38,7 @@ being is proven, because they add platform cost without changing whether the cor
 | **1** | The knowledge organism | Web | Ingest sources → semantic memory → grounded recall ⭐ | ✅ **Done** (PR #2) |
 | **2** | Memory & continuity | Web | Episodic memory, companion identity, cloud "home" | ✅ **Done** |
 | **3** | Tools, action & trust | Web | Tool/MCP use + propose→approve approval queue | ✅ **Done** |
-| **4** | Proactivity engine | Web | Motivated, tunable initiative ⭐ | Planned |
+| **4** | Proactivity engine | Web | Motivated, tunable initiative ⭐ | ✅ **Done** |
 | **5** | Bond & growth | Web | Four-axis growth + visual character — the PoC complete | Planned |
 | **6** | Mobile surface | + Mobile | Summon model, GPS recall, push, OS-as-tools | Planned |
 | **7** | Desktop surface | + Desktop | File/workspace OS tools, heavier local storage | Planned |
@@ -187,22 +187,88 @@ and every tool call is logged (`architecture.md` §4.4–4.5). The body is verif
 deterministic tests; the will only by measurement — so it lands on a trusted foundation.
 
 **Scope** (full mechanism → `architecture.md` §4.5)
-- Motivation model driving initiative: your goals & well-being, its own curiosity/learning,
-  maintaining the bond, pending work & opportunities (`product-overview.md` §5.4). Drives are
-  **learned** (interests read out of memory + the evolved persona), not configured.
-- Idle/return-triggered proactive turns (in-app, since web); proposals and questions back to you.
-  The companion **works its lead inventory on an idle tick** — the same exploration loop Phase 3
-  ran on command, now self-triggered.
+- Motivation model driving initiative: your goals & well-being, understanding you, its own
+  curiosity/learning, **earning your appreciation** (learned), maintaining the bond, pending work
+  & opportunities (`product-overview.md` §5.4). Drives are **learned** (interests read out of
+  memory + the evolved persona), not configured.
+- **Presence-aware behaviour.** The engine reads its environment — chiefly a **presence spectrum**
+  (active / attentive / away / absent, from a client heartbeat + activity recency) — and picks a
+  fitting expression: engage you when present, do solo work when you're away (surfaced on return),
+  and **stay idle** when nothing is worth doing. *(Phase 4.1 expresses solo work by **reading** leads
+  into memory and posting one report note; unprompted conversation beyond that is deferred — below.)*
+- **Lazy, web-appropriate trigger.** Proactive turns fire on user activity + on return + a periodic
+  sweep — not an always-on per-companion drain. The companion **works its lead inventory** — the
+  same exploration loop Phase 3 ran on command, now self-triggered. *(Genuine work **while you're
+  away** — continuous between-visit activity — is **deferred to Phase 6**, where push gives it an
+  audience.)*
+- **Cheap arbitration, then a burst.** A token-free heuristic gate (drive × salience) decides
+  *whether* to act; only on commit does the burst spend real tokens (reading leads into memory, **no
+  approval**), sized to what energy affords. "Idle is a valid outcome."
 - **Attention model (the "creature"):** each initiation is a **bounded burst**, not a full drain
-  of the inventory — shaped by personality parameters **focus length**, **boredom** (interest
-  decays without payoff), and **distractibility** (a higher-salience lead preempts). Different
-  Cobbles run different constants (tenacious deep-reader vs. magpie).
-- Tunable frequency/intensity controls.
+  of the inventory — designed to be shaped by personality parameters **focus length**, **boredom**
+  (interest decays without payoff), and **distractibility** (a higher-salience lead preempts).
+  **v1 ships only focus length live** (the burst limit); boredom and distractibility are persisted
+  but inert until the multi-step / multi-behaviour loop lands (`companion-motivation.md` §6, §10).
+  Different Cobbles run different constants (tenacious deep-reader vs. magpie), seeded at creation.
+- **Stamina & energy (the budget made legible).** Reframe the per-user daily cap into two pools —
+  **stamina** (user-initiated work) and **energy** (the engine's self-initiated work) — so autonomy
+  can never starve conversation (`architecture.md` §4.8). Phase 4 ships the mechanism plus a
+  **simple meter + manual top-up**; the full feeding/"food" game economy is **Phase 5**.
+- **Reinforcement (mood change, Phase 4.2).** The companion learns from **conversation** the way a
+  person does: the agent loop senses the user's mood on **every** turn and feeds the prior read
+  forward to **attune** the next reply (the fast loop). After it reads and posts a report note, the
+  **change** in mood across the user's reaction (`delta = valence_now − valence_before`) is the reward
+  → an additive nudge to interpretable per-drive weights (a zero change is a no-op, so neutrality
+  needs no threshold). No separate critic, no approve/reject button. v1 learns only on a drive-serving
+  act; ordinary chat senses but doesn't yet move weights. A Cobble starting **neutral** is *raised*
+  into its personality. *(Deferred: ordinary-chat learning; a deeper contextual-bandit policy.)*
+- Tunable frequency/intensity controls (a per-companion off/gentle/active dial).
 
-**Done when:** on opening the app with no prompt, Cobble offers genuinely relevant proposals or
-questions; users can dial it down; a holdout/measurement exists to track helpful-vs-annoying.
+Full mechanism (drive taxonomy, arbitration, seeding, learning, examples) →
+`companion-motivation.md`.
 
-**Key risk:** annoyance. Gate behind tunability and measure engagement/dismissal from day one.
+**Done when:** on opening the app with no prompt, Cobble **reads** genuinely relevant leads from its
+list on its own and reports back in one note; users can dial it down; energy is consumed and, when
+exhausted, initiation stops while chat keeps working; replies **attune** to the user's mood, and the
+**change** in mood across the user's reaction to the note shifts the drive weight (helpful-vs-annoying,
+learned from conversation — no button, sensed in the loop).
+
+**Key risk:** annoyance. Gate behind tunability + the energy budget, and measure
+engagement/dismissal (the reinforcement signal) from day one.
+
+**Deferred (designed here, built later):** **ordinary-chat learning** (using the every-turn mood
+change to move bond/understanding/persona, not only on a drive-serving act); **unprompted
+conversation** beyond the report note (tips/questions/check-ins) + a sense of **purpose/agenda** → a
+later phase; continuous work-while-away → Phase 6 (needs push); the stamina/energy **game economy**
+(food types, feeding, store, rich meters) → Phase 5; deeper RL beyond the additive weight nudge;
+**approval for outward/ irreversible tools** (when such tools exist — autonomous reads are internal +
+energy-bounded today).
+
+**Implemented** (Phase 4.1, this branch): the reserved `Initiator` seam is filled by a **motivation
+engine** (`packages/core/src/motivation/`) on a **lazy trigger** — `motivation.request` on a sent
+turn + on opening the transcript (return), plus a periodic `sweepMotivation`, all coalesced off the
+request path by a `MotivationRunner` (mirrors the consolidation runner). Each tick reads **drives ×
+presence** and either stays idle (token-free) or runs a **bounded autonomous burst**: a **presence
+spectrum** (`presence.ts`, fed by a heartbeat) gates self-initiation; a token-free **arbitration**
+gate (`arbitration.ts`: `pressure = level × weight` vs the dial threshold, burst sized to what energy
+affords) decides; when it commits, `runAutonomousBurst` **reads** the next leads into the companion's
+own memory **with no approval** (the shared ingestion pipeline, real tokens billed to energy via a
+per-run **meter override**) and posts **one in-character report note**. **Stamina/energy** split the
+old daily cap into two pools — chat draws stamina, the engine's reads draw **energy**
+(`companion_energy`), so autonomy can never starve interaction; out of energy → the engine idles
+while chat runs on. **Reinforcement = mood change in the loop (Phase 4.2)**: the agent loop senses the
+user's mood on every turn (`motivation/affect.ts`, stored in `companion_affect`, migration `0015`) and
+feeds the prior read forward to **attune** the next reply (`context.ts`, the fast loop). The burst
+logs a `proactive_outcomes` row linked to the note (migration `0014`); when the user reacts, the
+**change** in mood (`delta`) is applied as an **additive nudge** to the served **drive weight**
+(`motivation/reinforce.ts`; neutral start, a zero change is a no-op), so a Cobble is *raised* into its
+disposition from conversation — no separate critic, no button (the 4.1 `sentiment-reward.ts` is
+removed). The approval gate is kept for **chat** effectful calls + the user-initiated `/explore`
+command (which still proposes). Web adds a two-pool **vitality meter** + one-tap feed and an
+**off/gentle/active** dial. **Gate passed** (offline, deterministic): the DoD test
+(`packages/api/src/routes/phase4-dod.test.ts`) proves open-app→autonomous read + report note + energy
+consumed, out-of-energy/dial-off → no initiation, and reaction-to-note → mood-change reward + weight
+shift. Full suite green at ≥80% coverage. Canonical mechanism: `docs/companion-motivation.md`.
 
 ### Phase 5 — Bond & Growth (PoC complete)
 **Goal:** make Cobble feel raised, not used — closing the PoC loop.
@@ -212,6 +278,9 @@ questions; users can dial it down; a holdout/measurement exists to track helpful
   knowledge (semantic/episodic), relationship/personality, unlockable abilities (procedural),
   and **visual/character evolution** (appearance/home/accessories).
 - Leveling/progression surfaced in the UI.
+- **Stamina/energy game economy:** the Phase 4 vitality meters grow into a feeding loop — "food"
+  the user gives that favours stamina or energy, top-up/economy, and richer visuals
+  (`product-overview.md` §5.6).
 
 **Done when:** a returning user can see and feel how their Cobble has grown; the web PoC
 demonstrates all three differentiators (knowledge organism, embodiment groundwork, proactivity)
@@ -223,7 +292,9 @@ end-to-end. **Decision gate:** validate the concept before funding native surfac
 Native mobile app as a "living room" the companion is summoned into. Adds: GPS/location-aware
 recall, push notifications (the away-channel for proactivity), and **OS-as-tools** (files,
 photos, calendar, contacts, health — permission-gated). Implements the **one-embodiment-at-a-time
-summon** model and the companion-as-courier sync (`product-overview.md` §2.2, §5.2).
+summon** model and the companion-as-courier sync (`product-overview.md` §2.2, §5.2). The push
+channel also unlocks the **eager "work while you're away"** proactivity designed in Phase 4
+(`architecture.md` §4.5) — genuine between-visit activity that now has an audience.
 
 ### Phase 7 — Desktop Surface
 Native desktop app: file/workspace OS tools, heavier local storage/compute. Confirms the

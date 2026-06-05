@@ -1,0 +1,166 @@
+/** Proactive-outcome store — record (note-linked), latest-unresolved, set-reward, list. */
+
+import { type Database } from '@cobble/db';
+import { createTestDatabase } from '@cobble/db/testing';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { DrizzleIdentityStore } from '../identity/store.js';
+import { TranscriptMemoryStore } from '../memory/store.js';
+import { DrizzleProactiveOutcomeStore } from './reward-store.js';
+import { DEFAULT_DRIVE_WEIGHTS } from './drives.js';
+
+describe('DrizzleProactiveOutcomeStore', () => {
+  let db: Database;
+  let close: () => Promise<void>;
+  let companionId: string;
+  let rewards: DrizzleProactiveOutcomeStore;
+  let memory: TranscriptMemoryStore;
+
+  /** Append an assistant "report" note and return its id (the reward target). */
+  async function noteId(content = 'I read a couple of things from my list.'): Promise<string> {
+    const row = await memory.appendMessage(companionId, 'assistant', content);
+    return row.id;
+  }
+
+  beforeEach(async () => {
+    const created = await createTestDatabase();
+    db = created.db;
+    close = created.close;
+    const identity = new DrizzleIdentityStore(db);
+    const user = await identity.ensureUserByEmail('owner@example.com');
+    const companion = await identity.createCompanion(user.id, {
+      name: 'Pip',
+      form: 'fox',
+      temperament: 'curious',
+    });
+    companionId = companion.id;
+    rewards = new DrizzleProactiveOutcomeStore(db);
+    memory = new TranscriptMemoryStore(db);
+  });
+  afterEach(async () => {
+    await close();
+  });
+
+  it('records a note-linked outcome and resolves its reward', async () => {
+    const noteMessageId = await noteId();
+    const outcome = await rewards.record(companionId, {
+      noteMessageId,
+      drive: 'curiosity',
+      driveSnapshot: DEFAULT_DRIVE_WEIGHTS,
+    });
+    expect(outcome.reward).toBeNull();
+    expect(outcome.drive).toBe('curiosity');
+    expect(outcome.noteMessageId).toBe(noteMessageId);
+
+    await rewards.setReward(companionId, outcome.id, 1);
+    const resolved = await rewards.findLatestUnresolved(companionId);
+    expect(resolved).toBeNull(); // it's resolved now — no longer pending
+    const [listed] = await rewards.list(companionId, 1);
+    expect(listed?.reward).toBe(1);
+    expect(listed?.resolvedAt).not.toBeNull();
+  });
+
+  it('claims an outcome atomically — only the first setReward wins', async () => {
+    const outcome = await rewards.record(companionId, {
+      noteMessageId: await noteId(),
+      drive: 'curiosity',
+    });
+    // First reaction claims it; a racing second sees reward already set and bails.
+    expect(await rewards.setReward(companionId, outcome.id, 0.7)).toBe(true);
+    expect(await rewards.setReward(companionId, outcome.id, -0.9)).toBe(false);
+    // The losing call must not overwrite the winner's reward.
+    const [listed] = await rewards.list(companionId, 1);
+    expect(listed?.reward).toBeCloseTo(0.7);
+  });
+
+  it('finds the most recent unresolved outcome (reward attribution target)', async () => {
+    await rewards.record(companionId, { noteMessageId: await noteId('first'), drive: 'curiosity' });
+    const second = await rewards.record(companionId, {
+      noteMessageId: await noteId('second'),
+      drive: 'bond',
+    });
+    const latest = await rewards.findLatestUnresolved(companionId);
+    expect(latest?.id).toBe(second.id);
+    expect(latest?.drive).toBe('bond');
+  });
+
+  it('skips already-resolved outcomes when finding the latest unresolved', async () => {
+    const resolved = await rewards.record(companionId, {
+      noteMessageId: await noteId(),
+      drive: 'curiosity',
+    });
+    await rewards.setReward(companionId, resolved.id, -1);
+    expect(await rewards.findLatestUnresolved(companionId)).toBeNull();
+  });
+
+  it('does not set the reward for another companion (tenancy invariant)', async () => {
+    const outcome = await rewards.record(companionId, {
+      noteMessageId: await noteId(),
+      drive: 'curiosity',
+    });
+    await rewards.setReward('00000000-0000-0000-0000-000000000000', outcome.id, 1);
+    const found = await rewards.findLatestUnresolved(companionId);
+    expect(found?.id).toBe(outcome.id);
+    expect(found?.reward).toBeNull();
+  });
+
+  it("a real companion cannot claim or read another's pending outcome (tenancy isolation)", async () => {
+    // The zero-UUID case above only proves "an id owning no rows matches nothing".
+    // This proves the actual invariant the companion-scope fix protects: with TWO
+    // real companions each holding a pending outcome, A's reaction can neither
+    // claim nor surface B's outcome, and vice versa.
+    const identity = new DrizzleIdentityStore(db);
+    const owner = await identity.ensureUserByEmail('owner@example.com');
+    const other = await identity.createCompanion(owner.id, {
+      name: 'Moss',
+      form: 'cat',
+      temperament: 'calm',
+    });
+    const otherNote = await memory.appendMessage(other.id, 'assistant', 'Moss read something.');
+
+    const mine = await rewards.record(companionId, {
+      noteMessageId: await noteId(),
+      drive: 'curiosity',
+    });
+    const theirs = await rewards.record(other.id, {
+      noteMessageId: otherNote.id,
+      drive: 'bond',
+    });
+
+    // A's reaction must not claim B's pending outcome…
+    expect(await rewards.setReward(companionId, theirs.id, 1)).toBe(false);
+    // …and each companion only ever sees its own pending outcome.
+    expect((await rewards.findLatestUnresolved(companionId))?.id).toBe(mine.id);
+    expect((await rewards.findLatestUnresolved(other.id))?.id).toBe(theirs.id);
+    // B's own reaction still claims it, leaving A's untouched.
+    expect(await rewards.setReward(other.id, theirs.id, 1)).toBe(true);
+    expect((await rewards.findLatestUnresolved(companionId))?.reward).toBeNull();
+  });
+
+  it('claims atomically under a true concurrent race — exactly one winner', async () => {
+    // The sequential test above proves "the second call sees reward already set".
+    // This races the two reactions with Promise.all: exactly one setReward must
+    // win and the stored reward must be one contender's value, never summed or
+    // clobbered.
+    const outcome = await rewards.record(companionId, {
+      noteMessageId: await noteId(),
+      drive: 'curiosity',
+    });
+    const results = await Promise.all([
+      rewards.setReward(companionId, outcome.id, 0.7),
+      rewards.setReward(companionId, outcome.id, -0.9),
+    ]);
+    expect(results.filter(Boolean)).toHaveLength(1); // exactly one winner
+    const [listed] = await rewards.list(companionId, 1);
+    const reward = listed!.reward!;
+    const isContender = Math.abs(reward - 0.7) < 1e-6 || Math.abs(reward + 0.9) < 1e-6;
+    expect(isContender).toBe(true);
+  });
+
+  it('lists outcomes newest-first', async () => {
+    await rewards.record(companionId, { noteMessageId: await noteId('a'), drive: 'curiosity' });
+    await rewards.record(companionId, { noteMessageId: await noteId('b'), drive: 'bond' });
+    const list = await rewards.list(companionId, 10);
+    expect(list).toHaveLength(2);
+    expect(list[0]!.drive).toBe('bond'); // newest first
+  });
+});

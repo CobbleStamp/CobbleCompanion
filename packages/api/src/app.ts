@@ -1,4 +1,6 @@
 import type {
+  CompanionAffectStore,
+  CompanionEnergyStore,
   ConsolidationRunner,
   EmbeddingGateway,
   EpisodicMemoryStore,
@@ -8,6 +10,9 @@ import type {
   LeadStore,
   Logger,
   MemoryStore,
+  MotivationRunner,
+  PresenceStore,
+  ProactiveOutcomeStore,
   ProceduralStore,
   ProposalStore,
   SemanticMemoryStore,
@@ -31,6 +36,8 @@ import { registerEpisodeRoutes } from './routes/episode.routes.js';
 import { registerMemoryRoutes } from './routes/memory.routes.js';
 import { registerMessageRoutes } from './routes/message.routes.js';
 import { registerInventoryRoutes } from './routes/inventory.routes.js';
+import { registerPresenceRoutes } from './routes/presence.routes.js';
+import { registerProactivityRoutes } from './routes/proactivity.routes.js';
 import { registerProposalRoutes } from './routes/proposal.routes.js';
 import { registerSourceRoutes } from './routes/source.routes.js';
 import { registerUsageRoutes } from './routes/usage.routes.js';
@@ -63,7 +70,17 @@ export interface AppDeps {
   readonly leads: LeadStore;
   /** Procedural memory — learned, reusable workflows (P3 seed). */
   readonly procedural: ProceduralStore;
+  /** Volatile presence signal per companion — the motivation engine's environment (P4). */
+  readonly presence: PresenceStore;
+  /** Off-request proactive ticks — routes request it on activity/return (P4). */
+  readonly motivation: MotivationRunner;
   readonly quota: TokenQuotaStore;
+  /** Per-companion energy pool — the self-initiated budget, surfaced as the meter (P4). */
+  readonly energy: CompanionEnergyStore;
+  /** Reinforcement log — one outcome per proactive initiation (P4). */
+  readonly rewards: ProactiveOutcomeStore;
+  /** The rolling read of the user's mood, sensed in the agent loop (P4.2). */
+  readonly affect: CompanionAffectStore;
   readonly tokenVerifier: TokenVerifier;
   readonly config: AppConfig;
   readonly logger: Logger;
@@ -154,6 +171,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerSourceRoutes(app, deps, requireAuth);
   registerProposalRoutes(app, deps, requireAuth);
   registerInventoryRoutes(app, deps, requireAuth);
+  registerPresenceRoutes(app, deps, requireAuth);
+  registerProactivityRoutes(app, deps, requireAuth);
   registerUsageRoutes(app, deps, requireAuth);
 
   registerSpa(app);

@@ -24,21 +24,29 @@ import {
   DrizzleIdentityStore,
   DrizzleLeadStore,
   DrizzleProceduralStore,
+  DrizzleProactiveOutcomeStore,
   DrizzleProposalStore,
   DrizzleSemanticMemoryStore,
+  DrizzleCompanionAffectStore,
+  DrizzleCompanionEnergyStore,
   DrizzleTokenQuotaStore,
   DrizzleToolCallLog,
   FakeEmbeddingGateway,
   FakeLlmGateway,
   Harness,
+  InMemoryPresenceStore,
   IngestionPipeline,
   IngestionRunner,
   LlmIngestionAnnouncer,
   LlmPersonalityEvolver,
+  MotivationEngine,
+  MotivationRunner,
   OpenRouterEmbeddingGateway,
   OpenRouterGateway,
+  reinforceFromDelta,
   resumeDeferredJobs,
   sweepConsolidation,
+  sweepMotivation,
   ToolRegistry,
   TranscriptMemoryStore,
   type EmbeddingGateway,
@@ -85,6 +93,10 @@ async function main(): Promise<void> {
 
   const identity = new DrizzleIdentityStore(db);
   const memory = new TranscriptMemoryStore(db);
+  // Reinforcement log + the rolling affect read — built early so the harness can
+  // sense the user's mood each turn (Phase 4.2) and the will can learn from it.
+  const rewards = new DrizzleProactiveOutcomeStore(db);
+  const affectStore = new DrizzleCompanionAffectStore(db);
   const semantic = new DrizzleSemanticMemoryStore(db);
   const episodic = new DrizzleEpisodicMemoryStore(db);
   const quota = new DrizzleTokenQuotaStore(db, { defaultCapTokens: config.tokenCapPerDay });
@@ -95,32 +107,32 @@ async function main(): Promise<void> {
   // it embeds distinct chunks, so a one-entry memo would only ever miss.
   const retrievalEmbeddings = createMemoizingEmbeddingGateway(embeddings);
 
-  const ingestion = new IngestionRunner(
-    new IngestionPipeline({
-      semantic,
+  // The pipeline is shared: the runner drains user uploads through it (billed to
+  // stamina), and the motivation engine drives it directly for autonomous reads
+  // (billed to energy via a per-run meter override — `pipeline.ts`).
+  const ingestionPipeline = new IngestionPipeline({
+    semantic,
+    llm: llmGateway,
+    embeddings,
+    ingestionModel: config.ingestionModel,
+    embeddingModel: config.embeddingModel,
+    embeddingDimensions: config.embeddingDimensions,
+    useContextHeader: config.useContextHeader,
+    sourceParser: createSourceParser({
+      linkResolver: createHttpLinkResolver({ maxBytes: config.ingestionMaxBytes }),
+    }),
+    quota,
+    logger: consoleLogger,
+    announcer: new LlmIngestionAnnouncer({
+      identity,
+      memory,
       llm: llmGateway,
-      embeddings,
-      ingestionModel: config.ingestionModel,
-      embeddingModel: config.embeddingModel,
-      embeddingDimensions: config.embeddingDimensions,
-      useContextHeader: config.useContextHeader,
-      sourceParser: createSourceParser({
-        linkResolver: createHttpLinkResolver({ maxBytes: config.ingestionMaxBytes }),
-      }),
+      model: config.ingestionModel,
       quota,
       logger: consoleLogger,
-      announcer: new LlmIngestionAnnouncer({
-        identity,
-        memory,
-        llm: llmGateway,
-        model: config.ingestionModel,
-        quota,
-        logger: consoleLogger,
-      }),
     }),
-    consoleLogger,
-    config.ingestionQueueMax,
-  );
+  });
+  const ingestion = new IngestionRunner(ingestionPipeline, consoleLogger, config.ingestionQueueMax);
 
   // Phase 3 tool surface + trust machinery, built before the harness so the
   // propose→approve gate and the tool-call log can be wired into the loop.
@@ -128,6 +140,9 @@ async function main(): Promise<void> {
   const toolCallLog = new DrizzleToolCallLog(db);
   const leads = new DrizzleLeadStore(db);
   const procedural = new DrizzleProceduralStore(db);
+  // Volatile presence (P4) — fed by the heartbeat route and message sends; the
+  // motivation engine reads it to decide whether/how to initiate.
+  const presence = new InMemoryPresenceStore();
   const tools = new ToolRegistry([
     // web_fetch harvests outbound links into the reading list (the P4 substrate).
     createWebFetchTool({
@@ -151,6 +166,15 @@ async function main(): Promise<void> {
     model: config.llmModel,
     quota,
     logger: consoleLogger,
+    // P4.2: sense the user's mood each turn (cheap ingestion model, billed to
+    // stamina), attune the next reply to it, and let the *change* nudge the served
+    // drive's weight when a self-directed act is awaiting a reaction.
+    affect: {
+      store: affectStore,
+      model: config.ingestionModel,
+      reinforce: (companionId, delta) =>
+        reinforceFromDelta({ rewards, identity, logger: consoleLogger }, companionId, delta),
+    },
     // P3: the tools the model may call, the propose→approve gate (effectful calls
     // are held for approval), and the audit log (every call is logged).
     registry: tools,
@@ -207,6 +231,26 @@ async function main(): Promise<void> {
   });
   const consolidation = new ConsolidationRunner(consolidationService, consoleLogger);
 
+  // Motivation engine (P4): the "will" that works the lead inventory on idle.
+  // Self-initiated work draws the per-companion ENERGY pool (separate from the
+  // user stamina pool, so autonomy can't starve chat). The runner keeps ticks off
+  // the request path; routes request() it on activity/return + a periodic sweep.
+  const energy = new DrizzleCompanionEnergyStore(db, { defaultCapTokens: config.tokenCapPerDay });
+  const motivationEngine = new MotivationEngine({
+    identity,
+    presence,
+    energy,
+    leads,
+    semantic,
+    pipeline: ingestionPipeline,
+    memory,
+    rewards,
+    llm: llmGateway,
+    model: config.ingestionModel,
+    logger: consoleLogger,
+  });
+  const motivation = new MotivationRunner(motivationEngine, consoleLogger);
+
   const app = await buildApp({
     identity,
     memory,
@@ -221,7 +265,12 @@ async function main(): Promise<void> {
     toolCallLog,
     leads,
     procedural,
+    presence,
+    motivation,
     quota,
+    energy,
+    rewards,
+    affect: affectStore,
     tokenVerifier: createTokenVerifier(config),
     config,
     logger: consoleLogger,
@@ -259,14 +308,29 @@ async function main(): Promise<void> {
   }, CONSOLIDATION_SWEEP_INTERVAL_MS);
   consolidationTimer.unref();
 
+  // Proactivity catch-up (P4): on startup and on a timer, request a tick for any
+  // companion with unread leads — recovering companions whose activity/return
+  // trigger was lost to a restart. The engine's gate still decides whether to act.
+  const motivationSweepDeps = { leads, runner: motivation, logger: consoleLogger };
+  await sweepMotivation(motivationSweepDeps);
+  const motivationTimer = setInterval(() => {
+    void sweepMotivation(motivationSweepDeps).catch((error: unknown) => {
+      consoleLogger.error('motivation sweep failed', { error });
+    });
+  }, MOTIVATION_SWEEP_INTERVAL_MS);
+  motivationTimer.unref();
+
   // Graceful shutdown: stop the catch-up timers and drain in-flight background
   // work before exit so nothing is killed mid-write. Fastify runs onClose after
   // it has stopped accepting requests, so no new turns trigger work past here.
   app.addHook('onClose', async () => {
     clearInterval(sweepTimer);
     clearInterval(consolidationTimer);
+    clearInterval(motivationTimer);
     await ingestion.whenIdle();
+    await harness.whenIdle();
     await consolidation.close();
+    await motivation.close();
   });
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     process.once(signal, () => {
@@ -287,6 +351,9 @@ const DEFERRED_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 /** How often to catch up episodic consolidation (cheap; a pending-tail scan). */
 const CONSOLIDATION_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+
+/** How often to catch up proactive ticks (cheap; a leads-pending scan). */
+const MOTIVATION_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 main().catch((error: unknown) => {
   consoleLogger.error('api failed to start', { error });

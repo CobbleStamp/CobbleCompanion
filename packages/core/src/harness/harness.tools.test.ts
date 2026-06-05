@@ -15,7 +15,7 @@ import { FakeLlmGateway, type FakeTurn } from '../llm/fake.js';
 import type { LlmGateway, StreamResult, ToolCall } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import type { AppendOptions, MemoryStore, TranscriptEntry } from '../memory/store.js';
-import type { TokenQuotaStore } from '../quota/store.js';
+import type { TokenQuotaStore } from '../quota/stamina-store.js';
 import { ToolRegistry } from '../tools/registry.js';
 import type { Tool } from '../tools/tool.js';
 import { Harness } from './harness.js';
@@ -33,6 +33,7 @@ const companion: CompanionDto = {
   form: 'fox',
   temperament: 'curious',
   evolvedPersona: null,
+  proactivityDial: 'gentle',
   createdAt: new Date('2026-01-01').toISOString(),
 };
 
@@ -119,6 +120,7 @@ class RecordingQuota implements TokenQuotaStore {
   async isOverCap(): Promise<boolean> {
     return false;
   }
+  async topUp(): Promise<void> {}
 }
 
 describe('Harness inner loop (P3 tools)', () => {

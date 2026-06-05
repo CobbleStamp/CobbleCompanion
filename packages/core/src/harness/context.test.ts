@@ -1,6 +1,6 @@
 import type { CompanionDto } from '@cobble/shared';
 import { describe, expect, it } from 'vitest';
-import { assembleContext, buildPersona } from './context.js';
+import { affectAttunementLine, assembleContext, buildPersona } from './context.js';
 
 const companion: CompanionDto = {
   id: 'c1',
@@ -8,6 +8,7 @@ const companion: CompanionDto = {
   form: 'fox',
   temperament: 'curious and gentle',
   evolvedPersona: null,
+  proactivityDial: 'gentle',
   createdAt: new Date(0).toISOString(),
 };
 
@@ -57,5 +58,37 @@ describe('assembleContext', () => {
     const messages = assembleContext(companion, []);
     expect(messages).toHaveLength(1);
     expect(messages[0]?.role).toBe('system');
+  });
+
+  it('injects an attunement system line when a prior mood read exists', () => {
+    const messages = assembleContext(companion, [{ role: 'user', content: 'hi' }], {
+      valence: -0.6,
+      note: 'frustrated, terse',
+    });
+    expect(messages[0]?.role).toBe('system'); // persona
+    expect(messages[1]?.role).toBe('system'); // attunement
+    expect(messages[1]?.content).toContain('frustrated, terse');
+    expect(messages[1]?.content).not.toContain('-0.6'); // the valence number is never surfaced
+    expect(messages[2]).toEqual({ role: 'user', content: 'hi' });
+  });
+
+  it('omits attunement for a neutral/empty mood read', () => {
+    expect(assembleContext(companion, [], { valence: 0, note: '' })).toHaveLength(1);
+    expect(assembleContext(companion, [], null)).toHaveLength(1);
+  });
+});
+
+describe('affectAttunementLine', () => {
+  it('describes the mood and instructs attunement, hiding the number', () => {
+    const line = affectAttunementLine({ valence: 0.8, note: 'relieved' });
+    expect(line).toContain('relieved');
+    expect(line).toContain('Attune');
+    expect(line).not.toContain('0.8');
+  });
+
+  it('is null without a meaningful note', () => {
+    expect(affectAttunementLine({ valence: 0.9, note: '   ' })).toBeNull();
+    expect(affectAttunementLine(null)).toBeNull();
+    expect(affectAttunementLine(undefined)).toBeNull();
   });
 });

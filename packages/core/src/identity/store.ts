@@ -1,4 +1,4 @@
-import type { CompanionDto } from '@cobble/shared';
+import type { CompanionDto, DriveWeights, PersonalityKnobs, ProactivityDial } from '@cobble/shared';
 import { companions, type Database, users } from '@cobble/db';
 import { and, eq } from 'drizzle-orm';
 
@@ -29,6 +29,12 @@ export interface CompanionRecord {
   readonly evolvedPersona: string | null;
   readonly personaUpdatedThroughSeq: number;
   readonly consolidatedThroughSeq: number;
+  // Phase 4 — proactivity state the motivation engine reads (companion-motivation.md).
+  readonly proactivityDial: ProactivityDial;
+  /** Null until personalized via onboarding (PoC uses default constants). */
+  readonly personalityKnobs: PersonalityKnobs | null;
+  /** Null → neutral defaults; learned (additive change-as-reward nudge) by the reinforcement loop. */
+  readonly driveWeights: DriveWeights | null;
   readonly createdAt: string;
 }
 
@@ -62,6 +68,10 @@ export interface IdentityStore {
     evolvedPersona: string,
     personaUpdatedThroughSeq: number,
   ): Promise<void>;
+  /** Set the proactivity dial (Phase 4 tunability). Keyed by companionId. */
+  setProactivityDial(companionId: string, dial: ProactivityDial): Promise<void>;
+  /** Persist learned drive weights (Phase 4 reinforcement). Keyed by companionId. */
+  updateDriveWeights(companionId: string, driveWeights: DriveWeights): Promise<void>;
 }
 
 export class DrizzleIdentityStore implements IdentityStore {
@@ -125,6 +135,17 @@ export class DrizzleIdentityStore implements IdentityStore {
       .set({ evolvedPersona, personaUpdatedThroughSeq })
       .where(eq(companions.id, companionId));
   }
+
+  async setProactivityDial(companionId: string, dial: ProactivityDial): Promise<void> {
+    await this.db
+      .update(companions)
+      .set({ proactivityDial: dial })
+      .where(eq(companions.id, companionId));
+  }
+
+  async updateDriveWeights(companionId: string, driveWeights: DriveWeights): Promise<void> {
+    await this.db.update(companions).set({ driveWeights }).where(eq(companions.id, companionId));
+  }
 }
 
 function toUserRecord(row: typeof users.$inferSelect): UserRecord {
@@ -142,6 +163,7 @@ function toCompanionDto(row: typeof companions.$inferSelect): CompanionDto {
     form: row.form,
     temperament: row.temperament,
     evolvedPersona: row.evolvedPersona,
+    proactivityDial: row.proactivityDial,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -156,6 +178,9 @@ function toCompanionRecord(row: typeof companions.$inferSelect): CompanionRecord
     evolvedPersona: row.evolvedPersona,
     personaUpdatedThroughSeq: row.personaUpdatedThroughSeq,
     consolidatedThroughSeq: row.consolidatedThroughSeq,
+    proactivityDial: row.proactivityDial,
+    personalityKnobs: row.personalityKnobs,
+    driveWeights: row.driveWeights,
     createdAt: row.createdAt.toISOString(),
   };
 }

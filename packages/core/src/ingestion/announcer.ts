@@ -16,7 +16,7 @@ import type { IdentityStore } from '../identity/store.js';
 import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import type { MemoryStore } from '../memory/store.js';
-import type { TokenQuotaStore } from '../quota/store.js';
+import type { TokenQuotaStore } from '../quota/stamina-store.js';
 import { createUsageAccumulator, meteredLlmGateway } from '../usage.js';
 
 /** A terminal ingestion outcome worth telling the user about. */

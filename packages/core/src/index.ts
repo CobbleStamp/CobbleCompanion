@@ -105,13 +105,104 @@ export {
   type EmbeddingResult,
 } from './embedding/gateway.js';
 
-// Token quota (per-user daily cap state)
+// Stamina quota (per-user daily cap state)
 export {
   DrizzleTokenQuotaStore,
   type DrizzleTokenQuotaStoreOptions,
   type TokenQuotaStore,
   type UsageSnapshot,
-} from './quota/store.js';
+} from './quota/stamina-store.js';
+
+// Companion energy (per-companion self-initiated pool — the motivation engine's fuel, Phase 4)
+export {
+  type CompanionEnergyStore,
+  DrizzleCompanionEnergyStore,
+  type DrizzleCompanionEnergyStoreOptions,
+  type EnergySnapshot,
+} from './quota/energy-store.js';
+export { EnergyQuotaAdapter } from './quota/energy-quota-adapter.js';
+
+// Motivation engine — presence (Phase 4)
+export {
+  classifyPresence,
+  DEFAULT_PRESENCE_THRESHOLDS,
+  PRESENCE_POSTURE,
+  type PresencePosture,
+  type PresenceSignal,
+  type PresenceState,
+  type PresenceThresholds,
+  presencePosture,
+} from './motivation/presence.js';
+export { InMemoryPresenceStore, type PresenceStore } from './motivation/presence-store.js';
+// Motivation engine — drives, arbitration, explore burst, the engine (Phase 4)
+export {
+  computeDrives,
+  DEFAULT_DRIVE_WEIGHTS,
+  DRIVES,
+  type DriveContext,
+  type DriveLevels,
+  NEUTRAL_WEIGHT,
+  resolveWeights,
+} from './motivation/drives.js';
+export {
+  type ArbitrationInput,
+  DEFAULT_KNOBS,
+  decideMove,
+  type ExploreMove,
+  type Move,
+} from './motivation/arbitration.js';
+export {
+  DEFAULT_EXPLORE_BURST,
+  type ExploreBurstDeps,
+  type ExploreBurstParams,
+  runExploreBurst,
+} from './motivation/explore-burst.js';
+export {
+  MotivationEngine,
+  type MotivationEngineDeps,
+  type MotivationEngineOptions,
+  type MotivationTickResult,
+} from './motivation/engine.js';
+export {
+  type AutonomousBurstDeps,
+  type AutonomousBurstParams,
+  type AutonomousBurstResult,
+  type AutonomousIngestStore,
+  type CompanionVoice,
+  runAutonomousBurst,
+} from './motivation/autonomous-burst.js';
+export { MotivationRunner, type MotivationTarget } from './motivation/engine-runner.js';
+export { type MotivationSweepDeps, sweepMotivation } from './motivation/engine-sweep.js';
+// Reinforcement — outcome store, change-as-reward weight update, attribution (Phase 4)
+export {
+  DrizzleProactiveOutcomeStore,
+  type ProactiveOutcomeRecord,
+  type ProactiveOutcomeStore,
+  type RecordOutcomeInput,
+} from './motivation/reward-store.js';
+export {
+  DEFAULT_LEARNING_RATE,
+  nudgeDriveWeight,
+  WEIGHT_CEILING,
+  WEIGHT_FLOOR,
+} from './motivation/weights.js';
+// Reinforcement (Phase 4.2) — the will's half: attribute the mood change to the
+// pending drive-serving act and nudge that drive's weight.
+export { reinforceFromDelta, type ReinforceDeps } from './motivation/reinforce.js';
+// Affect perception (Phase 4.2) — the rolling read of the user's mood, sensed
+// every turn in the agent loop; drives attunement (fast loop) + reward (slow loop).
+export {
+  type AffectReading,
+  type AffectSenseDeps,
+  type AffectSenseParams,
+  coerceReading,
+  NEUTRAL_AFFECT,
+  senseAffect,
+} from './motivation/affect.js';
+export {
+  type CompanionAffectStore,
+  DrizzleCompanionAffectStore,
+} from './motivation/affect-store.js';
 
 // Token usage / metering (per-user daily cap)
 export {
@@ -133,7 +224,12 @@ export { FakeEmbeddingGateway, hashToUnitVector } from './embedding/fake.js';
 export { createMemoizingEmbeddingGateway } from './embedding/memoizing.js';
 
 // Harness (the agent loop)
-export { Harness, type HarnessOptions, type RunTurnParams } from './harness/harness.js';
+export {
+  Harness,
+  type HarnessAffect,
+  type HarnessOptions,
+  type RunTurnParams,
+} from './harness/harness.js';
 export { assembleContext, buildPersona } from './harness/context.js';
 export {
   createSemanticRetrieveContext,

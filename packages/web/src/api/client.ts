@@ -10,11 +10,13 @@ import type {
   LeadDto,
   MemorySnapshotDto,
   MessageDto,
+  ProactivityDial,
   ProcedureDto,
   ProposalDto,
   SectionDto,
   SemanticSearchResultDto,
   SourceDto,
+  StaminaEnergyDto,
   UsageDto,
 } from '@cobble/shared';
 
@@ -192,6 +194,35 @@ export async function getUsage(): Promise<UsageDto> {
   return body.usage;
 }
 
+/** The companion's two vitality pools — stamina + energy (Phase 4 meter). */
+export async function fetchBudget(companionId: string): Promise<StaminaEnergyDto> {
+  return request<StaminaEnergyDto>(`/companions/${companionId}/budget`);
+}
+
+/** Feed a vitality pool (the simple manual top-up). Returns the updated meter. */
+export async function topUpBudget(
+  companionId: string,
+  pool: 'stamina' | 'energy',
+  amount: number,
+): Promise<StaminaEnergyDto> {
+  return request<StaminaEnergyDto>(`/companions/${companionId}/budget/topup`, {
+    method: 'POST',
+    body: JSON.stringify({ pool, amount }),
+  });
+}
+
+/** Set the companion's proactivity dial (off / gentle / active). */
+export async function setProactivityDial(
+  companionId: string,
+  dial: ProactivityDial,
+): Promise<ProactivityDial> {
+  const body = await request<{ dial: ProactivityDial }>(`/companions/${companionId}/proactivity`, {
+    method: 'PATCH',
+    body: JSON.stringify({ dial }),
+  });
+  return body.dial;
+}
+
 /** Search the companion's semantic memory (the browser's recall window). */
 export async function searchMemory(
   companionId: string,
@@ -244,6 +275,17 @@ export async function* confirmProposal(
 /** Decline a held action (nothing executes). */
 export async function rejectProposal(companionId: string, proposalId: string): Promise<void> {
   await send(`/companions/${companionId}/proposals/${proposalId}/reject`, { method: 'POST' });
+}
+
+/**
+ * Tell the backend the user is present (Phase 4). The motivation engine reads
+ * this volatile signal to decide whether/how to initiate. Fire-and-forget.
+ */
+export async function sendHeartbeat(companionId: string, tabVisible: boolean): Promise<void> {
+  await send(`/companions/${companionId}/heartbeat`, {
+    method: 'POST',
+    body: JSON.stringify({ tabVisible }),
+  });
 }
 
 /** The companion's reading list — leads it discovered but hasn't acted on (P3). */

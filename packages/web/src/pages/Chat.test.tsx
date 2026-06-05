@@ -24,6 +24,7 @@ const companion: CompanionDto = {
   form: 'fox',
   temperament: 'curious and warm',
   evolvedPersona: null,
+  proactivityDial: 'gentle',
   createdAt: '2026-01-01T00:00:00.000Z',
 };
 
@@ -56,6 +57,12 @@ vi.mock('../api/client.js', () => ({
   listIngestionJobs: vi.fn(() => Promise.resolve([])),
   // The usage badge polls this; reject so it stays hidden in these tests.
   getUsage: vi.fn(() => Promise.reject(new Error('no usage'))),
+  // The presence heartbeat (P4) fires on mount/interval; no-op in tests.
+  sendHeartbeat: vi.fn(() => Promise.resolve()),
+  // The budget meter (P4) polls this; reject so it stays hidden in these tests.
+  fetchBudget: vi.fn(() => Promise.reject(new Error('no budget'))),
+  topUpBudget: vi.fn(() => Promise.resolve()),
+  setProactivityDial: vi.fn(() => Promise.resolve('gentle')),
   // The approval-queue hook polls this; default to empty so no cards show.
   listProposals: vi.fn(() => Promise.resolve([])),
   confirmProposal: vi.fn(),

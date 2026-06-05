@@ -23,15 +23,23 @@ import {
   DrizzleProceduralStore,
   DrizzleProposalStore,
   DrizzleSemanticMemoryStore,
+  DrizzleCompanionAffectStore,
+  DrizzleCompanionEnergyStore,
   DrizzleTokenQuotaStore,
   DrizzleToolCallLog,
   FakeEmbeddingGateway,
   FakeLlmGateway,
   type FakeTurn,
   Harness,
+  InMemoryPresenceStore,
   IngestionPipeline,
   IngestionRunner,
+  type IngestionTarget,
+  DrizzleProactiveOutcomeStore,
   LlmIngestionAnnouncer,
+  MotivationEngine,
+  MotivationRunner,
+  reinforceFromDelta,
   ToolRegistry,
   TranscriptMemoryStore,
   type Logger,
@@ -99,6 +107,12 @@ export interface TestAppOptions {
   readonly config?: Partial<AppConfig>;
   /** Replace the runner entirely (fault injection, e.g. a queue-full race). */
   readonly ingestion?: IngestionRunner;
+  /**
+   * Replace the pipeline the motivation engine drives for autonomous reads. A
+   * real read needs the network + scripted LLM passes, so route/DoD tests inject
+   * a fake that marks the job done and bills the meter (Phase 4.1).
+   */
+  readonly motivationPipeline?: IngestionTarget;
 }
 
 export async function makeTestApp(
@@ -120,31 +134,28 @@ export async function makeTestApp(
   const llmGateway = new FakeLlmGateway(chunks);
   const tokenVerifier = new FakeTokenVerifier();
   // Queue cap comes from config, mirroring production wiring (index.ts).
+  const ingestionPipeline = new IngestionPipeline({
+    semantic,
+    llm: llmGateway,
+    embeddings,
+    ingestionModel: config.ingestionModel,
+    embeddingModel: config.embeddingModel,
+    embeddingDimensions: config.embeddingDimensions,
+    useContextHeader: config.useContextHeader,
+    quota,
+    logger: silentLogger,
+    announcer: new LlmIngestionAnnouncer({
+      identity,
+      memory,
+      llm: llmGateway,
+      model: config.ingestionModel,
+      quota,
+      logger: silentLogger,
+    }),
+  });
   const ingestion =
     options.ingestion ??
-    new IngestionRunner(
-      new IngestionPipeline({
-        semantic,
-        llm: llmGateway,
-        embeddings,
-        ingestionModel: config.ingestionModel,
-        embeddingModel: config.embeddingModel,
-        embeddingDimensions: config.embeddingDimensions,
-        useContextHeader: config.useContextHeader,
-        quota,
-        logger: silentLogger,
-        announcer: new LlmIngestionAnnouncer({
-          identity,
-          memory,
-          llm: llmGateway,
-          model: config.ingestionModel,
-          quota,
-          logger: silentLogger,
-        }),
-      }),
-      silentLogger,
-      config.ingestionQueueMax,
-    );
+    new IngestionRunner(ingestionPipeline, silentLogger, config.ingestionQueueMax);
   const consolidation = new ConsolidationRunner(
     new ConsolidationService({
       episodic,
@@ -177,6 +188,29 @@ export async function makeTestApp(
   const toolCallLog = new DrizzleToolCallLog(db);
   const leads = new DrizzleLeadStore(db);
   const procedural = new DrizzleProceduralStore(db);
+  const presence = new InMemoryPresenceStore();
+  const energy = new DrizzleCompanionEnergyStore(db, { defaultCapTokens: config.tokenCapPerDay });
+  const rewards = new DrizzleProactiveOutcomeStore(db);
+  const affectStore = new DrizzleCompanionAffectStore(db);
+  const motivation = new MotivationRunner(
+    new MotivationEngine(
+      {
+        identity,
+        presence,
+        energy,
+        leads,
+        semantic,
+        pipeline: options.motivationPipeline ?? ingestionPipeline,
+        memory,
+        rewards,
+        llm: llmGateway,
+        model: config.ingestionModel,
+        logger: silentLogger,
+      },
+      {},
+    ),
+    silentLogger,
+  );
   const deps: AppDeps = {
     identity,
     memory,
@@ -190,12 +224,23 @@ export async function makeTestApp(
     toolCallLog,
     leads,
     procedural,
+    presence,
+    motivation,
+    energy,
+    rewards,
     harness: new Harness({
       gateway: llmGateway,
       memory,
       model: 'test-model',
       quota,
       logger: silentLogger,
+      // P4.2 affect loop: sense mood each turn, attune, and learn from the change.
+      affect: {
+        store: affectStore,
+        model: config.ingestionModel,
+        reinforce: (companionId, delta) =>
+          reinforceFromDelta({ rewards, identity, logger: silentLogger }, companionId, delta),
+      },
       registry: tools,
       beforeToolCall: createApprovalGate(proposals, tools, silentLogger),
       afterToolCall: createLoggingAfterToolCall(toolCallLog, silentLogger),
@@ -219,6 +264,7 @@ export async function makeTestApp(
       ),
     }),
     quota,
+    affect: affectStore,
     tokenVerifier,
     config,
     logger,
@@ -240,6 +286,9 @@ export async function makeTestApp(
     close: async () => {
       await ingestion.whenIdle();
       await consolidation.whenIdle();
+      // Drain proactive ticks (GET/POST messages request them) before the db
+      // closes, so a background tick can't write to a torn-down database.
+      await motivation.close();
       await app.close();
       await closeDb();
     },

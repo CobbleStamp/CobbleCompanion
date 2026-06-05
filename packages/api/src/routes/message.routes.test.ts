@@ -133,6 +133,41 @@ describe('message routes', () => {
     expect(usage.usedTokens).toBeGreaterThan(0);
   });
 
+  // Opening the transcript is a "return" trigger (P4): the GET handler nudges the
+  // motivation engine before responding, so this fires within inject.
+  it('nudges the motivation engine when the transcript is opened (return trigger)', async () => {
+    const requested: string[] = [];
+    ctx.deps.motivation.request = (id: string): void => {
+      requested.push(id);
+    };
+    await ctx.app.inject({
+      method: 'GET',
+      url: `/companions/${companionId}/messages`,
+      headers: auth,
+    });
+    expect(requested).toContain(companionId);
+  });
+
+  // A completed turn also nudges the engine (activity tick), fired after the SSE
+  // stream — so drain the real stream before asserting (mirrors consolidation).
+  it('nudges the motivation engine after a sent turn', async () => {
+    const requested: string[] = [];
+    ctx.deps.motivation.request = (id: string): void => {
+      requested.push(id);
+    };
+    await ctx.app.listen({ port: 0, host: '127.0.0.1' });
+    const { port } = ctx.app.server.address() as AddressInfo;
+
+    const response = await fetch(`http://127.0.0.1:${port}/companions/${companionId}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...auth },
+      body: JSON.stringify({ content: 'hello there' }),
+    });
+    await response.text(); // drain the SSE stream so the trigger has fired
+
+    expect(requested).toContain(companionId);
+  });
+
   // The background reflection pass is nudged once per completed turn (fired
   // after the reply has streamed, fire-and-forget). We wrap the runner's
   // `request` with a delegating spy so the real coalesce/cap logic still runs.

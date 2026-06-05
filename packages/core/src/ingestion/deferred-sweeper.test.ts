@@ -8,7 +8,7 @@ import { createTestDatabase } from '@cobble/db/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DrizzleIdentityStore } from '../identity/store.js';
 import { DrizzleSemanticMemoryStore } from '../memory/semantic-store.js';
-import type { TokenQuotaStore, UsageSnapshot } from '../quota/store.js';
+import type { TokenQuotaStore, UsageSnapshot } from '../quota/stamina-store.js';
 import { resumeDeferredJobs } from './deferred-sweeper.js';
 import type { ParsedDocument } from './parser.js';
 import type { IngestionRunParams } from './pipeline.js';
@@ -26,6 +26,7 @@ class SetQuota implements TokenQuotaStore {
   async isOverCap(userId: string): Promise<boolean> {
     return this.overOwners.has(userId);
   }
+  async topUp(): Promise<void> {}
 }
 
 const PARSED: ParsedDocument = { rawText: 'held', paragraphs: [{ ord: 1, text: 'held' }] };

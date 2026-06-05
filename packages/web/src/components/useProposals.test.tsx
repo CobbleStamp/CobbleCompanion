@@ -106,6 +106,31 @@ describe('useProposals polling', () => {
     expect(listProposals).toHaveBeenCalledTimes(callsAfterEmpty);
   });
 
+  it('idle slow-poll fires past the idle interval and surfaces an autonomous proposal', async () => {
+    // P4 reason this hook changed: with an EMPTY queue it must still poll — slowly
+    // — so a proposal the motivation engine raises on its own surfaces with nothing
+    // pending before it. The fast (2s) loop never fires within the idle window, so
+    // advancing only POLL_MS*3 (~6s) would miss it; advance PAST the 12s idle
+    // interval and assert the idle poll fired and picked up the new proposal.
+    const IDLE_MS = 12_000;
+    vi.mocked(listProposals).mockResolvedValue([]); // empty on mount → idle poll
+    const { result } = renderHook(() => useProposals('c1'));
+    await flush();
+    expect(result.current.proposals).toEqual([]);
+    const callsWhenIdle = vi.mocked(listProposals).mock.calls.length;
+
+    // The fast interval would have fired several times by 6s — prove it did NOT.
+    await act(async () => void (await vi.advanceTimersByTimeAsync(POLL_MS * 3)));
+    expect(listProposals).toHaveBeenCalledTimes(callsWhenIdle);
+
+    // An autonomous proposal arrives; cross the idle interval and the slow poll
+    // fires once, surfacing it.
+    vi.mocked(listProposals).mockResolvedValue([pending]);
+    await act(async () => void (await vi.advanceTimersByTimeAsync(IDLE_MS)));
+    expect(listProposals).toHaveBeenCalledTimes(callsWhenIdle + 1);
+    expect(result.current.proposals).toEqual([pending]);
+  });
+
   it('clears the pending poll timer on unmount', async () => {
     const { unmount } = renderHook(() => useProposals('c1'));
     await flush();

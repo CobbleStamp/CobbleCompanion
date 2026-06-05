@@ -5,10 +5,10 @@
 > system is* (components, flows, decisions) see `architecture.md`; for *what we're building and in
 > what order* see `development-plan.md`.
 >
-> **Status: incremental.** Specifies **Phases 0–3** (`development-plan.md` §3); later phases are
+> **Status: incremental.** Specifies **Phases 0–4** (`development-plan.md` §3); later phases are
 > marked **_Deferred — Phase N_**.
 
-## 1. Data Model (Phases 0–3)
+## 1. Data Model (Phases 0–4)
 
 Postgres (with `pgvector` available for later phases). Multi-tenant: every row is scoped by owner
 (`architecture.md` §2, invariant #5). Field types are indicative; authoritative DDL lives in
@@ -131,11 +131,14 @@ migrations under `db/`.
 | `window_reset_at` | timestamptz | when the current fixed-daily (UTC) window rolls; overage carries as debt clamped to one cap |
 | `used_tokens` | bigint | tokens spent in the current window (LLM + embedding) |
 | `cap_override` | integer, nullable | per-account cap; null → the `TOKEN_CAP_PER_DAY` default |
+| `top_up_tokens` | bigint, default 0 | manual feed grant; effective cap = `(cap_override ?? default) + top_up_tokens`. Added by an atomic SQL increment (concurrent feeds can't lose an update), persists across window rolls, and — being separate from `cap_override` — keeps tracking later changes to the default. Mirrors `companion_energy` exactly. |
 | `updated_at` | timestamptz | |
 
 > Postgres-backed so the cap is correct across replicas. Routes enforce it inline: chat/search
 > 429 over cap, ingestion defers (`architecture.md` §4.8). `GET /usage` exposes the standing for
-> the web client's live indicator.
+> the web client's live indicator. The manual top-up (`POST /companions/:id/budget/topup`, the Feed control)
+> raises `top_up_tokens`; the per-user stamina store is the structural twin of the per-companion
+> energy store (`packages/core/src/quota/stamina-store.ts` ↔ `energy-store.ts`).
 
 ### `sections` — Layer 1: retrieval units (Phase 1)
 | Field | Type | Notes |
@@ -230,7 +233,48 @@ hit carries provenance (source title, chapter, topic, para/page range) + the ver
 
 > Seeded on a successful approved action; browse-only — retrieval-as-hint is deferred to P5.
 
-**_Deferred:_** growth/progression records (P5). Added via new migrations.
+### Phase 4 — Proactivity Engine (✅ built)
+
+The schema the motivation engine uses (full mechanism → `companion-motivation.md`; migrations
+`0012` two-pool budget + companion knobs/dial/weights + proposals.origin, `0013` proactive_outcomes,
+`0014` `proactive_outcomes.note_message_id`, `0015` `companion_affect`, `0016` `user_token_usage.top_up_tokens`
+(the stamina-pool half of the manual feed, twin of energy's top-up)).
+
+- **`proposals.origin`** — `text` enum `chat | explore | autonomous`, default `chat`. Lets the
+  confirm route re-enter the loop only for `chat`-origin proposals (the §4.4 resolution) and bill
+  effectful work to the right budget pool (chat→stamina, explore/autonomous→energy).
+- **`companions`** gains: `proactivity_dial` (`off | gentle | active`, default `gentle` — the
+  tunability dial); `personality_knobs` (jsonb `{focusLength, boredom, distractibility}` — the
+  "creature" constants; **default constants in the PoC**, personalized via onboarding later, null →
+  defaults); `drive_weights` (jsonb — per-drive weights the reinforcement loop updates; **starts
+  neutral**, null → neutral defaults).
+- **`companion_energy`** (new) — the **energy** pool (self-initiated work), mirroring
+  `user_token_usage` (which becomes the **stamina** pool) but keyed per **companion**: window reset,
+  used tokens, a manual top-up grant. Separate counters so autonomy can't starve interaction (§4.8).
+- **`companion_affect`** (new, migration `0015`, Phase 4.2) — the companion's **rolling read of the
+  user's mood**, one row per companion: `valence` ∈ [−1, 1] + a short natural-language `note`. The
+  agent loop upserts it on every *successful* read (last-write-wins); the prior read is fed forward to
+  attune the next reply, and the turn-over-turn change is the reinforcement signal
+  (`companion-motivation.md` §7). The read is taken via a structured **`report_affect` tool call**
+  (named `valence` + `note` fields, provider-parsed) — no free-text parsing. A malformed *field*
+  degrades to neutral (still a genuine read), but a **missing call or provider failure is a non-read**
+  (`null`): the prior baseline is kept and nothing is learned, so a transient hiccup can't masquerade as
+  a neutral mood and fabricate a reward delta. The user's message is **fenced in `<user_message>` tags**
+  in the read prompt so it cannot dictate its own valence.
+- **`proactive_outcomes`** (new) — one row per initiation for the reinforcement loop: the served
+  drive, a drive snapshot at initiation, the linked **`note_message_id`** (the report note the user
+  reacts to — migration `0014`), and the **reward** once resolved. **Phase 4.2: the reward is the
+  *change* in the user's mood** across their reaction to the note (`delta = valence_now −
+  valence_before`, sensed in the agent loop), applied as an additive nudge — not approve/reject, and
+  not the 4.1 absolute-valence critic. Doubles as the helpful-vs-annoying measurement. (`proposal_id`
+  is retained nullable for legacy rows.) Resolution is an **atomic claim** — the reward write is
+  conditioned on `reward IS NULL`, so two racing reactions can't both score one outcome; only the
+  winning claim goes on to nudge the drive weights (no lost update).
+
+Presence is **not** a table — it is a volatile, heartbeat-fed in-memory signal (§4.5).
+
+**_Deferred:_** growth/progression records + the stamina/energy game economy (P5); deeper RL policy
+beyond the v1 additive change-as-reward nudge. Added via new migrations.
 
 ## 2. Harness & Agent-Loop Internals
 
@@ -326,8 +370,9 @@ replayed into the message array in the OpenAI wire shape.
   exits-with-partial.
 - On exit, the turn is appended to `messages` (the transcript / episodic substrate, §1).
 
-**_Deferred:_** proactive `Initiator` wiring + push (P4); transcript compaction when the context
-window fills (P-later).
+The proactive `Initiator` seam is now wired (P4 — the motivation engine in `motivation/`; see §1
+and `companion-motivation.md`). **_Deferred:_** push notifications (P-later) and transcript
+compaction when the context window fills (P-later).
 
 ## 3. Configuration
 
@@ -359,7 +404,13 @@ overridable via `HarnessOptions`), `web_fetch`'s returned-text cap (`web-fetch.t
 chars) and link-harvest cap (`MAX_HARVESTED_LINKS`, default 20), and the `/explore` burst size
 (`inventory.routes.ts`, default 3).
 
-**_Deferred:_** worker tuning, proactivity cadence + intensity dial, push-notification credentials (P4+).
+**P4 tuning constants** are likewise in-code: the motivation **sweep cadence**
+(`MOTIVATION_SWEEP_INTERVAL_MS`, `api/src/index.ts`) and the autonomous-burst focus length
+(`motivation/`). The per-companion **energy** pool reuses `TOKEN_CAP_PER_DAY` as its default cap
+(`api/src/index.ts`), and the post-turn **affect read** runs on `INGESTION_MODEL` (billed to
+stamina) — see §1 and `companion-motivation.md` §7–§8.
+
+**_Deferred:_** worker tuning and push-notification credentials (P-later).
 
 ## 4. Error Handling
 

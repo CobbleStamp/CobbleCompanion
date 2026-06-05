@@ -12,7 +12,7 @@ import { FakeEmbeddingGateway } from '../embedding/fake.js';
 import type { EmbeddingGateway } from '../embedding/gateway.js';
 import { FakeLlmGateway } from '../llm/fake.js';
 import type { LlmGateway } from '../llm/gateway.js';
-import type { TokenQuotaStore, UsageSnapshot } from '../quota/store.js';
+import type { TokenQuotaStore, UsageSnapshot } from '../quota/stamina-store.js';
 import { DrizzleIdentityStore } from '../identity/store.js';
 import {
   ConsolidationService,
@@ -38,6 +38,7 @@ class FakeQuota implements TokenQuotaStore {
   async isOverCap(): Promise<boolean> {
     return this.overCap;
   }
+  async topUp(): Promise<void> {}
 }
 
 const EPISODE_JSON =

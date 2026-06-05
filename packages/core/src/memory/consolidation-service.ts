@@ -15,7 +15,7 @@ import type { IdentityStore } from '../identity/store.js';
 import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import { createUsageAccumulator, meteredLlmGateway, type UsageSink } from '../usage.js';
-import type { TokenQuotaStore } from '../quota/store.js';
+import type { TokenQuotaStore } from '../quota/stamina-store.js';
 import type { PersonalityEvolver } from '../personality/evolve.js';
 import { consolidateWindow, type ConsolidationCandidate } from './consolidation.js';
 import type { ConsolidationTarget } from './consolidation-runner.js';

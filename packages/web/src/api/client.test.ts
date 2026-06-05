@@ -1,11 +1,15 @@
-import type { ChatStreamEvent } from '@cobble/shared';
+import type { ChatStreamEvent, StaminaEnergyDto } from '@cobble/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   confirmProposal,
   createCompanion,
+  fetchBudget,
   fetchMessages,
+  sendHeartbeat,
   sendMessage,
   setAccessTokenGetter,
+  setProactivityDial,
+  topUpBudget,
 } from './client.js';
 
 /**
@@ -202,5 +206,75 @@ describe('confirmProposal error surfacing', () => {
     await expect(confirmProposal('companion-1', 'p1').next()).rejects.toThrow(
       'proposal is no longer pending',
     );
+  });
+});
+
+/**
+ * The Phase 4 vitality methods: each drives the right verb/URL/payload through
+ * `send` and unwraps the response shape the surface expects (the meter, the dial,
+ * the fire-and-forget heartbeat). The generic send mechanics are pinned above.
+ */
+describe('phase 4 budget/dial/heartbeat methods', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  const BUDGET: StaminaEnergyDto = {
+    stamina: {
+      usedTokens: 10,
+      capTokens: 100,
+      percentUsed: 10,
+      resetsAt: '2999-01-01T00:00:00.000Z',
+    },
+    energy: {
+      usedTokens: 20,
+      capTokens: 100,
+      percentUsed: 20,
+      resetsAt: '2999-01-01T00:00:00.000Z',
+    },
+  };
+
+  beforeEach(() => {
+    setAccessTokenGetter(async () => 'tok');
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    setAccessTokenGetter(async () => null);
+  });
+
+  it('GETs the budget meter and returns the parsed DTO', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => BUDGET });
+    const budget = await fetchBudget('c1');
+    expect(budget).toEqual(BUDGET);
+    expect(fetchMock.mock.calls[0]![0]).toContain('/companions/c1/budget');
+  });
+
+  it('POSTs a top-up with the pool + amount payload', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => BUDGET });
+    await topUpBudget('c1', 'energy', 100_000);
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toContain('/companions/c1/budget/topup');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ pool: 'energy', amount: 100_000 });
+  });
+
+  it('PATCHes the proactivity dial and unwraps the dial field', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ dial: 'active' }) });
+    const dial = await setProactivityDial('c1', 'active');
+    expect(dial).toBe('active');
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toContain('/companions/c1/proactivity');
+    expect(init.method).toBe('PATCH');
+    expect(JSON.parse(init.body as string)).toEqual({ dial: 'active' });
+  });
+
+  it('POSTs a heartbeat carrying the live tab visibility', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({}) });
+    await sendHeartbeat('c1', false);
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toContain('/companions/c1/heartbeat');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ tabVisible: false });
   });
 });
