@@ -114,26 +114,42 @@ export async function runAutonomousBurst(
     if (await energy.isExhausted(companionId)) {
       break;
     }
-    const source = await semantic.createSource(companionId, {
-      kind: 'link',
-      title: lead.url,
-      origin: lead.url,
-      rawText: '',
-    });
-    const job = await semantic.createJob(companionId, source.id);
-    await pipeline.run({
-      companionId,
-      sourceId: source.id,
-      jobId: job.id,
-      sourceTitle: lead.url,
-      payload: { kind: 'link', url: lead.url },
-      // Bill this read to ENERGY (not the owner's stamina), and don't defer —
-      // the per-lead exhaustion check above is the gate.
-      meter: { quota: energyQuota, accountId: companionId },
-      announce: false,
-      deferOnOverCap: false,
-    });
-    attempts.push({ leadId: lead.id, sourceId: source.id, jobId: job.id, url: lead.url });
+    // One lead's failure must NOT abort the burst: energy already spent on prior
+    // leads would be wasted, this lead would stay `new` and get re-read/re-billed
+    // next tick (a double-spend), and the report note would never post. Catch
+    // per-lead, park the failed lead at `read` (attempted, not remembered) so it
+    // isn't retried as a fresh lead, and continue — best-effort throughout.
+    try {
+      const source = await semantic.createSource(companionId, {
+        kind: 'link',
+        title: lead.url,
+        origin: lead.url,
+        rawText: '',
+      });
+      const job = await semantic.createJob(companionId, source.id);
+      await pipeline.run({
+        companionId,
+        sourceId: source.id,
+        jobId: job.id,
+        sourceTitle: lead.url,
+        payload: { kind: 'link', url: lead.url },
+        // Bill this read to ENERGY (not the owner's stamina), and don't defer —
+        // the per-lead exhaustion check above is the gate.
+        meter: { quota: energyQuota, accountId: companionId },
+        announce: false,
+        deferOnOverCap: false,
+      });
+      attempts.push({ leadId: lead.id, sourceId: source.id, jobId: job.id, url: lead.url });
+    } catch (error) {
+      logger.error('autonomous read failed for lead', {
+        operation: 'motivation.autonomousBurst.read',
+        companionId,
+        leadId: lead.id,
+        url: lead.url,
+        error,
+      });
+      await parkFailedLead(deps, companionId, lead.id);
+    }
   }
 
   if (attempts.length === 0) {
@@ -148,7 +164,20 @@ export async function runAutonomousBurst(
   const read: { sourceId: string; title: string }[] = [];
   for (const attempt of attempts) {
     const succeeded = statusByJob.get(attempt.jobId) === 'done';
-    await leads.markStatus(companionId, attempt.leadId, succeeded ? 'ingested' : 'read');
+    // Best-effort per attempt: a failed status write must not abort the burst
+    // before the report note posts. The read itself already happened (energy
+    // spent), so always surface it; a missed `ingested` write just risks a
+    // re-read next tick, which the energy gate still bounds.
+    try {
+      await leads.markStatus(companionId, attempt.leadId, succeeded ? 'ingested' : 'read');
+    } catch (error) {
+      logger.error('failed to update lead status after autonomous read', {
+        operation: 'motivation.autonomousBurst.markStatus',
+        companionId,
+        leadId: attempt.leadId,
+        error,
+      });
+    }
     if (succeeded) {
       read.push({ sourceId: attempt.sourceId, title: attempt.url });
     }
@@ -174,6 +203,28 @@ export async function runAutonomousBurst(
     });
   }
   return { read, noteMessageId: message.id };
+}
+
+/**
+ * Park a lead whose read threw at `read` (attempted, not remembered) so the next
+ * tick doesn't re-read and re-bill it as a fresh `new` lead. Best-effort: if the
+ * status write itself fails, log and move on — the burst must still continue.
+ */
+async function parkFailedLead(
+  deps: AutonomousBurstDeps,
+  companionId: string,
+  leadId: string,
+): Promise<void> {
+  try {
+    await deps.leads.markStatus(companionId, leadId, 'read');
+  } catch (error) {
+    deps.logger.error('failed to park failed autonomous lead', {
+      operation: 'motivation.autonomousBurst.park',
+      companionId,
+      leadId,
+      error,
+    });
+  }
 }
 
 /**
