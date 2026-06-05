@@ -477,6 +477,14 @@ Design rules (the "improved staged hybrid"; memory guide → `companionmemory.md
   serialization *is* the burst backstop, so the cap is the whole defense (threat model:
   legitimate-user cost control, not attacker resistance). The runner still caps queued+in-flight
   runs (`INGESTION_QUEUE_MAX`) as a memory backstop. Knobs → `implementation.md` §config.
+  - **Abandoned chat turns are metered by cause.** A turn the **client aborts** mid-stream (it stops
+    reading — a disconnect) is still debited for the tokens already streamed (estimated from the
+    deltas seen), so a client can't stream a full answer and drop before the provider's trailing
+    usage frame to get it free. A turn that breaks on a **provider/infra fault** (the stream throws)
+    is **not** billed for the failed part — we err in the user's favor on our own failures; in a
+    multi-turn tool run the already-completed turns are still billed, only the broken one is free.
+    The metering wrapper (`meteredLlmGateway`, `usage.ts`) makes the distinction: a thrown error
+    leaves the in-flight turn out of the accumulator, a consumer `.return()` deposits the estimate.
 
 #### Supported source formats (acceptance contract)
 

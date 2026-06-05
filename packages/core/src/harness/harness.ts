@@ -5,7 +5,7 @@ import type {
   MessageDto,
   ProposalDto,
 } from '@cobble/shared';
-import type { LlmGateway, LlmMessage } from '../llm/gateway.js';
+import type { LlmGateway, LlmMessage, StreamResult } from '../llm/gateway.js';
 import { toolStepSummary } from '../tools/tool.js';
 import { consoleLogger, type Logger } from '../logging.js';
 import type { MemoryStore } from '../memory/store.js';
@@ -202,107 +202,136 @@ export class Harness {
     const ctx: TurnCtx = { companionId: companion.id, ownerId: ownerId ?? '' };
     const toolDefs = this.registry.list();
 
+    // A finish path debits once and sets this; any other exit (a client
+    // disconnect that `.return()`s the generator, or a provider/infra fault that
+    // throws) is abnormal and the `finally` settles the bill instead.
+    let settledNormally = false;
+    // The stream of the turn in flight, hoisted so the `finally` can forward
+    // termination into it (cancels its connection and lets the metering wrapper
+    // deposit a client-aborted turn's estimate before we read `acc`).
+    let activeStream: AsyncGenerator<string, StreamResult, void> | undefined;
     let lastText = '';
-    for (let iteration = 0; ; iteration++) {
-      if (this.exhausted(iteration, acc.total())) {
-        this.logger.error('turn hit its budget ceiling; exiting with partial', {
-          operation: 'harness.runLoop',
-          companionId: companion.id,
-          iteration,
-          tokens: acc.total().totalTokens,
-        });
-        yield* this.finish(
-          companion.id,
-          ownerId,
-          lastText || PARTIAL_FALLBACK,
-          citations,
-          retrievalUsage,
-          acc,
-        );
-        return;
-      }
-
-      let turnText = '';
-      const stream = llm.stream({
-        messages,
-        model: this.model,
-        ...(toolDefs.length > 0 ? { tools: toolDefs } : {}),
-        ...(signal ? { signal } : {}),
-      });
-      let next = await stream.next();
-      while (!next.done) {
-        turnText += next.value;
-        yield { type: 'token', value: next.value };
-        next = await stream.next();
-      }
-      const { toolCalls } = next.value;
-      lastText = turnText;
-
-      // No tool calls → this is the assistant's answer; the run EXITs (§4.1).
-      if (toolCalls.length === 0) {
-        yield* this.finish(companion.id, ownerId, turnText, citations, retrievalUsage, acc);
-        return;
-      }
-
-      // The model wants tools. Replay its tool-call turn into the running
-      // context so the provider can correlate the results we append next.
-      messages.push({ role: 'assistant', content: turnText, toolCalls });
-
-      // Walk EVERY requested call. Read-only calls run now; each effectful call
-      // is held as its own proposal. We collect all held proposals across the
-      // turn instead of bailing on the first — otherwise a turn that asks to
-      // remember two sources (or to remember one and look up another) would
-      // silently drop everything after the first blocked call. Nothing effectful
-      // runs here regardless; held actions wait for approval.
-      const heldProposals: ProposalDto[] = [];
-      let blocked = false;
-      let blockReason = '';
-      for (const call of toolCalls) {
-        const gated = await this.beforeToolCall(call, ctx);
-        if (isBlock(gated)) {
-          blocked = true;
-          if (gated.proposal) {
-            heldProposals.push(gated.proposal);
-          } else if (blockReason === '') {
-            blockReason = gated.reason;
-          }
-          continue;
+    try {
+      for (let iteration = 0; ; iteration++) {
+        if (this.exhausted(iteration, acc.total())) {
+          this.logger.error('turn hit its budget ceiling; exiting with partial', {
+            operation: 'harness.runLoop',
+            companionId: companion.id,
+            iteration,
+            tokens: acc.total().totalTokens,
+          });
+          settledNormally = true;
+          yield* this.finish(
+            companion.id,
+            ownerId,
+            lastText || PARTIAL_FALLBACK,
+            citations,
+            retrievalUsage,
+            acc,
+          );
+          return;
         }
-        const result = await dispatchTool(
-          this.registry,
-          gated.name,
-          gated.args,
-          ctx,
-          this.logger,
-          call.id,
-        );
-        const logged = await this.afterToolCall(result, gated, ctx);
-        messages.push({
-          role: 'tool',
-          content: logged.content,
-          ...(call.id !== undefined ? { toolCallId: call.id } : {}),
-        });
-        // Record a friendly one-line transcript row for the look-up so the
-        // conversation shows what the companion did (UI-only; filtered out of
-        // the model's context). Best-effort — see recordToolStep.
-        yield* this.recordToolStep(companion.id, gated.name, gated.args);
-      }
 
-      // Any held action means the run pauses for approval: persist the pre-amble
-      // and each proposal row (so they survive reload), surface the proposals,
-      // and EXIT. Approving re-enters via continueAfterApproval (confirm route).
-      if (blocked) {
-        yield* this.finishBlocked(
-          companion.id,
-          ownerId,
-          turnText,
-          heldProposals,
-          blockReason,
-          citations,
-          retrievalUsage,
-          acc,
-        );
-        return;
+        let turnText = '';
+        const stream = llm.stream({
+          messages,
+          model: this.model,
+          ...(toolDefs.length > 0 ? { tools: toolDefs } : {}),
+          ...(signal ? { signal } : {}),
+        });
+        activeStream = stream;
+        let next = await stream.next();
+        while (!next.done) {
+          turnText += next.value;
+          yield { type: 'token', value: next.value };
+          next = await stream.next();
+        }
+        const { toolCalls } = next.value;
+        lastText = turnText;
+
+        // No tool calls → this is the assistant's answer; the run EXITs (§4.1).
+        if (toolCalls.length === 0) {
+          settledNormally = true;
+          yield* this.finish(companion.id, ownerId, turnText, citations, retrievalUsage, acc);
+          return;
+        }
+
+        // The model wants tools. Replay its tool-call turn into the running
+        // context so the provider can correlate the results we append next.
+        messages.push({ role: 'assistant', content: turnText, toolCalls });
+
+        // Walk EVERY requested call. Read-only calls run now; each effectful call
+        // is held as its own proposal. We collect all held proposals across the
+        // turn instead of bailing on the first — otherwise a turn that asks to
+        // remember two sources (or to remember one and look up another) would
+        // silently drop everything after the first blocked call. Nothing effectful
+        // runs here regardless; held actions wait for approval.
+        const heldProposals: ProposalDto[] = [];
+        let blocked = false;
+        let blockReason = '';
+        for (const call of toolCalls) {
+          const gated = await this.beforeToolCall(call, ctx);
+          if (isBlock(gated)) {
+            blocked = true;
+            if (gated.proposal) {
+              heldProposals.push(gated.proposal);
+            } else if (blockReason === '') {
+              blockReason = gated.reason;
+            }
+            continue;
+          }
+          const result = await dispatchTool(
+            this.registry,
+            gated.name,
+            gated.args,
+            ctx,
+            this.logger,
+            call.id,
+          );
+          const logged = await this.afterToolCall(result, gated, ctx);
+          messages.push({
+            role: 'tool',
+            content: logged.content,
+            ...(call.id !== undefined ? { toolCallId: call.id } : {}),
+          });
+          // Record a friendly one-line transcript row for the look-up so the
+          // conversation shows what the companion did (UI-only; filtered out of
+          // the model's context). Best-effort — see recordToolStep.
+          yield* this.recordToolStep(companion.id, gated.name, gated.args);
+        }
+
+        // Any held action means the run pauses for approval: persist the pre-amble
+        // and each proposal row (so they survive reload), surface the proposals,
+        // and EXIT. Approving re-enters via continueAfterApproval (confirm route).
+        if (blocked) {
+          settledNormally = true;
+          yield* this.finishBlocked(
+            companion.id,
+            ownerId,
+            turnText,
+            heldProposals,
+            blockReason,
+            citations,
+            retrievalUsage,
+            acc,
+          );
+          return;
+        }
+      }
+    } finally {
+      // Abnormal exit (no finish path ran): the run was abandoned mid-stream.
+      // Forward termination into the in-flight stream so it cancels its
+      // connection and the metering wrapper deposits a client-aborted turn's
+      // estimated tokens into `acc` BEFORE we read it here. Then debit what was
+      // metered: a client disconnect bills the tokens already streamed to the
+      // user; a provider/infra fault left the failed turn out of `acc`, so only
+      // the already-completed turns are billed — the broken part is free
+      // (billing-crash-compensation).
+      if (!settledNormally) {
+        await activeStream
+          ?.return({ usage: ZERO_USAGE, toolCalls: [] } satisfies StreamResult)
+          .catch(() => undefined);
+        await this.debit(ownerId, addUsage(retrievalUsage, acc.total()));
       }
     }
   }

@@ -6,6 +6,7 @@ import { FakeEmbeddingGateway } from '../embedding/fake.js';
 import { FakeLlmGateway } from '../llm/fake.js';
 import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
+import type { TokenQuotaStore } from '../quota/store.js';
 import { DrizzleIdentityStore } from '../identity/store.js';
 import { DrizzleSemanticMemoryStore } from '../memory/semantic-store.js';
 import { TranscriptMemoryStore } from '../memory/store.js';
@@ -13,6 +14,20 @@ import { Harness } from './harness.js';
 import { createSemanticRetrieveContext } from './semantic-retrieve.js';
 
 const silentLogger: Logger = { error: () => {}, info: () => {} };
+
+/** Records every debit so a test can assert what a turn billed (or didn't). */
+class RecordingQuota implements TokenQuotaStore {
+  readonly recorded: number[] = [];
+  async getUsage(): Promise<{ usedTokens: number; capTokens: number; resetsAt: string }> {
+    return { usedTokens: 0, capTokens: 1_000_000, resetsAt: '' };
+  }
+  async recordUsage(_userId: string, totalTokens: number): Promise<void> {
+    this.recorded.push(totalTokens);
+  }
+  async isOverCap(): Promise<boolean> {
+    return false;
+  }
+}
 
 describe('Harness.runTurn (Phase 0 single-pass loop)', () => {
   let close: () => Promise<void>;
@@ -128,6 +143,62 @@ describe('Harness.runTurn (Phase 0 single-pass loop)', () => {
     const transcript = await memory.getRecentMessages(companion.id, 10);
     expect(transcript).toHaveLength(1);
     expect(transcript[0]?.role).toBe('user');
+  });
+
+  it('does not bill a turn that fails on the provider side (free for our faults)', async () => {
+    const failing: LlmGateway = {
+      async *stream() {
+        yield 'partial answer'; // tokens consumed before the drop
+        throw new Error('network drop');
+      },
+    };
+    const quota = new RecordingQuota();
+    const harness = new Harness({
+      gateway: failing,
+      memory,
+      model: 'test-model',
+      logger: silentLogger,
+      quota,
+    });
+
+    const events = [];
+    for await (const event of harness.runTurn({
+      companion,
+      userContent: 'hi',
+      ownerId: 'owner-1',
+    })) {
+      events.push(event);
+    }
+
+    expect(events.at(-1)?.type).toBe('error');
+    // The failed turn is our fault — nothing is debited (billing-crash-compensation).
+    expect(quota.recorded).toEqual([]);
+  });
+
+  it('bills the tokens already streamed when the client disconnects mid-stream', async () => {
+    const gateway = new FakeLlmGateway([{ chunks: ['Hel', 'lo', ' world'] }]);
+    const quota = new RecordingQuota();
+    const harness = new Harness({
+      gateway,
+      memory,
+      model: 'test-model',
+      logger: silentLogger,
+      quota,
+    });
+
+    // Consume the first token, then disconnect (break) before the stream's usage
+    // frame — the classic stream-then-abort that must not yield free output.
+    for await (const event of harness.runTurn({
+      companion,
+      userContent: 'hi there',
+      ownerId: 'owner-1',
+    })) {
+      if (event.type === 'token') break;
+    }
+
+    // The consumed tokens were metered and debited, not silently dropped.
+    expect(quota.recorded).toHaveLength(1);
+    expect(quota.recorded[0]).toBeGreaterThan(0);
   });
 
   describe('with semantic recall (Phase 1 RetrieveContext)', () => {
