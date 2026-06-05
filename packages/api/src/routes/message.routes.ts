@@ -19,7 +19,7 @@ export function registerMessageRoutes(
   deps: AppDeps,
   requireAuth: RequireAuth,
 ): void {
-  const { identity, memory, harness, quota, consolidation, presence, logger } = deps;
+  const { identity, memory, harness, quota, consolidation, presence, motivation, logger } = deps;
 
   // Read the companion's transcript (oldest-first).
   app.get(
@@ -32,6 +32,10 @@ export function registerMessageRoutes(
         return reply.code(404).send({ error: 'companion not found' });
       }
       const messages = await memory.getRecentMessages(companion.id, 200);
+      // Opening the transcript is a "return" — nudge the motivation engine so it
+      // can offer something on arrival (P4 lazy trigger). Fire-and-forget; the
+      // engine's gate decides whether to act (and stays idle if not).
+      motivation.request(companion.id);
       return reply.send({ messages });
     },
   );
@@ -74,6 +78,10 @@ export function registerMessageRoutes(
       // it only consolidates once enough new turns accrue). Fire-and-forget: the
       // response is already streamed, so this must never affect the turn.
       consolidation.request(companion.id);
+      // Also nudge the motivation engine (P4): the user just engaged, so this is
+      // both an activity tick and a chance to line up post-conversation work. The
+      // engine idles while the user is active; it acts once they go idle/away.
+      motivation.request(companion.id);
     },
   );
 }

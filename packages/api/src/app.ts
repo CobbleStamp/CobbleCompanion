@@ -8,6 +8,7 @@ import type {
   LeadStore,
   Logger,
   MemoryStore,
+  MotivationRunner,
   PresenceStore,
   ProceduralStore,
   ProposalStore,
@@ -67,6 +68,8 @@ export interface AppDeps {
   readonly procedural: ProceduralStore;
   /** Volatile presence signal per companion — the motivation engine's environment (P4). */
   readonly presence: PresenceStore;
+  /** Off-request proactive ticks — routes request it on activity/return (P4). */
+  readonly motivation: MotivationRunner;
   readonly quota: TokenQuotaStore;
   readonly tokenVerifier: TokenVerifier;
   readonly config: AppConfig;

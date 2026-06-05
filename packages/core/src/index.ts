@@ -166,6 +166,8 @@ export {
   type MotivationEngineOptions,
   type MotivationTickResult,
 } from './motivation/engine.js';
+export { MotivationRunner, type MotivationTarget } from './motivation/engine-runner.js';
+export { type MotivationSweepDeps, sweepMotivation } from './motivation/engine-sweep.js';
 
 // Token usage / metering (per-user daily cap)
 export {

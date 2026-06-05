@@ -26,6 +26,7 @@ import {
   DrizzleProceduralStore,
   DrizzleProposalStore,
   DrizzleSemanticMemoryStore,
+  DrizzleCompanionEnergyStore,
   DrizzleTokenQuotaStore,
   DrizzleToolCallLog,
   FakeEmbeddingGateway,
@@ -36,10 +37,13 @@ import {
   IngestionRunner,
   LlmIngestionAnnouncer,
   LlmPersonalityEvolver,
+  MotivationEngine,
+  MotivationRunner,
   OpenRouterEmbeddingGateway,
   OpenRouterGateway,
   resumeDeferredJobs,
   sweepConsolidation,
+  sweepMotivation,
   ToolRegistry,
   TranscriptMemoryStore,
   type EmbeddingGateway,
@@ -211,6 +215,22 @@ async function main(): Promise<void> {
   });
   const consolidation = new ConsolidationRunner(consolidationService, consoleLogger);
 
+  // Motivation engine (P4): the "will" that works the lead inventory on idle.
+  // Self-initiated work draws the per-companion ENERGY pool (separate from the
+  // user stamina pool, so autonomy can't starve chat). The runner keeps ticks off
+  // the request path; routes request() it on activity/return + a periodic sweep.
+  const energy = new DrizzleCompanionEnergyStore(db, { defaultCapTokens: config.tokenCapPerDay });
+  const motivationEngine = new MotivationEngine({
+    identity,
+    presence,
+    energy,
+    leads,
+    proposals,
+    tools,
+    logger: consoleLogger,
+  });
+  const motivation = new MotivationRunner(motivationEngine, consoleLogger);
+
   const app = await buildApp({
     identity,
     memory,
@@ -226,6 +246,7 @@ async function main(): Promise<void> {
     leads,
     procedural,
     presence,
+    motivation,
     quota,
     tokenVerifier: createTokenVerifier(config),
     config,
@@ -264,14 +285,28 @@ async function main(): Promise<void> {
   }, CONSOLIDATION_SWEEP_INTERVAL_MS);
   consolidationTimer.unref();
 
+  // Proactivity catch-up (P4): on startup and on a timer, request a tick for any
+  // companion with unread leads — recovering companions whose activity/return
+  // trigger was lost to a restart. The engine's gate still decides whether to act.
+  const motivationSweepDeps = { leads, runner: motivation, logger: consoleLogger };
+  await sweepMotivation(motivationSweepDeps);
+  const motivationTimer = setInterval(() => {
+    void sweepMotivation(motivationSweepDeps).catch((error: unknown) => {
+      consoleLogger.error('motivation sweep failed', { error });
+    });
+  }, MOTIVATION_SWEEP_INTERVAL_MS);
+  motivationTimer.unref();
+
   // Graceful shutdown: stop the catch-up timers and drain in-flight background
   // work before exit so nothing is killed mid-write. Fastify runs onClose after
   // it has stopped accepting requests, so no new turns trigger work past here.
   app.addHook('onClose', async () => {
     clearInterval(sweepTimer);
     clearInterval(consolidationTimer);
+    clearInterval(motivationTimer);
     await ingestion.whenIdle();
     await consolidation.close();
+    await motivation.close();
   });
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     process.once(signal, () => {
@@ -292,6 +327,9 @@ const DEFERRED_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 /** How often to catch up episodic consolidation (cheap; a pending-tail scan). */
 const CONSOLIDATION_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+
+/** How often to catch up proactive ticks (cheap; a leads-pending scan). */
+const MOTIVATION_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 main().catch((error: unknown) => {
   consoleLogger.error('api failed to start', { error });

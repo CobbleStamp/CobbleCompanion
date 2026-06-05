@@ -110,6 +110,45 @@ describe('proposal routes', () => {
     expect(contents).toContain('Hi there');
   });
 
+  it('confirm of an AUTONOMOUS proposal does NOT re-enter the loop; it nudges the engine', async () => {
+    // A self-directed (motivation-engine) proposal: confirming it executes the
+    // action but must not start an LLM narration turn — deciding what's next is
+    // the engine's job (architecture.md §4.4/§4.5).
+    await ctx.deps.leads.record(companionId, 'https://auto.dev');
+    const [lead] = await ctx.deps.leads.listByStatus(companionId, ['new']);
+    const proposal = await ctx.deps.proposals.create(companionId, {
+      toolName: 'ingest_source',
+      toolArgs: { url: 'https://auto.dev' },
+      summary: 'Remember https://auto.dev',
+      leadId: lead!.id,
+      origin: 'autonomous',
+    });
+    // Capture the engine nudge (override the shared runner instance, test-only).
+    const requested: string[] = [];
+    ctx.deps.motivation.request = (id: string): void => {
+      requested.push(id);
+    };
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/proposals/${proposal.id}/confirm`,
+      headers: auth,
+    });
+
+    expect(res.headers['content-type']).toContain('text/event-stream');
+    expect(res.body).toContain('"type":"done"');
+    // No LLM continuation: the scripted narration "Hi there" must NOT appear.
+    expect(res.body).not.toContain('Hi there');
+    // The action still executed and the lead reached its terminal state.
+    expect(await ctx.deps.semantic.listSources(companionId)).toHaveLength(1);
+    expect(await leadStatus(lead!.id)).toBe('ingested');
+    // The engine was nudged to decide the next move.
+    expect(requested).toContain(companionId);
+    // And no narration row was written to the transcript.
+    const transcript = await ctx.deps.memory.getRecentMessages(companionId, 10);
+    expect(transcript.map((m) => m.content)).not.toContain('Hi there');
+  });
+
   it('does not seed procedural memory when the approved action fails', async () => {
     // A proposal whose held call fails as data (bad url → ingest_source refuses).
     // The user approved it, but the action never happened — so no "learned

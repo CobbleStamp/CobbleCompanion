@@ -23,6 +23,7 @@ import {
   DrizzleProceduralStore,
   DrizzleProposalStore,
   DrizzleSemanticMemoryStore,
+  DrizzleCompanionEnergyStore,
   DrizzleTokenQuotaStore,
   DrizzleToolCallLog,
   FakeEmbeddingGateway,
@@ -33,6 +34,8 @@ import {
   IngestionPipeline,
   IngestionRunner,
   LlmIngestionAnnouncer,
+  MotivationEngine,
+  MotivationRunner,
   ToolRegistry,
   TranscriptMemoryStore,
   type Logger,
@@ -179,6 +182,14 @@ export async function makeTestApp(
   const leads = new DrizzleLeadStore(db);
   const procedural = new DrizzleProceduralStore(db);
   const presence = new InMemoryPresenceStore();
+  const energy = new DrizzleCompanionEnergyStore(db, { defaultCapTokens: config.tokenCapPerDay });
+  const motivation = new MotivationRunner(
+    new MotivationEngine(
+      { identity, presence, energy, leads, proposals, tools, logger: silentLogger },
+      {},
+    ),
+    silentLogger,
+  );
   const deps: AppDeps = {
     identity,
     memory,
@@ -193,6 +204,7 @@ export async function makeTestApp(
     leads,
     procedural,
     presence,
+    motivation,
     harness: new Harness({
       gateway: llmGateway,
       memory,
@@ -243,6 +255,9 @@ export async function makeTestApp(
     close: async () => {
       await ingestion.whenIdle();
       await consolidation.whenIdle();
+      // Drain proactive ticks (GET/POST messages request them) before the db
+      // closes, so a background tick can't write to a torn-down database.
+      await motivation.close();
       await app.close();
       await closeDb();
     },

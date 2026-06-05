@@ -28,6 +28,12 @@ export interface LeadStore {
   ): Promise<readonly LeadRecord[]>;
   /** Advance a lead's lifecycle (new→read→ingested/discarded). */
   markStatus(companionId: string, leadId: string, status: LeadStatus): Promise<void>;
+  /**
+   * Distinct companions with at least one `new` lead — the Phase 4 motivation
+   * sweep's worklist (a companion worth a tick because there's something to
+   * explore). Cheap scan; the engine's gate still decides whether to act.
+   */
+  companionsWithNewLeads(): Promise<readonly string[]>;
 }
 
 export class DrizzleLeadStore implements LeadStore {
@@ -64,5 +70,13 @@ export class DrizzleLeadStore implements LeadStore {
       .update(leads)
       .set({ status })
       .where(and(eq(leads.id, leadId), eq(leads.companionId, companionId)));
+  }
+
+  async companionsWithNewLeads(): Promise<readonly string[]> {
+    const rows = await this.db
+      .selectDistinct({ companionId: leads.companionId })
+      .from(leads)
+      .where(eq(leads.status, 'new'));
+    return rows.map((row) => row.companionId);
   }
 }
