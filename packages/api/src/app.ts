@@ -34,6 +34,7 @@ import { registerInventoryRoutes } from './routes/inventory.routes.js';
 import { registerProposalRoutes } from './routes/proposal.routes.js';
 import { registerSourceRoutes } from './routes/source.routes.js';
 import { registerUsageRoutes } from './routes/usage.routes.js';
+import { registerUuidParamGuard } from './uuid.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -132,6 +133,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     deps.logger.info('request rejected', { ...context, message: error.message });
     return reply.code(statusCode).send({ error: error.message });
   });
+
+  // Reject malformed resource-id path params with a clean 404 before they reach
+  // a DB query (else a bad UUID 500s with Postgres 22P02). Global, so every route
+  // — current and future — is uniform without per-handler boilerplate (uuid.ts).
+  registerUuidParamGuard(app);
 
   app.get('/health', async () => ({ status: 'ok' }));
 

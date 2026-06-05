@@ -31,11 +31,16 @@ describe('app error logging (common/logging.md)', () => {
   });
 
   it('logs an unexpected 5xx with full context and never leaks internals', async () => {
-    // A non-UUID companion id makes the DB driver throw (invalid uuid syntax),
-    // surfacing as an unhandled 500 through the route handler.
+    // Inject a genuine internal failure (a store throw) to exercise the 5xx path.
+    // A valid-format id is needed so the param guard lets it through to the
+    // handler — a malformed id is now a clean 404 (see the next test).
+    const url = '/companions/00000000-0000-0000-0000-000000000000/messages';
+    ctx.deps.identity.getCompanion = async () => {
+      throw new Error('boom');
+    };
     const res = await ctx.app.inject({
       method: 'GET',
-      url: '/companions/not-a-uuid/messages',
+      url,
       headers: ctx.bearerFor('owner@example.com'),
     });
 
@@ -48,11 +53,26 @@ describe('app error logging (common/logging.md)', () => {
     expect(entry.context).toMatchObject({
       operation: 'http.request',
       method: 'GET',
-      url: '/companions/not-a-uuid/messages',
+      url,
       statusCode: 500,
     });
     // The error itself is logged (message + stack), not just a string.
     expect(entry.context.error).toBeInstanceOf(Error);
+  });
+
+  it('rejects a malformed resource id with a clean 404, not a 500', async () => {
+    // A non-UUID id can't name a real row; the param guard short-circuits it to
+    // 404 before any DB query (which would otherwise throw Postgres 22P02 → 500).
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: '/companions/not-a-uuid/messages',
+      headers: ctx.bearerFor('owner@example.com'),
+    });
+
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toEqual({ error: 'companion not found' });
+    // A validation 404 is a client error, not an internal failure — nothing logged.
+    expect(errors).toHaveLength(0);
   });
 
   it('logs a 4xx client error at info severity, not error', async () => {
