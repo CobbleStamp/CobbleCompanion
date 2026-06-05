@@ -28,8 +28,45 @@ export function registerProposalRoutes(
   deps: AppDeps,
   requireAuth: RequireAuth,
 ): void {
-  const { identity, harness, memory, proposals, tools, toolCallLog, procedural, quota, logger } =
-    deps;
+  const {
+    identity,
+    harness,
+    memory,
+    proposals,
+    leads,
+    tools,
+    toolCallLog,
+    procedural,
+    quota,
+    logger,
+  } = deps;
+
+  /**
+   * Close an explore-origin lead's lifecycle when its proposal resolves. A
+   * chat-origin proposal has no lead (`leadId` null) — nothing to advance.
+   * Best-effort: this is bookkeeping, so a failure here must never fail an action
+   * the user already approved/rejected (logging.md).
+   */
+  async function advanceLead(
+    companionId: string,
+    leadId: string | null,
+    status: 'ingested' | 'discarded',
+    proposalId: string,
+  ): Promise<void> {
+    if (!leadId) return;
+    try {
+      await leads.markStatus(companionId, leadId, status);
+    } catch (error) {
+      logger.error('failed to advance lead lifecycle', {
+        operation: 'proposals.advanceLead',
+        companionId,
+        proposalId,
+        leadId,
+        status,
+        error,
+      });
+    }
+  }
 
   // The pending approval queue (the surface polls this while any are pending).
   app.get(
@@ -111,6 +148,11 @@ export function registerProposalRoutes(
             error,
           });
         }
+        // Close the originating lead's lifecycle: a successfully ingested lead
+        // leaves the reading list as 'ingested' (it was stranded at 'read'
+        // otherwise — M2). Only on real success; a failed ingest stays 'read' so
+        // it isn't recorded as read-into-memory when nothing was.
+        await advanceLead(companion.id, proposal.leadId, 'ingested', proposalId);
       }
       // The approved action's outcome becomes a friendly transcript row (a UI
       // record, filtered out of the model's context), then the agent loop
@@ -166,6 +208,9 @@ export function registerProposalRoutes(
       if (!proposal) {
         return reply.code(409).send({ error: 'proposal is no longer pending' });
       }
+      // A declined explore proposal discards its lead: it leaves the reading list
+      // and is never re-proposed (it was stranded at 'read' otherwise — M2).
+      await advanceLead(companion.id, proposal.leadId, 'discarded', proposalId);
       return reply.code(204).send();
     },
   );

@@ -178,6 +178,7 @@ hit carries provenance (source title, chapter, topic, para/page range) + the ver
 | Field | Type | Notes |
 |---|---|---|
 | `id` / `companion_id` | uuid | cascade FK |
+| `lead_id` | uuid, nullable | FK → `leads.id` (`on delete set null`). The reading-list lead this proposal came from (explore-origin); null for a chat-origin proposal. Resolving the proposal advances this lead's lifecycle |
 | `tool_name` | text | the effectful tool the companion wants to run |
 | `tool_args` | jsonb | the serialized call, run verbatim once approved |
 | `tool_call_id` | text, nullable | the provider's tool-call id (audit/correlation) |
@@ -188,6 +189,10 @@ hit carries provenance (source title, chapter, topic, para/page range) + the ver
 > **Exactly-once:** confirm/reject is a conditional update `WHERE status='pending'` that returns the
 > row only to the winner (mirrors the deferred-job claim, `architecture.md` §4.8), so a double-confirm
 > cannot double-execute. Index `(companion_id, status)`.
+>
+> **Lead closure:** resolving an explore-origin proposal advances its `lead_id` — a successful confirm
+> marks the lead `ingested`, a reject marks it `discarded` (best-effort, never fails the user's action).
+> Without the link a lead would be stranded at `read` forever — clogging `/leads` and never re-proposed.
 
 ### `tool_calls` — audit log (Phase 3)
 | Field | Type | Notes |
@@ -209,6 +214,10 @@ hit carries provenance (source title, chapter, topic, para/page range) + the ver
 
 > The body-then-will substrate: filled by `web_fetch` link harvest, worked on command in P3
 > (`/explore`), and by the motivation engine on idle in P4 (`architecture.md` §4.5).
+>
+> **Lifecycle:** `/explore` advances `new`→`read` and enqueues a proposal carrying the lead's id; the
+> terminal states are written when that proposal resolves — confirm→`ingested`, reject→`discarded` (see
+> `proposals.lead_id`). `/leads` lists only `new`+`read`, so a resolved lead leaves the reading list.
 
 ### `procedural_memories` — learned workflows (Phase 3 seed)
 | Field | Type | Notes |

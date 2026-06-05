@@ -14,6 +14,8 @@ export interface CreateProposalInput {
   readonly toolArgs: Record<string, unknown>;
   readonly toolCallId?: string;
   readonly summary: string;
+  /** The reading-list lead this proposal came from, if any (explore-origin). */
+  readonly leadId?: string;
 }
 
 export interface ProposalRecord {
@@ -24,6 +26,8 @@ export interface ProposalRecord {
   readonly toolCallId: string | null;
   readonly summary: string;
   readonly status: ProposalStatus;
+  /** Originating lead id (explore-origin), or null for a chat-origin proposal. */
+  readonly leadId: string | null;
   readonly createdAt: Date;
   readonly resolvedAt: Date | null;
 }
@@ -58,6 +62,7 @@ export class DrizzleProposalStore implements ProposalStore {
         toolName: input.toolName,
         toolArgs: input.toolArgs,
         ...(input.toolCallId !== undefined ? { toolCallId: input.toolCallId } : {}),
+        ...(input.leadId !== undefined ? { leadId: input.leadId } : {}),
         summary: input.summary,
       })
       .returning();
@@ -127,6 +132,7 @@ function toRecord(row: ProposalRow): ProposalRecord {
     toolCallId: row.toolCallId,
     summary: row.summary,
     status: row.status,
+    leadId: row.leadId,
     createdAt: row.createdAt,
     resolvedAt: row.resolvedAt,
   };

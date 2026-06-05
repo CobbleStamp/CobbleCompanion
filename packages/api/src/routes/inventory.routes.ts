@@ -59,6 +59,10 @@ export function registerInventoryRoutes(
           toolName: 'ingest_source',
           toolArgs: { url: lead.url },
           summary,
+          // Carry the lead id so resolving the proposal can close its lifecycle:
+          // approve→'ingested', reject→'discarded' (proposal.routes.ts). Without
+          // this link the lead would be stranded at 'read' forever.
+          leadId: lead.id,
         });
         await leads.markStatus(companion.id, lead.id, 'read');
         created.push(toProposalDto(proposal));

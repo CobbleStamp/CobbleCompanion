@@ -36,6 +36,35 @@ describe('proposal routes', () => {
     return proposal.id;
   }
 
+  /**
+   * Enqueue a pending proposal the way `explore` does — from a reading-list lead,
+   * so the proposal carries its `leadId`. Returns both ids so a test can confirm
+   * /reject the proposal and then assert the lead's resulting lifecycle status.
+   */
+  async function seedExploreProposal(
+    url = 'https://x.dev/post',
+  ): Promise<{ proposalId: string; leadId: string }> {
+    await ctx.deps.leads.record(companionId, url);
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/explore`,
+      headers: auth,
+    });
+    const [lead] = await ctx.deps.leads.listByStatus(companionId, ['read']);
+    return { proposalId: res.json().proposals[0].id, leadId: lead!.id };
+  }
+
+  /** The status a lead currently holds, or undefined if it left every list. */
+  async function leadStatus(leadId: string): Promise<string | undefined> {
+    const all = await ctx.deps.leads.listByStatus(companionId, [
+      'new',
+      'read',
+      'ingested',
+      'discarded',
+    ]);
+    return all.find((l) => l.id === leadId)?.status;
+  }
+
   it('lists the pending approval queue', async () => {
     await seedProposal();
     const res = await ctx.app.inject({
@@ -116,6 +145,51 @@ describe('proposal routes', () => {
     expect(second.statusCode).toBe(409);
     // Only one source was created — no double-execute.
     expect(await ctx.deps.semantic.listSources(companionId)).toHaveLength(1);
+  });
+
+  it('confirm advances the originating lead to ingested (it leaves the reading list — M2)', async () => {
+    const { proposalId, leadId } = await seedExploreProposal();
+    // Before confirm the lead is parked at 'read' (explore advanced it there).
+    expect(await leadStatus(leadId)).toBe('read');
+
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/proposals/${proposalId}/confirm`,
+      headers: auth,
+    });
+
+    // The successfully-ingested lead reaches its terminal state and is gone from
+    // the reading-list view (GET /leads lists only new + read).
+    expect(await leadStatus(leadId)).toBe('ingested');
+    expect(await ctx.deps.leads.listByStatus(companionId, ['new', 'read'])).toHaveLength(0);
+  });
+
+  it('confirm of a FAILED ingest leaves the lead at read, not ingested', async () => {
+    // The held call fails as data (bad url), so the lead was never read into
+    // memory — it must not be marked 'ingested' (only a real success counts).
+    const { proposalId, leadId } = await seedExploreProposal('not-a-url');
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/proposals/${proposalId}/confirm`,
+      headers: auth,
+    });
+    expect(await ctx.deps.semantic.listSources(companionId)).toHaveLength(0);
+    expect(await leadStatus(leadId)).toBe('read');
+  });
+
+  it('reject advances the originating lead to discarded (never re-proposed — M2)', async () => {
+    const { proposalId, leadId } = await seedExploreProposal();
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/proposals/${proposalId}/reject`,
+      headers: auth,
+    });
+    expect(res.statusCode).toBe(204);
+
+    // The declined lead reaches 'discarded': out of the reading list, and a
+    // further explore (which pulls only 'new') will never re-propose it.
+    expect(await leadStatus(leadId)).toBe('discarded');
+    expect(await ctx.deps.leads.listByStatus(companionId, ['new', 'read'])).toHaveLength(0);
   });
 
   it('reject resolves the proposal without executing anything', async () => {

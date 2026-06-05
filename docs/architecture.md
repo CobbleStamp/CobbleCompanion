@@ -249,6 +249,9 @@ companion *narrates* the result and continues whatever the user asked ("…then 
 saved") — rather than the conversation dead-ending on a raw tool line. No suspended generator is
 resumed; the transcript is the only state (§4.7). Approving an action mid-continuation can itself
 produce a new proposal — the gate re-applies. **Reject** resolves the proposal without executing.
+When the proposal is **explore-origin** (it carries the originating `lead_id`), resolving it also
+closes that lead's lifecycle — confirm→`ingested`, reject→`discarded` — so a worked lead leaves the
+reading list instead of being stranded at `read` (best-effort; never fails the user's action).
 
 > **Open — who decides "what next" after an approved action (settle when the motivation engine
 > lands, §4.5).** Re-entry on approval is right for **chat**: a conversational partner is present, so

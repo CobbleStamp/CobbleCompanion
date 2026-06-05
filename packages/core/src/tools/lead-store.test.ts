@@ -48,4 +48,25 @@ describe('DrizzleLeadStore', () => {
       'https://a.dev',
     ]);
   });
+
+  it('reaches the terminal states (ingested / discarded) and leaves the reading list', async () => {
+    await store.record(companionId, 'https://ingest.dev');
+    await store.record(companionId, 'https://discard.dev');
+    const all = await store.listByStatus(companionId, ['new']);
+    const ingest = all.find((l) => l.url === 'https://ingest.dev')!;
+    const discard = all.find((l) => l.url === 'https://discard.dev')!;
+
+    // Approve → ingested; reject → discarded (the two ways a lead leaves the list).
+    await store.markStatus(companionId, ingest.id, 'ingested');
+    await store.markStatus(companionId, discard.id, 'discarded');
+
+    // Both are gone from the reading-list view (which lists only new + read).
+    expect(await store.listByStatus(companionId, ['new', 'read'])).toHaveLength(0);
+    expect((await store.listByStatus(companionId, ['ingested'])).map((l) => l.url)).toEqual([
+      'https://ingest.dev',
+    ]);
+    expect((await store.listByStatus(companionId, ['discarded'])).map((l) => l.url)).toEqual([
+      'https://discard.dev',
+    ]);
+  });
 });

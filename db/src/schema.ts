@@ -323,6 +323,12 @@ export const proposals = pgTable(
     companionId: uuid('companion_id')
       .notNull()
       .references(() => companions.id, { onDelete: 'cascade' }),
+    // The lead this proposal originated from (explore turns a reading-list lead
+    // into a proposal), so resolving the proposal can advance the lead's
+    // lifecycle: approve→'ingested', reject→'discarded'. Null for chat-origin
+    // proposals that never came from a lead. `set null` on lead deletion keeps
+    // the proposal's audit row but drops the dangling link.
+    leadId: uuid('lead_id').references(() => leads.id, { onDelete: 'set null' }),
     toolName: text('tool_name').notNull(),
     // The serialized tool-call arguments to run verbatim once approved.
     toolArgs: jsonb('tool_args').notNull(),

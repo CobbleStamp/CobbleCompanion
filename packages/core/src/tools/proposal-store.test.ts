@@ -3,11 +3,13 @@
 import { createTestDatabase } from '@cobble/db/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DrizzleIdentityStore } from '../identity/store.js';
+import { DrizzleLeadStore } from './lead-store.js';
 import { DrizzleProposalStore } from './proposal-store.js';
 
 describe('DrizzleProposalStore', () => {
   let close: () => Promise<void>;
   let store: DrizzleProposalStore;
+  let leadStore: DrizzleLeadStore;
   let companionId: string;
   let otherCompanionId: string;
 
@@ -15,6 +17,7 @@ describe('DrizzleProposalStore', () => {
     const created = await createTestDatabase();
     close = created.close;
     store = new DrizzleProposalStore(created.db);
+    leadStore = new DrizzleLeadStore(created.db);
     const identity = new DrizzleIdentityStore(created.db);
     const user = await identity.ensureUserByEmail('owner@example.com');
     const a = await identity.createCompanion(user.id, {
@@ -47,6 +50,27 @@ describe('DrizzleProposalStore', () => {
 
     const pending = await store.listPending(companionId);
     expect(pending.map((p) => p.id)).toEqual([created.id]);
+    // A chat-origin proposal has no originating lead.
+    expect(created.leadId).toBeNull();
+  });
+
+  it('persists the originating lead id and round-trips it (explore-origin)', async () => {
+    await leadStore.record(companionId, 'https://x.dev');
+    const [lead] = await leadStore.listByStatus(companionId, ['new']);
+
+    const created = await store.create(companionId, {
+      toolName: 'ingest_source',
+      toolArgs: { url: 'https://x.dev' },
+      summary: 'Remember https://x.dev',
+      leadId: lead!.id,
+    });
+    expect(created.leadId).toBe(lead!.id);
+
+    // The link survives a read back (the confirm/reject route reads it to advance
+    // the lead) — on create, on list, and on resolve.
+    expect((await store.get(companionId, created.id))?.leadId).toBe(lead!.id);
+    expect((await store.listPending(companionId))[0]?.leadId).toBe(lead!.id);
+    expect((await store.markResolved(companionId, created.id, 'approved'))?.leadId).toBe(lead!.id);
   });
 
   it('resolves a pending proposal exactly once (a second confirm is a no-op)', async () => {
