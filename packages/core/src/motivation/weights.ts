@@ -21,9 +21,10 @@ function clamp(value: number): number {
 }
 
 /**
- * Return a new weight vector with `drive` nudged by `reward` (immutable —
- * `coding-style` immutability). Positive reward raises the weight, negative
- * lowers it, scaled by the learning rate and clamped.
+ * Return a new weight vector with `drive` nudged toward `reward` (immutable —
+ * `coding-style` immutability). EMA update `w ← w + α·(reward − w)`: positive
+ * reward raises the weight, negative lowers it, converging toward the reward
+ * value at rate `alpha`, clamped to the floor/ceiling.
  */
 export function updateDriveWeights(
   current: DriveWeights,
@@ -33,6 +34,6 @@ export function updateDriveWeights(
 ): DriveWeights {
   return {
     ...current,
-    [drive]: clamp(current[drive] + alpha * reward),
+    [drive]: clamp(current[drive] + alpha * (reward - current[drive])),
   };
 }
