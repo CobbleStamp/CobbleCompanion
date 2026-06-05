@@ -95,6 +95,25 @@ describe('senseAffect', () => {
     expect(recordUsage.mock.calls[0]![1]).toBeGreaterThan(0);
   });
 
+  it('keeps a valid reading even when billing throws (billing must not void it)', async () => {
+    const quota = {
+      recordUsage: vi.fn(async () => {
+        throw new Error('quota store down');
+      }),
+    } as unknown as TokenQuotaStore;
+    const reading = await senseAffect(
+      {
+        llm: new FakeLlmGateway(reportAffect({ valence: 0.9, note: 'delighted' })),
+        model: 'fake',
+        logger: silent,
+        quota,
+      },
+      { ownerId: 'owner', recentContext: '', userText: 'this is wonderful' },
+    );
+    // The model already judged the mood; a quota hiccup must not drop it to neutral.
+    expect(reading).toEqual({ valence: 0.9, note: 'delighted' });
+  });
+
   it('is neutral and never throws when the gateway fails', async () => {
     const llm = {
       // eslint-disable-next-line require-yield

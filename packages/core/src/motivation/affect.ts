@@ -111,15 +111,28 @@ export async function senseAffect(
         tools: [REPORT_AFFECT_TOOL],
       }),
     );
+    const call = result.toolCalls.find((toolCall) => toolCall.name === REPORT_AFFECT);
+    const reading = call ? coerceReading(call.args) : NEUTRAL_AFFECT;
+
+    // Bill best-effort AFTER the reading is in hand: a quota hiccup is our infra
+    // fault and must never void a valid read (which would poison the delta with a
+    // fake neutral). Log it and carry on (logging.md, billing-crash policy).
     if (deps.quota && params.ownerId) {
       const total = usage.total().totalTokens;
       if (total > 0) {
-        await deps.quota.recordUsage(params.ownerId, total);
+        try {
+          await deps.quota.recordUsage(params.ownerId, total);
+        } catch (error) {
+          deps.logger.error('failed to record affect read usage', {
+            operation: 'motivation.affect.bill',
+            ownerId: params.ownerId,
+            error,
+          });
+        }
       }
     }
 
-    const call = result.toolCalls.find((toolCall) => toolCall.name === REPORT_AFFECT);
-    return call ? coerceReading(call.args) : NEUTRAL_AFFECT;
+    return reading;
   } catch (error) {
     deps.logger.error('failed to sense user affect', {
       operation: 'motivation.affect.sense',
