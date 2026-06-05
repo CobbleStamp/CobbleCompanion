@@ -120,6 +120,7 @@ export {
   type DrizzleCompanionEnergyStoreOptions,
   type EnergySnapshot,
 } from './quota/energy-store.js';
+export { EnergyQuotaAdapter } from './quota/energy-quota-adapter.js';
 
 // Motivation engine — presence (Phase 4)
 export {
