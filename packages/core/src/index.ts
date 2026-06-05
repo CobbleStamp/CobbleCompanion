@@ -173,7 +173,7 @@ export {
 } from './motivation/autonomous-burst.js';
 export { MotivationRunner, type MotivationTarget } from './motivation/engine-runner.js';
 export { type MotivationSweepDeps, sweepMotivation } from './motivation/engine-sweep.js';
-// Reinforcement v1 — outcome store, EMA weight update, reward attribution (Phase 4)
+// Reinforcement — outcome store, change-as-reward weight update, attribution (Phase 4)
 export {
   DrizzleProactiveOutcomeStore,
   type ProactiveOutcomeRecord,
@@ -183,16 +183,12 @@ export {
 export {
   DEFAULT_LEARNING_RATE,
   nudgeDriveWeight,
-  updateDriveWeights,
   WEIGHT_CEILING,
   WEIGHT_FLOOR,
 } from './motivation/weights.js';
-export {
-  applyConversationReward,
-  type ConversationRewardDeps,
-  MIN_REWARD_TO_LEARN,
-  parseValence,
-} from './motivation/sentiment-reward.js';
+// Reinforcement (Phase 4.2) — the will's half: attribute the mood change to the
+// pending drive-serving act and nudge that drive's weight.
+export { reinforceFromDelta, type ReinforceDeps } from './motivation/reinforce.js';
 // Affect perception (Phase 4.2) — the rolling read of the user's mood, sensed
 // every turn in the agent loop; drives attunement (fast loop) + reward (slow loop).
 export {

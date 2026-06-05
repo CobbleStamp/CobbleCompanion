@@ -5,10 +5,10 @@
  * visible "personality" the companion is raised into, and they seed the Phase 5
  * relationship-growth axis.
  *
- * Two update rules coexist during the 4.1→4.2 transition:
- * - {@link updateDriveWeights} (4.1) — EMA *toward* an absolute valence target.
- * - {@link nudgeDriveWeight} (4.2) — additive nudge by a *change* signal (delta).
- *   This is the current rule; the EMA is removed once its last caller goes (M6).
+ * The update rule is {@link nudgeDriveWeight} (Phase 4.2): an additive nudge by a
+ * *change* signal (the turn-over-turn mood delta). It replaced the earlier
+ * EMA-toward-an-absolute-target rule, which was wrong for a change signal — a zero
+ * delta would have pulled the weight toward zero and slowly killed the drive.
  */
 
 import type { Drive, DriveWeights } from '@cobble/shared';
@@ -22,24 +22,6 @@ export const WEIGHT_CEILING = 1;
 
 function clamp(value: number): number {
   return Math.min(WEIGHT_CEILING, Math.max(WEIGHT_FLOOR, value));
-}
-
-/**
- * Return a new weight vector with `drive` nudged toward `reward` (immutable —
- * `coding-style` immutability). EMA update `w ← w + α·(reward − w)`: positive
- * reward raises the weight, negative lowers it, converging toward the reward
- * value at rate `alpha`, clamped to the floor/ceiling.
- */
-export function updateDriveWeights(
-  current: DriveWeights,
-  drive: Drive,
-  reward: number,
-  alpha: number = DEFAULT_LEARNING_RATE,
-): DriveWeights {
-  return {
-    ...current,
-    [drive]: clamp(current[drive] + alpha * (reward - current[drive])),
-  };
 }
 
 /**

@@ -1,5 +1,4 @@
 import { sendMessageSchema } from '@cobble/shared';
-import { applyConversationReward } from '@cobble/core';
 import type { FastifyInstance } from 'fastify';
 import type { AppDeps } from '../app.js';
 import type { RequireAuth } from '../auth-guard.js';
@@ -20,18 +19,7 @@ export function registerMessageRoutes(
   deps: AppDeps,
   requireAuth: RequireAuth,
 ): void {
-  const {
-    identity,
-    memory,
-    harness,
-    quota,
-    consolidation,
-    presence,
-    motivation,
-    rewards,
-    llm,
-    logger,
-  } = deps;
+  const { identity, memory, harness, quota, consolidation, presence, motivation, logger } = deps;
 
   // Read the companion's transcript (oldest-first).
   app.get(
@@ -74,17 +62,11 @@ export function registerMessageRoutes(
       if (overCap) {
         return reply.code(429).send({ error: overCap });
       }
-      // The companion learns like a person: if its last self-directed act is still
-      // awaiting a reaction, THIS message is that reaction — read its sentiment and
-      // let it nudge the served drive's weight (P4.1). Run before the reply so the
-      // critic scores the reaction in isolation. Best-effort: never blocks chat.
-      await applyConversationReward(
-        { rewards, identity, memory, llm, model: deps.config.ingestionModel, quota, logger },
-        companion.id,
-        request.userId!,
-        parsed.data.content,
-      );
-
+      // The companion learns like a person, but the sensing now lives INSIDE the
+      // agent loop (Phase 4.2): the harness reads the user's mood every turn and,
+      // when a self-directed act is awaiting a reaction, lets the *change* in mood
+      // nudge the served drive's weight. Nothing to do here on the hot path — it
+      // runs after the reply streams, so it can never block chat.
       await streamSse(
         reply,
         harness.runTurn({

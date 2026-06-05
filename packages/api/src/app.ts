@@ -7,7 +7,6 @@ import type {
   IdentityStore,
   IngestionRunner,
   LeadStore,
-  LlmGateway,
   Logger,
   MemoryStore,
   MotivationRunner,
@@ -79,8 +78,6 @@ export interface AppDeps {
   readonly energy: CompanionEnergyStore;
   /** Reinforcement log — one outcome per proactive initiation (P4). */
   readonly rewards: ProactiveOutcomeStore;
-  /** Raw LLM gateway — the sentiment critic reads the user's reaction (P4.1). */
-  readonly llm: LlmGateway;
   readonly tokenVerifier: TokenVerifier;
   readonly config: AppConfig;
   readonly logger: Logger;

@@ -23,6 +23,7 @@ import {
   DrizzleProceduralStore,
   DrizzleProposalStore,
   DrizzleSemanticMemoryStore,
+  DrizzleCompanionAffectStore,
   DrizzleCompanionEnergyStore,
   DrizzleTokenQuotaStore,
   DrizzleToolCallLog,
@@ -38,6 +39,7 @@ import {
   LlmIngestionAnnouncer,
   MotivationEngine,
   MotivationRunner,
+  reinforceFromDelta,
   ToolRegistry,
   TranscriptMemoryStore,
   type Logger,
@@ -189,6 +191,7 @@ export async function makeTestApp(
   const presence = new InMemoryPresenceStore();
   const energy = new DrizzleCompanionEnergyStore(db, { defaultCapTokens: config.tokenCapPerDay });
   const rewards = new DrizzleProactiveOutcomeStore(db);
+  const affectStore = new DrizzleCompanionAffectStore(db);
   const motivation = new MotivationRunner(
     new MotivationEngine(
       {
@@ -231,6 +234,13 @@ export async function makeTestApp(
       model: 'test-model',
       quota,
       logger: silentLogger,
+      // P4.2 affect loop: sense mood each turn, attune, and learn from the change.
+      affect: {
+        store: affectStore,
+        model: config.ingestionModel,
+        reinforce: (companionId, delta) =>
+          reinforceFromDelta({ rewards, identity, logger: silentLogger }, companionId, delta),
+      },
       registry: tools,
       beforeToolCall: createApprovalGate(proposals, tools, silentLogger),
       afterToolCall: createLoggingAfterToolCall(toolCallLog, silentLogger),
@@ -254,7 +264,6 @@ export async function makeTestApp(
       ),
     }),
     quota,
-    llm: llmGateway,
     tokenVerifier,
     config,
     logger,

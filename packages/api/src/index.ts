@@ -27,6 +27,7 @@ import {
   DrizzleProactiveOutcomeStore,
   DrizzleProposalStore,
   DrizzleSemanticMemoryStore,
+  DrizzleCompanionAffectStore,
   DrizzleCompanionEnergyStore,
   DrizzleTokenQuotaStore,
   DrizzleToolCallLog,
@@ -42,6 +43,7 @@ import {
   MotivationRunner,
   OpenRouterEmbeddingGateway,
   OpenRouterGateway,
+  reinforceFromDelta,
   resumeDeferredJobs,
   sweepConsolidation,
   sweepMotivation,
@@ -91,6 +93,10 @@ async function main(): Promise<void> {
 
   const identity = new DrizzleIdentityStore(db);
   const memory = new TranscriptMemoryStore(db);
+  // Reinforcement log + the rolling affect read — built early so the harness can
+  // sense the user's mood each turn (Phase 4.2) and the will can learn from it.
+  const rewards = new DrizzleProactiveOutcomeStore(db);
+  const affectStore = new DrizzleCompanionAffectStore(db);
   const semantic = new DrizzleSemanticMemoryStore(db);
   const episodic = new DrizzleEpisodicMemoryStore(db);
   const quota = new DrizzleTokenQuotaStore(db, { defaultCapTokens: config.tokenCapPerDay });
@@ -160,6 +166,15 @@ async function main(): Promise<void> {
     model: config.llmModel,
     quota,
     logger: consoleLogger,
+    // P4.2: sense the user's mood each turn (cheap ingestion model, billed to
+    // stamina), attune the next reply to it, and let the *change* nudge the served
+    // drive's weight when a self-directed act is awaiting a reaction.
+    affect: {
+      store: affectStore,
+      model: config.ingestionModel,
+      reinforce: (companionId, delta) =>
+        reinforceFromDelta({ rewards, identity, logger: consoleLogger }, companionId, delta),
+    },
     // P3: the tools the model may call, the propose→approve gate (effectful calls
     // are held for approval), and the audit log (every call is logged).
     registry: tools,
@@ -221,7 +236,6 @@ async function main(): Promise<void> {
   // user stamina pool, so autonomy can't starve chat). The runner keeps ticks off
   // the request path; routes request() it on activity/return + a periodic sweep.
   const energy = new DrizzleCompanionEnergyStore(db, { defaultCapTokens: config.tokenCapPerDay });
-  const rewards = new DrizzleProactiveOutcomeStore(db);
   const motivationEngine = new MotivationEngine({
     identity,
     presence,
@@ -256,7 +270,6 @@ async function main(): Promise<void> {
     quota,
     energy,
     rewards,
-    llm: llmGateway,
     tokenVerifier: createTokenVerifier(config),
     config,
     logger: consoleLogger,
