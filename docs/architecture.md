@@ -340,6 +340,10 @@ flowchart LR
 > conversational, and distinct from deciding the next move. Until this engine exists, Phase 3 simply
 > re-enters on every approval (the known wart called out in §4.4).
 
+**Full mechanism — the drive taxonomy, the arbitration math, seeding from temperament, the learning
+loop, and worked examples — is canonical in `companion-motivation.md`.** This section is the
+loop-integration overview.
+
 The engine's parts (each additive, no loop change):
 
 - **Trigger (lazy, web-appropriate)** — the engine ticks on **user activity + on return** (the

@@ -264,5 +264,6 @@ threat model: `architecture.md` / `implementation.md`.)
 | [`implementation.md`](./implementation.md) | Data models, harness internals, configuration, security |
 | [`documentation-rules.md`](./documentation-rules.md) | Doc taxonomy, naming, and cross-referencing rules |
 | [`ontology.md`](./ontology.md) | Knowledge ontology contract & governance (fixed core types + rules for the dynamic part) |
+| [`companion-motivation.md`](./companion-motivation.md) | The motivation/proactivity mechanism — drives, arbitration, seeding, learning (Phase 4) |
 | [`../README.md`](../README.md) | Orientation & setup |
 | [`../AGENTS.md`](../AGENTS.md) · [`../CLAUDE.md`](../CLAUDE.md) | Working rules · AI-agent entry point |
