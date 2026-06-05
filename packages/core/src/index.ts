@@ -158,12 +158,19 @@ export {
   runExploreBurst,
 } from './motivation/explore-burst.js';
 export {
-  DEFAULT_ENERGY_PER_PROPOSAL,
   MotivationEngine,
   type MotivationEngineDeps,
   type MotivationEngineOptions,
   type MotivationTickResult,
 } from './motivation/engine.js';
+export {
+  type AutonomousBurstDeps,
+  type AutonomousBurstParams,
+  type AutonomousBurstResult,
+  type AutonomousIngestStore,
+  type CompanionVoice,
+  runAutonomousBurst,
+} from './motivation/autonomous-burst.js';
 export { MotivationRunner, type MotivationTarget } from './motivation/engine-runner.js';
 export { type MotivationSweepDeps, sweepMotivation } from './motivation/engine-sweep.js';
 // Reinforcement v1 — outcome store, EMA weight update, reward attribution (Phase 4)
@@ -179,12 +186,6 @@ export {
   WEIGHT_CEILING,
   WEIGHT_FLOOR,
 } from './motivation/weights.js';
-export {
-  applyProposalReward,
-  REWARD_BY_SIGNAL,
-  type RewardDeps,
-  type RewardSignal,
-} from './motivation/reward.js';
 
 // Token usage / metering (per-user daily cap)
 export {

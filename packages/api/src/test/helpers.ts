@@ -33,6 +33,7 @@ import {
   InMemoryPresenceStore,
   IngestionPipeline,
   IngestionRunner,
+  type IngestionTarget,
   DrizzleProactiveOutcomeStore,
   LlmIngestionAnnouncer,
   MotivationEngine,
@@ -104,6 +105,12 @@ export interface TestAppOptions {
   readonly config?: Partial<AppConfig>;
   /** Replace the runner entirely (fault injection, e.g. a queue-full race). */
   readonly ingestion?: IngestionRunner;
+  /**
+   * Replace the pipeline the motivation engine drives for autonomous reads. A
+   * real read needs the network + scripted LLM passes, so route/DoD tests inject
+   * a fake that marks the job done and bills the meter (Phase 4.1).
+   */
+  readonly motivationPipeline?: IngestionTarget;
 }
 
 export async function makeTestApp(
@@ -125,31 +132,28 @@ export async function makeTestApp(
   const llmGateway = new FakeLlmGateway(chunks);
   const tokenVerifier = new FakeTokenVerifier();
   // Queue cap comes from config, mirroring production wiring (index.ts).
+  const ingestionPipeline = new IngestionPipeline({
+    semantic,
+    llm: llmGateway,
+    embeddings,
+    ingestionModel: config.ingestionModel,
+    embeddingModel: config.embeddingModel,
+    embeddingDimensions: config.embeddingDimensions,
+    useContextHeader: config.useContextHeader,
+    quota,
+    logger: silentLogger,
+    announcer: new LlmIngestionAnnouncer({
+      identity,
+      memory,
+      llm: llmGateway,
+      model: config.ingestionModel,
+      quota,
+      logger: silentLogger,
+    }),
+  });
   const ingestion =
     options.ingestion ??
-    new IngestionRunner(
-      new IngestionPipeline({
-        semantic,
-        llm: llmGateway,
-        embeddings,
-        ingestionModel: config.ingestionModel,
-        embeddingModel: config.embeddingModel,
-        embeddingDimensions: config.embeddingDimensions,
-        useContextHeader: config.useContextHeader,
-        quota,
-        logger: silentLogger,
-        announcer: new LlmIngestionAnnouncer({
-          identity,
-          memory,
-          llm: llmGateway,
-          model: config.ingestionModel,
-          quota,
-          logger: silentLogger,
-        }),
-      }),
-      silentLogger,
-      config.ingestionQueueMax,
-    );
+    new IngestionRunner(ingestionPipeline, silentLogger, config.ingestionQueueMax);
   const consolidation = new ConsolidationRunner(
     new ConsolidationService({
       episodic,
@@ -187,7 +191,19 @@ export async function makeTestApp(
   const rewards = new DrizzleProactiveOutcomeStore(db);
   const motivation = new MotivationRunner(
     new MotivationEngine(
-      { identity, presence, energy, leads, proposals, tools, rewards, logger: silentLogger },
+      {
+        identity,
+        presence,
+        energy,
+        leads,
+        semantic,
+        pipeline: options.motivationPipeline ?? ingestionPipeline,
+        memory,
+        rewards,
+        llm: llmGateway,
+        model: config.ingestionModel,
+        logger: silentLogger,
+      },
       {},
     ),
     silentLogger,

@@ -149,32 +149,6 @@ describe('proposal routes', () => {
     expect(transcript.map((m) => m.content)).not.toContain('Hi there');
   });
 
-  it('confirming an autonomous proposal attributes reward and bumps the drive weight', async () => {
-    await ctx.deps.leads.record(companionId, 'https://auto2.dev');
-    const [lead] = await ctx.deps.leads.listByStatus(companionId, ['new']);
-    const proposal = await ctx.deps.proposals.create(companionId, {
-      toolName: 'ingest_source',
-      toolArgs: { url: 'https://auto2.dev' },
-      summary: 'Remember https://auto2.dev',
-      leadId: lead!.id,
-      origin: 'autonomous',
-    });
-    // The engine would have logged this outcome at initiation; record it here.
-    await ctx.deps.rewards.record(companionId, { proposalId: proposal.id, drive: 'curiosity' });
-    ctx.deps.motivation.request = (): void => {}; // suppress background ticks
-
-    await ctx.app.inject({
-      method: 'POST',
-      url: `/companions/${companionId}/proposals/${proposal.id}/confirm`,
-      headers: auth,
-    });
-
-    const outcome = await ctx.deps.rewards.findByProposal(companionId, proposal.id);
-    expect(outcome?.reward).toBe(1);
-    const companion = await ctx.deps.identity.getCompanionById(companionId);
-    expect(companion?.driveWeights?.curiosity).toBeGreaterThan(0.5);
-  });
-
   it('does not seed procedural memory when the approved action fails', async () => {
     // A proposal whose held call fails as data (bad url → ingest_source refuses).
     // The user approved it, but the action never happened — so no "learned

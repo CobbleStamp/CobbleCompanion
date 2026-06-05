@@ -480,8 +480,16 @@ export const proactiveOutcomes = pgTable(
     companionId: uuid('companion_id')
       .notNull()
       .references(() => companions.id, { onDelete: 'cascade' }),
-    // The proposal this initiation produced (v1 is proposal-only). `set null`
-    // keeps the outcome row for measurement even if the proposal is cleaned up.
+    // The report note the user reacts to (Phase 4.1): the autonomous burst posts
+    // one in-character "what I read" turn, and the user's reaction to it is the
+    // reward signal. `set null` keeps the outcome for measurement if the message
+    // is ever removed.
+    noteMessageId: uuid('note_message_id').references(() => messages.id, {
+      onDelete: 'set null',
+    }),
+    // Legacy (pre-4.1): the proposal this initiation produced, when autonomous
+    // work surfaced as an approval card. Retained nullable for old rows; the
+    // current model surfaces a note (above), not a proposal.
     proposalId: uuid('proposal_id').references(() => proposals.id, { onDelete: 'set null' }),
     // The drive the move served (whose weight the reward nudges).
     drive: text('drive').$type<Drive>().notNull(),

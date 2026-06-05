@@ -1,28 +1,52 @@
 /**
- * Phase 4 Definition-of-Done — the differentiator, mechanically verified offline
- * (development-plan.md §3). Drives the real motivation engine through the app's
- * stores and asserts:
- *   1. Open the app with no prompt → Cobble offers a relevant autonomous proposal.
+ * Phase 4.1 Definition-of-Done — the differentiator, mechanically verified
+ * offline (development-plan.md §3). Drives the real motivation engine through the
+ * app's stores and asserts:
+ *   1. Open the app with no prompt → Cobble READS its reading list on its own
+ *      (no approval) and posts one in-character report note.
  *   2. Energy is consumed by the self-initiated work.
  *   3. Out of energy → no initiation and no further spend (chat still runs on stamina).
  *   4. Dial off → no initiation.
- *   5. Approving an autonomous proposal captures reward, shifts the drive weight,
- *      and does NOT re-enter the chat loop (the engine owns "what next").
+ *   5. The user's reaction to the report note becomes a sentiment reward that
+ *      shifts the served drive's weight (added with the reward milestone).
  *
- * Deterministic: a fake gateway, the in-memory store, neutral weights + the
- * default gentle dial, and a directly-awaited engine tick (request → whenIdle).
+ * Deterministic: a fake pipeline (a real read needs the network + scripted LLM
+ * passes) that bills the energy meter and marks the job done, the in-memory
+ * store, neutral weights + the default gentle dial, and a directly-awaited engine
+ * tick (request → whenIdle).
  */
 
+import type { IngestionRunParams, IngestionTarget } from '@cobble/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { makeTestApp, type TestApp } from '../test/helpers.js';
 
-describe('Phase 4 DoD — proactivity engine', () => {
+const TOKENS_PER_READ = 120;
+
+/** Fake pipeline: simulate a successful read — bill the energy meter, job done. */
+function fakeReadPipeline(markDone: (jobId: string) => Promise<void>): IngestionTarget {
+  return {
+    async run(params: IngestionRunParams): Promise<void> {
+      if (params.meter) {
+        await params.meter.quota.recordUsage(params.meter.accountId, TOKENS_PER_READ);
+      }
+      await markDone(params.jobId);
+    },
+  };
+}
+
+describe('Phase 4.1 DoD — proactivity engine', () => {
   let ctx: TestApp;
   let auth: { authorization: string };
   let companionId: string;
 
   beforeEach(async () => {
-    ctx = await makeTestApp(['Hi', ' there']);
+    // The note generation reads the scripted chunks → a deterministic note.
+    ctx = await makeTestApp(['I read ', 'some things.'], undefined, {
+      motivationPipeline: fakeReadPipeline((jobId) =>
+        // Mark the job done so the burst counts it as a successful read.
+        ctxDeps().semantic.updateJob(jobId, { status: 'done' }),
+      ),
+    });
     auth = ctx.bearerFor('owner@example.com');
     const created = await ctx.app.inject({
       method: 'POST',
@@ -36,6 +60,11 @@ describe('Phase 4 DoD — proactivity engine', () => {
     await ctx.close();
   });
 
+  // `ctx` isn't assigned yet when the pipeline closure is built, so reach it lazily.
+  function ctxDeps(): TestApp['deps'] {
+    return ctx.deps;
+  }
+
   /** Drive one proactive tick to completion (deterministic). */
   async function tick(): Promise<void> {
     ctx.deps.motivation.request(companionId);
@@ -48,17 +77,26 @@ describe('Phase 4 DoD — proactivity engine', () => {
     }
   }
 
-  it('offers a relevant autonomous proposal with no prompt, consuming energy (DoD 1+2)', async () => {
+  async function assistantNotes(): Promise<readonly string[]> {
+    const messages = await ctx.deps.memory.getRecentMessages(companionId, 50);
+    return messages.filter((m) => m.role === 'assistant').map((m) => m.content);
+  }
+
+  it('reads the list with no prompt and posts one report note, consuming energy (DoD 1+2)', async () => {
     await seedLeads(5);
     await tick();
 
-    const pending = await ctx.deps.proposals.listPending(companionId);
-    expect(pending.length).toBeGreaterThan(0);
-    expect(pending.every((p) => p.origin === 'autonomous')).toBe(true);
-    expect(pending.every((p) => p.toolName === 'ingest_source')).toBe(true);
-    // A reinforcement outcome was logged for each initiation.
-    expect((await ctx.deps.rewards.list(companionId, 10)).length).toBe(pending.length);
-    // Energy was consumed by the self-initiated work.
+    // It read on its own — leads advanced to ingested, no approval queue used.
+    expect((await ctx.deps.leads.listByStatus(companionId, ['ingested'])).length).toBeGreaterThan(
+      0,
+    );
+    expect(await ctx.deps.proposals.listPending(companionId)).toHaveLength(0);
+    // Exactly one in-character report note (the reward surface).
+    expect(await assistantNotes()).toHaveLength(1);
+    // A pending outcome links to that note; energy was consumed.
+    const outcomes = await ctx.deps.rewards.list(companionId, 10);
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]!.noteMessageId).not.toBeNull();
     expect((await ctx.deps.energy.getEnergy(companionId)).usedTokens).toBeGreaterThan(0);
   });
 
@@ -69,7 +107,8 @@ describe('Phase 4 DoD — proactivity engine', () => {
 
     await tick();
 
-    expect(await ctx.deps.proposals.listPending(companionId)).toHaveLength(0);
+    expect(await assistantNotes()).toHaveLength(0);
+    expect(await ctx.deps.leads.listByStatus(companionId, ['new'])).toHaveLength(5);
     expect((await ctx.deps.energy.getEnergy(companionId)).usedTokens).toBe(before);
   });
 
@@ -79,31 +118,7 @@ describe('Phase 4 DoD — proactivity engine', () => {
 
     await tick();
 
-    expect(await ctx.deps.proposals.listPending(companionId)).toHaveLength(0);
-  });
-
-  it('approving an autonomous proposal rewards it, shifts the weight, and does not re-enter chat (DoD 5)', async () => {
-    await seedLeads(5);
-    await tick();
-    const [proposal] = await ctx.deps.proposals.listPending(companionId);
-    expect(proposal).toBeDefined();
-    // Suppress the post-approval engine nudge so the assertion is deterministic.
-    ctx.deps.motivation.request = (): void => {};
-
-    const res = await ctx.app.inject({
-      method: 'POST',
-      url: `/companions/${companionId}/proposals/${proposal!.id}/confirm`,
-      headers: auth,
-    });
-
-    // The action ran, but the loop did NOT re-enter (no scripted narration).
-    expect(res.body).toContain('"type":"done"');
-    expect(res.body).not.toContain('Hi there');
-    const transcript = await ctx.deps.memory.getRecentMessages(companionId, 20);
-    expect(transcript.map((m) => m.content)).not.toContain('Hi there');
-    // Reward captured and the served drive's weight shifted upward.
-    expect((await ctx.deps.rewards.findByProposal(companionId, proposal!.id))?.reward).toBe(1);
-    const companion = await ctx.deps.identity.getCompanionById(companionId);
-    expect(companion?.driveWeights?.curiosity).toBeGreaterThan(0.5);
+    expect(await assistantNotes()).toHaveLength(0);
+    expect((await ctx.deps.energy.getEnergy(companionId)).usedTokens).toBe(0);
   });
 });

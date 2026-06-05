@@ -101,32 +101,32 @@ async function main(): Promise<void> {
   // it embeds distinct chunks, so a one-entry memo would only ever miss.
   const retrievalEmbeddings = createMemoizingEmbeddingGateway(embeddings);
 
-  const ingestion = new IngestionRunner(
-    new IngestionPipeline({
-      semantic,
+  // The pipeline is shared: the runner drains user uploads through it (billed to
+  // stamina), and the motivation engine drives it directly for autonomous reads
+  // (billed to energy via a per-run meter override — `pipeline.ts`).
+  const ingestionPipeline = new IngestionPipeline({
+    semantic,
+    llm: llmGateway,
+    embeddings,
+    ingestionModel: config.ingestionModel,
+    embeddingModel: config.embeddingModel,
+    embeddingDimensions: config.embeddingDimensions,
+    useContextHeader: config.useContextHeader,
+    sourceParser: createSourceParser({
+      linkResolver: createHttpLinkResolver({ maxBytes: config.ingestionMaxBytes }),
+    }),
+    quota,
+    logger: consoleLogger,
+    announcer: new LlmIngestionAnnouncer({
+      identity,
+      memory,
       llm: llmGateway,
-      embeddings,
-      ingestionModel: config.ingestionModel,
-      embeddingModel: config.embeddingModel,
-      embeddingDimensions: config.embeddingDimensions,
-      useContextHeader: config.useContextHeader,
-      sourceParser: createSourceParser({
-        linkResolver: createHttpLinkResolver({ maxBytes: config.ingestionMaxBytes }),
-      }),
+      model: config.ingestionModel,
       quota,
       logger: consoleLogger,
-      announcer: new LlmIngestionAnnouncer({
-        identity,
-        memory,
-        llm: llmGateway,
-        model: config.ingestionModel,
-        quota,
-        logger: consoleLogger,
-      }),
     }),
-    consoleLogger,
-    config.ingestionQueueMax,
-  );
+  });
+  const ingestion = new IngestionRunner(ingestionPipeline, consoleLogger, config.ingestionQueueMax);
 
   // Phase 3 tool surface + trust machinery, built before the harness so the
   // propose→approve gate and the tool-call log can be wired into the loop.
@@ -227,9 +227,12 @@ async function main(): Promise<void> {
     presence,
     energy,
     leads,
-    proposals,
-    tools,
+    semantic,
+    pipeline: ingestionPipeline,
+    memory,
     rewards,
+    llm: llmGateway,
+    model: config.ingestionModel,
     logger: consoleLogger,
   });
   const motivation = new MotivationRunner(motivationEngine, consoleLogger);

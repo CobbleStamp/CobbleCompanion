@@ -101,6 +101,20 @@ export function ingestionFailedFallback(sourceTitle: string): string {
   return `I ran into trouble reading "${sourceTitle}" and couldn't finish. You may want to try uploading it again.`;
 }
 
+/**
+ * Canned "what I read" note for an autonomous burst (Phase 4.1) when an
+ * in-character note can't be generated (out of energy, generation failed, or no
+ * persona). The companion always tells the user what it did on its own — the
+ * surface its next reaction is learned from.
+ */
+export function autonomousReadFallback(titles: readonly string[]): string {
+  const count = titles.length;
+  if (count === 1) {
+    return `While you were away I read ${titles[0]} from my list. Ask me anything about it.`;
+  }
+  return `While you were away I read ${count} things from my list. Ask me anything about them.`;
+}
+
 // --- Sources & ingestion (Phase 1 semantic memory) ---
 
 /** How a source entered the companion's knowledge base. */
