@@ -1,3 +1,4 @@
+import { consoleLogger, type Logger } from '../logging.js';
 import { estimateUsage, type TokenUsage } from '../usage.js';
 import {
   type LlmGateway,
@@ -14,6 +15,7 @@ const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 export interface OpenRouterConfig {
   readonly apiKey: string;
   readonly baseUrl?: string;
+  readonly logger?: Logger;
 }
 
 /**
@@ -24,10 +26,12 @@ export interface OpenRouterConfig {
 export class OpenRouterGateway implements LlmGateway {
   private readonly apiKey: string;
   private readonly baseUrl: string;
+  private readonly logger: Logger;
 
   constructor(config: OpenRouterConfig) {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl ?? OPENROUTER_URL;
+    this.logger = config.logger ?? consoleLogger;
   }
 
   async *stream(params: LlmStreamParams): AsyncGenerator<string, StreamResult, void> {
@@ -52,7 +56,7 @@ export class OpenRouterGateway implements LlmGateway {
       estimateUsage(params.messages.map((message) => message.content).join('\n'), text);
     const result = (): StreamResult => ({
       usage: usage ?? fallbackUsage(),
-      toolCalls: buildToolCalls(toolBuffers),
+      toolCalls: buildToolCalls(toolBuffers, this.logger),
     });
     const reader = body.getReader();
     // Tracks whether the reader drained to its natural end. A consumer that
@@ -198,6 +202,10 @@ function accumulateToolCalls(
   for (const delta of deltas) {
     const buffer = buffers.get(delta.index) ?? { argsText: '' };
     if (delta.id !== undefined) buffer.id = delta.id;
+    // OpenRouter sends `function.name` whole in a single fragment (only the
+    // arguments string is chunked), so last-write-wins is correct today. If a
+    // future provider chunked the name, this would silently keep only the last
+    // piece — the "name overwritten, last frame wins" test locks the assumption.
     if (delta.name !== undefined) buffer.name = delta.name;
     if (delta.argumentsFragment !== undefined) buffer.argsText += delta.argumentsFragment;
     buffers.set(delta.index, buffer);
@@ -209,12 +217,25 @@ function accumulateToolCalls(
  * string as JSON. A buffer with no name is dropped (nothing callable); malformed
  * arguments degrade to `{}` so a bad fragment is data, not a throw (§4.7) — the
  * harness surfaces an empty-arg call as an ordinary (failing) tool result.
+ *
+ * A nameless buffer that still carried an id or arguments is real model intent
+ * we cannot dispatch, so it is logged before being discarded (no silent drop).
  */
-function buildToolCalls(buffers: Map<number, ToolCallBuffer>): readonly ToolCall[] {
+function buildToolCalls(buffers: Map<number, ToolCallBuffer>, logger: Logger): readonly ToolCall[] {
   const calls: ToolCall[] = [];
   for (const index of [...buffers.keys()].sort((a, b) => a - b)) {
     const buffer = buffers.get(index)!;
-    if (!buffer.name) continue;
+    if (!buffer.name) {
+      if (buffer.id !== undefined || buffer.argsText.length > 0) {
+        logger.info('dropping a streamed tool call that never received a function name', {
+          operation: 'openrouter.buildToolCalls',
+          index,
+          id: buffer.id,
+          argsLength: buffer.argsText.length,
+        });
+      }
+      continue;
+    }
     calls.push({
       ...(buffer.id !== undefined ? { id: buffer.id } : {}),
       name: buffer.name,

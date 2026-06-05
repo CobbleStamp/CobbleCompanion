@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Logger } from '../logging.js';
 import { LlmGatewayError, type StreamResult } from './gateway.js';
 import { OpenRouterGateway } from './openrouter.js';
 
@@ -213,6 +214,54 @@ describe('OpenRouterGateway', () => {
     );
     expect(text).toBe('Let me check. ');
     expect(result.toolCalls).toEqual([{ id: 'c1', name: 'memory_search', args: { q: 'x' } }]);
+  });
+
+  it('drops a nameless tool call but logs the discarded model intent', async () => {
+    // Arguments arrive across two frames; a function name never does. The call
+    // is uncallable, so it is dropped — but with a log, not silently.
+    const body = sseStream([
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"orphan","function":{"arguments":"{\\"url\\":"}}]}}]}',
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"x\\"}"}}]}}]}',
+      'data: [DONE]',
+    ]);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(body, { status: 200 })),
+    );
+    const info = vi.fn();
+    const logger: Logger = { error: vi.fn(), info };
+
+    const gateway = new OpenRouterGateway({ apiKey: 'test-key', logger });
+    const { result } = await collectWithResult(
+      gateway.stream({ messages: [{ role: 'user', content: 'go' }], model: 'm' }),
+    );
+    expect(result.toolCalls).toEqual([]);
+    expect(info).toHaveBeenCalledTimes(1);
+    expect(info).toHaveBeenCalledWith(
+      expect.stringContaining('never received a function name'),
+      expect.objectContaining({ index: 0, id: 'orphan', argsLength: expect.any(Number) }),
+    );
+  });
+
+  it('keeps the last function name when frames repeat it (overwrite, not concatenate)', async () => {
+    // Locks the assumption that OpenRouter sends the name whole in one fragment:
+    // if a provider ever split it, accumulateToolCalls would keep only the last
+    // piece. This test documents last-write-wins so that change is caught.
+    const body = sseStream([
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c","function":{"name":"web_fetch","arguments":"{\\"url\\":"}}]}}]}',
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"web_fetch","arguments":"\\"u\\"}"}}]}}]}',
+      'data: [DONE]',
+    ]);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(body, { status: 200 })),
+    );
+
+    const gateway = new OpenRouterGateway({ apiKey: 'test-key' });
+    const { result } = await collectWithResult(
+      gateway.stream({ messages: [{ role: 'user', content: 'go' }], model: 'm' }),
+    );
+    expect(result.toolCalls).toEqual([{ id: 'c', name: 'web_fetch', args: { url: 'u' } }]);
   });
 
   it('degrades malformed tool-call arguments to an empty object (failures are data)', async () => {
