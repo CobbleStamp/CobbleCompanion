@@ -321,8 +321,9 @@ replayed into the message array in the OpenAI wire shape.
   by `index` (the first carries id+name+partial args, later frames append arg-string pieces) and
   `JSON.parse`s the assembled arguments at `[DONE]`; malformed args degrade to `{}` (failures are
   data) rather than throwing.
-- **Dead-loop guard (§4.7):** the loop is bounded by `MAX_TOOL_ITERATIONS` and an optional per-run
-  token budget (both `HarnessOptions`, defaults in `harness.ts`); hitting either exits-with-partial.
+- **Dead-loop guard (§4.7):** the loop is bounded by `DEFAULT_MAX_TOOL_ITERATIONS` and an optional
+  per-run token budget (both `HarnessOptions`, defaults in `harness.ts`); hitting either
+  exits-with-partial.
 - On exit, the turn is appended to `messages` (the transcript / episodic substrate, §1).
 
 **_Deferred:_** proactive `Initiator` wiring + push (P4); transcript compaction when the context
@@ -353,9 +354,10 @@ Loaded from environment / a secret manager; required values validated at startup
 | `INGESTION_QUEUE_MAX` | Backstop cap on queued+in-flight ingestion runs across all owners; submissions past it get 429 (default 100) |
 
 **P3 tuning constants** are in-code defaults (not secrets, so not env-wired): the loop ceilings
-`MAX_TOOL_ITERATIONS` (default 6) + the optional per-run token budget (`harness.ts`,
+`DEFAULT_MAX_TOOL_ITERATIONS` (default 6) + the optional per-run token budget (`harness.ts`,
 overridable via `HarnessOptions`), `web_fetch`'s returned-text cap (`web-fetch.ts`, default 8000
-chars) and link-harvest cap, and the `/explore` burst size (`inventory.routes.ts`, default 3).
+chars) and link-harvest cap (`MAX_HARVESTED_LINKS`, default 20), and the `/explore` burst size
+(`inventory.routes.ts`, default 3).
 
 **_Deferred:_** worker tuning, proactivity cadence + intensity dial, push-notification credentials (P4+).
 

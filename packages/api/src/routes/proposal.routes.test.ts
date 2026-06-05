@@ -217,6 +217,110 @@ describe('proposal routes', () => {
     expect(await ctx.deps.proposals.listPending(companionId)).toHaveLength(1);
   });
 
+  it('rejecting then confirming the same proposal 409s and never executes the held action', async () => {
+    // The atomic claim guards on status='pending': once a proposal is rejected it
+    // is no longer pending, so a later confirm cannot win the transition — and so
+    // the held ingest must not run (no source, no proposal re-execution).
+    const id = await seedProposal();
+    const rejected = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/proposals/${id}/reject`,
+      headers: auth,
+    });
+    expect(rejected.statusCode).toBe(204);
+
+    const confirmed = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/proposals/${id}/confirm`,
+      headers: auth,
+    });
+    expect(confirmed.statusCode).toBe(409);
+    // The held action never ran: nothing ingested, nothing logged.
+    expect(await ctx.deps.semantic.listSources(companionId)).toHaveLength(0);
+    expect(await ctx.deps.toolCallLog.list(companionId, 10)).toHaveLength(0);
+  });
+
+  it('confirming then rejecting the same proposal 409s (the reverse cross-transition)', async () => {
+    // Confirm flips pending→approved; a later reject can no longer win the
+    // pending-gated transition, so it 409s — the action stays exactly-once.
+    const id = await seedProposal();
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/proposals/${id}/confirm`,
+      headers: auth,
+    });
+    const rejected = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/proposals/${id}/reject`,
+      headers: auth,
+    });
+    expect(rejected.statusCode).toBe(409);
+    // The confirm executed exactly once — the reject did not undo or re-run it.
+    expect(await ctx.deps.semantic.listSources(companionId)).toHaveLength(1);
+  });
+
+  it('a best-effort audit-log failure does NOT fail an approved action', async () => {
+    // logging.md guarantee: a logging hiccup must never fail an action the user
+    // already approved. Inject a tool-call-log whose record() throws, then confirm
+    // a valid pending proposal — the held ingest must STILL run and the response
+    // must still be a successful narration stream.
+    const id = await seedProposal();
+    // The route captured this exact store instance at registration; overriding the
+    // method on the shared instance makes its record() throw (test-only seam — no
+    // source change). Restored in the afterEach via a fresh app per test.
+    ctx.deps.toolCallLog.record = async (): Promise<void> => {
+      throw new Error('audit log is down');
+    };
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/proposals/${id}/confirm`,
+      headers: auth,
+    });
+    // The action still succeeded and the companion still narrated the outcome.
+    expect(res.headers['content-type']).toContain('text/event-stream');
+    expect(res.body).toContain('"type":"done"');
+    expect(res.body).toContain('Hi there');
+    // The held ingest ran despite the logging failure.
+    expect(await ctx.deps.semantic.listSources(companionId)).toHaveLength(1);
+    // The proposal is resolved (out of the pending queue), not stuck.
+    expect(await ctx.deps.proposals.listPending(companionId)).toHaveLength(0);
+  });
+
+  it('a best-effort procedural-seed failure does NOT fail an approved action', async () => {
+    // The same logging.md guarantee for the procedural-memory seed: if recording
+    // the learned workflow throws, the approved action still completes and narrates.
+    const id = await seedProposal();
+    ctx.deps.procedural.record = async (): Promise<void> => {
+      throw new Error('procedural store is down');
+    };
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/proposals/${id}/confirm`,
+      headers: auth,
+    });
+    expect(res.headers['content-type']).toContain('text/event-stream');
+    expect(res.body).toContain('"type":"done"');
+    // The held ingest ran despite the procedural-seed failure.
+    expect(await ctx.deps.semantic.listSources(companionId)).toHaveLength(1);
+    // And the call was still logged (that path is independent of the seed).
+    const logged = await ctx.deps.toolCallLog.list(companionId, 10);
+    expect(logged.map((r) => r.name)).toEqual(['ingest_source']);
+  });
+
+  it('404s a malformed (non-UUID) proposalId before it reaches the DB (review M4)', async () => {
+    // The global UUID param guard rejects a malformed resource id with a clean 404
+    // rather than letting Postgres throw 22P02 and surface a 500. Nothing executes.
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/proposals/not-a-uuid/confirm`,
+      headers: auth,
+    });
+    expect(res.statusCode).toBe(404);
+    expect(await ctx.deps.semantic.listSources(companionId)).toHaveLength(0);
+  });
+
   it("404s when confirming another owner's companion (tenancy)", async () => {
     const id = await seedProposal();
     const otherAuth = ctx.bearerFor('intruder@example.com');

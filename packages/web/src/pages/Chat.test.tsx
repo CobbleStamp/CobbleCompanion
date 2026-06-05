@@ -658,4 +658,102 @@ describe('Chat transcript fidelity (rich rows survive reload)', () => {
     await waitFor(() => expect(screen.getByText('Saved — here are the highlights.')).toBeTruthy());
     expect(confirmProposal).toHaveBeenCalledWith(companion.id, 'pp1');
   });
+
+  it('renders no proposal card when the approval queue is empty', async () => {
+    vi.mocked(fetchMessages).mockResolvedValue([]);
+    vi.mocked(listProposals).mockResolvedValue([]);
+
+    renderChat();
+
+    // Wait until the surface is ready (composer enabled) so any queued card would
+    // have had a chance to render.
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText(/Message Pebble/) as HTMLInputElement).disabled).toBe(
+        false,
+      ),
+    );
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Decline' })).toBeNull();
+    expect(document.querySelector('.proposal-queue')).toBeNull();
+  });
+
+  it('ignores a second confirm while one is already streaming (busy guard)', async () => {
+    const narration: MessageDto = {
+      id: 'm9',
+      companionId: companion.id,
+      sourceId: null,
+      role: 'assistant',
+      content: 'Saved.',
+      kind: 'message',
+      createdAt: '2026-01-03T00:00:09.000Z',
+    };
+    vi.mocked(fetchMessages).mockResolvedValueOnce([]).mockResolvedValue([narration]);
+    vi.mocked(listProposals).mockResolvedValue([
+      {
+        id: 'pp1',
+        toolName: 'ingest_source',
+        summary: 'Remember https://x.dev',
+        status: 'pending',
+        createdAt: '2026-01-03T00:00:00.000Z',
+      },
+    ]);
+    // Hold the stream open on the first confirm so the turn stays in flight while
+    // we fire a second click. onConfirmProposal's `if (busy) return` must drop it.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    vi.mocked(confirmProposal).mockImplementation(async function* () {
+      yield { type: 'token', value: 'Saved.' };
+      await gate;
+      yield { type: 'done', message: narration };
+    });
+
+    renderChat();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Approve' })).toBeTruthy());
+    const approve = screen.getByRole('button', { name: 'Approve' });
+    fireEvent.click(approve);
+    // First turn is now streaming (token emitted); a second click is a no-op.
+    await waitFor(() => expect(screen.getByText('Saved.')).toBeTruthy());
+    fireEvent.click(approve);
+
+    // The busy guard means the second click never started a second confirm turn.
+    expect(confirmProposal).toHaveBeenCalledTimes(1);
+
+    // Let the first turn finish cleanly so no act() warnings dangle.
+    release();
+    await waitFor(() => expect(confirmProposal).toHaveBeenCalledTimes(1));
+  });
+
+  it('shows the server error message when confirm fails with 429 over-cap', async () => {
+    // The client now preserves the server's response body, so onConfirmProposal's
+    // catch surfaces the real over-cap message (not a generic status code) and
+    // drops the optimistic empty assistant bubble.
+    vi.mocked(fetchMessages).mockResolvedValue([]);
+    vi.mocked(listProposals).mockResolvedValue([
+      {
+        id: 'pp1',
+        toolName: 'ingest_source',
+        summary: 'Remember https://x.dev',
+        status: 'pending',
+        createdAt: '2026-01-03T00:00:00.000Z',
+      },
+    ]);
+    vi.mocked(confirmProposal).mockImplementation(async function* () {
+      // The confirm stream errors before any frame: send() throws the server's
+      // 429 body (the client now preserves it) before readSse yields anything.
+      throw new Error("You're over your daily token limit.");
+    });
+
+    renderChat();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Approve' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+
+    // The real server message is surfaced verbatim.
+    await waitFor(() =>
+      expect(screen.getByText("You're over your daily token limit.")).toBeTruthy(),
+    );
+    // The optimistic empty assistant bubble was dropped, not left dangling.
+    expect(document.querySelector('.proposal-queue')).not.toBeNull();
+  });
 });

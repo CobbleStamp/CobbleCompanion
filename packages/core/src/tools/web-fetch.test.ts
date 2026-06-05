@@ -115,4 +115,57 @@ describe('createWebFetchTool', () => {
     expect(result.content).toContain('Error fetching https://example.com/missing');
     expect(result.content).toContain('404');
   });
+
+  it('caps harvested links at MAX_HARVESTED_LINKS (20), deduped', async () => {
+    const leads = fakeLeads();
+    // 30 distinct links + a duplicate of the first; the cap is 20 and the
+    // duplicate is collapsed before the cap is applied.
+    const anchors = Array.from(
+      { length: 30 },
+      (_unused, i) => `<a href="https://other.dev/p${i}">p${i}</a>`,
+    ).join('\n');
+    const html = `<html><body>
+      ${anchors}
+      <a href="https://other.dev/p0">dup of p0</a>
+    </body></html>`;
+    const tool = createWebFetchTool({
+      resolver: htmlResolver(html, 'https://src.dev/page'),
+      leads,
+    });
+    await tool.run({ url: 'https://src.dev/page' }, ctx);
+    expect(leads.captured).toHaveLength(20);
+    const urls = leads.captured.map((c) => c.url);
+    expect(new Set(urls).size).toBe(20); // all distinct (deduped)
+  });
+
+  it('returns an SSRF-guard rejection as an error result and harvests nothing', async () => {
+    const leads = fakeLeads();
+    const resolver: LinkResolver = {
+      async resolve(): Promise<RawContent> {
+        throw new Error('blocked: URL resolves to a private address');
+      },
+    };
+    const tool = createWebFetchTool({ resolver, leads, logger: silentLogger });
+    const result = await tool.run({ url: 'https://internal.host/secret' }, ctx);
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain('Error fetching https://internal.host/secret');
+    expect(leads.captured).toHaveLength(0); // guard throws before harvesting
+  });
+
+  it('does not harvest links from non-HTML content', async () => {
+    const leads = fakeLeads();
+    // A plain-text body that happens to contain an href — content-type 'text'
+    // means the html-only harvest branch is skipped.
+    const tool = createWebFetchTool({
+      resolver: textResolver('<a href="https://other.dev/post">link in text</a>'),
+      leads,
+    });
+    const result = await tool.run({ url: 'https://src.dev/note.txt' }, ctx);
+    expect(result.name).toBe('web_fetch');
+    expect(leads.captured).toHaveLength(0);
+  });
+
+  it.todo(
+    'harvests remaining links when one lead.record throws (per-link isolation) — see review M3',
+  );
 });

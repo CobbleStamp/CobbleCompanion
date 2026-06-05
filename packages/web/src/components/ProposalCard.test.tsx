@@ -66,6 +66,10 @@ describe('ProposalCard', () => {
   });
 
   it('surfaces an error if the action fails', async () => {
+    // The card surfaces whatever message the rejected promise carries; the client
+    // (confirmProposal → stream → send) now preserves the server's 409/429 body, so
+    // this is the real over-cap text the user sees end to end. The client side of
+    // that contract is pinned in api/client.test.ts.
     const onConfirm = vi.fn().mockRejectedValue(new Error('over your daily limit'));
     render(<ProposalCard proposal={proposal} onConfirm={onConfirm} onReject={vi.fn()} />);
     fireEvent.click(screen.getByText('Approve'));

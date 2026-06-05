@@ -1,6 +1,12 @@
 import type { ChatStreamEvent } from '@cobble/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createCompanion, fetchMessages, sendMessage, setAccessTokenGetter } from './client.js';
+import {
+  confirmProposal,
+  createCompanion,
+  fetchMessages,
+  sendMessage,
+  setAccessTokenGetter,
+} from './client.js';
 
 /**
  * Guards the request helper's content-type behavior: a POST with a body must send
@@ -154,5 +160,47 @@ describe('sendMessage SSE parser', () => {
     stubFetchStreaming(['data: {not json}\n\n']);
 
     await expect(collect()).rejects.toThrow();
+  });
+});
+
+/**
+ * The confirm endpoint streams SSE on success but returns a plain JSON error on a
+ * non-2xx (e.g. 429 over-cap, 409 no-longer-pending). `send()` must surface the
+ * server's `error` body verbatim — not a generic `request failed (NNN)` — so the
+ * UI can show the user why the action was held (review H1).
+ */
+describe('confirmProposal error surfacing', () => {
+  beforeEach(() => {
+    setAccessTokenGetter(async () => 'tok');
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    setAccessTokenGetter(async () => null);
+  });
+
+  function stubErrorResponse(status: number, error: string): void {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: false,
+        status,
+        json: async () => ({ error }),
+      })),
+    );
+  }
+
+  it('throws the server body on a 429 over-cap (not the status code)', async () => {
+    stubErrorResponse(429, "You're over your daily token limit.");
+    await expect(confirmProposal('companion-1', 'p1').next()).rejects.toThrow(
+      "You're over your daily token limit.",
+    );
+  });
+
+  it('throws the server body on a 409 no-longer-pending proposal', async () => {
+    stubErrorResponse(409, 'proposal is no longer pending');
+    await expect(confirmProposal('companion-1', 'p1').next()).rejects.toThrow(
+      'proposal is no longer pending',
+    );
   });
 });

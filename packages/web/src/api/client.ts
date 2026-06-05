@@ -56,8 +56,7 @@ async function send(path: string, init?: RequestInit): Promise<Response> {
   // application/json (FST_ERR_CTP_EMPTY_JSON_BODY), 400-ing bodyless GET/POST.
   // A FormData body (file upload) must also omit it so the browser can set the
   // multipart boundary itself.
-  const contentType =
-    typeof init?.body === 'string' ? { 'content-type': 'application/json' } : {};
+  const contentType = typeof init?.body === 'string' ? { 'content-type': 'application/json' } : {};
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
     headers: { ...contentType, ...auth, ...(init?.headers ?? {}) },

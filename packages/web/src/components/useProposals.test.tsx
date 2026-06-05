@@ -41,6 +41,22 @@ describe('useProposals', () => {
     expect(rejectProposal).toHaveBeenCalledWith('c1', 'p1');
     await waitFor(() => expect(result.current.proposals).toEqual([]));
   });
+
+  it('rethrows a reject failure to the caller without setting hook error', async () => {
+    const { result } = renderHook(() => useProposals('c1'));
+    await waitFor(() => expect(result.current.proposals).toHaveLength(1));
+
+    // reject does not catch: a failed rejectProposal rethrows so the ProposalCard
+    // (the caller) surfaces it. The hook's own `error` is for the poll, not reject,
+    // and must stay clear.
+    vi.mocked(rejectProposal).mockRejectedValueOnce(new Error('reject failed (409)'));
+    await act(async () => {
+      await expect(result.current.reject('p1')).rejects.toThrow('reject failed (409)');
+    });
+    expect(result.current.error).toBeNull();
+    // The throw is before refresh(), so the queue is unchanged (still pending).
+    expect(result.current.proposals).toHaveLength(1);
+  });
 });
 
 describe('useProposals polling', () => {

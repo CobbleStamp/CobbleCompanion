@@ -102,6 +102,27 @@ describe('createIngestSourceTool', () => {
     expect(result.content).toMatch(/busy reading/);
   });
 
+  it('returns a generic store failure via the "Error remembering" branch (not busy)', async () => {
+    const semantic: SourceRegistrationPort = {
+      async createSource() {
+        throw new Error('db write failed');
+      },
+      async createJob() {
+        return { id: 'job' };
+      },
+    };
+    const tool = createIngestSourceTool({
+      semantic,
+      ingestion: fakeRunner(),
+      logger: silentLogger,
+    });
+    const result = await tool.run({ url: 'https://x.dev/post' }, ctx);
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain('Error remembering https://x.dev/post');
+    expect(result.content).toContain('db write failed');
+    expect(result.content).not.toMatch(/busy reading/);
+  });
+
   it('rejects a missing url as an error result', async () => {
     const tool = createIngestSourceTool({ semantic: fakeStore(), ingestion: fakeRunner() });
     expect((await tool.run({}, ctx)).content).toMatch(/valid "url"/);

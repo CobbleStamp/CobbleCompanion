@@ -12,9 +12,10 @@ import type {
 } from '@cobble/shared';
 import { describe, expect, it } from 'vitest';
 import { FakeLlmGateway, type FakeTurn } from '../llm/fake.js';
-import type { ToolCall } from '../llm/gateway.js';
+import type { LlmGateway, StreamResult, ToolCall } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import type { AppendOptions, MemoryStore, TranscriptEntry } from '../memory/store.js';
+import type { TokenQuotaStore } from '../quota/store.js';
 import { ToolRegistry } from '../tools/registry.js';
 import type { Tool } from '../tools/tool.js';
 import { Harness } from './harness.js';
@@ -105,6 +106,20 @@ const call = (name: string, args: Record<string, unknown> = {}): ToolCall => ({
   name,
   args,
 });
+
+/** Records every debit so a test can assert what a turn billed (or didn't). */
+class RecordingQuota implements TokenQuotaStore {
+  readonly recorded: number[] = [];
+  async getUsage(): Promise<{ usedTokens: number; capTokens: number; resetsAt: string }> {
+    return { usedTokens: 0, capTokens: 1_000_000, resetsAt: '' };
+  }
+  async recordUsage(_userId: string, totalTokens: number): Promise<void> {
+    this.recorded.push(totalTokens);
+  }
+  async isOverCap(): Promise<boolean> {
+    return false;
+  }
+}
 
 describe('Harness inner loop (P3 tools)', () => {
   it('runs a read-only tool, feeds the result back, and answers on the next turn', async () => {
@@ -647,6 +662,178 @@ describe('Harness inner loop (P3 tools)', () => {
     expect(events.some((e) => e.type === 'proposal')).toBe(true);
     expect(events.some((e) => e.type === 'error')).toBe(true);
     expect(events.some((e) => e.type === 'done')).toBe(false);
+  });
+
+  it('re-applies the gate when an approved continuation itself proposes a new effectful call', async () => {
+    // Approving an action mid-continuation can itself produce a new proposal —
+    // the gate re-applies (architecture.md §4.4). The resumed loop turns once,
+    // the model proposes another effectful call, and we block + exit again.
+    const tool = recordingTool('ingest_source', true, 'ingested');
+    const proposal: ProposalDto = {
+      id: 'p2',
+      toolName: 'ingest_source',
+      summary: 'Remember https://second.dev',
+      status: 'pending',
+      createdAt: new Date('2026-01-02').toISOString(),
+    };
+    const gate = async (c: HookToolCall, _ctx: TurnCtx): Promise<HookToolCall | Block> =>
+      'name' in c && c.name === 'ingest_source'
+        ? { blocked: true, reason: 'needs approval', proposal }
+        : c;
+    // The resumed turn proposes a second effectful action.
+    const gateway = new FakeLlmGateway([
+      {
+        chunks: ['Saved the first. Now the next one. '],
+        toolCalls: [call('ingest_source', { url: 'https://second.dev' })],
+      },
+    ]);
+    const mem = memory();
+    const harness = new Harness({
+      gateway,
+      memory: mem,
+      model: 'm',
+      registry: new ToolRegistry([tool]),
+      beforeToolCall: gate,
+      logger: silentLogger,
+    });
+
+    const events = await collect(
+      harness.continueAfterApproval({
+        companion,
+        ownerId: 'u1',
+        outcome: 'Read https://first.dev into long-term memory.',
+      }),
+    );
+
+    expect(tool.calls).toEqual([]); // the new effectful call is held, not run
+    const proposalEvent = events.find((e) => e.type === 'proposal');
+    expect(proposalEvent && proposalEvent.type === 'proposal' && proposalEvent.proposal).toEqual(
+      proposal,
+    );
+    // A second proposal row was persisted so it survives reload.
+    const row = mem.appended.find((m) => m.kind === 'proposal');
+    expect(row?.metadata?.proposalId).toBe('p2');
+    // The loop exited blocked again — no second model turn.
+    expect(gateway.calls).toHaveLength(1);
+    expect(events.some((e) => e.type === 'done')).toBe(true);
+  });
+
+  it('bills the consumed tokens when the consumer aborts a tool run mid-stream', async () => {
+    // (a) The caller breaks out of the generator (a client disconnect that
+    // `.return()`s it) before the turn finishes — the abnormal-exit path must
+    // still debit the tokens already streamed, never free output
+    // (billing-crash-compensation).
+    const tool = recordingTool('web_fetch', false, 'more');
+    const gateway = new FakeLlmGateway([
+      { chunks: ['Look', 'ing', ' it up'], toolCalls: [call('web_fetch')] },
+    ]);
+    const quota = new RecordingQuota();
+    const harness = new Harness({
+      gateway,
+      memory: memory(),
+      model: 'm',
+      registry: new ToolRegistry([tool]),
+      quota,
+      logger: silentLogger,
+    });
+
+    for await (const event of harness.runTurn({
+      companion,
+      userContent: 'go',
+      ownerId: 'u1',
+    })) {
+      if (event.type === 'token') break; // disconnect mid-stream
+    }
+
+    // The consumed tokens were metered and debited, not silently dropped.
+    expect(quota.recorded).toHaveLength(1);
+    expect(quota.recorded[0]).toBeGreaterThan(0);
+  });
+
+  it('frees only our-fault tokens when a provider fault throws mid-loop', async () => {
+    // (b) A provider/infra fault throws mid-stream. Per the billing rule, the
+    // broken turn's tokens stay out of the accumulator, so nothing is billed —
+    // free ONLY for our software/infra faults.
+    const faulting: LlmGateway = {
+      async *stream(): AsyncGenerator<string, StreamResult, void> {
+        yield 'partial';
+        throw new Error('network drop');
+      },
+    };
+    const quota = new RecordingQuota();
+    const harness = new Harness({
+      gateway: faulting,
+      memory: memory(),
+      model: 'm',
+      registry: new ToolRegistry([recordingTool('web_fetch', false, 'x')]),
+      quota,
+      logger: silentLogger,
+    });
+
+    const events = await collect(harness.runTurn({ companion, userContent: 'go', ownerId: 'u1' }));
+
+    expect(events.at(-1)?.type).toBe('error');
+    // Our fault — nothing debited for the broken turn.
+    expect(quota.recorded).toEqual([]);
+  });
+
+  it('runs two read-only tools in one turn: both results fed back, both steps recorded', async () => {
+    const tool = recordingTool('web_fetch', false, 'PAGE');
+    // One turn requests the SAME read-only tool twice (distinct call ids), then
+    // the next turn answers.
+    const gateway = new FakeLlmGateway([
+      {
+        toolCalls: [
+          { id: 'call-a', name: 'web_fetch', args: { url: 'https://a.dev' } },
+          { id: 'call-b', name: 'web_fetch', args: { url: 'https://b.dev' } },
+        ],
+      },
+      { chunks: ['done'] },
+    ]);
+    const mem = memory();
+    const harness = new Harness({
+      gateway,
+      memory: mem,
+      model: 'm',
+      registry: new ToolRegistry([tool]),
+      logger: silentLogger,
+    });
+
+    const events = await collect(harness.runTurn({ companion, userContent: 'go', ownerId: 'u1' }));
+
+    // Both calls ran.
+    expect(tool.calls).toEqual([{ url: 'https://a.dev' }, { url: 'https://b.dev' }]);
+    // Both results were appended to the model's context with their own ids.
+    const secondCall = gateway.calls[1]!;
+    const toolMessages = secondCall.messages.filter((m) => m.role === 'tool');
+    expect(toolMessages.map((m) => m.toolCallId)).toEqual(['call-a', 'call-b']);
+    expect(toolMessages.every((m) => m.content === 'PAGE')).toBe(true);
+    // Both tool_step rows were emitted and persisted.
+    const stepEvents = events.filter((e) => e.type === 'tool_step');
+    expect(stepEvents).toHaveLength(2);
+    expect(mem.appended.filter((m) => m.kind === 'tool_step')).toHaveLength(2);
+  });
+
+  it('exits before any provider call when maxToolIterations is zero', async () => {
+    // A zero iteration ceiling trips exhausted() on the very first iteration
+    // (0 >= 0), before any model turn — the partial fallback stands in.
+    const tool = recordingTool('web_fetch', false, 'x');
+    const gateway = new FakeLlmGateway([{ chunks: ['unused'], toolCalls: [call('web_fetch')] }]);
+    const harness = new Harness({
+      gateway,
+      memory: memory(),
+      model: 'm',
+      registry: new ToolRegistry([tool]),
+      maxToolIterations: 0,
+      logger: silentLogger,
+    });
+
+    const events = await collect(harness.runTurn({ companion, userContent: 'go', ownerId: 'u1' }));
+
+    expect(gateway.calls).toHaveLength(0); // never reached the model
+    expect(tool.calls).toEqual([]);
+    const done = events.find((e) => e.type === 'done');
+    expect(done && done.type === 'done' && done.message.content).toContain('ran out of room');
   });
 
   // Guards the import surface used above (avoids an unused-import lint).
