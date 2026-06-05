@@ -12,6 +12,7 @@ import { FakeLlmGateway, type FakeTurn } from '../llm/fake.js';
 import type { Logger } from '../logging.js';
 import { DrizzleIdentityStore } from '../identity/store.js';
 import { TranscriptMemoryStore } from '../memory/store.js';
+import type { AffectReading } from '../motivation/affect.js';
 import { DrizzleCompanionAffectStore } from '../motivation/affect-store.js';
 import { Harness, type HarnessAffect } from './harness.js';
 
@@ -48,9 +49,15 @@ describe('Harness perceiveAndLearn', () => {
     await close();
   });
 
-  /** A gateway scripting the reply turn, then the affect read turn(s). */
-  function gateway(reply: string, ...affectReads: string[]): FakeLlmGateway {
-    const turns: FakeTurn[] = [{ chunks: [reply] }, ...affectReads.map((r) => ({ chunks: [r] }))];
+  /** A gateway scripting the reply turn, then the affect read turn(s) — each a
+   * `report_affect` tool call carrying the named valence + note. */
+  function gateway(reply: string, ...affectReads: AffectReading[]): FakeLlmGateway {
+    const turns: FakeTurn[] = [
+      { chunks: [reply] },
+      ...affectReads.map((r) => ({
+        toolCalls: [{ name: 'report_affect', args: { valence: r.valence, note: r.note } }],
+      })),
+    ];
     return new FakeLlmGateway(turns);
   }
 
@@ -60,7 +67,7 @@ describe('Harness perceiveAndLearn', () => {
 
   it('senses the user mood and stores the rolling read after the turn', async () => {
     const reinforce = vi.fn(async () => {});
-    const harness = harnessWith(gateway('Hello!', '0.8\nwarm'), {
+    const harness = harnessWith(gateway('Hello!', { valence: 0.8, note: 'warm' }), {
       store: affectStore,
       model: 'cheap',
       reinforce,
@@ -73,7 +80,7 @@ describe('Harness perceiveAndLearn', () => {
 
   it('hands a zero delta to reinforce on the first turn (no baseline)', async () => {
     const reinforce = vi.fn(async (_companionId: string, _delta: number) => {});
-    const harness = harnessWith(gateway('Hi', '0.7\npleased'), {
+    const harness = harnessWith(gateway('Hi', { valence: 0.7, note: 'pleased' }), {
       store: affectStore,
       model: 'cheap',
       reinforce,
@@ -87,11 +94,14 @@ describe('Harness perceiveAndLearn', () => {
 
   it('hands the turn-over-turn CHANGE to reinforce on the next turn', async () => {
     // Turn 1: user is cool (−0.5). Turn 2: user warms (+0.6) → delta +1.1.
-    const t1 = harnessWith(gateway('ok', '-0.5\ncool'), { store: affectStore, model: 'cheap' });
+    const t1 = harnessWith(gateway('ok', { valence: -0.5, note: 'cool' }), {
+      store: affectStore,
+      model: 'cheap',
+    });
     await drain(t1.runTurn({ companion, userContent: 'whatever', ownerId: 'owner' }));
 
     const reinforce = vi.fn(async (_companionId: string, _delta: number) => {});
-    const t2 = harnessWith(gateway('great', '0.6\nwarm'), {
+    const t2 = harnessWith(gateway('great', { valence: 0.6, note: 'warm' }), {
       store: affectStore,
       model: 'cheap',
       reinforce,
@@ -108,7 +118,7 @@ describe('Harness perceiveAndLearn', () => {
     const reinforce = vi.fn(async () => {
       throw new Error('reinforce blew up');
     });
-    const harness = harnessWith(gateway('Hello', '0.9\nhappy'), {
+    const harness = harnessWith(gateway('Hello', { valence: 0.9, note: 'happy' }), {
       store: affectStore,
       model: 'cheap',
       reinforce,
@@ -129,11 +139,14 @@ describe('Harness perceiveAndLearn', () => {
 
   it('feeds the prior mood forward into the next reply prompt (fast-loop attunement)', async () => {
     // Turn 1 stores a "grumpy" read.
-    const t1 = harnessWith(gateway('ok', '-0.5\ngrumpy'), { store: affectStore, model: 'cheap' });
+    const t1 = harnessWith(gateway('ok', { valence: -0.5, note: 'grumpy' }), {
+      store: affectStore,
+      model: 'cheap',
+    });
     await drain(t1.runTurn({ companion, userContent: 'ugh fine', ownerId: 'owner' }));
 
     // Turn 2's reply call should carry an attunement system line built from it.
-    const t2gw = gateway('better now', '0.2\nneutral');
+    const t2gw = gateway('better now', { valence: 0.2, note: 'neutral' });
     const t2 = harnessWith(t2gw, { store: affectStore, model: 'cheap' });
     await drain(t2.runTurn({ companion, userContent: 'hello again', ownerId: 'owner' }));
 

@@ -49,7 +49,7 @@ describe('Phase 4.2 DoD — proactivity engine', () => {
       [
         { chunks: ['I read some things.'] },
         { chunks: ['Glad it helped!'] },
-        { chunks: ['0.9\ndelighted'] },
+        { toolCalls: [{ name: 'report_affect', args: { valence: 0.9, note: 'delighted' } }] },
       ],
       undefined,
       {

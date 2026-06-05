@@ -195,8 +195,8 @@ export {
   type AffectReading,
   type AffectSenseDeps,
   type AffectSenseParams,
+  coerceReading,
   NEUTRAL_AFFECT,
-  parseAffect,
   senseAffect,
 } from './motivation/affect.js';
 export {

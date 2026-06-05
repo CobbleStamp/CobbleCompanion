@@ -250,6 +250,8 @@ The schema the motivation engine uses (full mechanism → `companion-motivation.
   user's mood**, one row per companion: `valence` ∈ [−1, 1] + a short natural-language `note`. The
   agent loop upserts it every user turn (last-write-wins); the prior read is fed forward to attune the
   next reply, and the turn-over-turn change is the reinforcement signal (`companion-motivation.md` §7).
+  The read is taken via a structured **`report_affect` tool call** (named `valence` + `note` fields,
+  provider-parsed) — no free-text parsing; a missing/malformed call degrades to neutral.
 - **`proactive_outcomes`** (new) — one row per initiation for the reinforcement loop: the served
   drive, a drive snapshot at initiation, the linked **`note_message_id`** (the report note the user
   reacts to — migration `0014`), and the **reward** once resolved. **Phase 4.2: the reward is the

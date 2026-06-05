@@ -8,11 +8,17 @@
  * in valence its own acts produce (slow loop). This module is the perception only;
  * the learning lives in the will (`reinforce.ts`).
  *
+ * The read uses the gateway's structured tool-call channel — the model reports its
+ * judgement as a single `report_affect` call with named `{ valence, note }` fields,
+ * provider-parsed into `toolCalls[0].args`. There is no free-text parsing: a
+ * missing/malformed call simply falls back to {@link NEUTRAL_AFFECT}, so ambiguity
+ * never masquerades as a strong signal.
+ *
  * Best-effort: a perception hiccup must never disrupt the chat turn (logging.md).
  * The read rides the chat turn, so its tokens bill the user's STAMINA, not energy.
  */
 
-import type { LlmGateway } from '../llm/gateway.js';
+import type { LlmGateway, StreamResult, ToolDef } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import type { TokenQuotaStore } from '../quota/store.js';
 import { createUsageAccumulator, meteredLlmGateway } from '../usage.js';
@@ -27,6 +33,34 @@ export interface AffectReading {
 
 /** The neutral default — used on the first turn and on any unparseable read. */
 export const NEUTRAL_AFFECT: AffectReading = { valence: 0, note: '' };
+
+/** The name of the structured tool the model calls to report its read. */
+const REPORT_AFFECT = 'report_affect';
+
+/** The single tool advertised for the read: named fields, no positional guessing. */
+const REPORT_AFFECT_TOOL: ToolDef = {
+  name: REPORT_AFFECT,
+  description: "Report the user's current emotional state, judged from their latest message.",
+  parameters: {
+    type: 'object',
+    properties: {
+      valence: {
+        type: 'number',
+        minimum: -1,
+        maximum: 1,
+        description:
+          'How the user feels right now: 1 = clearly pleased/warm, ' +
+          '0 = neutral, -1 = clearly upset/annoyed.',
+      },
+      note: {
+        type: 'string',
+        description: 'A few words naming the mood (e.g. "relieved", "frustrated, terse").',
+      },
+    },
+    required: ['valence', 'note'],
+    additionalProperties: false,
+  },
+};
 
 export interface AffectSenseDeps {
   readonly llm: LlmGateway;
@@ -48,8 +82,8 @@ export interface AffectSenseParams {
 
 /**
  * Read the user's affect from their latest message (in recent context). Returns
- * {@link NEUTRAL_AFFECT} on any failure or unparseable reply — ambiguity must
- * never masquerade as a strong signal. Never throws.
+ * {@link NEUTRAL_AFFECT} on any failure or when the model declines to report —
+ * ambiguity must never masquerade as a strong signal. Never throws.
  */
 export async function senseAffect(
   deps: AffectSenseDeps,
@@ -60,32 +94,32 @@ export async function senseAffect(
     const llm = meteredLlmGateway(deps.llm, usage.sink);
     const system =
       'You read the emotional state of a user talking to their AI companion. ' +
-      'Judge how the user feels RIGHT NOW from their latest message in context. ' +
-      'Reply with EXACTLY two lines and nothing else:\n' +
-      'Line 1: a number from -1 to 1 (1 = clearly pleased/warm, 0 = neutral, ' +
-      '-1 = clearly upset/annoyed).\n' +
-      'Line 2: a few words naming the mood (e.g. "relieved", "frustrated, terse").';
+      'Judge how the user feels RIGHT NOW from their latest message in context, ' +
+      `then report it by calling the ${REPORT_AFFECT} tool. Always call the tool; ` +
+      'do not reply with prose.';
     const user =
       (params.recentContext ? `Recent conversation:\n${params.recentContext}\n\n` : '') +
       `The user just said:\n"${params.userText}"`;
 
-    let text = '';
-    for await (const delta of llm.stream({
-      model: deps.model,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: user },
-      ],
-    })) {
-      text += delta;
-    }
+    const result = await drain(
+      llm.stream({
+        model: deps.model,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: user },
+        ],
+        tools: [REPORT_AFFECT_TOOL],
+      }),
+    );
     if (deps.quota && params.ownerId) {
       const total = usage.total().totalTokens;
       if (total > 0) {
         await deps.quota.recordUsage(params.ownerId, total);
       }
     }
-    return parseAffect(text);
+
+    const call = result.toolCalls.find((toolCall) => toolCall.name === REPORT_AFFECT);
+    return call ? coerceReading(call.args) : NEUTRAL_AFFECT;
   } catch (error) {
     deps.logger.error('failed to sense user affect', {
       operation: 'motivation.affect.sense',
@@ -96,40 +130,28 @@ export async function senseAffect(
   }
 }
 
-/**
- * Parse the two-line affect reply: first signed decimal → valence (clamped to
- * [−1, 1]); the first non-numeric line → note. Defaults to {@link NEUTRAL_AFFECT}
- * when nothing usable is found.
- */
-export function parseAffect(text: string): AffectReading {
-  const lines = text
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-
-  let valence = 0;
-  let note = '';
-  for (const line of lines) {
-    const match = line.match(/-?\d+(\.\d+)?/);
-    if (match && valence === 0 && note === '') {
-      const value = Number.parseFloat(match[0]);
-      if (Number.isFinite(value)) {
-        valence = Math.min(1, Math.max(-1, value));
-      }
-      // If the same line also carries words, keep them as a fallback note
-      // (strip the leading separator punctuation between number and words).
-      const words = line
-        .replace(match[0], '')
-        .replace(/^[\s|:.–—-]+/, '')
-        .trim();
-      if (words.length > 0 && note === '') {
-        note = words;
-      }
-      continue;
-    }
-    if (note === '') {
-      note = line;
-    }
+/** Run a stream to completion, discarding text deltas, and return its result. */
+async function drain(stream: AsyncGenerator<string, StreamResult, void>): Promise<StreamResult> {
+  let step = await stream.next();
+  while (!step.done) {
+    step = await stream.next();
   }
+  return step.value;
+}
+
+/**
+ * Build a reading from the tool's parsed args. Valence is read as a finite number
+ * clamped to [−1, 1] (non-numeric → neutral 0); note is read as a trimmed string
+ * (absent/blank → ''). Tolerant by construction — a malformed field degrades to
+ * its neutral default rather than throwing.
+ */
+export function coerceReading(args: Record<string, unknown>): AffectReading {
+  const rawValence = args.valence;
+  const valence =
+    typeof rawValence === 'number' && Number.isFinite(rawValence)
+      ? Math.min(1, Math.max(-1, rawValence))
+      : 0;
+  const rawNote = args.note;
+  const note = typeof rawNote === 'string' ? rawNote.trim() : '';
   return { valence, note };
 }

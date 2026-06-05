@@ -1,55 +1,93 @@
 /**
  * Affect perception — one cheap structured read turns the user's latest message
- * into a valence + a short mood note. Parsing is tolerant (clamps, neutral on
- * junk); sensing meters its tokens to the user's stamina.
+ * into a valence + a short mood note. The model reports via a `report_affect`
+ * tool call (named fields, provider-parsed); `coerceReading` is tolerant (clamps,
+ * neutral on junk) and sensing meters its tokens to the user's stamina.
  */
 
 import { describe, expect, it, vi } from 'vitest';
 import { FakeLlmGateway } from '../llm/fake.js';
+import type { ToolCall } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import type { TokenQuotaStore } from '../quota/store.js';
-import { NEUTRAL_AFFECT, parseAffect, senseAffect } from './affect.js';
+import { coerceReading, NEUTRAL_AFFECT, senseAffect } from './affect.js';
 
 const silent: Logger = { error: () => {}, warn: () => {}, info: () => {} };
 
-describe('parseAffect', () => {
-  it('reads the two-line valence + note reply', () => {
-    expect(parseAffect('0.8\npleased, grateful')).toEqual({
+/** Script the gateway to emit a single report_affect tool call. */
+function reportAffect(args: Record<string, unknown>): readonly [{ toolCalls: ToolCall[] }] {
+  return [{ toolCalls: [{ name: 'report_affect', args }] }];
+}
+
+describe('coerceReading', () => {
+  it('reads valence + note from the parsed tool args', () => {
+    expect(coerceReading({ valence: 0.8, note: 'pleased, grateful' })).toEqual({
       valence: 0.8,
       note: 'pleased, grateful',
     });
-    expect(parseAffect('-0.6\nfrustrated')).toEqual({ valence: -0.6, note: 'frustrated' });
+    expect(coerceReading({ valence: -0.6, note: 'frustrated' })).toEqual({
+      valence: -0.6,
+      note: 'frustrated',
+    });
   });
 
   it('clamps valence to [-1, 1]', () => {
-    expect(parseAffect('2\nelated').valence).toBe(1);
-    expect(parseAffect('-9\nfurious').valence).toBe(-1);
+    expect(coerceReading({ valence: 2, note: 'elated' }).valence).toBe(1);
+    expect(coerceReading({ valence: -9, note: 'furious' }).valence).toBe(-1);
   });
 
-  it('falls back to neutral on an unparseable reply', () => {
-    expect(parseAffect('who knows')).toEqual({ valence: 0, note: 'who knows' });
-    expect(parseAffect('')).toEqual(NEUTRAL_AFFECT);
+  it('keeps a genuine neutral 0 distinct from a missing valence', () => {
+    expect(coerceReading({ valence: 0, note: 'calm' })).toEqual({ valence: 0, note: 'calm' });
+    expect(coerceReading({ note: 'calm' })).toEqual({ valence: 0, note: 'calm' });
   });
 
-  it('recovers a note from a single combined line', () => {
-    expect(parseAffect('0.5 — content')).toEqual({ valence: 0.5, note: 'content' });
+  it('falls back to neutral on malformed fields', () => {
+    expect(coerceReading({ valence: 'high', note: 42 })).toEqual(NEUTRAL_AFFECT);
+    expect(coerceReading({ valence: Number.NaN, note: '  ' })).toEqual(NEUTRAL_AFFECT);
+    expect(coerceReading({})).toEqual(NEUTRAL_AFFECT);
   });
 });
 
 describe('senseAffect', () => {
-  it('returns the parsed reading from the model', async () => {
+  it('returns the reading from the model tool call', async () => {
     const reading = await senseAffect(
-      { llm: new FakeLlmGateway(['0.9\ndelighted']), model: 'fake', logger: silent },
+      {
+        llm: new FakeLlmGateway(reportAffect({ valence: 0.9, note: 'delighted' })),
+        model: 'fake',
+        logger: silent,
+      },
       { recentContext: '', userText: 'this is wonderful, thank you!' },
     );
     expect(reading).toEqual({ valence: 0.9, note: 'delighted' });
+  });
+
+  it('advertises the report_affect tool to the gateway', async () => {
+    const llm = new FakeLlmGateway(reportAffect({ valence: 0.2, note: 'calm' }));
+    await senseAffect(
+      { llm, model: 'fake', logger: silent },
+      { recentContext: '', userText: 'all good' },
+    );
+    expect(llm.lastParams?.tools?.[0]?.name).toBe('report_affect');
+  });
+
+  it('is neutral when the model declines to call the tool', async () => {
+    const reading = await senseAffect(
+      { llm: new FakeLlmGateway(['just some prose, no tool call']), model: 'fake', logger: silent },
+      { recentContext: '', userText: 'whatever' },
+    );
+    expect(reading).toEqual(NEUTRAL_AFFECT);
   });
 
   it('meters its tokens to the stamina pool when given a quota + owner', async () => {
     const recordUsage = vi.fn(async (_ownerId: string, _total: number) => {});
     const quota = { recordUsage } as unknown as TokenQuotaStore;
     await senseAffect(
-      { llm: new FakeLlmGateway(['0.2\ncalm']), model: 'fake', logger: silent, quota },
+      {
+        llm: new FakeLlmGateway(reportAffect({ valence: 0.2, note: 'calm' })),
+        model: 'fake',
+        logger: silent,
+        quota,
+      },
       { ownerId: 'owner', recentContext: 'hi', userText: 'all good' },
     );
     expect(recordUsage).toHaveBeenCalledTimes(1);
