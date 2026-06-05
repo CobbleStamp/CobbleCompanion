@@ -133,6 +133,11 @@ export class Harness {
   /** In-flight post-turn affect reads — launched fire-and-forget, tracked so
    *  shutdown/tests can await them settling (see {@link whenIdle}). */
   private readonly backgroundTasks = new Set<Promise<void>>();
+  /** Tail of the per-companion affect chain. The read→sense→upsert is serialized
+   *  per companion so a fast follow-up turn can't read the same stale `prior`
+   *  baseline (double-counting the mood delta) or clobber a newer reading with a
+   *  late older upsert — both failure modes of the last-write-wins store. */
+  private readonly affectChains = new Map<string, Promise<void>>();
 
   constructor(options: HarnessOptions) {
     this.gateway = options.gateway;
@@ -178,9 +183,12 @@ export class Harness {
       // `done` before this runs, so the next turn already races this read either
       // way. Self-catching (perceiveAndLearn never throws), so the floated
       // promise can't surface as an unhandled rejection.
-      this.trackBackground(
-        this.perceiveAndLearn(companion.id, userContent, affectSnapshot, ownerId),
-      );
+      //
+      // Serialize per companion: chain this read after the prior turn's so its
+      // upsert lands before the next read captures `prior` (no double-count, no
+      // clobber). `.catch` isolates a prior link's failure; the snapshot was
+      // already taken above, so the chained read still reflects this turn.
+      this.trackBackground(this.chainAffect(companion.id, affectSnapshot, userContent, ownerId));
     } catch (error) {
       yield this.failed(companion.id, error);
     }
@@ -233,6 +241,32 @@ export class Harness {
   }
 
   /**
+   * Queue a post-turn affect read behind the companion's prior one so the
+   * read→sense→upsert window can't overlap for the same companion. Each link is
+   * self-catching (perceiveAndLearn never throws); the `.catch` on the prior tail
+   * defends against any unexpected rejection so the chain can't wedge. The map
+   * entry is cleared once this read is the tail, keeping it from growing.
+   */
+  private chainAffect(
+    companionId: string,
+    recent: readonly MessageDto[],
+    userContent: string,
+    ownerId: string | undefined,
+  ): Promise<void> {
+    const prior = this.affectChains.get(companionId) ?? Promise.resolve();
+    const next = prior
+      .catch(() => undefined)
+      .then(() => this.perceiveAndLearn(companionId, userContent, recent, ownerId));
+    this.affectChains.set(companionId, next);
+    void next.finally(() => {
+      if (this.affectChains.get(companionId) === next) {
+        this.affectChains.delete(companionId);
+      }
+    });
+    return next;
+  }
+
+  /**
    * Sense the user's mood from this turn and let the will learn from its change
    * (Phase 4.2, companion-motivation.md §7). Loads the prior read, senses the
    * fresh one, stores it (so the next turn has a baseline), and hands the
@@ -250,17 +284,13 @@ export class Harness {
       return;
     }
     try {
-      // KNOWN RACE (accepted for now): this read→sense→upsert is NOT serialized
-      // per companion, and the upsert is last-write-wins with no version guard
-      // (affect-store.ts). Because the read is fire-and-forget (runTurn) and the
-      // senseAffect call below is a seconds-long round-trip, a fast follow-up turn
-      // can call get() before this turn's upsert lands — both capture the same
-      // `prior`, so the next turn's `delta` is measured against a stale baseline
-      // (double-counting the change), and a late older upsert can clobber a newer
-      // reading. Low-frequency with a single user (needs two turns inside the
-      // sense window) and only softly mis-trains drive weights, so it's tolerated.
-      // Fix when it matters: per-companion serialization of perceiveAndLearn, or an
-      // optimistic-version guard on upsert + recompute on conflict.
+      // The read→sense→upsert is serialized per companion (chainAffect): this
+      // runs only after the prior turn's upsert has landed, so `prior` is never a
+      // stale baseline (no double-counted delta) and a late older upsert can't
+      // clobber a newer reading. The upsert remains last-write-wins, which is safe
+      // under this single-writer-per-companion ordering. (A second process running
+      // the same companion would reintroduce the race; out of scope for the
+      // single-instance PoC — see affect-store.ts.)
       const prior = await this.affect.store.get(companionId);
       const reading = await senseAffect(
         {

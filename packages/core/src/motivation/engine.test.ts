@@ -18,7 +18,11 @@ import type { IngestionRunParams } from '../ingestion/pipeline.js';
 import { FakeLlmGateway } from '../llm/fake.js';
 import { TranscriptMemoryStore } from '../memory/store.js';
 import { DrizzleSemanticMemoryStore } from '../memory/semantic-store.js';
-import { DrizzleCompanionEnergyStore } from '../quota/energy-store.js';
+import {
+  DrizzleCompanionEnergyStore,
+  type CompanionEnergyStore,
+  type EnergySnapshot,
+} from '../quota/energy-store.js';
 import { DrizzleLeadStore } from '../tools/lead-store.js';
 import { MotivationEngine } from './engine.js';
 import { InMemoryPresenceStore } from './presence-store.js';
@@ -60,6 +64,50 @@ class AlwaysThrowingPipeline implements IngestionTarget {
   async run(_params: IngestionRunParams): Promise<void> {
     throw new Error('read blew up');
   }
+}
+
+/**
+ * Energy store that scripts successive `getEnergy` snapshots so a test can model a
+ * UTC-midnight window roll landing mid-burst: the sensing read (call 0) sees the
+ * pre-roll usage and the post-burst read (call 1) sees the rolled-down usage
+ * (overage clamped to debt). Spend/exhaustion are inert so the burst's reads all
+ * run regardless of the scripted numbers. (getEnergy is called exactly twice by a
+ * tick — sensing + post-burst; the burst itself only uses recordSpend/isExhausted.)
+ */
+class ScriptedEnergyStore implements CompanionEnergyStore {
+  private call = 0;
+  constructor(
+    private readonly usedByCall: readonly number[],
+    private readonly cap: number,
+  ) {}
+  async getEnergy(): Promise<EnergySnapshot> {
+    const used = this.usedByCall[Math.min(this.call, this.usedByCall.length - 1)]!;
+    this.call += 1;
+    return { usedTokens: used, capTokens: this.cap, resetsAt: new Date(0).toISOString() };
+  }
+  async recordSpend(): Promise<void> {}
+  async isExhausted(): Promise<boolean> {
+    return false;
+  }
+  async topUp(): Promise<void> {}
+}
+
+/** Logger capturing `info` entries so the structured tick log can be asserted. */
+function infoCapturingLogger(): {
+  logger: Logger;
+  infos: { message: string; context: Record<string, unknown> }[];
+} {
+  const infos: { message: string; context: Record<string, unknown> }[] = [];
+  return {
+    infos,
+    logger: {
+      error: () => {},
+      warn: () => {},
+      info: (message: string, context?: unknown): void => {
+        infos.push({ message, context: (context ?? {}) as Record<string, unknown> });
+      },
+    },
+  };
 }
 
 describe('MotivationEngine.tick', () => {
@@ -289,5 +337,41 @@ describe('MotivationEngine.tick', () => {
     expect(await assistantNotes()).toHaveLength(0);
     expect(await leads.listByStatus(companionId, ['new'])).toHaveLength(0);
     expect(await rewards.list(companionId, 10)).toHaveLength(0);
+  });
+
+  it('reports post-roll usage (not a clamped-to-zero delta) when the energy window rolls mid-burst', async () => {
+    await seedLeads(3);
+    // Sensing sees 900 used (pre-roll). After the burst, the UTC window has rolled
+    // and usage reset to 250 of carried debt — so `after` (250) is BELOW `before`
+    // (900). The store was still debited correctly during the burst; this is a
+    // logged metric, so the engine must fall back to the post-roll usage and flag
+    // it, NOT report the naive `after - before` (negative) nor silently 0.
+    const rolling = new ScriptedEnergyStore([900, 250], 1_000_000);
+    const { logger, infos } = infoCapturingLogger();
+    const rolled = new MotivationEngine({
+      identity,
+      presence,
+      energy: rolling,
+      leads,
+      semantic,
+      pipeline: new FakeReadPipeline(semantic),
+      memory,
+      rewards,
+      llm: new FakeLlmGateway(['Read ', 'three things.']),
+      model: 'fake-model',
+      logger,
+    });
+
+    const result = await rolled.tick(companionId);
+
+    // It did initiate and read — the roll only affects the spend metric.
+    expect(result.initiated).toBe(true);
+    expect(result.sourcesRead).toBe(3);
+    // Post-roll usage (250), NOT the old `Math.max(0, 250 - 900)` = 0.
+    expect(result.energySpent).toBe(250);
+    // The inaccuracy is surfaced, not hidden: the structured log flags it.
+    const initiated = infos.find((e) => e.message === 'motivation tick initiated');
+    expect(initiated?.context.energySpent).toBe(250);
+    expect(initiated?.context.energySpentApprox).toBe(true);
   });
 });

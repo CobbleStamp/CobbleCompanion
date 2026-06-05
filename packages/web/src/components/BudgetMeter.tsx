@@ -29,8 +29,10 @@ export function BudgetMeter({ companionId }: { companionId: string }): JSX.Eleme
     try {
       const next = await fetchBudget(companionId);
       if (mountedRef.current) setBudget(next);
-    } catch {
-      // Informational; ignore transient failures.
+    } catch (error) {
+      // Informational meter; a transient failure just leaves the prior reading
+      // and the next poll reconciles — but log it (logging.md: no silent catch).
+      console.error('BudgetMeter: failed to refresh budget', error);
     }
   }, [companionId]);
 
@@ -52,8 +54,9 @@ export function BudgetMeter({ companionId }: { companionId: string }): JSX.Eleme
       try {
         const next = await topUpBudget(companionId, pool, TOPUP_AMOUNT);
         if (mountedRef.current) setBudget(next);
-      } catch {
-        // Best-effort; the next poll reconciles.
+      } catch (error) {
+        // Best-effort; the next poll reconciles — but log it (logging.md).
+        console.error('BudgetMeter: failed to feed pool', { pool, error });
       } finally {
         if (mountedRef.current) setFeeding(false);
       }

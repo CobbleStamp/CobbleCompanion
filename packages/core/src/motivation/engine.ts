@@ -158,13 +158,21 @@ export class MotivationEngine {
           limit: move.limit,
         },
       );
-      const energySpent = Math.max(0, (await energy.getEnergy(companionId)).usedTokens - before);
+      // Spend = energy delta across the burst. If a UTC-midnight window roll
+      // landed mid-burst, `after` resets below `before`; the store was still
+      // debited correctly during the burst — this is a logged metric only — so
+      // fall back to the post-roll usage and flag the roll rather than report a
+      // misleading 0.
+      const after = (await energy.getEnergy(companionId)).usedTokens;
+      const rolledMidBurst = after < before;
+      const energySpent = rolledMidBurst ? after : after - before;
       logger.info('motivation tick initiated', {
         companionId,
         move: move.kind,
         drive: move.drive,
         sourcesRead: result.read.length,
         energySpent,
+        ...(rolledMidBurst ? { energySpentApprox: true } : {}),
       });
       return {
         initiated: result.read.length > 0,

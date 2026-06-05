@@ -477,8 +477,9 @@ export const companionEnergy = pgTable('companion_energy', {
 
 /**
  * Affect — the companion's rolling read of the user's mood (Phase 4.2,
- * companion-motivation.md §7). One row per companion, upserted on every user turn
- * inside the agent loop: `valence` ∈ [−1, 1] (how positive the user reads) plus a
+ * companion-motivation.md §7). One row per companion, upserted on every successful
+ * affect read inside the agent loop (a non-read keeps the prior baseline and
+ * writes nothing): `valence` ∈ [−1, 1] (how positive the user reads) plus a
  * short natural-language `note`. The harness feeds the *prior* read forward to
  * attune the next reply (fast loop), and the *change* in valence its own acts
  * produce is the reinforcement signal (slow loop). Durable so the next turn — even

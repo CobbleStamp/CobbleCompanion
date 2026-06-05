@@ -33,7 +33,7 @@ export interface CompanionRecord {
   readonly proactivityDial: ProactivityDial;
   /** Null until personalized via onboarding (PoC uses default constants). */
   readonly personalityKnobs: PersonalityKnobs | null;
-  /** Null → neutral defaults; learned (EMA) by the reinforcement loop. */
+  /** Null → neutral defaults; learned (additive change-as-reward nudge) by the reinforcement loop. */
   readonly driveWeights: DriveWeights | null;
   readonly createdAt: string;
 }

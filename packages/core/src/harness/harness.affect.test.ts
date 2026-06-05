@@ -9,11 +9,16 @@ import type { CompanionDto } from '@cobble/shared';
 import { createTestDatabase } from '@cobble/db/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeLlmGateway, type FakeTurn } from '../llm/fake.js';
+import type { LlmGateway, LlmMessage, LlmStreamParams, StreamResult } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import { DrizzleIdentityStore } from '../identity/store.js';
 import { TranscriptMemoryStore } from '../memory/store.js';
 import type { AffectReading } from '../motivation/affect.js';
-import { DrizzleCompanionAffectStore } from '../motivation/affect-store.js';
+import {
+  DrizzleCompanionAffectStore,
+  type CompanionAffectStore,
+} from '../motivation/affect-store.js';
+import { ZERO_USAGE } from '../usage.js';
 import { Harness, type HarnessAffect } from './harness.js';
 
 const silent: Logger = { error: () => {}, warn: () => {}, info: () => {} };
@@ -23,6 +28,69 @@ async function drain(gen: AsyncIterable<unknown>): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   for await (const _ of gen) {
     /* consume */
+  }
+}
+
+/** A resolvable promise, for gating an in-flight affect read. */
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve: () => void = () => {};
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+/** Pull the fenced user text back out of a senseAffect prompt (`<user_message>…`). */
+function fencedUserText(messages: readonly LlmMessage[]): string {
+  const userMsg = messages.find((m) => m.role === 'user')?.content ?? '';
+  return (userMsg.match(/<user_message>\n([\s\S]*?)\n<\/user_message>/)?.[1] ?? '').trim();
+}
+
+/**
+ * Concurrency-safe gateway for the interleaving-turns test: responses are
+ * addressed by message CONTENT, not call order, so two turns sharing one harness
+ * can run with their stream() calls interleaved without scrambling a script. A
+ * reply call (no report_affect tool) streams 'ok'; an affect read (the tool is
+ * advertised) returns the valence keyed to its fenced user text. `onAffectRead`
+ * lets a test observe / gate a specific read to widen the serialization window.
+ */
+class ContentAddressedGateway implements LlmGateway {
+  constructor(
+    private readonly affectByUserText: ReadonlyMap<string, AffectReading>,
+    private readonly onAffectRead?: (userText: string) => Promise<void>,
+  ) {}
+
+  async *stream(params: LlmStreamParams): AsyncGenerator<string, StreamResult, void> {
+    const isAffectRead = (params.tools ?? []).some((t) => t.name === 'report_affect');
+    if (!isAffectRead) {
+      yield 'ok';
+      return { usage: ZERO_USAGE, toolCalls: [] };
+    }
+    const userText = fencedUserText(params.messages);
+    if (this.onAffectRead) {
+      await this.onAffectRead(userText);
+    }
+    const reading = this.affectByUserText.get(userText);
+    return {
+      usage: ZERO_USAGE,
+      toolCalls: reading
+        ? [{ name: 'report_affect', args: { valence: reading.valence, note: reading.note } }]
+        : [],
+    };
+  }
+}
+
+/** In-memory affect store that records the order of get/upsert ops across turns. */
+class RecordingAffectStore implements CompanionAffectStore {
+  readonly ops: string[] = [];
+  private value: AffectReading | null = null;
+  async get(): Promise<AffectReading | null> {
+    this.ops.push(`get:${this.value ? this.value.valence : 'null'}`);
+    return this.value;
+  }
+  async upsert(_companionId: string, reading: AffectReading): Promise<void> {
+    this.ops.push(`upsert:${reading.valence}`);
+    this.value = reading;
   }
 }
 
@@ -216,6 +284,70 @@ describe('Harness perceiveAndLearn', () => {
     expect(tokens.join('')).toBe('Hello there');
     expect(events).toContain('done');
     expect(events).not.toContain('error');
+  });
+
+  it('serializes the affect read per companion so a follow-up turn sees the prior upsert', async () => {
+    // Two turns through ONE harness instance (the per-instance chain is what
+    // serializes them — in production there is one harness per process). Turn 1's
+    // affect read is held open; if the read were NOT serialized, turn 2 would read
+    // its baseline before turn 1's upsert lands — both capture the same prior, and
+    // turn 2's delta double-counts (here: would be 0 against a null baseline). The
+    // chain must keep turn 2's read queued until turn 1's upsert has committed.
+    const store = new RecordingAffectStore();
+    const reachedTurn1 = deferred();
+    const releaseTurn1 = deferred();
+    let gatedTurn1 = false;
+    const gateway = new ContentAddressedGateway(
+      new Map([
+        ['turn one', { valence: -0.5, note: 'cool' }],
+        ['turn two', { valence: 0.6, note: 'warm' }],
+      ]),
+      async (userText) => {
+        // Hold ONLY turn 1's read open, once, to widen the race window.
+        if (userText === 'turn one' && !gatedTurn1) {
+          gatedTurn1 = true;
+          reachedTurn1.resolve();
+          await releaseTurn1.promise;
+        }
+      },
+    );
+    const reinforce = vi.fn(async (_companionId: string, _delta: number) => {});
+    const harness = new Harness({
+      gateway,
+      memory,
+      model: 'chat-model',
+      logger: silent,
+      affect: { store, model: 'cheap', reinforce },
+    });
+
+    // Turn 1: reply streams, then its background affect read starts and blocks at
+    // the gate (after its perceive-get, before its upsert).
+    await drain(harness.runTurn({ companion, userContent: 'turn one', ownerId: 'owner' }));
+    await reachedTurn1.promise;
+
+    // Turn 2: reply streams; its affect read is chained behind turn 1's. Turn 2's
+    // own read is NOT gated, so without serialization it would run to completion
+    // here and upsert 0.6 while turn 1 is still blocked. The chain must keep it
+    // queued: no upsert and no learning has happened yet. (Each turn's prepare()
+    // also does an attunement get — those are not part of the serialized chain, so
+    // assert on upserts/reinforce, the chain's effects, not raw get count.)
+    await drain(harness.runTurn({ companion, userContent: 'turn two', ownerId: 'owner' }));
+    expect(store.ops.filter((o) => o.startsWith('upsert'))).toEqual([]);
+    expect(reinforce).not.toHaveBeenCalled();
+
+    // Release turn 1; both reads now settle in order.
+    releaseTurn1.resolve();
+    await harness.whenIdle();
+
+    // Strict ordering: turn 1 commits (-0.5) before turn 2's read, which therefore
+    // sees -0.5 and writes 0.6 — never the reverse, and never two writes off null.
+    expect(store.ops.filter((o) => o.startsWith('upsert'))).toEqual(['upsert:-0.5', 'upsert:0.6']);
+    // Turn 1: first turn, no baseline → delta 0. Turn 2: 0.6 − (−0.5) = 1.1, which
+    // is only correct because it read turn 1's committed value (not a stale null,
+    // which the `?? reading.valence` first-turn rule would have collapsed to 0).
+    expect(reinforce).toHaveBeenCalledTimes(2);
+    expect(reinforce.mock.calls[0]![1]).toBe(0);
+    expect(reinforce.mock.calls[1]![1]).toBeCloseTo(1.1);
   });
 
   it('skips perception entirely when no affect deps are configured (pre-4.2 path)', async () => {

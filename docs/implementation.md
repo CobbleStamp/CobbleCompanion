@@ -237,7 +237,7 @@ hit carries provenance (source title, chapter, topic, para/page range) + the ver
 
 The schema the motivation engine uses (full mechanism → `companion-motivation.md`; migrations
 `0012` two-pool budget + companion knobs/dial/weights + proposals.origin, `0013` proactive_outcomes,
-`0014` `proposals.note_message_id`, `0015` `companion_affect`, `0016` `user_token_usage.top_up_tokens`
+`0014` `proactive_outcomes.note_message_id`, `0015` `companion_affect`, `0016` `user_token_usage.top_up_tokens`
 (the stamina-pool half of the manual feed, twin of energy's top-up)).
 
 - **`proposals.origin`** — `text` enum `chat | explore | autonomous`, default `chat`. Lets the
