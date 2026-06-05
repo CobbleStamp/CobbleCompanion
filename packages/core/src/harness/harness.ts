@@ -9,6 +9,8 @@ import type { LlmGateway, LlmMessage, StreamResult } from '../llm/gateway.js';
 import { toolStepSummary } from '../tools/tool.js';
 import { consoleLogger, type Logger } from '../logging.js';
 import type { MemoryStore } from '../memory/store.js';
+import { senseAffect } from '../motivation/affect.js';
+import type { CompanionAffectStore } from '../motivation/affect-store.js';
 import type { TokenQuotaStore } from '../quota/store.js';
 import { dispatchTool } from '../tools/dispatch.js';
 import { ToolRegistry } from '../tools/registry.js';
@@ -43,6 +45,23 @@ const HELD_TURN_FALLBACK = 'I’ve set that aside for you to confirm.';
 /** User-facing text when a turn can't be completed (failures are data, §4.7). */
 const TURN_ERROR_MESSAGE = 'Cobble hit a problem while responding. Please try again.';
 
+/** Recent transcript turns to give the affect read as context (Phase 4.2). */
+const AFFECT_CONTEXT_TURNS = 6;
+
+/**
+ * Affect perception + learning wiring (Phase 4.2, companion-motivation.md §7).
+ * Optional: when present, the harness senses the user's mood each turn (storing
+ * the rolling read) and hands the *change* to `reinforce` for the will to learn
+ * from. The body senses; the will learns. Omitted = the pre-4.2 path (no affect).
+ */
+export interface HarnessAffect {
+  readonly store: CompanionAffectStore;
+  /** Cheap model for the one-shot mood read. */
+  readonly model: string;
+  /** Consumes the turn-over-turn change in mood (the slow loop). Optional. */
+  readonly reinforce?: (companionId: string, delta: number) => Promise<void>;
+}
+
 export interface HarnessOptions {
   readonly gateway: LlmGateway;
   readonly memory: MemoryStore;
@@ -62,6 +81,8 @@ export interface HarnessOptions {
   readonly turnTokenBudget?: number;
   /** Debits the turn's tokens against the owner's daily cap; omitted = no metering. */
   readonly quota?: TokenQuotaStore;
+  /** Affect perception + learning (Phase 4.2); omitted = no mood sensing. */
+  readonly affect?: HarnessAffect;
   readonly logger?: Logger;
 }
 
@@ -107,6 +128,7 @@ export class Harness {
   private readonly maxToolIterations: number;
   private readonly turnTokenBudget: number | undefined;
   private readonly quota: TokenQuotaStore | undefined;
+  private readonly affect: HarnessAffect | undefined;
   private readonly logger: Logger;
 
   constructor(options: HarnessOptions) {
@@ -122,6 +144,7 @@ export class Harness {
     this.maxToolIterations = options.maxToolIterations ?? DEFAULT_MAX_TOOL_ITERATIONS;
     this.turnTokenBudget = options.turnTokenBudget;
     this.quota = options.quota;
+    this.affect = options.affect;
   }
 
   /**
@@ -135,6 +158,10 @@ export class Harness {
       await this.memory.appendMessage(companion.id, 'user', userContent);
       const prep = await this.prepare(companion, userContent);
       yield* this.runLoop(companion, ownerId, prep, signal);
+      // Perception + learning (Phase 4.2) — runs AFTER the reply has fully
+      // streamed (all tokens + `done` already yielded), so it adds zero latency
+      // to what the user sees. Best-effort; never throws.
+      await this.perceiveAndLearn(companion.id, userContent, ownerId);
     } catch (error) {
       yield this.failed(companion.id, error);
     }
@@ -161,6 +188,54 @@ export class Harness {
       yield* this.runLoop(companion, ownerId, prep, signal);
     } catch (error) {
       yield this.failed(companion.id, error);
+    }
+  }
+
+  /**
+   * Sense the user's mood from this turn and let the will learn from its change
+   * (Phase 4.2, companion-motivation.md §7). Loads the prior read, senses the
+   * fresh one, stores it (so the next turn has a baseline), and hands the
+   * turn-over-turn `delta` to `reinforce`. The body senses; the will decides what
+   * that teaches. Best-effort throughout — a perception hiccup must never disrupt
+   * the turn that carried it (logging.md); the reply has already streamed.
+   */
+  private async perceiveAndLearn(
+    companionId: string,
+    userContent: string,
+    ownerId: string | undefined,
+  ): Promise<void> {
+    if (!this.affect) {
+      return;
+    }
+    try {
+      const prior = await this.affect.store.get(companionId);
+      const recent = await this.memory.getRecentMessages(companionId, this.recentLimit);
+      const reading = await senseAffect(
+        {
+          llm: this.gateway,
+          model: this.affect.model,
+          logger: this.logger,
+          ...(this.quota ? { quota: this.quota } : {}),
+        },
+        {
+          ...(ownerId ? { ownerId } : {}),
+          recentContext: affectContext(recent),
+          userText: userContent,
+        },
+      );
+      await this.affect.store.upsert(companionId, reading);
+      // First-ever turn (no prior) has no baseline → delta 0, so nothing is
+      // learned; the reading is still stored for next time.
+      const delta = reading.valence - (prior?.valence ?? reading.valence);
+      if (this.affect.reinforce) {
+        await this.affect.reinforce(companionId, delta);
+      }
+    } catch (error) {
+      this.logger.error('failed to perceive/learn user affect', {
+        operation: 'harness.perceiveAndLearn',
+        companionId,
+        error,
+      });
     }
   }
 
@@ -509,6 +584,21 @@ export class Harness {
       usage: ZERO_USAGE,
     };
   };
+}
+
+/**
+ * Format recent transcript turns as context for the affect read (Phase 4.2):
+ * conversational turns only (tool-step/proposal rows are UI chrome), and drop the
+ * final turn — that's the user message being read, passed separately as the
+ * subject. Capped to the last {@link AFFECT_CONTEXT_TURNS} so the read stays cheap.
+ */
+function affectContext(recent: readonly MessageDto[]): string {
+  return recent
+    .filter((message) => (message.kind ?? 'message') === 'message')
+    .slice(0, -1)
+    .slice(-AFFECT_CONTEXT_TURNS)
+    .map((message) => `${message.role}: ${message.content}`)
+    .join('\n');
 }
 
 /** Collapse repeated passages from the same source span into one citation. */
