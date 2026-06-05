@@ -230,7 +230,30 @@ hit carries provenance (source title, chapter, topic, para/page range) + the ver
 
 > Seeded on a successful approved action; browse-only — retrieval-as-hint is deferred to P5.
 
-**_Deferred:_** growth/progression records (P5). Added via new migrations.
+### Phase 4 — Proactivity Engine (designed, not yet built)
+
+The schema deltas the motivation engine needs (full design → `architecture.md` §4.5/§4.8). DDL
+lands with the Phase 4 migrations; captured here so the design is single-sourced.
+
+- **`proposals.origin`** — `text` enum `chat | explore | autonomous`, default `chat`. Lets the
+  confirm route re-enter the loop only for `chat`-origin proposals (the §4.4 resolution) and bill
+  effectful work to the right budget pool (chat→stamina, explore/autonomous→energy).
+- **`companions`** gains: `proactivity_dial` (`off | gentle | active`, default `gentle` — the
+  tunability dial); `personality_knobs` (jsonb `{focusLength, boredom, distractibility}`, seeded at
+  creation from temperament — the "creature" constants); `drive_weights` (jsonb — per-drive EMA
+  weights the reinforcement loop updates; null → neutral defaults).
+- **`companion_energy`** (new) — the **energy** pool (self-initiated work), mirroring
+  `user_token_usage` (which becomes the **stamina** pool) but keyed per **companion**: window reset,
+  used tokens, a manual top-up grant. Separate counters so autonomy can't starve interaction (§4.8).
+- **`proactive_outcomes`** (new) — one row per initiation for the reinforcement loop: `origin`,
+  move kind, linked `proposal_id`/message `seq`, a drive snapshot at initiation, and the **blended
+  reward** (LLM-critic feeling-score + hard signals) once resolved. Doubles as the
+  helpful-vs-annoying measurement.
+
+Presence is **not** a table — it is a volatile, heartbeat-fed in-memory signal (§4.5).
+
+**_Deferred:_** growth/progression records + the stamina/energy game economy (P5); deeper RL policy
+beyond the v1 EMA weight update. Added via new migrations.
 
 ## 2. Harness & Agent-Loop Internals
 

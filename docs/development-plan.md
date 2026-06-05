@@ -187,22 +187,44 @@ and every tool call is logged (`architecture.md` §4.4–4.5). The body is verif
 deterministic tests; the will only by measurement — so it lands on a trusted foundation.
 
 **Scope** (full mechanism → `architecture.md` §4.5)
-- Motivation model driving initiative: your goals & well-being, its own curiosity/learning,
-  maintaining the bond, pending work & opportunities (`product-overview.md` §5.4). Drives are
-  **learned** (interests read out of memory + the evolved persona), not configured.
-- Idle/return-triggered proactive turns (in-app, since web); proposals and questions back to you.
-  The companion **works its lead inventory on an idle tick** — the same exploration loop Phase 3
-  ran on command, now self-triggered.
+- Motivation model driving initiative: your goals & well-being, understanding you, its own
+  curiosity/learning, **earning your appreciation** (learned), maintaining the bond, pending work
+  & opportunities (`product-overview.md` §5.4). Drives are **learned** (interests read out of
+  memory + the evolved persona), not configured.
+- **Presence-aware behaviour.** The engine reads its environment — chiefly a **presence spectrum**
+  (active / attentive / away / absent, from a client heartbeat + activity recency) — and picks a
+  fitting expression: engage you when present, do solo work when you're away (surfaced on return),
+  and **stay idle** when nothing is worth doing.
+- **Lazy, web-appropriate trigger.** Proactive turns fire on user activity + on return + a periodic
+  sweep — not an always-on per-companion drain. The companion **works its lead inventory** — the
+  same exploration loop Phase 3 ran on command, now self-triggered. *(Genuine work **while you're
+  away** — continuous between-visit activity — is **deferred to Phase 6**, where push gives it an
+  audience.)*
+- **Cheap arbitration, then a burst.** A token-free heuristic gate (drive × salience) decides
+  *whether* to act; only on commit does an LLM burst run the move. "Idle is a valid outcome."
 - **Attention model (the "creature"):** each initiation is a **bounded burst**, not a full drain
   of the inventory — shaped by personality parameters **focus length**, **boredom** (interest
   decays without payoff), and **distractibility** (a higher-salience lead preempts). Different
-  Cobbles run different constants (tenacious deep-reader vs. magpie).
-- Tunable frequency/intensity controls.
+  Cobbles run different constants (tenacious deep-reader vs. magpie), seeded at creation.
+- **Stamina & energy (the budget made legible).** Reframe the per-user daily cap into two pools —
+  **stamina** (user-initiated work) and **energy** (the engine's self-initiated work) — so autonomy
+  can never starve conversation (`architecture.md` §4.8). Phase 4 ships the mechanism plus a
+  **simple meter + manual top-up**; the full feeding/"food" game economy is **Phase 5**.
+- **Reinforcement (v1).** A blended reward — an LLM-judged feeling-score of your reaction plus hard
+  signals (approved / dismissed / ignored / appreciated) — updates interpretable per-drive weights
+  so the companion learns what lands. *(A deeper contextual-bandit policy is deferred.)*
+- Tunable frequency/intensity controls (a per-companion off/gentle/active dial).
 
 **Done when:** on opening the app with no prompt, Cobble offers genuinely relevant proposals or
-questions; users can dial it down; a holdout/measurement exists to track helpful-vs-annoying.
+questions; users can dial it down; energy is consumed and, when exhausted, initiation stops while
+chat keeps working; reward is captured to track helpful-vs-annoying.
 
-**Key risk:** annoyance. Gate behind tunability and measure engagement/dismissal from day one.
+**Key risk:** annoyance. Gate behind tunability + the energy budget, and measure
+engagement/dismissal (the reinforcement signal) from day one.
+
+**Deferred (designed here, built later):** continuous work-while-away → Phase 6 (needs push); the
+stamina/energy **game economy** (food types, feeding, store, rich meters) → Phase 5; deeper RL
+beyond the v1 weight update.
 
 ### Phase 5 — Bond & Growth (PoC complete)
 **Goal:** make Cobble feel raised, not used — closing the PoC loop.
@@ -212,6 +234,9 @@ questions; users can dial it down; a holdout/measurement exists to track helpful
   knowledge (semantic/episodic), relationship/personality, unlockable abilities (procedural),
   and **visual/character evolution** (appearance/home/accessories).
 - Leveling/progression surfaced in the UI.
+- **Stamina/energy game economy:** the Phase 4 vitality meters grow into a feeding loop — "food"
+  the user gives that favours stamina or energy, top-up/economy, and richer visuals
+  (`product-overview.md` §5.6).
 
 **Done when:** a returning user can see and feel how their Cobble has grown; the web PoC
 demonstrates all three differentiators (knowledge organism, embodiment groundwork, proactivity)
@@ -223,7 +248,9 @@ end-to-end. **Decision gate:** validate the concept before funding native surfac
 Native mobile app as a "living room" the companion is summoned into. Adds: GPS/location-aware
 recall, push notifications (the away-channel for proactivity), and **OS-as-tools** (files,
 photos, calendar, contacts, health — permission-gated). Implements the **one-embodiment-at-a-time
-summon** model and the companion-as-courier sync (`product-overview.md` §2.2, §5.2).
+summon** model and the companion-as-courier sync (`product-overview.md` §2.2, §5.2). The push
+channel also unlocks the **eager "work while you're away"** proactivity designed in Phase 4
+(`architecture.md` §4.5) — genuine between-visit activity that now has an audience.
 
 ### Phase 7 — Desktop Surface
 Native desktop app: file/workspace OS tools, heavier local storage/compute. Confirms the

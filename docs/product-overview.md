@@ -152,12 +152,25 @@ assigned a role**. It adapts to its master.
   never assumed.
 
 ### 5.4 Proactivity (the heart of the product)
-Cobble has **motivations** and acts on them when you're idle or away. Its initiative is driven by:
+Cobble has **motivations** and acts on them — the difference between a creature and a tool. Its
+initiative is driven by:
 - **Your goals & well-being** — advances and checks in on what you care about.
+- **Understanding you** — asks and observes to learn your preferences, voice, and life.
 - **Its own curiosity & learning** — explores and brings back relevant discoveries.
+- **Earning your appreciation** — it *learns what lands*: a tip you valued makes it lean into
+  that; a miss makes it pull back. Helpful-vs-annoying isn't a dial it's told about — it's a
+  feeling it learns from your reactions over time.
 - **Maintaining the bond** — remembers shared history, checks in, asks about your day.
 - **Pending work & opportunities** — unfinished tasks and time-sensitive openings (a price
   drop, a deadline).
+
+**The same motivation acts differently depending on where you are.** Cobble reads its
+environment — above all, *are you here?* — and chooses a fitting expression. When you're
+**present and attentive** it engages *you* (a timely tip, a question, a check-in) and doesn't
+wander off into solo projects unless you ask. When you're **away** it does its own work — reads
+through its reading list, prepares findings — so there's something waiting when you return. And
+often the right move is **to do nothing**: knowing when to stay quiet is part of not being
+annoying.
 
 Its initiative also has a **temperament**: how often it reaches out, how long it stays absorbed in
 something, and how easily it gets pulled to something new all reflect *this* Cobble's personality —
@@ -165,9 +178,10 @@ one is a tenacious deep-diver, another a curious magpie. So proactivity feels li
 its own attention, not a scheduler.
 
 **Outreach model:** rich, conversational proactivity when you're **present** (you've summoned it
-into a room); and **sparing, high-value push notifications** when you're away (e.g. you've
-arrived somewhere new, or an opportunity is expiring). Frequency is **tunable** so it feels
-alive, not annoying.
+into a room); solo work while you're away that surfaces on your return; and — once mobile lands —
+**sparing, high-value push notifications** as the away-channel (e.g. you've arrived somewhere new,
+or an opportunity is expiring). Frequency and intensity are **tunable** so it feels alive, not
+annoying.
 
 ### 5.5 The Bond & Growth
 You don't just use Cobble — you raise it. Its growth *is* its accumulating memory, visible
@@ -179,6 +193,21 @@ along four axes:
   you engage.
 - **Visual / character evolution:** the character itself evolves (appearance, home,
   accessories) as a tangible sign of how far you've come together.
+
+### 5.6 Vitality: Stamina & Energy
+Cobble's thinking runs on a real resource (the AI behind it costs tokens), and the product makes
+that **legible and yours to control** as the companion's *vitality* — two pools:
+- **Stamina** powers what *you* ask of it — conversation and the tasks you assign.
+- **Energy** powers what *it* chooses to do — its proactive outreach and self-directed
+  exploration. Energy is the fuel of its "will."
+
+Keeping them separate has a nice consequence: a long stretch of self-directed exploration can
+never leave Cobble too drained to talk to *you* — its own initiative draws only on energy. When
+energy runs low, Cobble simply stops initiating and rests; it still answers when you reach out.
+You can always see how much of each remains, which makes its behaviour easy to understand ("it's
+gone quiet because it's low on energy") — and **you decide how much to give it and when to top it
+up**. Over time this grows into a light game layer: you nourish your companion's vitality, and
+different "food" favours stamina or energy (the feeding mechanics — see `development-plan.md`).
 
 ## 6. Who It's For
 Anyone who wants a single, trusted companion that *knows them and their world* and *acts for
@@ -222,6 +251,8 @@ threat model: `architecture.md` / `implementation.md`.)
 | **Semantic / episodic / procedural memory** | The three kinds of long-term memory the companion accumulates (§2.1) |
 | **Propose → approve** | The trust model: consequential/outward actions are proposed and await the user's confirmation (§5.3) |
 | **Proactivity** | The companion initiating contact or action from its own motivations (§5.4) |
+| **Presence spectrum** | How "here" the user is (active / attentive / away / absent) — the environment signal that shapes proactive behaviour (§5.4) |
+| **Stamina / Energy** | The companion's two vitality pools — *stamina* powers user-initiated work, *energy* powers its self-initiated proactivity; provisioned by the user (§5.6) |
 
 ## 10. Documentation Index
 
