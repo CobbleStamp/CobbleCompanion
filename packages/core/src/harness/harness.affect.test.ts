@@ -127,6 +127,24 @@ describe('Harness perceiveAndLearn', () => {
     expect(events).not.toContain('error');
   });
 
+  it('feeds the prior mood forward into the next reply prompt (fast-loop attunement)', async () => {
+    // Turn 1 stores a "grumpy" read.
+    const t1 = harnessWith(gateway('ok', '-0.5\ngrumpy'), { store: affectStore, model: 'cheap' });
+    await drain(t1.runTurn({ companion, userContent: 'ugh fine', ownerId: 'owner' }));
+
+    // Turn 2's reply call should carry an attunement system line built from it.
+    const t2gw = gateway('better now', '0.2\nneutral');
+    const t2 = harnessWith(t2gw, { store: affectStore, model: 'cheap' });
+    await drain(t2.runTurn({ companion, userContent: 'hello again', ownerId: 'owner' }));
+
+    const replyCall = t2gw.calls[0]!; // first stream() of turn 2 = the reply
+    const systemText = replyCall.messages
+      .filter((m) => m.role === 'system')
+      .map((m) => m.content)
+      .join('\n');
+    expect(systemText).toContain('grumpy');
+  });
+
   it('skips perception entirely when no affect deps are configured (pre-4.2 path)', async () => {
     const gw = new FakeLlmGateway([{ chunks: ['Hi'] }]);
     const harness = new Harness({ gateway: gw, memory, model: 'chat-model', logger: silent });

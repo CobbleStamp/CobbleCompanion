@@ -9,7 +9,7 @@ import type { LlmGateway, LlmMessage, StreamResult } from '../llm/gateway.js';
 import { toolStepSummary } from '../tools/tool.js';
 import { consoleLogger, type Logger } from '../logging.js';
 import type { MemoryStore } from '../memory/store.js';
-import { senseAffect } from '../motivation/affect.js';
+import { senseAffect, type AffectReading } from '../motivation/affect.js';
 import type { CompanionAffectStore } from '../motivation/affect-store.js';
 import type { TokenQuotaStore } from '../quota/store.js';
 import { dispatchTool } from '../tools/dispatch.js';
@@ -239,13 +239,34 @@ export class Harness {
     }
   }
 
+  /** The companion's prior rolling mood read, or null (best-effort — never throws). */
+  private async priorAffect(companionId: string): Promise<AffectReading | null> {
+    if (!this.affect) {
+      return null;
+    }
+    try {
+      return await this.affect.store.get(companionId);
+    } catch (error) {
+      this.logger.error('failed to load prior affect for attunement', {
+        operation: 'harness.priorAffect',
+        companionId,
+        error,
+      });
+      return null;
+    }
+  }
+
   /** Retrieve context, assemble the prompt, and collect the turn's citations. */
   private async prepare(companion: CompanionDto, userContent: string): Promise<PreparedTurn> {
     const { blocks: history, usage: retrievalUsage } = await this.retrieveContext({
       companionId: companion.id,
       userContent,
     });
-    const messages = assembleContext(companion, history);
+    // Fast-loop attunement (Phase 4.2): the prior rolling read of the user's mood
+    // is fed forward so this reply adjusts tone/detail to where they are.
+    // Best-effort — a store hiccup must never block the reply (just lose attunement).
+    const affect = await this.priorAffect(companion.id);
+    const messages = assembleContext(companion, history, affect);
     const citations = dedupeCitations(history.flatMap((block) => block.provenance ?? []));
     return { messages, citations, retrievalUsage };
   }
