@@ -23,7 +23,7 @@ import { DrizzleEpisodicMemoryStore } from './episodic-store.js';
 import { TranscriptMemoryStore } from './store.js';
 
 const EMBEDDING_DIMENSIONS = 1024;
-const logger = { error: vi.fn(), info: vi.fn() };
+const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn() };
 
 /** A fake quota with a fixed over-cap verdict and a recordUsage spy. */
 class FakeQuota implements TokenQuotaStore {

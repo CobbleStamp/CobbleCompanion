@@ -5,10 +5,10 @@
 > system is* (components, flows, decisions) see `architecture.md`; for *what we're building and in
 > what order* see `development-plan.md`.
 >
-> **Status: incremental.** Specifies **Phases 0–2** (`development-plan.md` §3); later phases are
+> **Status: incremental.** Specifies **Phases 0–3** (`development-plan.md` §3); later phases are
 > marked **_Deferred — Phase N_**.
 
-## 1. Data Model (Phases 0–2)
+## 1. Data Model (Phases 0–3)
 
 Postgres (with `pgvector` available for later phases). Multi-tenant: every row is scoped by owner
 (`architecture.md` §2, invariant #5). Field types are indicative; authoritative DDL lives in
@@ -47,6 +47,8 @@ migrations under `db/`.
 | `companion_id` | uuid (FK → `companions.id`) | indexed with `seq` (`messages_companion_idx`) for recency recall |
 | `role` | text | `user` \| `assistant` \| `system` |
 | `content` | text | |
+| `kind` | text | `message` \| `tool_step` \| `proposal` — `$type<MessageKind>()`, default `message` (P3). What the row *is*, so the rich conversation (grounded answers, read-only look-ups, held actions) reconstructs identically on reload. **Only `message` rows enter the LLM-context projection** (`getMessagesSince` and the recency window filter to `kind='message'`); `tool_step`/`proposal` are UI chrome — never re-fed to the model nor consolidated into episodes |
+| `metadata` | jsonb | nullable `MessageMetadata` (P3): `citations` on a grounded `message`; `toolName` on a `tool_step`; `toolName`+`proposalId` on a `proposal` (the id wires the row to the live approval queue). Lets the surface re-render the row faithfully |
 | `source_id` | uuid (FK → `sources.id`, **`ON DELETE SET NULL`**) | nullable; set on a file upload's attachment chip (a `user` turn) and its acknowledgement (an `assistant` turn) so the chat reconstructs the 📎 chip + "View status →" link on reload. `SET NULL` (not cascade): deleting a source must never delete an append-only transcript turn — it just drops the link |
 | `created_at` | timestamptz | episodic memory (P2) builds on these timestamped turns |
 
@@ -172,8 +174,63 @@ Optional metadata filters: `source_id`, and `entity` (an EXISTS over the fact ov
 subject/object — how a section whose text only says "he" is still found by "Pizarro"). Every
 hit carries provenance (source title, chapter, topic, para/page range) + the verbatim text.
 
-**_Deferred:_** episodic indices (P2); procedural/skill records + approval-queue tables (P3).
-Added via new migrations.
+### `proposals` — approval queue (Phase 3)
+| Field | Type | Notes |
+|---|---|---|
+| `id` / `companion_id` | uuid | cascade FK |
+| `lead_id` | uuid, nullable | FK → `leads.id` (`on delete set null`). The reading-list lead this proposal came from (explore-origin); null for a chat-origin proposal. Resolving the proposal advances this lead's lifecycle |
+| `tool_name` | text | the effectful tool the companion wants to run |
+| `tool_args` | jsonb | the serialized call, run verbatim once approved |
+| `tool_call_id` | text, nullable | the provider's tool-call id (audit/correlation) |
+| `summary` | text | human-readable description shown in the approval card |
+| `status` | text `$type<ProposalStatus>` | `pending` → `approved`/`rejected` |
+| `created_at` / `resolved_at` | timestamptz (resolved nullable) | |
+
+> **Exactly-once:** confirm/reject is a conditional update `WHERE status='pending'` that returns the
+> row only to the winner (mirrors the deferred-job claim, `architecture.md` §4.8), so a double-confirm
+> cannot double-execute. Index `(companion_id, status)`.
+>
+> **Lead closure:** resolving an explore-origin proposal advances its `lead_id` — a successful confirm
+> marks the lead `ingested`, a reject marks it `discarded` (best-effort, never fails the user's action).
+> Without the link a lead would be stranded at `read` forever — clogging `/leads` and never re-proposed.
+
+### `tool_calls` — audit log (Phase 3)
+| Field | Type | Notes |
+|---|---|---|
+| `id` / `companion_id` | uuid | cascade FK |
+| `seq` | bigserial | monotonic order (`created_at` ties within a ms) |
+| `name` / `args` / `result` | text / jsonb / text | one row per executed call — the DoD's "every tool call is logged" |
+| `created_at` | timestamptz | |
+
+### `leads` — reading-list inventory (Phase 3)
+| Field | Type | Notes |
+|---|---|---|
+| `id` / `companion_id` | uuid | cascade FK |
+| `seq` | bigserial | stable reading-list order |
+| `url` | text | unique per `(companion_id, url)` → re-discovery is idempotent |
+| `why` | text, nullable | where it was captured (the page it came from) |
+| `status` | text `$type<LeadStatus>` | `new` → `read` → `ingested`/`discarded` |
+| `created_at` | timestamptz | |
+
+> The body-then-will substrate: filled by `web_fetch` link harvest, worked on command in P3
+> (`/explore`), and by the motivation engine on idle in P4 (`architecture.md` §4.5).
+>
+> **Lifecycle:** `/explore` advances `new`→`read` and enqueues a proposal carrying the lead's id; the
+> terminal states are written when that proposal resolves — confirm→`ingested`, reject→`discarded` (see
+> `proposals.lead_id`). `/leads` lists only `new`+`read`, so a resolved lead leaves the reading list.
+
+### `procedural_memories` — learned workflows (Phase 3 seed)
+| Field | Type | Notes |
+|---|---|---|
+| `id` / `companion_id` | uuid | cascade FK |
+| `seq` | bigserial | newest-first listing |
+| `title` | text | the approved action's summary |
+| `steps` | jsonb | ordered tool names the workflow ran |
+| `created_at` | timestamptz | |
+
+> Seeded on a successful approved action; browse-only — retrieval-as-hint is deferred to P5.
+
+**_Deferred:_** growth/progression records (P5). Added via new migrations.
 
 ## 2. Harness & Agent-Loop Internals
 
@@ -201,9 +258,12 @@ type RetrieveContext = (params: RetrieveParams) => Promise<RetrieveResult>;
 // surfaces a turn's provenance as a `citations` stream event before `done`
 interface ContextBlock { role: MessageRole; content: string; provenance?: Citation[] }
 
-// tool hooks — gate around every tool call (P3)
-type BeforeToolCall = (call: ToolCall, ctx: TurnCtx) => Promise<ToolCall | Block>; // Block → exit-to-approve
-type AfterToolCall  = (result: ToolResult, ctx: TurnCtx) => Promise<ToolResult>;   // rewrite / terminate
+// tool hooks — gate around every tool call (P3 ✅). The gate writes a pending
+// proposal + returns Block for an effectful call (→ exit-to-approve); afterToolCall
+// receives the executed call so it can log name+args+result.
+type BeforeToolCall = (call: ToolCall, ctx: TurnCtx) => Promise<ToolCall | Block>;
+type AfterToolCall  = (result: ToolResult, call: ToolCall, ctx: TurnCtx) => Promise<ToolResult>;
+// TurnCtx carries { companionId, ownerId } so tools scope tenant state + bill tokens.
 
 // initiation hook — produces a non-human ENTRY (P4)
 type Initiator = (companionId: string) => Promise<Entry | null>;                   // null → stay idle
@@ -233,19 +293,41 @@ present), **(2)** the base system prompt, **(3)** `RetrieveContext` output. The 
 `composeRetrieveContext` runs the arms in order — **P2 episodic** memory blocks (time-anchored,
 fenced), then **P1** top-K semantic grounding blocks (verbatim sections with source/para
 preambles), then the most-recent N transcript messages (the recency window, appended once by the
-semantic arm). Each arm degrades independently. The available-tools list is still empty.
+semantic arm). Each arm degrades independently. **P3:** the registry's tool list is advertised to
+the gateway via `LlmStreamParams.tools` (not the prompt text); prior tool-call/result turns are
+replayed into the message array in the OpenAI wire shape.
 
-### 2.3 Turn & loop mechanics (Phase 0)
+### 2.3 Turn & loop mechanics (Phases 0–3)
 
-- A **turn** = one streamed LLM call; its assistant message is parsed for tool calls. With no tools
-  registered, every turn yields a no-tool-call message → the inner loop exits after one turn.
-- The model response **streams** to the client (SSE/WebSocket); tokens are relayed as they arrive.
-- On exit, the turn (user message + assistant message) is appended to `messages` (the transcript /
-  episodic substrate, §1).
+- A **turn** = one streamed LLM call; the gateway returns a `StreamResult { usage, toolCalls }`. With
+  no tools registered, `toolCalls` is empty → the inner loop exits after one turn (the P0 path).
+- **P3 inner loop:** when a turn returns tool calls, each is run through `beforeToolCall` — a read-only
+  call dispatches via `dispatchTool` and its result re-enters as a `tool`-role message for the next
+  turn; an **effectful** call is BLOCKED. **All** effectful calls in a turn are collected (not just the
+  first) and each enqueues a `proposals` row; the loop then EXITs. `afterToolCall` logs every executed
+  call. The model response **streams** throughout; usage accrues across all turns, debited once at exit.
+- **Transcript fidelity (P3):** the loop persists what the user sees so it survives reload — a grounded
+  answer carries its `citations` in `metadata`; each read-only call writes a friendly `tool_step` row
+  (`Tool.stepSummary`) and emits a `tool_step` stream event; each held action writes a `proposal` row
+  and emits a `proposal` event. `ChatStreamEvent` therefore spans `token` / `citations` / `tool_step` /
+  `proposal` / `done` / `error`. The web reconciles against the transcript after any turn that produced
+  tool-step/proposal rows (live == reload).
+- **Approval re-entry:** the confirm route resolves the proposal exactly once, executes + logs the held
+  call, writes its outcome as a `tool_step` row, then calls `Harness.continueAfterApproval` — which
+  retrieves recent context, injects the outcome as an **ephemeral** observation (the persisted row is
+  UI-only and filtered from context), and runs the loop so the companion narrates and continues. No new
+  user message is persisted; the response **streams** back over SSE like a normal turn.
+- **Streamed tool calls:** the OpenRouter gateway accumulates `choices[].delta.tool_calls` fragments
+  by `index` (the first carries id+name+partial args, later frames append arg-string pieces) and
+  `JSON.parse`s the assembled arguments at `[DONE]`; malformed args degrade to `{}` (failures are
+  data) rather than throwing.
+- **Dead-loop guard (§4.7):** the loop is bounded by `DEFAULT_MAX_TOOL_ITERATIONS` and an optional
+  per-run token budget (both `HarnessOptions`, defaults in `harness.ts`); hitting either
+  exits-with-partial.
+- On exit, the turn is appended to `messages` (the transcript / episodic substrate, §1).
 
-**_Deferred:_** inner-loop tool iteration + `beforeToolCall` approval enqueue (P3); progress meter +
-per-run budget ceiling and the two-tier wind-down (P3+); proactive `Initiator` wiring + push (P4);
-transcript compaction when the context window fills (P-later).
+**_Deferred:_** proactive `Initiator` wiring + push (P4); transcript compaction when the context
+window fills (P-later).
 
 ## 3. Configuration
 
@@ -271,7 +353,13 @@ Loaded from environment / a secret manager; required values validated at startup
 | `TOKEN_CAP_PER_DAY` | Per-user daily token cap (LLM + embedding) — the cost guardrail across all routes; fixed daily UTC window, overage carries as clamped debt (default 1 000 000). Per-account override → `user_token_usage.cap_override` |
 | `INGESTION_QUEUE_MAX` | Backstop cap on queued+in-flight ingestion runs across all owners; submissions past it get 429 (default 100) |
 
-**_Deferred:_** worker tuning, proactivity cadence, push-notification credentials (P2+).
+**P3 tuning constants** are in-code defaults (not secrets, so not env-wired): the loop ceilings
+`DEFAULT_MAX_TOOL_ITERATIONS` (default 6) + the optional per-run token budget (`harness.ts`,
+overridable via `HarnessOptions`), `web_fetch`'s returned-text cap (`web-fetch.ts`, default 8000
+chars) and link-harvest cap (`MAX_HARVESTED_LINKS`, default 20), and the `/explore` burst size
+(`inventory.routes.ts`, default 3).
+
+**_Deferred:_** worker tuning, proactivity cadence + intensity dial, push-notification credentials (P4+).
 
 ## 4. Error Handling
 

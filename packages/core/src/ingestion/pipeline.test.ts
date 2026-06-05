@@ -10,11 +10,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { EmbeddingGateway, EmbeddingParams, EmbeddingResult } from '../embedding/gateway.js';
 import { FakeEmbeddingGateway } from '../embedding/fake.js';
 import { DrizzleIdentityStore } from '../identity/store.js';
-import type { LlmGateway, LlmStreamParams } from '../llm/gateway.js';
+import type { LlmGateway, LlmStreamParams, StreamResult } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import { DrizzleSemanticMemoryStore } from '../memory/semantic-store.js';
 import type { TokenQuotaStore, UsageSnapshot } from '../quota/store.js';
-import { estimateUsage, type TokenUsage } from '../usage.js';
+import { estimateUsage } from '../usage.js';
 import type { IngestionAnnouncer, IngestionOutcome } from './announcer.js';
 import { createHttpLinkResolver } from './link-resolver.js';
 import { IngestionPipeline } from './pipeline.js';
@@ -29,7 +29,11 @@ function linkSourceParser(fetchFn: typeof fetch, maxBytes?: number) {
   });
 }
 
-const silentLogger: Logger = { error: () => undefined, info: () => undefined };
+const silentLogger: Logger = {
+  error: () => undefined,
+  warn: () => undefined,
+  info: () => undefined,
+};
 
 /** LLM fake returning one scripted response per call, in order (we own the seam). */
 class ScriptedLlmGateway implements LlmGateway {
@@ -38,11 +42,14 @@ class ScriptedLlmGateway implements LlmGateway {
 
   constructor(private readonly responses: readonly string[]) {}
 
-  async *stream(params: LlmStreamParams): AsyncGenerator<string, TokenUsage, void> {
+  async *stream(params: LlmStreamParams): AsyncGenerator<string, StreamResult, void> {
     this.calls.push(params);
     const response = this.responses[Math.min(this.next++, this.responses.length - 1)]!;
     yield response;
-    return estimateUsage(params.messages.map((message) => message.content).join('\n'), response);
+    return {
+      usage: estimateUsage(params.messages.map((message) => message.content).join('\n'), response),
+      toolCalls: [],
+    };
   }
 }
 

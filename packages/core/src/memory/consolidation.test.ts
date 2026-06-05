@@ -17,7 +17,7 @@ import {
 } from './consolidation.js';
 
 const persona: PersonaSummary = { name: 'Pebble', form: 'a fox', temperament: 'curious' };
-const logger = { error: vi.fn(), info: vi.fn() };
+const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn() };
 
 function turn(
   seq: number,

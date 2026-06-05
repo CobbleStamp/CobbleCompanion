@@ -13,7 +13,7 @@ import { sweepConsolidation } from './consolidation-service.js';
 import { DrizzleEpisodicMemoryStore } from './episodic-store.js';
 import { TranscriptMemoryStore } from './store.js';
 
-const logger = { error: vi.fn(), info: vi.fn() };
+const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn() };
 
 describe('sweepConsolidation error isolation', () => {
   let close: () => Promise<void>;

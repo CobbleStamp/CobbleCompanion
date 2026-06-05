@@ -7,8 +7,11 @@ import type {
   EpisodeDto,
   EpisodeSearchResultDto,
   IngestionJobDto,
+  LeadDto,
   MemorySnapshotDto,
   MessageDto,
+  ProcedureDto,
+  ProposalDto,
   SectionDto,
   SemanticSearchResultDto,
   SourceDto,
@@ -39,12 +42,21 @@ async function authHeaders(): Promise<Record<string, string>> {
   return token ? { authorization: `Bearer ${token}` } : {};
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+/**
+ * The single fetch path: applies the bearer token (and a JSON content-type when
+ * the body is a JSON string), then throws a body-aware error on any non-2xx.
+ * Returns the raw Response so callers can read it as JSON, drain it as an SSE
+ * stream, or ignore it (a 204). Every request flows through here so the
+ * auth-header and error-surfacing contracts can't diverge between call sites.
+ */
+async function send(path: string, init?: RequestInit): Promise<Response> {
   const auth = await authHeaders();
-  // Only declare a JSON content-type when there's a body — Fastify rejects an
-  // empty body with content-type: application/json (FST_ERR_CTP_EMPTY_JSON_BODY),
-  // which would otherwise 400 bodyless requests (e.g. a GET, or a bodyless POST).
-  const contentType = init?.body != null ? { 'content-type': 'application/json' } : {};
+  // Only declare a JSON content-type for a string (JSON) body. A bodyless
+  // request must omit it — Fastify rejects an empty body with content-type:
+  // application/json (FST_ERR_CTP_EMPTY_JSON_BODY), 400-ing bodyless GET/POST.
+  // A FormData body (file upload) must also omit it so the browser can set the
+  // multipart boundary itself.
+  const contentType = typeof init?.body === 'string' ? { 'content-type': 'application/json' } : {};
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
     headers: { ...contentType, ...auth, ...(init?.headers ?? {}) },
@@ -53,7 +65,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const body = (await response.json().catch(() => ({}))) as { error?: string };
     throw new Error(body.error ?? `request failed (${response.status})`);
   }
+  return response;
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await send(path, init);
   return (await response.json()) as T;
+}
+
+/** Drive an endpoint that streams SSE chat events (chat + confirm). */
+async function* stream(path: string, init?: RequestInit): AsyncGenerator<ChatStreamEvent> {
+  const response = await send(path, init);
+  if (!response.body) throw new Error('streamed response has no body');
+  yield* readSse(response);
 }
 
 export async function fetchCurrentUser(): Promise<CurrentUser | null> {
@@ -128,18 +152,12 @@ export async function createLinkSource(
 
 /** Upload a document file (PDF/txt/md/docx/pptx); reading happens in the background. */
 export async function uploadFileSource(companionId: string, file: File): Promise<FileSourceIntake> {
-  const auth = await authHeaders();
   const form = new FormData();
   form.append('file', file);
-  const response = await fetch(`${API_URL}/companions/${companionId}/sources/file`, {
+  const response = await send(`/companions/${companionId}/sources/file`, {
     method: 'POST',
-    headers: auth,
     body: form,
   });
-  if (!response.ok) {
-    const body = (await response.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? `upload failed (${response.status})`);
-  }
   return (await response.json()) as FileSourceIntake;
 }
 
@@ -165,15 +183,7 @@ export async function listIngestionJobs(companionId: string): Promise<IngestionJ
 
 /** Delete a source (and its job + sections) — e.g. dropping a job parked at the cap. */
 export async function deleteSource(companionId: string, sourceId: string): Promise<void> {
-  const auth = await authHeaders();
-  const response = await fetch(`${API_URL}/companions/${companionId}/sources/${sourceId}`, {
-    method: 'DELETE',
-    headers: auth,
-  });
-  if (!response.ok) {
-    const body = (await response.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? `delete failed (${response.status})`);
-  }
+  await send(`/companions/${companionId}/sources/${sourceId}`, { method: 'DELETE' });
 }
 
 /** The signed-in user's daily token-budget standing (the live usage indicator). */
@@ -212,22 +222,66 @@ export async function searchEpisodes(
   return body.results;
 }
 
+/** The companion's pending approval queue (propose→approve, P3). */
+export async function listProposals(companionId: string): Promise<ProposalDto[]> {
+  const body = await request<{ proposals: ProposalDto[] }>(`/companions/${companionId}/proposals`);
+  return body.proposals;
+}
+
+/**
+ * Approve a held action. The companion executes it, then RE-ENTERS the agent
+ * loop to narrate the outcome and continue the task, streamed back as SSE — so
+ * approving "remember this and summarize it" yields the summary, not a dead
+ * tool-result line. The streamed turn's rows land in the transcript.
+ */
+export async function* confirmProposal(
+  companionId: string,
+  proposalId: string,
+): AsyncGenerator<ChatStreamEvent> {
+  yield* stream(`/companions/${companionId}/proposals/${proposalId}/confirm`, { method: 'POST' });
+}
+
+/** Decline a held action (nothing executes). */
+export async function rejectProposal(companionId: string, proposalId: string): Promise<void> {
+  await send(`/companions/${companionId}/proposals/${proposalId}/reject`, { method: 'POST' });
+}
+
+/** The companion's reading list — leads it discovered but hasn't acted on (P3). */
+export async function listLeads(companionId: string): Promise<LeadDto[]> {
+  const body = await request<{ leads: LeadDto[] }>(`/companions/${companionId}/leads`);
+  return body.leads;
+}
+
+/** "Go through your reading list": propose remembering the next leads. */
+export async function explore(companionId: string): Promise<ProposalDto[]> {
+  const body = await request<{ proposals: ProposalDto[] }>(`/companions/${companionId}/explore`, {
+    method: 'POST',
+  });
+  return body.proposals;
+}
+
+/** The companion's learned, reusable workflows (procedural memory, P3). */
+export async function listProcedures(companionId: string): Promise<ProcedureDto[]> {
+  const body = await request<{ procedures: ProcedureDto[] }>(
+    `/companions/${companionId}/procedures`,
+  );
+  return body.procedures;
+}
+
 /** Send a message and yield streamed chat events (SSE). */
 export async function* sendMessage(
   companionId: string,
   content: string,
 ): AsyncGenerator<ChatStreamEvent> {
-  const auth = await authHeaders();
-  const response = await fetch(`${API_URL}/companions/${companionId}/messages`, {
+  yield* stream(`/companions/${companionId}/messages`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...auth },
     body: JSON.stringify({ content }),
   });
-  if (!response.ok || !response.body) {
-    throw new Error(`message failed (${response.status})`);
-  }
+}
 
-  const reader = response.body.getReader();
+/** Parse a `text/event-stream` body into chat events (shared by chat + confirm). */
+async function* readSse(response: Response): AsyncGenerator<ChatStreamEvent> {
+  const reader = response.body!.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
   for (;;) {

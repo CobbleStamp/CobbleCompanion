@@ -2,8 +2,10 @@ import type {
   CompanionDto,
   EpisodeDto,
   EpisodeSearchResultDto,
+  LeadDto,
   MemorySnapshotDto,
   MessageDto,
+  ProcedureDto,
   SemanticSearchResultDto,
 } from '@cobble/shared';
 import { useEffect, useState } from 'react';
@@ -11,6 +13,8 @@ import {
   fetchMessages,
   getCompanionMemory,
   listEpisodes,
+  listLeads,
+  listProcedures,
   searchEpisodes,
   searchMemory,
 } from '../api/client.js';
@@ -140,10 +144,15 @@ export function MemoryBrowser({ companion, onBack }: MemoryBrowserProps): JSX.El
             </p>
             {snapshot.semantic.sectionCount > 0 && <SemanticSearch companionId={companion.id} />}
           </section>
-          <PlannedSection
-            title="Procedural — learned skills & workflows"
-            phase={snapshot.procedural.plannedPhase}
-          />
+          <section className="memory-section">
+            <h2>Procedural — learned skills & workflows</h2>
+            <p className="who">
+              {snapshot.procedural.procedureCount} learned workflow
+              {snapshot.procedural.procedureCount === 1 ? '' : 's'}
+            </p>
+            <ProceduralList companionId={companion.id} />
+          </section>
+          <ReadingListSection companionId={companion.id} />
         </div>
       )}
     </main>
@@ -282,17 +291,74 @@ function SemanticSearch({ companionId }: SemanticSearchProps): JSX.Element {
   );
 }
 
-interface PlannedSectionProps {
-  readonly title: string;
-  readonly phase: string;
+/** Lists the companion's learned workflows (procedural memory, P3). */
+function ProceduralList({ companionId }: { readonly companionId: string }): JSX.Element | null {
+  const [procedures, setProcedures] = useState<readonly ProcedureDto[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  useEffect(() => {
+    let mounted = true;
+    void listProcedures(companionId)
+      .then((rows) => {
+        if (mounted) setProcedures(rows);
+      })
+      .catch((err: unknown) => {
+        console.error('failed to load procedural memory', { companionId, error: err });
+        if (mounted) setLoadError(err instanceof Error ? err.message : 'Failed to load workflows');
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [companionId]);
+  if (loadError) return <p className="error">{loadError}</p>;
+  if (procedures.length === 0) return null;
+  return (
+    <ul className="memory-list">
+      {procedures.map((procedure) => (
+        <li key={procedure.id}>
+          <span className="content">{procedure.title}</span>
+          <span className="who">{procedure.steps.join(' → ')}</span>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
-/** A designed-but-unbuilt memory kind, shown so the full shape is visible. */
-function PlannedSection({ title, phase }: PlannedSectionProps): JSX.Element {
+/** The reading list — leads the companion discovered but hasn't acted on (P3). */
+function ReadingListSection({ companionId }: { readonly companionId: string }): JSX.Element {
+  const [leads, setLeads] = useState<readonly LeadDto[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  useEffect(() => {
+    let mounted = true;
+    void listLeads(companionId)
+      .then((rows) => {
+        if (mounted) setLeads(rows);
+      })
+      .catch((err: unknown) => {
+        console.error('failed to load reading list', { companionId, error: err });
+        if (mounted)
+          setLoadError(err instanceof Error ? err.message : 'Failed to load reading list');
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [companionId]);
   return (
-    <section className="memory-section planned">
-      <h2>{title}</h2>
-      <p className="who">Coming soon · planned for {phase}</p>
+    <section className="memory-section">
+      <h2>Reading list — discovered, not yet read</h2>
+      {loadError ? (
+        <p className="error">{loadError}</p>
+      ) : leads.length === 0 ? (
+        <p className="who">Nothing waiting — Cobble collects links here as it reads.</p>
+      ) : (
+        <ul className="memory-list">
+          {leads.map((lead) => (
+            <li key={lead.id}>
+              <span className="content">{lead.url}</span>
+              {lead.why && <span className="who">{lead.why}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }

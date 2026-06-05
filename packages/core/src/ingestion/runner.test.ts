@@ -30,7 +30,11 @@ describe('IngestionRunner', () => {
         finished.push(runParams.jobId);
       },
     };
-    const runner = new IngestionRunner(target, { error: () => undefined, info: () => undefined });
+    const runner = new IngestionRunner(target, {
+      error: () => undefined,
+      warn: () => undefined,
+      info: () => undefined,
+    });
 
     runner.enqueue(params('a'));
     runner.enqueue(params('b'));
@@ -47,6 +51,7 @@ describe('IngestionRunner', () => {
     const completed: string[] = [];
     const logger: Logger = {
       error: (message) => logged.push(message),
+      warn: () => undefined,
       info: () => undefined,
     };
     const target: IngestionTarget = {
@@ -74,7 +79,11 @@ describe('IngestionRunner', () => {
         completed.push(runParams.jobId);
       },
     };
-    const runner = new IngestionRunner(target, { error: () => undefined, info: () => undefined });
+    const runner = new IngestionRunner(target, {
+      error: () => undefined,
+      warn: () => undefined,
+      info: () => undefined,
+    });
 
     runner.enqueue(params('first'));
     await runner.whenIdle();
@@ -94,7 +103,7 @@ describe('IngestionRunner', () => {
     };
     const runner = new IngestionRunner(
       target,
-      { error: () => undefined, info: () => undefined },
+      { error: () => undefined, warn: () => undefined, info: () => undefined },
       2, // cap: one in-flight + one queued
     );
 

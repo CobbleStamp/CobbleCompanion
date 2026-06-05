@@ -5,9 +5,14 @@ import type {
   Harness,
   IdentityStore,
   IngestionRunner,
+  LeadStore,
   Logger,
   MemoryStore,
+  ProceduralStore,
+  ProposalStore,
   SemanticMemoryStore,
+  ToolCallLog,
+  ToolRegistry,
   TokenQuotaStore,
 } from '@cobble/core';
 import cors from '@fastify/cors';
@@ -25,8 +30,11 @@ import { registerCompanionRoutes } from './routes/companion.routes.js';
 import { registerEpisodeRoutes } from './routes/episode.routes.js';
 import { registerMemoryRoutes } from './routes/memory.routes.js';
 import { registerMessageRoutes } from './routes/message.routes.js';
+import { registerInventoryRoutes } from './routes/inventory.routes.js';
+import { registerProposalRoutes } from './routes/proposal.routes.js';
 import { registerSourceRoutes } from './routes/source.routes.js';
 import { registerUsageRoutes } from './routes/usage.routes.js';
+import { registerUuidParamGuard } from './uuid.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -45,6 +53,16 @@ export interface AppDeps {
   /** Off-request episodic reflection — the message route requests it post-turn. */
   readonly consolidation: ConsolidationRunner;
   readonly harness: Harness;
+  /** The tools available to the companion (P3) — also used to run approved calls. */
+  readonly tools: ToolRegistry;
+  /** The propose→approve queue (P3). */
+  readonly proposals: ProposalStore;
+  /** The "every tool call is logged" audit log (P3). */
+  readonly toolCallLog: ToolCallLog;
+  /** The lead inventory — the companion's reading list (P3 substrate). */
+  readonly leads: LeadStore;
+  /** Procedural memory — learned, reusable workflows (P3 seed). */
+  readonly procedural: ProceduralStore;
   readonly quota: TokenQuotaStore;
   readonly tokenVerifier: TokenVerifier;
   readonly config: AppConfig;
@@ -116,6 +134,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return reply.code(statusCode).send({ error: error.message });
   });
 
+  // Reject malformed resource-id path params with a clean 404 before they reach
+  // a DB query (else a bad UUID 500s with Postgres 22P02). Global, so every route
+  // — current and future — is uniform without per-handler boilerplate (uuid.ts).
+  registerUuidParamGuard(app);
+
   app.get('/health', async () => ({ status: 'ok' }));
 
   const requireAuth = makeRequireAuth(deps);
@@ -129,6 +152,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerMemoryRoutes(app, deps, requireAuth);
   registerEpisodeRoutes(app, deps, requireAuth);
   registerSourceRoutes(app, deps, requireAuth);
+  registerProposalRoutes(app, deps, requireAuth);
+  registerInventoryRoutes(app, deps, requireAuth);
   registerUsageRoutes(app, deps, requireAuth);
 
   registerSpa(app);

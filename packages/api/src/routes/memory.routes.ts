@@ -8,6 +8,7 @@
 import type {
   EpisodicMemorySection,
   MemorySnapshotDto,
+  ProceduralMemorySection,
   SemanticMemorySection,
   SemanticSearchResultDto,
 } from '@cobble/shared';
@@ -26,7 +27,7 @@ export function registerMemoryRoutes(
   deps: AppDeps,
   requireAuth: RequireAuth,
 ): void {
-  const { identity, memory, semantic, episodic, embeddings, config, quota } = deps;
+  const { identity, memory, semantic, episodic, embeddings, config, quota, procedural } = deps;
 
   // A sectioned snapshot of everything the companion holds.
   app.get(
@@ -62,11 +63,16 @@ export function registerMemoryRoutes(
         })),
       };
 
+      const proceduralSection: ProceduralMemorySection = {
+        status: 'available',
+        procedureCount: await procedural.count(companion.id),
+      };
+
       const snapshot: MemorySnapshotDto = {
         identity: companion,
         episodic: episodicSection,
         semantic: semanticSection,
-        procedural: { status: 'not_implemented', plannedPhase: 'Phase 3' },
+        procedural: proceduralSection,
       };
       return reply.send({ memory: snapshot });
     },

@@ -181,17 +181,14 @@ export function registerSourceRoutes(
       // logged and the upload still returns 202 (failures are data).
       let messages: MessageDto[] = [];
       try {
-        const attachment = await memory.appendMessage(
-          companion.id,
-          'user',
-          filename,
-          result.source.id,
-        );
+        const attachment = await memory.appendMessage(companion.id, 'user', filename, {
+          sourceId: result.source.id,
+        });
         const acknowledgement = await memory.appendMessage(
           companion.id,
           'assistant',
           fileSourceAcknowledgement(filename),
-          result.source.id,
+          { sourceId: result.source.id },
         );
         messages = [attachment, acknowledgement];
       } catch (error) {

@@ -1,6 +1,18 @@
-import type { MessageDto, MessageRole } from '@cobble/shared';
+import type { MessageDto, MessageKind, MessageMetadata, MessageRole } from '@cobble/shared';
 import { type Database, messages } from '@cobble/db';
 import { and, count, desc, eq, gt } from 'drizzle-orm';
+
+/**
+ * Extras when appending a transcript row beyond the plain `(role, content)`:
+ * `sourceId` links an upload's chip/acknowledgement; `kind` + `metadata` carry
+ * the rich-conversation data (tool steps, proposals, grounding citations) so the
+ * transcript is the single source of truth for what the surface renders.
+ */
+export interface AppendOptions {
+  readonly sourceId?: string;
+  readonly kind?: MessageKind;
+  readonly metadata?: MessageMetadata;
+}
 
 /**
  * A transcript turn with its monotonic `seq` and raw `createdAt` Date — the unit
@@ -25,15 +37,15 @@ export interface TranscriptEntry {
  */
 export interface MemoryStore {
   /**
-   * Append a turn to the transcript. `sourceId` links the turn to a source it is
-   * about (an upload's attachment chip / acknowledgement); omit it for ordinary
-   * turns.
+   * Append a turn to the transcript. `options` carries the optional source link
+   * and the rich-conversation `kind`/`metadata`; omit it for an ordinary turn
+   * (which records as a plain `message`).
    */
   appendMessage(
     companionId: string,
     role: MessageRole,
     content: string,
-    sourceId?: string,
+    options?: AppendOptions,
   ): Promise<MessageDto>;
   /** Most recent `limit` messages, returned oldest-first for prompt assembly. */
   getRecentMessages(companionId: string, limit: number): Promise<readonly MessageDto[]>;
@@ -58,11 +70,18 @@ export class TranscriptMemoryStore implements MemoryStore {
     companionId: string,
     role: MessageRole,
     content: string,
-    sourceId?: string,
+    options?: AppendOptions,
   ): Promise<MessageDto> {
     const [row] = await this.db
       .insert(messages)
-      .values({ companionId, role, content, sourceId: sourceId ?? null })
+      .values({
+        companionId,
+        role,
+        content,
+        kind: options?.kind ?? 'message',
+        metadata: options?.metadata ?? null,
+        sourceId: options?.sourceId ?? null,
+      })
       .returning();
     if (!row) {
       throw new Error('failed to append message');
@@ -89,10 +108,18 @@ export class TranscriptMemoryStore implements MemoryStore {
     afterSeq: number,
     limit: number,
   ): Promise<readonly TranscriptEntry[]> {
+    // Consolidation reflects over the *conversation*; tool-step and proposal
+    // rows are UI chrome, so they never become episodic memory.
     const rows = await this.db
       .select()
       .from(messages)
-      .where(and(eq(messages.companionId, companionId), gt(messages.seq, afterSeq)))
+      .where(
+        and(
+          eq(messages.companionId, companionId),
+          gt(messages.seq, afterSeq),
+          eq(messages.kind, 'message'),
+        ),
+      )
       .orderBy(messages.seq)
       .limit(limit);
     return rows.map((row) => ({
@@ -118,6 +145,8 @@ function toMessageDto(row: typeof messages.$inferSelect): MessageDto {
     companionId: row.companionId,
     role: row.role,
     content: row.content,
+    kind: row.kind,
+    ...(row.metadata !== null ? { metadata: row.metadata } : {}),
     sourceId: row.sourceId,
     createdAt: row.createdAt.toISOString(),
   };

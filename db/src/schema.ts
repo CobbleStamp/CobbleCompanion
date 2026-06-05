@@ -1,4 +1,12 @@
-import type { IngestionStatus, MessageRole, SourceKind } from '@cobble/shared';
+import type {
+  IngestionStatus,
+  LeadStatus,
+  MessageKind,
+  MessageMetadata,
+  MessageRole,
+  ProposalStatus,
+  SourceKind,
+} from '@cobble/shared';
 import { sql } from 'drizzle-orm';
 import {
   bigint,
@@ -11,6 +19,7 @@ import {
   real,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
   vector,
 } from 'drizzle-orm/pg-core';
@@ -98,6 +107,14 @@ export const messages = pgTable(
       .references(() => companions.id, { onDelete: 'cascade' }),
     role: text('role').$type<MessageRole>().notNull(),
     content: text('content').notNull(),
+    // What this row IS, beyond who said it — so the rich conversation (grounded
+    // answers, read-only tool steps, held proposals) reconstructs identically on
+    // reload. `message` for ordinary turns; the LLM-context projection includes
+    // only `message` rows (tool steps + proposals are UI chrome).
+    kind: text('kind').$type<MessageKind>().notNull().default('message'),
+    // Kind-specific extras (citations on a grounded answer, tool/proposal ids);
+    // null for a plain turn. Lets the surface re-render the row faithfully.
+    metadata: jsonb('metadata').$type<MessageMetadata>(),
     // Optional link to the source a turn is about — set on the attachment chip
     // and acknowledgement an upload writes, so they reconstruct on reload. Null
     // for ordinary typed turns. `set null` keeps the append-only transcript turn
@@ -292,6 +309,110 @@ export const facts = pgTable(
  * rolls, carrying clamped overage forward as debt. `cap_override` grants an
  * account a non-default allowance (null → the configured default).
  */
+/**
+ * Approval queue (Phase 3, architecture.md §4.4). An effectful tool call the
+ * companion wants to make is held here as `pending` until the user approves it;
+ * `tool_args` is the serialized call. `status` advances pending→approved/rejected
+ * exactly once via a conditional update (the propose→approve gate's atomic claim,
+ * mirroring the deferred-job claim) so a double-confirm cannot double-execute.
+ */
+export const proposals = pgTable(
+  'proposals',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companionId: uuid('companion_id')
+      .notNull()
+      .references(() => companions.id, { onDelete: 'cascade' }),
+    // The lead this proposal originated from (explore turns a reading-list lead
+    // into a proposal), so resolving the proposal can advance the lead's
+    // lifecycle: approve→'ingested', reject→'discarded'. Null for chat-origin
+    // proposals that never came from a lead. `set null` on lead deletion keeps
+    // the proposal's audit row but drops the dangling link.
+    leadId: uuid('lead_id').references(() => leads.id, { onDelete: 'set null' }),
+    toolName: text('tool_name').notNull(),
+    // The serialized tool-call arguments to run verbatim once approved.
+    toolArgs: jsonb('tool_args').notNull(),
+    // The provider's tool-call id, kept for audit/correlation; null if absent.
+    toolCallId: text('tool_call_id'),
+    // A short human description shown in the approval card.
+    summary: text('summary').notNull(),
+    status: text('status').$type<ProposalStatus>().notNull().default('pending'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  },
+  (table) => [index('proposals_companion_status_idx').on(table.companionId, table.status)],
+);
+
+/**
+ * Tool-call audit log (Phase 3 DoD: "every tool call is logged"). One row per
+ * executed tool call — read-only and approved-effectful alike — capturing the
+ * name, the args, and the result content. Append-only; never on the read path.
+ */
+export const toolCalls = pgTable(
+  'tool_calls',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    // Monotonic insertion order — `created_at` ties within a millisecond, so the
+    // audit log orders by this for a deterministic newest-first listing.
+    seq: bigserial('seq', { mode: 'number' }).notNull(),
+    companionId: uuid('companion_id')
+      .notNull()
+      .references(() => companions.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    args: jsonb('args').notNull(),
+    result: text('result').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('tool_calls_companion_idx').on(table.companionId, table.seq)],
+);
+
+/**
+ * Lead inventory (Phase 3) — the companion's reading list: URLs discovered but
+ * not yet read (e.g. links spotted while reading a page). The durable substrate
+ * the Phase 4 motivation engine works through on idle; in Phase 3 it is worked on
+ * the user's command. `(companion_id, url)` is unique so re-discovering a link is
+ * idempotent. `seq` gives a stable order; `status` tracks new→read→ingested.
+ */
+export const leads = pgTable(
+  'leads',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    seq: bigserial('seq', { mode: 'number' }).notNull(),
+    companionId: uuid('companion_id')
+      .notNull()
+      .references(() => companions.id, { onDelete: 'cascade' }),
+    url: text('url').notNull(),
+    // Why it was captured — the page/topic it came from. Null for user-added.
+    why: text('why'),
+    status: text('status').$type<LeadStatus>().notNull().default('new'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('leads_companion_url_uniq').on(table.companionId, table.url),
+    index('leads_companion_status_idx').on(table.companionId, table.status),
+  ],
+);
+
+/**
+ * Procedural memory (Phase 3 seed) — a learned, reusable workflow recorded after
+ * a successful action (`steps` = the ordered tool names it ran). Browsable now;
+ * retrieval-as-hint is deferred to the growth system (Phase 5).
+ */
+export const proceduralMemories = pgTable(
+  'procedural_memories',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    seq: bigserial('seq', { mode: 'number' }).notNull(),
+    companionId: uuid('companion_id')
+      .notNull()
+      .references(() => companions.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    steps: jsonb('steps').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('procedural_companion_idx').on(table.companionId, table.seq)],
+);
+
 export const userTokenUsage = pgTable('user_token_usage', {
   userId: uuid('user_id')
     .primaryKey()
@@ -311,5 +432,9 @@ export const schema = {
   ingestionJobs,
   sections,
   facts,
+  proposals,
+  toolCalls,
+  leads,
+  proceduralMemories,
   userTokenUsage,
 };

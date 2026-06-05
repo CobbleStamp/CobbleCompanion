@@ -13,7 +13,7 @@ import { UNTRUSTED_CLOSE } from '../ingestion/untrusted.js';
 import { ZERO_USAGE } from '../usage.js';
 import { createEpisodicRetrieveContext, toEpisodeBlock } from './episodic-retrieve.js';
 
-const logger = { error: vi.fn(), info: vi.fn() };
+const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn() };
 const EMBEDDING_DIMENSIONS = 1024;
 
 function hit(overrides: Partial<EpisodeSearchHit> = {}): EpisodeSearchHit {

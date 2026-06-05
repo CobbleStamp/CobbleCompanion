@@ -13,12 +13,21 @@ import {
   createEpisodicRetrieveContext,
   createHttpLinkResolver,
   createMemoizingEmbeddingGateway,
+  createApprovalGate,
+  createIngestSourceTool,
+  createLoggingAfterToolCall,
+  createMemorySearchTool,
   createSemanticRetrieveContext,
   createSourceParser,
+  createWebFetchTool,
   DrizzleEpisodicMemoryStore,
   DrizzleIdentityStore,
+  DrizzleLeadStore,
+  DrizzleProceduralStore,
+  DrizzleProposalStore,
   DrizzleSemanticMemoryStore,
   DrizzleTokenQuotaStore,
+  DrizzleToolCallLog,
   FakeEmbeddingGateway,
   FakeLlmGateway,
   Harness,
@@ -30,6 +39,7 @@ import {
   OpenRouterGateway,
   resumeDeferredJobs,
   sweepConsolidation,
+  ToolRegistry,
   TranscriptMemoryStore,
   type EmbeddingGateway,
   type LlmGateway,
@@ -112,12 +122,40 @@ async function main(): Promise<void> {
     config.ingestionQueueMax,
   );
 
+  // Phase 3 tool surface + trust machinery, built before the harness so the
+  // propose→approve gate and the tool-call log can be wired into the loop.
+  const proposals = new DrizzleProposalStore(db);
+  const toolCallLog = new DrizzleToolCallLog(db);
+  const leads = new DrizzleLeadStore(db);
+  const procedural = new DrizzleProceduralStore(db);
+  const tools = new ToolRegistry([
+    // web_fetch harvests outbound links into the reading list (the P4 substrate).
+    createWebFetchTool({
+      resolver: createHttpLinkResolver({ maxBytes: config.ingestionMaxBytes }),
+      leads,
+      logger: consoleLogger,
+    }),
+    createMemorySearchTool({
+      semantic,
+      embeddings,
+      embeddingModel: config.embeddingModel,
+      embeddingDimensions: config.embeddingDimensions,
+      logger: consoleLogger,
+    }),
+    createIngestSourceTool({ semantic, ingestion, logger: consoleLogger }),
+  ]);
+
   const harness = new Harness({
     gateway: llmGateway,
     memory,
     model: config.llmModel,
     quota,
     logger: consoleLogger,
+    // P3: the tools the model may call, the propose→approve gate (effectful calls
+    // are held for approval), and the audit log (every call is logged).
+    registry: tools,
+    beforeToolCall: createApprovalGate(proposals, tools, consoleLogger),
+    afterToolCall: createLoggingAfterToolCall(toolCallLog, consoleLogger),
     // The memory-retrieval hook (invariant #3): episodic recall (P2) first, then
     // semantic recall (P1) which appends the recency transcript window last — so
     // a turn carries persona + memories + grounding + recent transcript, in order.
@@ -178,6 +216,11 @@ async function main(): Promise<void> {
     ingestion,
     consolidation,
     harness,
+    tools,
+    proposals,
+    toolCallLog,
+    leads,
+    procedural,
     quota,
     tokenVerifier: createTokenVerifier(config),
     config,

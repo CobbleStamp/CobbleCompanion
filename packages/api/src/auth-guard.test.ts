@@ -13,6 +13,7 @@ interface LogEntry {
 function capturingLogger(errors: LogEntry[], infos: LogEntry[]): Logger {
   return {
     error: (message, context) => errors.push({ message, context }),
+    warn: (message, context) => infos.push({ message, context: context ?? {} }),
     info: (message, context) => infos.push({ message, context: context ?? {} }),
   };
 }

@@ -1,5 +1,8 @@
-import type { Citation, MessageRole } from '@cobble/shared';
+import type { Citation, MessageRole, ProposalDto } from '@cobble/shared';
+import type { ToolCall } from '../llm/gateway.js';
 import type { TokenUsage } from '../usage.js';
+
+export type { ToolCall };
 
 /**
  * The harness's named extension points (architecture.md invariant #3,
@@ -18,18 +21,25 @@ export interface ContextBlock {
   readonly provenance?: readonly Citation[];
 }
 
-export interface ToolCall {
-  readonly name: string;
-  readonly args: Record<string, unknown>;
-}
-
 export interface ToolResult {
   readonly name: string;
   readonly content: string;
+  /** Correlates this result to the {@link ToolCall} it answers (the call's id). */
+  readonly toolCallId?: string;
+  /**
+   * True when `content` is a failure surfaced as data (failures are data, §4.7):
+   * an unknown tool, a thrown error, or a tool's own validation/busy refusal.
+   * Lets callers tell a real outcome from a failure they can't see inside the
+   * string — e.g. the confirm route only seeds procedural memory (a "learned
+   * workflow") when the approved action actually succeeded. Absent = success.
+   */
+  readonly isError?: boolean;
 }
 
 export interface TurnCtx {
   readonly companionId: string;
+  /** The companion's owner — tools scope tenant state and bill tokens to it (P3). */
+  readonly ownerId: string;
 }
 
 /** A loop ENTRY — a human turn (P0) or a proactive trigger (P4). */
@@ -42,6 +52,8 @@ export interface Entry {
 export interface Block {
   readonly blocked: true;
   readonly reason: string;
+  /** The persisted proposal the gate enqueued; the harness relays it to the surface. */
+  readonly proposal?: ProposalDto;
 }
 
 /**
@@ -68,7 +80,12 @@ export type RetrieveContext = (params: RetrieveParams) => Promise<RetrieveResult
 
 // tool hooks — gate around every tool call (P3)
 export type BeforeToolCall = (call: ToolCall, ctx: TurnCtx) => Promise<ToolCall | Block>;
-export type AfterToolCall = (result: ToolResult, ctx: TurnCtx) => Promise<ToolResult>;
+// `call` is the executed call (name + args), so the after-hook can log it.
+export type AfterToolCall = (
+  result: ToolResult,
+  call: ToolCall,
+  ctx: TurnCtx,
+) => Promise<ToolResult>;
 
 // initiation hook — produces a non-human ENTRY (P4)
 export type Initiator = (companionId: string) => Promise<Entry | null>;

@@ -14,7 +14,7 @@ import type { ParsedDocument } from './parser.js';
 import type { IngestionRunParams } from './pipeline.js';
 import { IngestionRunner, type IngestionTarget } from './runner.js';
 
-const silentLogger = { error: () => undefined, info: () => undefined };
+const silentLogger = { error: () => undefined, warn: () => undefined, info: () => undefined };
 
 /** Quota fake: an owner is over cap iff its id is in the set. */
 class SetQuota implements TokenQuotaStore {

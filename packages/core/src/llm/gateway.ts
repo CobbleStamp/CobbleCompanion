@@ -7,14 +7,53 @@
 import type { TokenUsage } from '../usage.js';
 
 export interface LlmMessage {
-  readonly role: 'system' | 'user' | 'assistant';
+  readonly role: 'system' | 'user' | 'assistant' | 'tool';
   readonly content: string;
+  /** Set on a `tool`-role message: the id of the tool call this result answers. */
+  readonly toolCallId?: string;
+  /** Set on an `assistant` message that requested tools — replayed so the
+   * provider can correlate the following `tool` messages to their calls. */
+  readonly toolCalls?: readonly ToolCall[];
+}
+
+/**
+ * A tool the model may call, in the wire shape the gateway advertises to the
+ * provider. `parameters` is a JSON Schema object (hand-written per tool, M2).
+ */
+export interface ToolDef {
+  readonly name: string;
+  readonly description: string;
+  readonly parameters: Record<string, unknown>;
+}
+
+/**
+ * A tool invocation the model emitted, parsed from the provider stream. `id`
+ * correlates the eventual `tool`-role result back to this call; `args` is the
+ * parsed `function.arguments` JSON. This is the canonical tool-call value the
+ * harness hooks (`BeforeToolCall`/`AfterToolCall`) also operate on.
+ */
+export interface ToolCall {
+  readonly id?: string;
+  readonly name: string;
+  readonly args: Record<string, unknown>;
 }
 
 export interface LlmStreamParams {
   readonly messages: readonly LlmMessage[];
   readonly model: string;
+  /** Tools to advertise this turn; omitted/empty = a text-only call (P0 path). */
+  readonly tools?: readonly ToolDef[];
   readonly signal?: AbortSignal;
+}
+
+/**
+ * What an LLM stream produces beyond its text deltas: the call's token usage and
+ * any tool calls the model emitted. Returned as the generator's value so the
+ * text relay (`for await` over the deltas) is unchanged for text-only callers.
+ */
+export interface StreamResult {
+  readonly usage: TokenUsage;
+  readonly toolCalls: readonly ToolCall[];
 }
 
 /** Typed gateway failure — provider errors surface as data, not raw throws (§4.7). */
@@ -33,8 +72,9 @@ export class LlmGatewayError extends Error {
 export interface LlmGateway {
   /**
    * Stream the assistant response as incremental text deltas; the generator's
-   * **return value** is the call's {@link TokenUsage} (so text-only consumers
-   * using `for await` are unaffected, while metered callers read the return).
+   * **return value** is the {@link StreamResult} (usage + any tool calls), so
+   * text-only consumers using `for await` are unaffected, while the harness and
+   * metered callers read the return for tool calls / token accounting.
    */
-  stream(params: LlmStreamParams): AsyncGenerator<string, TokenUsage, void>;
+  stream(params: LlmStreamParams): AsyncGenerator<string, StreamResult, void>;
 }

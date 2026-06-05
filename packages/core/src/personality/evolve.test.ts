@@ -14,7 +14,7 @@ import { DrizzleEpisodicMemoryStore, type NewEpisode } from '../memory/episodic-
 import type { TokenQuotaStore, UsageSnapshot } from '../quota/store.js';
 import { LlmPersonalityEvolver, type PersonalityEvolverOptions } from './evolve.js';
 
-const logger = { error: vi.fn(), info: vi.fn() };
+const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn() };
 const PERSONA_TEXT = "You've grown playful with them, and you know they unwind by cooking.";
 
 class FakeQuota implements TokenQuotaStore {

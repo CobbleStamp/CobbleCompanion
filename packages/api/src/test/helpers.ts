@@ -12,17 +12,27 @@ import {
   ConsolidationService,
   createEpisodicRetrieveContext,
   createMemoizingEmbeddingGateway,
+  createApprovalGate,
+  createIngestSourceTool,
+  createLoggingAfterToolCall,
+  createMemorySearchTool,
   createSemanticRetrieveContext,
   DrizzleEpisodicMemoryStore,
   DrizzleIdentityStore,
+  DrizzleLeadStore,
+  DrizzleProceduralStore,
+  DrizzleProposalStore,
   DrizzleSemanticMemoryStore,
   DrizzleTokenQuotaStore,
+  DrizzleToolCallLog,
   FakeEmbeddingGateway,
   FakeLlmGateway,
+  type FakeTurn,
   Harness,
   IngestionPipeline,
   IngestionRunner,
   LlmIngestionAnnouncer,
+  ToolRegistry,
   TranscriptMemoryStore,
   type Logger,
 } from '@cobble/core';
@@ -31,7 +41,7 @@ import { buildApp, type AppDeps } from '../app.js';
 import type { TokenVerifier, VerifiedClaims } from '../auth/jwt-verifier.js';
 import type { AppConfig } from '../config.js';
 
-export const silentLogger: Logger = { error: () => {}, info: () => {} };
+export const silentLogger: Logger = { error: () => {}, warn: () => {}, info: () => {} };
 
 /**
  * Token verifier for tests: maps a known token string to claims, throwing on
@@ -92,7 +102,7 @@ export interface TestAppOptions {
 }
 
 export async function makeTestApp(
-  chunks: readonly string[] = ['Hi', ' there'],
+  chunks: readonly string[] | readonly FakeTurn[] = ['Hi', ' there'],
   logger: Logger = silentLogger,
   options: TestAppOptions = {},
 ): Promise<TestApp> {
@@ -150,6 +160,23 @@ export async function makeTestApp(
     }),
     silentLogger,
   );
+  // The Phase 3 tool surface: read-only memory_search + effectful ingest_source
+  // (web_fetch is omitted here — it needs a live resolver and isn't exercised by
+  // route tests). The proposal store + audit log back the approval queue.
+  const tools = new ToolRegistry([
+    createMemorySearchTool({
+      semantic,
+      embeddings,
+      embeddingModel: config.embeddingModel,
+      embeddingDimensions: config.embeddingDimensions,
+      logger: silentLogger,
+    }),
+    createIngestSourceTool({ semantic, ingestion, logger: silentLogger }),
+  ]);
+  const proposals = new DrizzleProposalStore(db);
+  const toolCallLog = new DrizzleToolCallLog(db);
+  const leads = new DrizzleLeadStore(db);
+  const procedural = new DrizzleProceduralStore(db);
   const deps: AppDeps = {
     identity,
     memory,
@@ -158,12 +185,20 @@ export async function makeTestApp(
     embeddings,
     ingestion,
     consolidation,
+    tools,
+    proposals,
+    toolCallLog,
+    leads,
+    procedural,
     harness: new Harness({
       gateway: llmGateway,
       memory,
       model: 'test-model',
       quota,
       logger: silentLogger,
+      registry: tools,
+      beforeToolCall: createApprovalGate(proposals, tools, silentLogger),
+      afterToolCall: createLoggingAfterToolCall(toolCallLog, silentLogger),
       retrieveContext: composeRetrieveContext(
         silentLogger,
         createEpisodicRetrieveContext({

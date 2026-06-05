@@ -69,6 +69,50 @@ describe('TranscriptMemoryStore', () => {
     expect(recalled?.sourceId).toBeNull();
   });
 
+  it('round-trips a row kind and metadata (the rich-conversation columns)', async () => {
+    const citation = {
+      sourceId: 's1',
+      sourceTitle: 'Peru book',
+      chapterTitle: '4',
+      topicTitle: 'Sacred Valley',
+      paraStart: 1,
+      paraEnd: 3,
+      pageStart: null,
+      pageEnd: null,
+    };
+    await memory.appendMessage(companionId, 'assistant', 'Read example.com', {
+      kind: 'tool_step',
+      metadata: { toolName: 'web_fetch' },
+    });
+    const grounded = await memory.appendMessage(companionId, 'assistant', 'Grounded reply', {
+      metadata: { citations: [citation] },
+    });
+    expect(grounded.kind).toBe('message');
+    expect(grounded.metadata?.citations).toEqual([citation]);
+
+    const recent = await memory.getRecentMessages(companionId, 10);
+    const step = recent.find((m) => m.kind === 'tool_step');
+    expect(step?.metadata?.toolName).toBe('web_fetch');
+  });
+
+  it('excludes tool_step / proposal rows from the consolidation window', async () => {
+    await memory.appendMessage(companionId, 'user', 'real turn');
+    await memory.appendMessage(companionId, 'assistant', 'Read example.com', {
+      kind: 'tool_step',
+      metadata: { toolName: 'web_fetch' },
+    });
+    await memory.appendMessage(companionId, 'assistant', 'held action', {
+      kind: 'proposal',
+      metadata: { proposalId: 'p1', toolName: 'ingest_source' },
+    });
+    await memory.appendMessage(companionId, 'assistant', 'real reply');
+
+    // Consolidation reflects over the conversation only — UI chrome never
+    // becomes episodic memory.
+    const window = await memory.getMessagesSince(companionId, 0, 10);
+    expect(window.map((m) => m.content)).toEqual(['real turn', 'real reply']);
+  });
+
   it('reads transcript turns after a seq cursor, oldest-first, with seq + Date', async () => {
     const first = await memory.appendMessage(companionId, 'user', 'one');
     await memory.appendMessage(companionId, 'assistant', 'two');
@@ -101,7 +145,9 @@ describe('TranscriptMemoryStore', () => {
       title: 'report',
       rawText: '',
     });
-    const message = await memory.appendMessage(companionId, 'user', 'report.pdf', source.id);
+    const message = await memory.appendMessage(companionId, 'user', 'report.pdf', {
+      sourceId: source.id,
+    });
     expect(message.sourceId).toBe(source.id);
     const [recalled] = await memory.getRecentMessages(companionId, 1);
     expect(recalled?.sourceId).toBe(source.id);

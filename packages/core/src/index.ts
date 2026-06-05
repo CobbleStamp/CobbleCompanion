@@ -1,3 +1,39 @@
+// Tools (P3 — the companion's hands; the gate decides which run freely)
+export { type Tool, toToolDef, toolErrorMessage } from './tools/tool.js';
+export { ToolRegistry } from './tools/registry.js';
+export { dispatchTool } from './tools/dispatch.js';
+export {
+  DrizzleProposalStore,
+  toProposalDto,
+  type CreateProposalInput,
+  type ProposalRecord,
+  type ProposalStore,
+} from './tools/proposal-store.js';
+export {
+  DrizzleToolCallLog,
+  type ToolCallLog,
+  type ToolCallRecord,
+} from './tools/tool-call-log.js';
+export { createApprovalGate, createLoggingAfterToolCall } from './tools/gate.js';
+export { DrizzleLeadStore, type LeadRecord, type LeadStore } from './tools/lead-store.js';
+export {
+  DrizzleProceduralStore,
+  type ProceduralStore,
+  type ProcedureRecord,
+} from './tools/procedural-store.js';
+export { createWebFetchTool, type WebFetchOptions } from './tools/web-fetch.js';
+export {
+  createMemorySearchTool,
+  type MemorySearchOptions,
+  type SemanticSearchPort,
+} from './tools/memory-search.js';
+export {
+  createIngestSourceTool,
+  type IngestSourceOptions,
+  type IngestionEnqueuePort,
+  type SourceRegistrationPort,
+} from './tools/ingest-source.js';
+
 // Identity (the companion "home")
 export {
   DrizzleIdentityStore,
@@ -54,9 +90,12 @@ export {
   LlmGatewayError,
   type LlmMessage,
   type LlmStreamParams,
+  type StreamResult,
+  type ToolCall,
+  type ToolDef,
 } from './llm/gateway.js';
 export { OpenRouterGateway, type OpenRouterConfig } from './llm/openrouter.js';
-export { FakeLlmGateway } from './llm/fake.js';
+export { FakeLlmGateway, type FakeTurn } from './llm/fake.js';
 
 // Embedding gateway
 export {
@@ -126,7 +165,6 @@ export {
   type Initiator,
   type RetrieveContext,
   type RetrieveParams,
-  type ToolCall,
   type ToolResult,
   type TurnCtx,
 } from './harness/hooks.js';

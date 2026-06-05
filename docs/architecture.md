@@ -5,7 +5,7 @@
 > `product-overview.md`; for *scope & priorities* see `development-plan.md`; for *internal
 > mechanisms* (data models, schemas, config, security implementation) see `implementation.md`.
 >
-> **Status: incremental.** Built up phase by phase; currently specifies **Phases 0–2**
+> **Status: incremental.** Built up phase by phase; currently specifies **Phases 0–3**
 > (`development-plan.md` §3). Content for later phases is marked **_Deferred — Phase N_**. The
 > **Architectural Invariants** (§2) are the exception — load-bearing boundaries fixed now.
 
@@ -19,11 +19,14 @@ in as clients. **Phase 0** delivered the smallest end-to-end slice: a user creat
 **Phase 1** adds the knowledge organism: sources are ingested into **semantic memory** (§4.8) and
 chat answers ground themselves in them with citations. **Phase 2** adds memory & continuity: a
 background pass consolidates the transcript into **episodic memory** (recalled by topic, §4.3) and
-the companion's **personality evolves** from those episodes.
+the companion's **personality evolves** from those episodes. **Phase 3** adds tools, action & trust:
+the loop gains a real **inner loop** that calls tools (§4.1–4.2), and the **propose→approve** gate
+holds every effectful action in an **approval queue** for one-tap confirmation (§4.4); a **lead
+inventory** (reading list) and a **procedural-memory** seed land as the body the Phase 4 will drives.
 
-**Non-goals / scope boundaries (Phases 0–2):** no tools/MCP or approval queue (Phase 3), no
-proactivity (Phase 4), no growth/visual system (Phase 5), no native surfaces or OS tools
-(Phase 6–7). See `development-plan.md`.
+**Non-goals / scope boundaries (Phases 0–3):** no proactivity / motivation engine (Phase 4 — the
+`Initiator` seam is reserved but idle, §4.5), no growth/visual system (Phase 5), no native surfaces
+or OS tools (Phase 6–7). See `development-plan.md`.
 
 ## 2. Architectural Invariants (design decisions)
 
@@ -113,10 +116,15 @@ flowchart TB
 | **Token Quota Store** | Per-user daily token-budget state — the cost cap (P1, §4.8) | Postgres-backed (`user_token_usage`); routes enforce it inline |
 | **Persistence** | Relational + vector storage | Postgres + `pgvector`; schemas → `implementation.md` |
 | **Eval Harness** | Offline memory-vs-performance evaluation (`packages/eval`) | Not on the serving path; live OpenRouter. See `companionmemory.md` §5 |
+| **Tool Registry + Tools (P3)** | The tools a turn advertises + dispatches (`core/tools/`): `web_fetch`, `memory_search` (read-only), `ingest_source` (effectful) | Read-only tools run freely; the gate holds effectful ones (§4.4). `web_fetch` reuses the link resolver; `ingest_source` reuses the P1 pipeline |
+| **Approval Queue + Gate (P3)** | The `beforeToolCall` gate + the `proposals` store — holds effectful calls for one-tap approval, resolved exactly once | The mechanical realization of propose→approve (§4.4); confirm executes via `dispatchTool` |
+| **Tool-Call Log (P3)** | Append-only audit of every executed tool call (`tool_calls`) | The `afterToolCall` hook records all calls — the DoD's "every tool call is logged" |
+| **Lead Inventory (P3)** | The companion's reading list (`leads`) — discovered-but-unread URLs | Populated by `web_fetch` link harvest; worked on command in P3 (`/explore`), by the motivation engine on idle in P4 (§4.5) |
+| **Procedural Store (P3)** | Learned, reusable workflows seeded from approved actions (`procedural_memories`) | Browse-only seed; retrieval-as-hint deferred to P5 |
 
-**_Deferred — later phases:_** Tool Registry / MCP & Approval Queue (P3),
-Proactivity Scheduler & Motivation Engine (P4), Growth/Progression service (P5), Mobile/Desktop
-clients, OS-tool bridges & Sync Courier (P6–7).
+**_Deferred — later phases:_** Proactivity Scheduler & Motivation Engine (P4, fills the reserved
+`Initiator` seam, §4.5), Growth/Progression service (P5), Mobile/Desktop clients, OS-tool bridges &
+Sync Courier (P6–7).
 
 ## 4. The Agent Loop & Harness
 
@@ -160,7 +168,10 @@ flowchart TD
 ```
 
 > **Phase 0:** the tool set is empty, so `tool calls? → no` always holds — the inner loop turns once
-> and exits. The loop shape is unchanged when tools (P3) and proactive entries (P4) arrive.
+> and exits. **Phase 3 ✅:** the inner loop is real — the model may call tools, each runs (read-only)
+> or is held by the gate (effectful), the result re-enters as the next turn, bounded by a
+> max-iteration + token ceiling (§4.7). The loop shape is unchanged; proactive entries (P4) arrive
+> the same way.
 
 ### 4.2 The turn (the primitive)
 
@@ -181,8 +192,10 @@ flowchart TD
     TR -->|next turn| CTX
 ```
 
-> **Phase 0:** no tools, so every turn is `context → LLM → message → EXIT`. The right-hand branch is
-> wired (typed hooks) but never taken until P3.
+> **Phase 0:** no tools, so every turn is `context → LLM → message → EXIT`. **Phase 3 ✅:** the
+> right-hand branch is live — `validate args → beforeToolCall (gate) → execute → afterToolCall (log)`;
+> tool calls/results are replayed to the provider in the OpenAI tool-call wire shape, and the gateway
+> accumulates streamed `tool_calls` fragments (`implementation.md` §2).
 
 ### 4.3 Context assembly (what enters each turn)
 
@@ -225,7 +238,42 @@ There are **no dedicated "ask" or "confirm" steps** — the loop runs until it h
 then EXITs with a plain message; the user's reply is the next ENTRY. The product's **propose→approve**
 trust model (`product-overview.md` §5.3) is realized mechanically as the `beforeToolCall` gate: a
 read-only tool runs freely, but an **effectful/costly** tool call (book · send · pay) is **blocked**,
-forcing an exit-to-approve. The user's approval re-enters as the next turn and the action executes.
+forcing an exit-to-approve. **Every** effectful call in the turn is held — the loop collects them all
+rather than bailing on the first — and each is written to the transcript as a `proposal` row so the
+held action survives a reload.
+
+On **approval**, the confirm route resolves the proposal exactly once, executes the held call
+(`dispatchTool`), logs it, records a friendly outcome row, and then **re-enters the agent loop**
+(`Harness.continueAfterApproval`): the outcome is injected as an ephemeral observation, so the
+companion *narrates* the result and continues whatever the user asked ("…then summarize what you
+saved") — rather than the conversation dead-ending on a raw tool line. No suspended generator is
+resumed; the transcript is the only state (§4.7). Approving an action mid-continuation can itself
+produce a new proposal — the gate re-applies. **Reject** resolves the proposal without executing.
+When the proposal is **explore-origin** (it carries the originating `lead_id`), resolving it also
+closes that lead's lifecycle — confirm→`ingested`, reject→`discarded` — so a worked lead leaves the
+reading list instead of being stranded at `read` (best-effort; never fails the user's action).
+
+> **Open — who decides "what next" after an approved action (settle when the motivation engine
+> lands, §4.5).** Re-entry on approval is right for **chat**: a conversational partner is present, so
+> even when the approved action *was* the whole request ("remember this page"), a natural
+> confirmation or follow-up reads as companion-like — and a multi-step ask ("remember it **and**
+> summarize it") *requires* the continuation. Crucially, **terminality is not knowable at propose
+> time**: the model often can't summarize until the page is actually read, so it proposes the ingest
+> alone and only decides whether to continue once it sees the result. So the model must get the
+> post-approval turn and decide for itself — we don't try to predict it.
+>
+> Today the confirm route re-enters for **every** approval, including **explore**-origin proposals
+> (the reading-list "go through your list" action, §4.5). That is the part to revisit here: for a
+> **self-directed** origin there is no conversational task to continue, and choosing the companion's
+> *own* next move is **agenda-setting — the motivation engine's job (§4.5), not a confirm-route
+> reflex**. Per-approval re-entry is also the wrong *granularity* for a batch: explore approves N
+> proposals through N queue cards → N disjoint mini-turns, each blind to the others. Keep the two
+> concerns apart: *reacting to the person who just approved* is conversational (fine — ideally
+> **once** per batch); *deciding the next self-directed action* belongs to the outer loop. **To
+> address when Phase 4 lands:** stamp each proposal with its origin (a `chat` vs `explore`/
+> `autonomous` marker on the `proposals` row), have confirm re-enter only for `chat`, and let the
+> motivation engine pick up post-action "what next" for the rest from the full updated state on its
+> own cadence.
 
 ```mermaid
 flowchart TD
@@ -238,9 +286,11 @@ flowchart TD
     DEC -->|reject| DROP["drop proposal"]
 ```
 
-> **Generalized invariant (stated now so the architecture is correct by construction):** the
-> companion never executes a consequential, outward action without explicit user approval. The gate
-> arrives in P3; the rule holds from the start.
+> **Generalized invariant (P3 ✅):** the companion never executes a consequential, outward action
+> without explicit user approval. Realized as the `beforeToolCall` gate: an effectful tool call is
+> written to the `proposals` queue and the loop EXITs; the confirm route resolves it **exactly once**
+> (a conditional `pending→approved` claim) and runs the held call. Reject drops it. Data model +
+> exactly-once mechanics → `implementation.md` §`proposals`.
 
 ### 4.5 Proactive initiation (Phase 4)
 
@@ -260,6 +310,59 @@ flowchart LR
     classDef human fill:#1e3a5f,stroke:#3b82f6,color:#e2e8f0;
     class USER human;
 ```
+
+> **Design fixed now, implementation deferred to Phase 4.** The motivation engine *is* the thing
+> that fills the `Initiator` hook (architecture.md invariant #3; reserved in code, returns `null`
+> today). It is the **"will"** of a deliberate **body-then-will split**: Phase 3 builds the *body*
+> — the tools, the propose→approve gate (§4.4), the tool-call audit log, and the **lead inventory**
+> (a persistent frontier of discovered-but-unread leads, e.g. URLs spotted while reading) — and
+> Phase 4 builds the *will* that drives that body on its own. The ordering is a safety
+> precondition, not a convenience: an autonomous, exploring, token-*spending* companion is only
+> acceptable because **every consequential act already routes through the approval gate and every
+> tool call is logged** (the §4.4 generalized invariant). The body is verifiable with deterministic
+> tests; the will only by measurement over time (its named risk is annoyance, `development-plan.md`
+> §3), so it lands on a foundation already trusted. The exploration loop is *identical* whether a
+> human or the motivation engine triggers it — Phase 3 works the inventory **on the user's command**
+> ("go through your reading list"); Phase 4 works it **on an idle tick**.
+
+> **This engine owns post-action "what next" for self-directed work (paired with §4.4).** When an
+> approved action did not come from a live conversation — an `explore`/idle-tick ingest rather than a
+> chat ask — the question "what should I do now that this is done?" is *agenda-setting*, and that is
+> precisely this engine's job, not the confirm route's. It sees the **full** updated state (the new
+> memory, the remaining lead frontier) at once, runs on the creature's own cadence, and surfaces
+> proactively — so it can react **once** to a finished batch instead of N times mid-approval. The
+> confirm route should therefore **defer** here: re-enter the loop only for `chat`-origin approvals
+> (a present partner to reply to, §4.4) and leave self-directed continuation to this engine. A brief
+> in-character acknowledgement to *whoever approved* a proactive proposal is still fine — that is
+> conversational, and distinct from deciding the next move. Until this engine exists, Phase 3 simply
+> re-enters on every approval (the known wart called out in §4.4).
+
+The engine's parts (each additive, no loop change):
+
+- **Trigger** — an idle/periodic tick (the background-runner + sweep pattern already used for
+  consolidation, §4.3) asks "is there anything worth doing?" → may emit a non-human ENTRY, or stay
+  idle. Return-after-absence and external events (e.g. arrival somewhere new, Phase 6) are further
+  triggers.
+- **Drives (what it wants)** — **learned** user interests (read out of semantic/episodic memory, not
+  a configured setting) + the companion's personality (seed temperament + evolved persona, §4.3) +
+  pending **leads** (the inventory) + bond maintenance (time since last contact) + pending
+  work/opportunities (`product-overview.md` §5.4).
+- **Arbitration** — score candidate actions by drive × salience; **"idle" is a valid outcome**
+  (sparing, not annoying).
+- **Attention model (the "creature")** — each initiation is a **bounded burst**, never a full drain
+  of the inventory. Personality parameters shape it: **focus length** (steps before re-deciding),
+  **boredom** (interest on a thread decays without payoff), **distractibility** (a higher-salience
+  lead can preempt). Different Cobbles run different constants — a tenacious deep-reader vs. a magpie
+  that flits.
+- **Budget** — bounded by the per-run ceiling (reused from the Phase 3 loop guard, §4.7) and the
+  daily token cap (§4.8).
+- **Output** — a proactive turn → a message/question, or a **proposal awaiting approval** (in-app on
+  web; sparing push when away, Phase 6). Consequential acts still pass the §4.4 gate.
+- **Tunability** — a global frequency/intensity dial (Phase 4 DoD).
+
+**Phase 3 builds the substrate** the engine plugs into: the **lead inventory**, the `Initiator`
+contract, and the **burst-budget knob** (the §4.7 per-run ceiling that Phase 4 parameterizes by
+personality).
 
 ### 4.6 Phase 0 realization (end-to-end)
 
@@ -294,14 +397,21 @@ sequenceDiagram
 
 ### 4.7 Loop invariants
 
-- **Termination.** *Normal:* the model stops calling tools, or a gate forces an exit (approve, P3).
-  *Abnormal — a no-progress dead loop:* guarded later (P3+) by a progress meter and a per-run budget
-  ceiling, ending in **exit-to-user-with-partial**. (Not needed in P0: one turn always terminates.)
+- **Termination.** *Normal:* the model stops calling tools, or the gate forces an exit (a held
+  proposal, P3). *Abnormal — a no-progress dead loop:* guarded (P3 ✅) by a **max tool-iteration
+  count + a per-run token budget**; hitting either ends in **exit-to-user-with-partial** (logged).
 - **Failures are data.** A provider error or a tool throw becomes an ordinary turn outcome (an error
   message / an error result) that re-enters the loop — uniform recovery, and gaps are surfaced, never
   fabricated.
 - **Transcript is the source of truth.** Append-only; reconstructable into context; compaction
-  summarizes the compactible remainder when the window fills (P-later).
+  summarizes the compactible remainder when the window fills (P-later). **The rendered conversation —
+  live *and* after reload — is a projection of the transcript, never a richer separate reality (P3 ✅).**
+  So everything the user sees is a persisted row: a grounded answer carries its `citations` (metadata),
+  a read-only look-up is a `tool_step` row, a held action is a `proposal` row. Rows carry a **`kind`**
+  (`message` | `tool_step` | `proposal`) and `metadata`; the **LLM-context projection includes only
+  `message` rows** (tool steps + proposals are UI chrome and never re-enter the model's context, nor
+  episodic consolidation). Live streaming is a *progressive preview* of rows that will be persisted; a
+  turn that produced tool-step/proposal rows reconciles the surface against the transcript on settle.
 - **State is authoritative only at the home.** Surfaces never hold loop state (§6); a run reads from
   and writes back to the cloud home.
 
@@ -370,6 +480,14 @@ Design rules (the "improved staged hybrid"; memory guide → `companionmemory.md
   serialization *is* the burst backstop, so the cap is the whole defense (threat model:
   legitimate-user cost control, not attacker resistance). The runner still caps queued+in-flight
   runs (`INGESTION_QUEUE_MAX`) as a memory backstop. Knobs → `implementation.md` §config.
+  - **Abandoned chat turns are metered by cause.** A turn the **client aborts** mid-stream (it stops
+    reading — a disconnect) is still debited for the tokens already streamed (estimated from the
+    deltas seen), so a client can't stream a full answer and drop before the provider's trailing
+    usage frame to get it free. A turn that breaks on a **provider/infra fault** (the stream throws)
+    is **not** billed for the failed part — we err in the user's favor on our own failures; in a
+    multi-turn tool run the already-completed turns are still billed, only the broken one is free.
+    The metering wrapper (`meteredLlmGateway`, `usage.ts`) makes the distinction: a thrown error
+    leaves the in-flight turn out of the accumulator, a consumer `.return()` deposits the estimate.
 
 #### Supported source formats (acceptance contract)
 
@@ -456,7 +574,7 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
   with one embodiment active at a time there is no cross-surface state to reconcile (invariants
   #4, #5).
 
-## 7. Folder Structure (Phases 0–2)
+## 7. Folder Structure (Phases 0–3)
 
 ```
 /                      repo root
@@ -468,11 +586,12 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
       embedding/       provider-agnostic embedding gateway (P1; request-path memoizing wrapper P2)
       ingestion/       parse → segment → enrich → embed pipeline + runner + deferred-job sweeper (P1, §4.8)
       memory/          MemoryStore (transcript) + SemanticMemoryStore (P1) + EpisodicMemoryStore + consolidation service/runner (P2)
+      tools/           tool framework + registry, the three tools, the approval gate, proposal/tool-call/lead/procedural stores (P3, §4.2/§4.4)
       personality/     evolvedPersona synthesis from episodes (P2)
       identity/        companion "home" model + store
       quota/           per-user daily token-cap state (P1, §4.8)
-    api/               BFF / surface boundary (Fastify); memory + source + usage routes
-    web/               React web client; chat w/ citations + ingestion-status panel, sources page, memory browser, usage badge
+    api/               BFF / surface boundary (Fastify); memory + source + usage + proposal/inventory routes (P3)
+    web/               React web client; chat w/ citations + ingestion-status panel + approval cards (P3), sources page, memory browser, usage badge
     shared/            shared TS types / contracts
     eval/              live memory-vs-performance harness (→ companionmemory.md §5)
   db/                  migrations & schema (→ implementation.md)

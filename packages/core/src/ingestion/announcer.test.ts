@@ -9,7 +9,11 @@ import { TranscriptMemoryStore } from '../memory/store.js';
 import type { TokenQuotaStore } from '../quota/store.js';
 import { LlmIngestionAnnouncer } from './announcer.js';
 
-const silentLogger: Logger = { error: () => undefined, info: () => undefined };
+const silentLogger: Logger = {
+  error: () => undefined,
+  warn: () => undefined,
+  info: () => undefined,
+};
 
 /** Controllable quota fake — toggles over-cap and records what was debited. */
 class FakeQuota implements TokenQuotaStore {

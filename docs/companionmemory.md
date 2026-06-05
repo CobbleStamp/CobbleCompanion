@@ -61,8 +61,9 @@ the fact overlay's contract: [`ontology.md`](./ontology.md).
 | Episodic transcript | ✅ Built (Phase 0) | —                                              |
 | Semantic memory     | ✅ Built (Phase 1) | —                                              |
 | Episodic store      | ✅ Built (Phase 2) — consolidated episodes + personality evolution | — |
-| Procedural memory   | ❌ Not built       | Phase 3                                        |
-| Approval queue      | ❌ Not built       | Phase 3                                        |
+| Procedural memory   | ✅ Built (Phase 3) — seeded from approved actions; browse-only | retrieval-as-hint: Phase 5 |
+| Lead inventory      | ✅ Built (Phase 3) — the reading list (discovered URLs); the body-then-will substrate | motivation-driven on idle: Phase 4 |
+| Approval queue      | ✅ Built (Phase 3) — propose→approve, exactly-once | —                          |
 | Manage/delete UI    | ❌ Not built       | Phase 8                                        |
 
 The browser and eval harness below are built **now** and designed so each memory
@@ -79,8 +80,10 @@ A read-only view of everything a companion holds, grouped by memory kind.
 - `GET /companions/:companionId/memory` — a sectioned snapshot
   (`MemorySnapshotDto` in `packages/shared/src/contracts.ts`): `identity`,
   `episodic` (the single transcript's `messageCount`), `semantic`
-  (source/section/fact counts + ingestion jobs), and `procedural` as a
-  `not_implemented` placeholder carrying its planned phase.
+  (source/section/fact counts + ingestion jobs), and `procedural` (count of learned
+  workflows). Phase 3 also adds `GET …/procedures` (learned workflows), `GET …/leads`
+  (the reading list), `POST …/explore` (work the reading list → proposals), and the
+  approval queue (`GET …/proposals`, `POST …/proposals/:id/confirm|reject`).
 - `POST /companions/:companionId/memory/search` — search semantic memory
   directly; results carry the verbatim passage + a `Citation` (source, chapter,
   paragraph/page range).
@@ -101,7 +104,9 @@ via the **Memory** and **Sources** buttons in the chat header
 (`packages/web/src/App.tsx`). The browser renders the identity card, the episodic
 section (message count + "View transcript" toggle), the semantic section
 (source/section/fact counts + a search box returning verbatim passages with
-provenance), and a "coming soon" panel for procedural. The Sources page handles
+provenance), the procedural section (learned-workflow count + list), and the
+reading-list (leads). Effectful actions surface as one-tap **approval cards** below
+the chat transcript (`ProposalCard` + the `useProposals` hook). The Sources page handles
 intake (file upload, note, link), shows reading progress, and lets the user delete a
 source (incl. one parked at the daily token cap); a usage indicator in each page
 header shows the day's token allowance. Grounded chat answers render their citations

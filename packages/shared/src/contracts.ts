@@ -11,6 +11,32 @@ import { z } from 'zod';
 export const messageRoleSchema = z.enum(['user', 'assistant', 'system']);
 export type MessageRole = z.infer<typeof messageRoleSchema>;
 
+/**
+ * What a transcript row *is*, beyond who said it. The transcript is the single
+ * source of truth for the conversation, so everything the user sees live must be
+ * a persisted row that reconstructs identically on reload (architecture.md §4.7):
+ * - `message`   — an ordinary typed/spoken turn (`role` says user vs. assistant).
+ * - `tool_step` — a friendly one-line record of a read-only tool the companion
+ *                 ran ("Searched memory for …", "Read example.com"). UI-only:
+ *                 excluded from the LLM context projection.
+ * - `proposal`  — a held effectful action awaiting approval; renders with inline
+ *                 Approve/Decline while still pending.
+ */
+export const messageKindSchema = z.enum(['message', 'tool_step', 'proposal']);
+export type MessageKind = z.infer<typeof messageKindSchema>;
+
+/**
+ * Structured extras a transcript row carries so the surface can re-render it
+ * exactly on reload. Kind-specific: `citations` on a grounded `message`,
+ * `toolName` on a `tool_step`, `toolName`+`proposalId` on a `proposal` (the id
+ * lets the surface attach the live Approve/Decline affordance to the row).
+ */
+export interface MessageMetadata {
+  readonly citations?: readonly Citation[];
+  readonly toolName?: string;
+  readonly proposalId?: string;
+}
+
 // --- Entities (mirror the persisted rows, minus tenancy internals) ---
 
 export interface CompanionDto {
@@ -33,6 +59,14 @@ export interface MessageDto {
   readonly companionId: string;
   readonly role: MessageRole;
   readonly content: string;
+  /**
+   * What this row is (ordinary message, tool step, or proposal). Absent is
+   * treated as `message` so older callers/fixtures stay valid; the store always
+   * populates it.
+   */
+  readonly kind?: MessageKind;
+  /** Kind-specific extras so the row re-renders identically on reload. */
+  readonly metadata?: MessageMetadata;
   /**
    * The source this turn is about, when it was written by an upload (the
    * attachment chip and its acknowledgement). Null for ordinary typed turns.
@@ -208,17 +242,6 @@ export interface EpisodeSearchResultDto {
 // --- Memory snapshot (the read-only memory browser, companionmemory.md) ---
 
 /**
- * A memory section that is designed but not yet built. The browser renders these
- * as "coming soon" panels so the full knowledge-base shape is visible before the
- * stores exist (procedural = P3). See companionmemory.md.
- */
-export interface PlannedMemorySection {
-  readonly status: 'not_implemented';
-  /** Phase that introduces this memory kind, for the browser to surface. */
-  readonly plannedPhase: string;
-}
-
-/**
  * The episodic memory section — the companion's single continuous transcript
  * (implementation.md §1). One companion holds one lifelong conversation, so
  * this is a single message stream, not a list.
@@ -239,6 +262,38 @@ export interface SemanticMemorySection {
   readonly jobs: readonly IngestionJobDto[];
 }
 
+/** The procedural memory section — learned workflows the companion can reuse (Phase 3). */
+export interface ProceduralMemorySection {
+  readonly status: 'available';
+  readonly procedureCount: number;
+}
+
+/** A learned, reusable workflow recorded after a successful action (Phase 3 seed). */
+export interface ProcedureDto {
+  readonly id: string;
+  readonly title: string;
+  /** The ordered tool steps the workflow ran. */
+  readonly steps: readonly string[];
+  readonly createdAt: string;
+}
+
+/** Lifecycle of a discovered lead in the companion's reading list (Phase 3). */
+export type LeadStatus = 'new' | 'read' | 'ingested' | 'discarded';
+
+/**
+ * A discovered-but-unread lead in the companion's reading list (Phase 3) — e.g.
+ * a URL spotted while reading. The persistent substrate the Phase 4 motivation
+ * engine will work through on idle; in Phase 3 it is worked on the user's command.
+ */
+export interface LeadDto {
+  readonly id: string;
+  readonly url: string;
+  /** Why it was captured (the page/topic it came from). */
+  readonly why: string | null;
+  readonly status: LeadStatus;
+  readonly createdAt: string;
+}
+
 /**
  * A read-only snapshot of everything a companion "holds", grouped by memory kind
  * so new kinds slot in without reshaping the client (architecture.md invariant #2).
@@ -247,7 +302,7 @@ export interface MemorySnapshotDto {
   readonly identity: CompanionDto;
   readonly episodic: EpisodicMemorySection;
   readonly semantic: SemanticMemorySection;
-  readonly procedural: PlannedMemorySection;
+  readonly procedural: ProceduralMemorySection;
 }
 
 // --- Request bodies (validated at the API boundary) ---
@@ -324,6 +379,16 @@ export interface StreamCitationsEvent {
   readonly citations: readonly Citation[];
 }
 
+/**
+ * A read-only tool the companion just ran, emitted the moment it completes so the
+ * live transcript shows "Cobble looked something up" in place. Carries the
+ * persisted `tool_step` row, so the live line and the reloaded one are identical.
+ */
+export interface StreamToolStepEvent {
+  readonly type: 'tool_step';
+  readonly step: MessageDto;
+}
+
 /** Terminal success event carrying the persisted assistant message. */
 export interface StreamDoneEvent {
   readonly type: 'done';
@@ -336,9 +401,34 @@ export interface StreamErrorEvent {
   readonly message: string;
 }
 
+/** Lifecycle of a proposed effectful action held for the user (architecture.md §4.4). */
+export type ProposalStatus = 'pending' | 'approved' | 'rejected';
+
+/** A held effectful tool call awaiting the user's one-tap approval (P3). */
+export interface ProposalDto {
+  readonly id: string;
+  /** The effectful tool the companion wants to run (e.g. `ingest_source`). */
+  readonly toolName: string;
+  /** A short, human-readable description of what will happen if approved. */
+  readonly summary: string;
+  readonly status: ProposalStatus;
+  readonly createdAt: string;
+}
+
+/**
+ * Emitted when a turn EXITs because an effectful action was blocked for approval
+ * (propose→approve). The action is held in the approval queue, not executed.
+ */
+export interface StreamProposalEvent {
+  readonly type: 'proposal';
+  readonly proposal: ProposalDto;
+}
+
 export type ChatStreamEvent =
   | StreamTokenEvent
   | StreamCitationsEvent
+  | StreamToolStepEvent
+  | StreamProposalEvent
   | StreamDoneEvent
   | StreamErrorEvent;
 

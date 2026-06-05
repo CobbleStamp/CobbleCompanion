@@ -1,5 +1,5 @@
-import type { LlmGateway, LlmStreamParams } from '@cobble/core';
-import { estimateUsage, type TokenUsage } from '@cobble/core';
+import type { LlmGateway, LlmStreamParams, StreamResult } from '@cobble/core';
+import { estimateUsage } from '@cobble/core';
 import { describe, expect, test } from 'vitest';
 import { clamp01, factPresent, scoreCase } from './score.js';
 import type { EvalCase } from './types.js';
@@ -13,12 +13,15 @@ import type { EvalCase } from './types.js';
 class StubJudgeGateway implements LlmGateway {
   constructor(private readonly response: string) {}
 
-  async *stream(params: LlmStreamParams): AsyncGenerator<string, TokenUsage, void> {
+  async *stream(params: LlmStreamParams): AsyncGenerator<string, StreamResult, void> {
     yield this.response;
-    return estimateUsage(
-      params.messages.map((message) => message.content).join('\n'),
-      this.response,
-    );
+    return {
+      usage: estimateUsage(
+        params.messages.map((message) => message.content).join('\n'),
+        this.response,
+      ),
+      toolCalls: [],
+    };
   }
 }
 
