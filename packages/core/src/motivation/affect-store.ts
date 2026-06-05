@@ -13,7 +13,9 @@ import type { AffectReading } from './affect.js';
 export interface CompanionAffectStore {
   /** The companion's last stored read of the user, or null if none yet. */
   get(companionId: string): Promise<AffectReading | null>;
-  /** Replace the stored read with `reading` (last-write-wins). */
+  /** Replace the stored read with `reading` (last-write-wins). NOTE: no version
+   *  guard — under overlapping per-companion turns a late older write can clobber a
+   *  newer one. Known/accepted; see the race note in harness.ts `perceiveAndLearn`. */
   upsert(companionId: string, reading: AffectReading): Promise<void>;
 }
 

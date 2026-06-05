@@ -250,6 +250,17 @@ export class Harness {
       return;
     }
     try {
+      // KNOWN RACE (accepted for now): this read→sense→upsert is NOT serialized
+      // per companion, and the upsert is last-write-wins with no version guard
+      // (affect-store.ts). Because the read is fire-and-forget (runTurn) and the
+      // senseAffect call below is a seconds-long round-trip, a fast follow-up turn
+      // can call get() before this turn's upsert lands — both capture the same
+      // `prior`, so the next turn's `delta` is measured against a stale baseline
+      // (double-counting the change), and a late older upsert can clobber a newer
+      // reading. Low-frequency with a single user (needs two turns inside the
+      // sense window) and only softly mis-trains drive weights, so it's tolerated.
+      // Fix when it matters: per-companion serialization of perceiveAndLearn, or an
+      // optimistic-version guard on upsert + recompute on conflict.
       const prior = await this.affect.store.get(companionId);
       const reading = await senseAffect(
         {
