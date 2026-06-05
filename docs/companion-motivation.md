@@ -13,6 +13,15 @@
 > into memory itself, billed to **energy**, then posts a **report note**), and reward is **sentiment
 > read from the conversation** (not approve/reject). Remaining scope cuts (unprompted conversation
 > beyond the report note, neutral weight seed) are noted inline and in §10.
+>
+> **Status: in progress (Phase 4.2 — affective attunement & change-as-reward).** §7 is being
+> revised from a *conditional, separate* sentiment critic to a **two-loop** model driven by one
+> perception that runs **inside the agent loop on every turn**: the companion senses the user's
+> **mood and its change**, uses it to **attune** the next reply (fast loop), and learns from the
+> **change** in mood that its acts produce (slow loop, change-as-reward). The slow loop still fires
+> only on a deliberate drive-serving act (the report note) in v1. Sections marked *(4.2)* describe
+> the model being built now; the *(4.1)* sentiment-critic text they replace is retained until the
+> code lands (see `development-plan.md` §3).
 
 ## 1. Why this exists
 
@@ -86,10 +95,11 @@ activity recency. Presence is **volatile** (in-memory, not persisted; a restart 
 | **Away-short** | gone minutes–hours | light solo work; have something ready for return |
 | **Absent-long** | gone longer | catch-up posture; bond pressure rising |
 
-Other environment inputs: available tools, the lead frontier, time since last contact, and
-**remaining energy** (§8). Rule of thumb: **present → engage the user** (don't wander into solo
-projects unasked); **away → do solo work** that surfaces on return; **idle whenever nothing clears
-the bar.**
+Other environment inputs: available tools, the lead frontier, time since last contact,
+**remaining energy** (§8), and the **user's affect** — the companion's rolling read of the user's
+mood and *its change* turn to turn, sensed in the agent loop (§7, *4.2*). Rule of thumb: **present
+→ engage the user** (don't wander into solo projects unasked); **away → do solo work** that surfaces
+on return; **idle whenever nothing clears the bar.**
 
 ## 5. The mechanism — one tick
 
@@ -112,8 +122,9 @@ presence), so *staying idle costs nothing*. Only step 5 spends tokens (energy).
    next leads into memory — **no approval, autonomous work isn't gated** (§4.4) — then posting one
    in-character **report note** summarising what it did. The burst is sized to what energy can
    afford (§8).
-6. **Learn** — the user's reaction to the report note is read as a **sentiment** reward that updates
-   the served drives' weights (§7).
+6. **Learn** — learning does not happen on this engine tick; it happens on the *chat* turn the user
+   reacts on. The agent loop senses the user's mood every turn and, when a report note is awaiting a
+   reaction, the **change** in mood it produced nudges the served drive's weight (§7, *4.2*).
 
 `θ` (threshold), `λ` (energy aversion), and `ε` (exploration) are scaled by the **tunability dial**:
 `off` → never act; `gentle` → high threshold, sparing; `active` → low threshold, eager. The dial is
@@ -162,32 +173,76 @@ boredom, high distractibility) — without any special-case code.
   *mechanism* works; per-companion personalization (alongside the weight seed) comes from onboarding
   later, and they could also drift via learning post-PoC. Deferred (§10).
 
-### Reinforcement — sentiment from conversation
+### Reinforcement — learning from the user's mood, turn by turn *(4.2)*
 
-The companion learns the way a person does: it does something, **tells the user** (the report note),
-and reads **how they react**. There is **no approve/reject button** — tying learning to a UI control
-was the wrong abstraction. After the autonomous burst posts its note, the user's **next message is
-the reaction**, and an **LLM critic** rates its emotional valence:
+The companion learns the way a person does: across **every** turn it senses how the user feels and,
+crucially, **how that feeling changes** in response to what the companion just said or did. There is
+**no approve/reject button** — tying learning to a UI control was the wrong abstraction. Two loops
+run off **one perception**.
 
-- **Sentiment valence ∈ [−1, 1]**: clearly pleased / grateful → `+`; clearly annoyed / displeased →
-  `−`; neutral or unclear → `0`. Ambiguity (sarcasm, an unrelated bad mood, no real reaction) defaults
-  to neutral rather than guessing a strong signal.
+**Perception — sense every turn, in the agent loop.** On each user turn the harness reads the user's
+affect: a **valence ∈ [−1, 1]** plus a short natural-language **note** ("relieved", "frustrated,
+terse"). It is stored as the companion's **rolling read of the user** (`companion_affect`, one row
+per companion; see `implementation.md` §1). This is a **body** capability — it lives *in* the agent
+loop (`architecture.md` §4.5), not as a bolt-on in a route handler — and it runs **alongside the
+reply so it never delays the answer**. It is taken on every turn, not only after the companion acted.
+Its tokens ride the chat turn, so they are billed to **stamina**, not energy.
 
-The reaction is attributed to the most recent unresolved outcome (the one the note produced;
-`proactive_outcomes.note_message_id`). The critic rides on the chat turn the reaction arrived in, so
-its tokens are billed to **stamina**, not energy.
+**Fast loop — attunement (adjusts behaviour, learns nothing).** The stored read is fed *forward*
+into the next reply's context, so the companion adjusts **tone, warmth, and level of detail** to
+where the user is — the way you enter a conversation already holding a sense of how the other person
+last seemed. This updates **no weights**; it is pure in-the-moment attunement, and it is the most
+human-visible half of the mechanism.
 
-A simple **EMA update** nudges the weights of the drives that behaviour served:
-`w ← w + α · (reward − w)`, clamped. A **clear** reaction (|valence| ≥ a small floor) shifts the
-weight; a **neutral** one resolves the outcome without nudging — a shrug shouldn't reshape
-personality, and it stops the companion fishing for faint praise. The weights stay **interpretable**
-("Cobble has learned you value concise morning summaries"), which is both the growth signal *and* the
-helpful-vs-annoying **measurement** — one mechanism, not two. Each initiation is logged
-(`proactive_outcomes`, see `implementation.md` §1) so reward can be attributed.
+**Slow loop — change-as-reward (learns).** The reward is the **change** in affect, not its level:
 
-**Guards:** bounded update rate (slow drift, not whiplash); an exploration floor so a drive never
-dies to zero; neutral-by-default so it can't simply fish for "thanks"; the energy budget + dial cap
-frequency. **Deferred:** a deeper contextual-bandit / richer policy beyond this EMA update (§10).
+```
+delta = valence_now − valence_before
+```
+
+Brightened after the companion's act → positive; cooled → negative; nothing moved → ~0. The delta
+nudges the served drive's weight by an **additive step**, clamped:
+
+```
+w ← clamp( w + α · delta )
+```
+
+Positive delta raises the weight, negative lowers it, **zero leaves it untouched**. Because the
+signal is a *change*, neutrality is **intrinsic** — a flat reaction simply yields `delta ≈ 0` and no
+nudge, with no arbitrary "ignore faint praise" threshold — and **big emotional swings teach more**
+than flat exchanges (the magnitude self-weights). The weights stay **interpretable** ("Cobble has
+learned you value concise morning summaries"), which is both the growth signal *and* the
+helpful-vs-annoying **measurement** — one mechanism, not two.
+
+> **Why change, not level.** Absolute valence would reward "the user is happy" even when the
+> companion's act had nothing to do with it (or mildly annoyed them on an otherwise good day). The
+> derivative isolates *the companion's effect*. It also **replaces the 4.1 EMA-toward-target update**
+> `w ← w + α·(r − w)`, which is wrong for a change signal: a zero delta would pull the weight toward
+> zero and slowly kill the drive. The old neutral-band floor (`MIN_REWARD_TO_LEARN`) is removed —
+> the additive rule makes it unnecessary.
+
+**What the delta is attributed to (v1 scope cut).** For now the slow loop fires **only when a
+deliberate drive-serving act is awaiting a reaction** — the autonomous burst's report note (the most
+recent unresolved `proactive_outcomes` row; `note_message_id`). The delta is attributed to that act's
+drive, and `proactive_outcomes.reward` records it. Ordinary chat still **senses** every turn (so
+attunement and the rolling read always work) but does **not yet move weights**: diffuse credit
+assignment across **bond / understanding-the-user / persona** is deferred (§10). This keeps learning
+well-attributed and, as a side effect, naturally **bounds reward-hacking** — weights only move on acts
+the companion *chose*, not on every pleasant exchange.
+
+**Seam — body senses, will learns.** Perception lives in the agent loop (the body); the weight update
+lives in the motivation layer (the will). The two stay separated; one affect signal connects them.
+The harness produces "the user's mood changed by `delta`"; the will decides what, if anything, that
+teaches.
+
+**Guards:** additive nudge at a small rate (slow drift, not whiplash); an exploration floor so a
+drive never dies to zero; change-as-reward so it can't fish for raw "thanks"; the energy budget + dial
+cap how often the companion initiates at all. **Not guarded — by decision:** *sycophancy.* A companion
+that learns to please vs. one that stays honest-and-stubborn is a **personality divergence**, not a
+bug; the per-companion **learning policy** that produces it is a later feature, so v1 keeps the reward
+policy-neutral (and the drive-serving gate above bounds it for free meanwhile). **Deferred:**
+ordinary-chat learning (bond/understanding from the every-turn delta); folding perception into the
+single reply pass (one model call instead of two); a deeper contextual-bandit policy (§10).
 
 ## 8. Budget interplay — energy gates the will
 
@@ -252,15 +307,31 @@ research partner — *raised, not configured.*
    **reads** the lead inventory into memory itself, spends real tokens against **energy**, and posts
    one **report note**. (Approval is kept for the user-initiated `/explore` command and for any future
    outward/irreversible tools — revisited when such tools exist. For now: autonomy is autonomy.)
-7. **Reinforcement = sentiment from conversation** — the user's reaction to the report note is read
-   by an LLM critic (valence ∈ [−1, 1]) → EMA weight update; neutral leaves weights untouched. No
-   approve/reject button. Unprompted conversation beyond the report note is deferred.
+7. **Reinforcement = the user's mood, sensed every turn in the agent loop** *(4.2)* — one perception
+   per turn drives two loops: a **fast** loop that attunes the next reply to the user's mood (no
+   learning), and a **slow** loop that learns from the **change** in mood (`delta = valence_now −
+   valence_before`) via an additive nudge `w ← clamp(w + α·delta)`. Change-as-reward, not absolute
+   valence; this replaces the 4.1 EMA-toward-target update and removes the neutral-band floor. No
+   approve/reject button.
+8. **Slow-loop learning is gated on a deliberate drive-serving act (v1)** *(4.2)* — the delta moves
+   weights only when a report note is awaiting a reaction (attributed to that act's drive). Ordinary
+   chat senses every turn (attunement + rolling read) but does not yet move weights. **Sycophancy is
+   not guarded** by decision — it's a personality divergence the future per-companion learning policy
+   will own, and the drive-serving gate bounds it meanwhile.
 
 **Deferred (designed elsewhere, built later):**
+- **Ordinary-chat learning** *(4.2 cut)* — using the every-turn mood **delta** to move the **bond /
+  understanding-the-user / persona** dispositions on plain conversation (not only on a drive-serving
+  act). Needs diffuse credit assignment across those targets; v1 senses every turn but only learns on
+  the report note (§7).
+- **Single-pass perception** *(4.2 optimization)* — folding the affect read into the same model pass
+  that generates the reply (one call instead of two), via a structured side-channel. v1 runs a
+  separate cheap read inside the loop, alongside the reply.
+- **Per-companion learning policy** — the disposition that makes one Cobble learn to please and
+  another stay honest/stubborn (the sycophancy axis, §7); reward stays policy-neutral until then.
 - **Unprompted conversation** beyond the report note (tips, questions, check-ins) + a stronger
   sense of **purpose/agenda** (goals the companion pursues and raises on its own) → a later phase.
-  This is where the **bond** and **understanding-the-user** drives begin to fire and learn. (The
-  LLM-critic reward, once deferred here, is now built as the sentiment reward, §7.)
+  This is where the **bond** and **understanding-the-user** drives begin to fire and learn.
 - Continuous **work-while-away** (eager between-visit activity) → Phase 6 (needs push for an
   audience; `architecture.md` §4.5).
 - The stamina/energy **game economy** (food types, feeding, store, rich meters) → Phase 5
@@ -279,5 +350,5 @@ research partner — *raised, not configured.*
 - `architecture.md` §4.8 — stamina/energy two-pool budget.
 - `product-overview.md` §5.4–§5.6 — proactivity & vitality (the what & why).
 - `implementation.md` §1 — schema (`drive_weights`, `personality_knobs`, `companion_energy`,
-  `proactive_outcomes`, `proposals.origin`).
+  `proactive_outcomes`, `proposals.origin`, `companion_affect` *(4.2)*).
 - `development-plan.md` §3 — Phase 4 scope, DoD, and deferrals.

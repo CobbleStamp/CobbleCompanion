@@ -192,6 +192,16 @@ export {
   MIN_REWARD_TO_LEARN,
   parseValence,
 } from './motivation/sentiment-reward.js';
+// Affect perception (Phase 4.2) — the rolling read of the user's mood, sensed
+// every turn in the agent loop; drives attunement (fast loop) + reward (slow loop).
+export {
+  type AffectReading,
+  type AffectSenseDeps,
+  type AffectSenseParams,
+  NEUTRAL_AFFECT,
+  parseAffect,
+  senseAffect,
+} from './motivation/affect.js';
 
 // Token usage / metering (per-user daily cap)
 export {
