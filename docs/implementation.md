@@ -251,17 +251,23 @@ The schema the motivation engine uses (full mechanism → `companion-motivation.
   used tokens, a manual top-up grant. Separate counters so autonomy can't starve interaction (§4.8).
 - **`companion_affect`** (new, migration `0015`, Phase 4.2) — the companion's **rolling read of the
   user's mood**, one row per companion: `valence` ∈ [−1, 1] + a short natural-language `note`. The
-  agent loop upserts it every user turn (last-write-wins); the prior read is fed forward to attune the
-  next reply, and the turn-over-turn change is the reinforcement signal (`companion-motivation.md` §7).
-  The read is taken via a structured **`report_affect` tool call** (named `valence` + `note` fields,
-  provider-parsed) — no free-text parsing; a missing/malformed call degrades to neutral.
+  agent loop upserts it on every *successful* read (last-write-wins); the prior read is fed forward to
+  attune the next reply, and the turn-over-turn change is the reinforcement signal
+  (`companion-motivation.md` §7). The read is taken via a structured **`report_affect` tool call**
+  (named `valence` + `note` fields, provider-parsed) — no free-text parsing. A malformed *field*
+  degrades to neutral (still a genuine read), but a **missing call or provider failure is a non-read**
+  (`null`): the prior baseline is kept and nothing is learned, so a transient hiccup can't masquerade as
+  a neutral mood and fabricate a reward delta. The user's message is **fenced in `<user_message>` tags**
+  in the read prompt so it cannot dictate its own valence.
 - **`proactive_outcomes`** (new) — one row per initiation for the reinforcement loop: the served
   drive, a drive snapshot at initiation, the linked **`note_message_id`** (the report note the user
   reacts to — migration `0014`), and the **reward** once resolved. **Phase 4.2: the reward is the
   *change* in the user's mood** across their reaction to the note (`delta = valence_now −
   valence_before`, sensed in the agent loop), applied as an additive nudge — not approve/reject, and
   not the 4.1 absolute-valence critic. Doubles as the helpful-vs-annoying measurement. (`proposal_id`
-  is retained nullable for legacy rows.)
+  is retained nullable for legacy rows.) Resolution is an **atomic claim** — the reward write is
+  conditioned on `reward IS NULL`, so two racing reactions can't both score one outcome; only the
+  winning claim goes on to nudge the drive weights (no lost update).
 
 Presence is **not** a table — it is a volatile, heartbeat-fed in-memory signal (§4.5).
 

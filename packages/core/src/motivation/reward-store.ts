@@ -43,8 +43,14 @@ export interface ProactiveOutcomeStore {
    * the target the next user reaction is attributed to (Phase 4.1). Newest first.
    */
   findLatestUnresolved(companionId: string): Promise<ProactiveOutcomeRecord | null>;
-  /** Fill in the blended reward once the user has reacted (companion-scoped). */
-  setReward(companionId: string, id: string, reward: number): Promise<void>;
+  /**
+   * Atomically claim an unresolved outcome and fill in its reward (companion-
+   * scoped). Returns `true` iff THIS call claimed it — the update is conditioned on
+   * `reward IS NULL`, so when two reactions race only one wins and only that caller
+   * should go on to move personality weights. A no-op (already resolved, or wrong
+   * companion) returns `false`.
+   */
+  setReward(companionId: string, id: string, reward: number): Promise<boolean>;
   /** Recent outcomes, newest-first (measurement + tests). */
   list(companionId: string, limit: number): Promise<readonly ProactiveOutcomeRecord[]>;
 }
@@ -79,11 +85,22 @@ export class DrizzleProactiveOutcomeStore implements ProactiveOutcomeStore {
     return row ? toRecord(row) : null;
   }
 
-  async setReward(companionId: string, id: string, reward: number): Promise<void> {
-    await this.db
+  async setReward(companionId: string, id: string, reward: number): Promise<boolean> {
+    // Guard on `reward IS NULL`: the update only matches an outcome no one has
+    // scored yet, so concurrent reactions can't both claim it. `returning` reports
+    // whether a row actually changed — the caller uses it to decide whether to nudge.
+    const claimed = await this.db
       .update(proactiveOutcomes)
       .set({ reward, resolvedAt: new Date() })
-      .where(and(eq(proactiveOutcomes.companionId, companionId), eq(proactiveOutcomes.id, id)));
+      .where(
+        and(
+          eq(proactiveOutcomes.companionId, companionId),
+          eq(proactiveOutcomes.id, id),
+          isNull(proactiveOutcomes.reward),
+        ),
+      )
+      .returning({ id: proactiveOutcomes.id });
+    return claimed.length > 0;
   }
 
   async list(companionId: string, limit: number): Promise<readonly ProactiveOutcomeRecord[]> {

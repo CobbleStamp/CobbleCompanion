@@ -40,8 +40,14 @@ export async function reinforceFromDelta(
     if (!outcome) {
       return; // ordinary chat — nothing the companion did is awaiting a reaction
     }
-    // Record the change as this outcome's reward (resolves it so it isn't re-scored).
-    await deps.rewards.setReward(companionId, outcome.id, delta);
+    // Atomically claim the outcome and record the change as its reward. The claim
+    // guards the read-modify-write below: if a concurrent reaction already scored
+    // this outcome, `setReward` returns false and we bail — so only one racer ever
+    // nudges the weights, no lost update.
+    const claimed = await deps.rewards.setReward(companionId, outcome.id, delta);
+    if (!claimed) {
+      return; // another reaction already scored this outcome — don't double-nudge
+    }
     if (delta === 0) {
       return; // a neutral change resolves the outcome but leaves personality alone
     }

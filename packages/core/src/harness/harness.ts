@@ -160,6 +160,15 @@ export class Harness {
     try {
       await this.memory.appendMessage(companion.id, 'user', userContent);
       const prep = await this.prepare(companion, userContent);
+      // Snapshot the transcript for the post-turn affect read NOW, while the user's
+      // message is still the final row. Once the reply persists (end of runLoop) it
+      // becomes the final row, and `affectContext` — which drops the final turn as
+      // "the message being read" — would drop the reply instead, leaving the user
+      // message duplicated against `userText`. Capturing here keeps that invariant.
+      // Skipped entirely when affect is off (no extra query on the pre-4.2 path).
+      const affectSnapshot = this.affect
+        ? await this.memory.getRecentMessages(companion.id, this.recentLimit)
+        : [];
       yield* this.runLoop(companion, ownerId, prep, signal);
       // Perception + learning (Phase 4.2) — launched AFTER the reply has fully
       // streamed (all tokens + `done` already yielded) and deliberately NOT
@@ -169,7 +178,9 @@ export class Harness {
       // `done` before this runs, so the next turn already races this read either
       // way. Self-catching (perceiveAndLearn never throws), so the floated
       // promise can't surface as an unhandled rejection.
-      this.trackBackground(this.perceiveAndLearn(companion.id, userContent, ownerId));
+      this.trackBackground(
+        this.perceiveAndLearn(companion.id, userContent, affectSnapshot, ownerId),
+      );
     } catch (error) {
       yield this.failed(companion.id, error);
     }
@@ -232,6 +243,7 @@ export class Harness {
   private async perceiveAndLearn(
     companionId: string,
     userContent: string,
+    recent: readonly MessageDto[],
     ownerId: string | undefined,
   ): Promise<void> {
     if (!this.affect) {
@@ -239,7 +251,6 @@ export class Harness {
     }
     try {
       const prior = await this.affect.store.get(companionId);
-      const recent = await this.memory.getRecentMessages(companionId, this.recentLimit);
       const reading = await senseAffect(
         {
           llm: this.gateway,
@@ -253,6 +264,13 @@ export class Harness {
           userText: userContent,
         },
       );
+      // A non-read (provider hiccup or the model declining to report) is not
+      // evidence of a neutral mood — it's no evidence. Keep the prior baseline and
+      // learn nothing, so a transient failure can't fabricate a mood swing (and a
+      // spurious reward) on this turn or the next.
+      if (!reading) {
+        return;
+      }
       await this.affect.store.upsert(companionId, reading);
       // First-ever turn (no prior) has no baseline → delta 0, so nothing is
       // learned; the reading is still stored for next time.

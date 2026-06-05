@@ -116,6 +116,22 @@ describe('Harness perceiveAndLearn', () => {
     expect(reinforce.mock.calls[0]![1]).toBeCloseTo(1.1);
   });
 
+  it('keeps the prior baseline and does not learn when the read yields nothing', async () => {
+    // Seed a prior read so we can prove it survives a non-read.
+    await affectStore.upsert(companion.id, { valence: 0.8, note: 'warm' });
+    const reinforce = vi.fn(async () => {});
+    // Reply turn, then an affect read that returns prose (no report_affect call) —
+    // senseAffect yields null, so the baseline must stay put and nothing is learned.
+    const gw = new FakeLlmGateway([{ chunks: ['Hello'] }, { chunks: ['no tool call here'] }]);
+    const harness = harnessWith(gw, { store: affectStore, model: 'cheap', reinforce });
+
+    await drain(harness.runTurn({ companion, userContent: 'hi', ownerId: 'owner' }));
+    await harness.whenIdle();
+
+    expect(await affectStore.get(companion.id)).toEqual({ valence: 0.8, note: 'warm' });
+    expect(reinforce).not.toHaveBeenCalled();
+  });
+
   it('completes the turn even when the affect read fails (best-effort)', async () => {
     // Only one scripted turn → the second stream() (the affect read) returns an
     // empty reading; force a hard failure via a throwing reinforce instead.

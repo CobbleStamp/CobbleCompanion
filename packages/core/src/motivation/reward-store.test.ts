@@ -59,6 +59,19 @@ describe('DrizzleProactiveOutcomeStore', () => {
     expect(listed?.resolvedAt).not.toBeNull();
   });
 
+  it('claims an outcome atomically — only the first setReward wins', async () => {
+    const outcome = await rewards.record(companionId, {
+      noteMessageId: await noteId(),
+      drive: 'curiosity',
+    });
+    // First reaction claims it; a racing second sees reward already set and bails.
+    expect(await rewards.setReward(companionId, outcome.id, 0.7)).toBe(true);
+    expect(await rewards.setReward(companionId, outcome.id, -0.9)).toBe(false);
+    // The losing call must not overwrite the winner's reward.
+    const [listed] = await rewards.list(companionId, 1);
+    expect(listed?.reward).toBeCloseTo(0.7);
+  });
+
   it('finds the most recent unresolved outcome (reward attribution target)', async () => {
     await rewards.record(companionId, { noteMessageId: await noteId('first'), drive: 'curiosity' });
     const second = await rewards.record(companionId, {
