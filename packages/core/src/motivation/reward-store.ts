@@ -2,8 +2,8 @@
  * Reinforcement record store (Phase 4) — one `proactive_outcomes` row per
  * initiation: the engine records it when it acts (the report note + served drive
  * + weight snapshot); the reward is filled in when the user reacts to that note
- * in conversation (Phase 4.1 — sentiment, not approve/reject). Also the
- * helpful-vs-annoying measurement surface.
+ * in conversation (Phase 4.2 — the *change* in their mood across the reaction,
+ * not approve/reject). Also the helpful-vs-annoying measurement surface.
  */
 
 import { proactiveOutcomes, type Database } from '@cobble/db';

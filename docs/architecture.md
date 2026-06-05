@@ -132,7 +132,7 @@ flowchart TB
 `Initiator` seam — drives × presence → bounded autonomous explore burst), **Presence model**
 (volatile heartbeat-fed signal), **Energy Store** (`companion_energy` — the self-initiated half of
 the §4.8 two-pool budget), **Motivation Runner + Sweep** (off-request ticks, mirrors consolidation),
-and the **Reinforcement** outcome store + EMA weight update.
+and the **Reinforcement** outcome store + additive change-as-reward weight update.
 
 **_Deferred — later phases:_** Growth/Progression service incl. the **stamina/energy game economy**
 + onboarding personality seed (P5), unprompted conversation beyond the autonomous report note (a
@@ -324,7 +324,7 @@ flowchart LR
     class USER human;
 ```
 
-> **Phase 4.1 ✅ — implemented (autonomous reads, no approval; sentiment reward).** The motivation engine
+> **Phase 4 ✅ — implemented (autonomous reads, no approval; mood-change reward, sensed in the loop).** The motivation engine
 > (`packages/core/src/motivation/`) fills the `Initiator` hook (architecture.md invariant #3). It is
 > the **"will"** of a deliberate **body-then-will split**: Phase 3 builds the *body*
 > — the tools, the propose→approve gate (§4.4), the tool-call audit log, and the **lead inventory**

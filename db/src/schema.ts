@@ -496,10 +496,13 @@ export const companionAffect = pgTable('companion_affect', {
 /**
  * Reinforcement record (Phase 4, companion-motivation.md §7) — one row per
  * proactive initiation. The motivation engine writes it when it acts (linking the
- * proposal it created and the drive it served, with a snapshot of the weights at
- * the time for attribution). When the user reacts, the blended `reward` is filled
- * in (v1: hard signals only — approved/rejected) and the served drive's weight is
- * nudged. Doubles as the helpful-vs-annoying measurement surface.
+ * report note it posted — `note_message_id` — and the drive it served, with a
+ * snapshot of the weights at the time for attribution). When the user reacts to
+ * the note, `reward` is filled in: the *change* in their mood across that reaction
+ * (`delta = valence_now − valence_before`, Phase 4.2, sensed in the agent loop),
+ * applied as an additive nudge to the served drive's weight — not approve/reject,
+ * not the 4.1 absolute-valence critic. Doubles as the helpful-vs-annoying
+ * measurement surface. (`proposal_id` is retained nullable for legacy rows.)
  */
 export const proactiveOutcomes = pgTable(
   'proactive_outcomes',

@@ -272,7 +272,7 @@ The schema the motivation engine uses (full mechanism → `companion-motivation.
 Presence is **not** a table — it is a volatile, heartbeat-fed in-memory signal (§4.5).
 
 **_Deferred:_** growth/progression records + the stamina/energy game economy (P5); deeper RL policy
-beyond the v1 EMA weight update. Added via new migrations.
+beyond the v1 additive change-as-reward nudge. Added via new migrations.
 
 ## 2. Harness & Agent-Loop Internals
 
