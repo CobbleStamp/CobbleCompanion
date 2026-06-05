@@ -5,7 +5,7 @@
 > `product-overview.md`; for *scope & priorities* see `development-plan.md`; for *internal
 > mechanisms* (data models, schemas, config, security implementation) see `implementation.md`.
 >
-> **Status: incremental.** Built up phase by phase; currently specifies **Phases 0–3**
+> **Status: incremental.** Built up phase by phase; currently specifies **Phases 0–4**
 > (`development-plan.md` §3). Content for later phases is marked **_Deferred — Phase N_**. The
 > **Architectural Invariants** (§2) are the exception — load-bearing boundaries fixed now.
 
@@ -23,10 +23,14 @@ the companion's **personality evolves** from those episodes. **Phase 3** adds to
 the loop gains a real **inner loop** that calls tools (§4.1–4.2), and the **propose→approve** gate
 holds every effectful action in an **approval queue** for one-tap confirmation (§4.4); a **lead
 inventory** (reading list) and a **procedural-memory** seed land as the body the Phase 4 will drives.
+**Phase 4** adds the **will**: a **motivation engine** fills the `Initiator` seam (§4.5) and, on a
+lazy idle/return tick, works the lead inventory into **autonomous proposals** shaped by drives ×
+presence; a **stamina/energy** two-pool budget (§4.8) and a **reinforcement** loop that learns
+per-drive weights round it out (full mechanism → `companion-motivation.md`).
 
-**Non-goals / scope boundaries (Phases 0–3):** no proactivity / motivation engine (Phase 4 — the
-`Initiator` seam is reserved but idle, §4.5), no growth/visual system (Phase 5), no native surfaces
-or OS tools (Phase 6–7). See `development-plan.md`.
+**Non-goals / scope boundaries (Phases 0–4):** no growth/visual system or stamina/energy game economy
+(Phase 5), no unprompted conversation / LLM-critic reward (a later phase — P4 v1 is proposal-only),
+no native surfaces or OS tools (Phase 6–7). See `development-plan.md`.
 
 ## 2. Architectural Invariants (design decisions)
 
@@ -122,11 +126,15 @@ flowchart TB
 | **Lead Inventory (P3)** | The companion's reading list (`leads`) — discovered-but-unread URLs | Populated by `web_fetch` link harvest; worked on command in P3 (`/explore`), by the motivation engine on idle in P4 (§4.5) |
 | **Procedural Store (P3)** | Learned, reusable workflows seeded from approved actions (`procedural_memories`) | Browse-only seed; retrieval-as-hint deferred to P5 |
 
-**_Deferred — later phases:_** **Motivation Engine + Presence model + Energy Store** (P4 — fill the
-reserved `Initiator` seam, §4.5: the engine reads drives × presence and initiates within an energy
-budget; presence is a volatile heartbeat-fed signal; the energy store is the self-initiated half of
-the §4.8 two-pool budget), Growth/Progression service incl. the **stamina/energy game economy**
-(P5), Mobile/Desktop clients, OS-tool bridges & Sync Courier (P6–7).
+**Phase 4 ✅ components** (now wired, `companion-motivation.md`): **Motivation Engine** (fills the
+`Initiator` seam — drives × presence → bounded autonomous explore burst), **Presence model**
+(volatile heartbeat-fed signal), **Energy Store** (`companion_energy` — the self-initiated half of
+the §4.8 two-pool budget), **Motivation Runner + Sweep** (off-request ticks, mirrors consolidation),
+and the **Reinforcement** outcome store + EMA weight update.
+
+**_Deferred — later phases:_** Growth/Progression service incl. the **stamina/energy game economy**
++ onboarding personality seed (P5), unprompted conversation + LLM-critic reward (a later phase),
+Mobile/Desktop clients, OS-tool bridges & Sync Courier (P6–7).
 
 ## 4. The Agent Loop & Harness
 
@@ -314,9 +322,9 @@ flowchart LR
     class USER human;
 ```
 
-> **Design fixed now, implementation deferred to Phase 4.** The motivation engine *is* the thing
-> that fills the `Initiator` hook (architecture.md invariant #3; reserved in code, returns `null`
-> today). It is the **"will"** of a deliberate **body-then-will split**: Phase 3 builds the *body*
+> **Phase 4 ✅ — implemented (v1, proposal-only).** The motivation engine
+> (`packages/core/src/motivation/`) fills the `Initiator` hook (architecture.md invariant #3). It is
+> the **"will"** of a deliberate **body-then-will split**: Phase 3 builds the *body*
 > — the tools, the propose→approve gate (§4.4), the tool-call audit log, and the **lead inventory**
 > (a persistent frontier of discovered-but-unread leads, e.g. URLs spotted while reading) — and
 > Phase 4 builds the *will* that drives that body on its own. The ordering is a safety

@@ -38,7 +38,7 @@ being is proven, because they add platform cost without changing whether the cor
 | **1** | The knowledge organism | Web | Ingest sources → semantic memory → grounded recall ⭐ | ✅ **Done** (PR #2) |
 | **2** | Memory & continuity | Web | Episodic memory, companion identity, cloud "home" | ✅ **Done** |
 | **3** | Tools, action & trust | Web | Tool/MCP use + propose→approve approval queue | ✅ **Done** |
-| **4** | Proactivity engine | Web | Motivated, tunable initiative ⭐ | Planned |
+| **4** | Proactivity engine | Web | Motivated, tunable initiative ⭐ | ✅ **Done** |
 | **5** | Bond & growth | Web | Four-axis growth + visual character — the PoC complete | Planned |
 | **6** | Mobile surface | + Mobile | Summon model, GPS recall, push, OS-as-tools | Planned |
 | **7** | Desktop surface | + Desktop | File/workspace OS tools, heavier local storage | Planned |
@@ -231,6 +231,28 @@ engagement/dismissal (the reinforcement signal) from day one.
 the LLM-critic + a sense of **purpose/agenda** → a later phase (Phase 4 v1 is proposal-only);
 continuous work-while-away → Phase 6 (needs push); the stamina/energy **game economy** (food types,
 feeding, store, rich meters) → Phase 5; deeper RL beyond the v1 weight update.
+
+**Implemented** (this branch): the reserved `Initiator` seam is filled by a **motivation engine**
+(`packages/core/src/motivation/`) that fills it on a **lazy trigger** — `motivation.request` on a
+sent turn + on opening the transcript (return), plus a periodic `sweepMotivation`, all coalesced off
+the request path by a `MotivationRunner` (mirrors the consolidation runner). Each tick reads
+**drives × presence** and either stays idle (token-free) or runs a **bounded explore burst**: a
+**presence spectrum** (`presence.ts`, fed by a heartbeat) gates self-initiation; a token-free
+**arbitration** gate (`arbitration.ts`: `pressure = level × weight` vs the dial threshold) decides;
+when it commits, `runExploreBurst` turns the **lead inventory** into **autonomous ingest proposals**
+(the extracted P3 `/explore` path, now self-triggered). **Stamina/energy** split the old daily cap
+into two pools — chat draws stamina, the engine draws **energy** (`companion_energy`), so autonomy
+can never starve interaction; out of energy → the engine idles while chat runs on. The
+propose→approve gate now stamps proposal **origin** (`chat|explore|autonomous`); confirm re-enters
+the loop only for `chat` (the §4.4 open note, resolved). **Reinforcement v1**: each initiation logs a
+`proactive_outcomes` row; approval/rejection applies a hard-signal reward that nudges the served
+**drive weight** (EMA, neutral start), so a Cobble is *raised* into its disposition. Web adds a
+two-pool **vitality meter** + one-tap feed and an **off/gentle/active** dial. **Gate passed**
+(offline, deterministic — P4's differentiator is *safe, tunable, learning proactivity*, mechanically
+verifiable): the DoD test (`packages/api/src/routes/phase4-dod.test.ts`) proves open-app→relevant
+autonomous proposal, energy consumed, out-of-energy/dial-off → no initiation, and approval →
+reward + weight shift without re-entering chat. Full suite green at ≥80% coverage. Canonical
+mechanism: `docs/companion-motivation.md`.
 
 ### Phase 5 — Bond & Growth (PoC complete)
 **Goal:** make Cobble feel raised, not used — closing the PoC loop.

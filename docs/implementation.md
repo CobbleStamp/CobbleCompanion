@@ -5,10 +5,10 @@
 > system is* (components, flows, decisions) see `architecture.md`; for *what we're building and in
 > what order* see `development-plan.md`.
 >
-> **Status: incremental.** Specifies **Phases 0–3** (`development-plan.md` §3); later phases are
+> **Status: incremental.** Specifies **Phases 0–4** (`development-plan.md` §3); later phases are
 > marked **_Deferred — Phase N_**.
 
-## 1. Data Model (Phases 0–3)
+## 1. Data Model (Phases 0–4)
 
 Postgres (with `pgvector` available for later phases). Multi-tenant: every row is scoped by owner
 (`architecture.md` §2, invariant #5). Field types are indicative; authoritative DDL lives in
@@ -230,10 +230,10 @@ hit carries provenance (source title, chapter, topic, para/page range) + the ver
 
 > Seeded on a successful approved action; browse-only — retrieval-as-hint is deferred to P5.
 
-### Phase 4 — Proactivity Engine (designed, not yet built)
+### Phase 4 — Proactivity Engine (✅ built)
 
-The schema deltas the motivation engine needs (full design → `architecture.md` §4.5/§4.8). DDL
-lands with the Phase 4 migrations; captured here so the design is single-sourced.
+The schema the motivation engine uses (full mechanism → `companion-motivation.md`; migrations
+`0012` two-pool budget + companion knobs/dial/weights + proposals.origin, `0013` proactive_outcomes).
 
 - **`proposals.origin`** — `text` enum `chat | explore | autonomous`, default `chat`. Lets the
   confirm route re-enter the loop only for `chat`-origin proposals (the §4.4 resolution) and bill

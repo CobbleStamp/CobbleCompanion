@@ -8,8 +8,9 @@
 > exactly one place — this doc owns the drive model, the arbitration mechanism, seeding, and
 > learning.
 >
-> **Status: design (Phase 4 — not yet built).** Implementation lands in Phase 4; this doc is the
-> design of record that the build follows.
+> **Status: implemented (Phase 4 ✅).** The mechanism below is built
+> (`packages/core/src/motivation/`); the v1 scope cuts (proposal-only, hard-signal reward, neutral
+> seed) are noted inline and in §10.
 
 ## 1. Why this exists
 
