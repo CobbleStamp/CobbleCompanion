@@ -140,6 +140,14 @@ export interface TestAppOptions {
    * (e.g. the Phase 9 DoD) sets this to keep the sequence deterministic.
    */
   readonly disableAffect?: boolean;
+  /**
+   * Reuse an existing test database instead of creating a fresh one. Lets a test
+   * build two apps over the SAME persisted store — exercising a true process
+   * restart (a cold registry rebuild from the persisted connections) rather than
+   * just a second turn on the same running app. When provided, the caller owns the
+   * db lifecycle: the returned `close()` tears down the app but leaves the db open.
+   */
+  readonly database?: Awaited<ReturnType<typeof createTestDatabase>>;
 }
 
 export async function makeTestApp(
@@ -148,7 +156,10 @@ export async function makeTestApp(
   options: TestAppOptions = {},
 ): Promise<TestApp> {
   const config: AppConfig = { ...testConfig, ...options.config };
-  const { db, close: closeDb } = await createTestDatabase();
+  // When the caller passes a shared db it owns the lifecycle (see `database`
+  // option); otherwise we create one here and close it on teardown.
+  const ownsDb = options.database === undefined;
+  const { db, close: closeDb } = options.database ?? (await createTestDatabase());
   const identity = new DrizzleIdentityStore(db);
   const memory = new TranscriptMemoryStore(db);
   const semantic = new DrizzleSemanticMemoryStore(db);
@@ -356,7 +367,9 @@ export async function makeTestApp(
       // Growth recompute runs inline as the tail of each turn's stream, so there's
       // no background runner to drain here.
       await app.close();
-      await closeDb();
+      if (ownsDb) {
+        await closeDb();
+      }
     },
   };
 }
