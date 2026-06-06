@@ -67,7 +67,10 @@ export function Growth({ companionName, companionId, onBack }: GrowthPageProps):
             <AxisBar label="Knowledge" axis={growth.knowledge} />
             <AxisBar label="Bond" axis={growth.bond} />
             <AxisBar label="Initiative" axis={growth.initiative} />
-            <AxisBar label="Character" axis={characterAxis(growth)} />
+            <AxisBar
+              label="Character"
+              axis={{ band: growth.character.band, fill: growth.character.fill, detail: '' }}
+            />
           </section>
 
           <section className="card">
@@ -119,16 +122,6 @@ export function Growth({ companionName, companionId, onBack }: GrowthPageProps):
       )}
     </main>
   );
-}
-
-/** The character axis as an AxisReadingDto (band + a fill derived from the drive spread). */
-function characterAxis(growth: GrowthDto): AxisReadingDto {
-  const drives = growth.character.drives;
-  const spread =
-    drives.length === 0
-      ? 0
-      : drives.reduce((sum, d) => sum + Math.abs(d.weight - 0.5), 0) / drives.length / 0.5;
-  return { band: growth.character.band, fill: spread, detail: '' };
 }
 
 /** A labelled axis reading: the band name, a gauge fill, and the substrate detail. */

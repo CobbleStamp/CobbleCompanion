@@ -19,6 +19,7 @@ const baseGrowth: GrowthDto = {
   initiative: { band: 'Tentative', fill: 0.4, detail: '2 self-directed moves' },
   character: {
     band: 'Emerging',
+    fill: 0.5,
     drives: [
       { key: 'curiosity', label: 'Curiosity', weight: 0.9 },
       { key: 'bond', label: 'Bond', weight: 0.7 },

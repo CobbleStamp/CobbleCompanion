@@ -315,14 +315,16 @@ export interface CharacterDriveDto {
 /**
  * The companion's emerged character — the "Who {name} has become" card, and the
  * backing detail of the Character axis. `band` is the qualitative standing
- * ("Still forming" … "Strongly formed"); `drives` is the learned per-drive
- * disposition (each weight 0–1, raised from neutral by the P4 reinforcement loop);
- * `evolvedPersona` is the synthesized self-description (P2). Every Cobble starts
- * neutral, so a formed character is genuinely earned — and, being a mirror, may also
- * soften.
+ * ("Still forming" … "Strongly formed"); `fill` is the 0–1 gauge fill (the drive
+ * spread from neutral) computed server-side, so the surface renders it like any other
+ * axis without re-deriving the measure; `drives` is the learned per-drive disposition
+ * (each weight 0–1, raised from neutral by the P4 reinforcement loop); `evolvedPersona`
+ * is the synthesized self-description (P2). Every Cobble starts neutral, so a formed
+ * character is genuinely earned — and, being a mirror, may also soften.
  */
 export interface CharacterDto {
   readonly band: string;
+  readonly fill: number;
   readonly drives: readonly CharacterDriveDto[];
   readonly evolvedPersona: string | null;
 }
@@ -340,6 +342,17 @@ export interface GrowthDto {
   readonly character: CharacterDto;
   readonly capabilities: readonly CapabilityDto[];
   readonly treats: number;
+}
+
+/**
+ * The result of feeding (Phase 5 feeding economy) — the updated vitality meter plus
+ * the full growth standing, so a single reply refreshes both the client's pools and
+ * its treats balance. Single-sourced here so the server route reply and the web
+ * client's typed result never drift.
+ */
+export interface FeedResultDto {
+  readonly budget: StaminaEnergyDto;
+  readonly growth: GrowthDto;
 }
 
 /**

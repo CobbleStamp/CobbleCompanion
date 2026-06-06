@@ -3,12 +3,13 @@
  * (development-plan.md §3). Growth is mechanical (derived from substrate), not a
  * recall-quality score, so the gate is deterministic. It drives the real growth
  * service + feeding economy + routes through the app's stores and asserts:
- *   1. A substrate change → the axis level rises and abilities unlock, surfaced
- *      via GET /growth (the visible four axes).
- *   2. Crossing a threshold awards treats AND posts an in-character growth note to
- *      the transcript (growth, felt).
- *   3. Recompute is idempotent — re-reading growth never double-awards treats or
- *      re-posts a note.
+ *   1. A substrate change → the axis band rises and capabilities are observed,
+ *      surfaced via the read-only GET /growth (the visible four axes).
+ *   2. Crossing a threshold (on the post-turn recompute, driven here via the
+ *      GrowthRunner as the message route does) awards treats AND posts an
+ *      in-character growth note to the transcript (growth, felt).
+ *   3. Recompute is idempotent — a repeat recompute never double-awards treats or
+ *      re-posts a note (and the read-only GET never mutates anything).
  *   4. Feeding spends treats and tops up the favoured pool; out of treats → 409.
  *   5. A learned procedure RESURFACES as a context hint (abilities made functional,
  *      not just observed).
@@ -54,6 +55,12 @@ describe('Phase 5 DoD — bond & growth', () => {
     return messages.filter((m) => m.role === 'assistant').map((m) => m.content);
   }
 
+  /** Drive the post-turn growth recompute the way the message route does, then await it. */
+  async function runGrowth(): Promise<void> {
+    ctx.deps.growthRunner.request(companionId);
+    await ctx.deps.growthRunner.whenIdle();
+  }
+
   /** Seed enough substrate to cross a knowledge level and unlock several abilities. */
   async function seedSubstrate(): Promise<void> {
     for (let i = 0; i < 4; i += 1) {
@@ -79,6 +86,7 @@ describe('Phase 5 DoD — bond & growth', () => {
 
   it('raises the axis + observes capabilities + awards treats + posts a reflection (DoD 1+2)', async () => {
     await seedSubstrate();
+    await runGrowth();
     const growth = await getGrowth();
 
     // Knowledge axis rose; capabilities observed from real tool/source logs.
@@ -94,11 +102,13 @@ describe('Phase 5 DoD — bond & growth', () => {
     expect(notes).toContain(growthReflectionNote('knowledge'));
   });
 
-  it('is idempotent — re-reading growth never double-awards or re-posts (DoD 3)', async () => {
+  it('is idempotent — a repeat recompute never double-awards or re-posts (DoD 3)', async () => {
     await seedSubstrate();
+    await runGrowth();
     const first = await getGrowth();
     const notesAfterFirst = (await assistantNotes()).length;
 
+    await runGrowth();
     const second = await getGrowth();
     expect(second.treats).toBe(first.treats);
     expect(second.knowledge.band).toBe(first.knowledge.band);

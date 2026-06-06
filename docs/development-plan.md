@@ -296,14 +296,15 @@ Bond, Initiative, Character) — each a descriptive **band** + an intra-band gau
 **capabilities checklist** (6 capabilities flipped from real logs: web research, memory recall, reading
 sources, a learned routine, multi-step tasks, mood attunement) and the **character card** ("Who *X* has
 become" — per-drive weights + `evolved_persona`). Young axes read honestly empty ("Hasn't ventured out
-yet", "Still forming"). A `companion_growth` row (migration `0017`, realigned in `0018`) stores only the
+yet", "Still forming"). A `companion_growth` row (migration `0017`) stores only the
 **idempotent high-water mark** (highest band per axis + observed capabilities) **+ treats** — the
 readings recompute freely and the mark **never floors** the surface; it exists only so a reflection
 fires **exactly once** per band/capability reached (a compare-and-set on the monotonic band indices +
-observed set, mirroring the P2 cursor). Recompute runs lazily on `GET /companions/:id/growth` and
-post-turn via a `GrowthRunner` (off the request path), posting one in-character **growth reflection** to
-the transcript on a genuine advance (reusing the announcer pattern; canned, numberless text since the
-pass is token-free). The **feeding economy** (the one deliberate game loop — `companion-economy.md`)
+observed set, mirroring the P2 cursor). Recompute runs **post-turn only**, via a `GrowthRunner` (off the
+request path), posting one in-character **growth reflection** to the transcript on a genuine advance
+(reusing the announcer pattern; canned, numberless text since the pass is token-free);
+`GET /companions/:id/growth` is a **read-only** snapshot of the live derived standing, so a read (or a
+client poll) never advances the mark or writes to the transcript. The **feeding economy** (the one deliberate game loop — `companion-economy.md`)
 turns the P4 vitality meters into a kitchen: typed **foods** (`ration`→stamina, `spark`→energy,
 `treat`→both) spend earned **treats** (a starting balance + milestone rewards) via the existing atomic
 top-ups (`POST /companions/:id/feed`). **Procedural retrieval-as-hint** makes the capabilities

@@ -1,9 +1,9 @@
 CREATE TABLE "companion_growth" (
 	"companion_id" uuid PRIMARY KEY NOT NULL,
-	"knowledge_level" integer DEFAULT 0 NOT NULL,
-	"relationship_level" integer DEFAULT 0 NOT NULL,
-	"unlocked_abilities" jsonb DEFAULT '[]'::jsonb NOT NULL,
-	"overall_stage" integer DEFAULT 0 NOT NULL,
+	"knowledge_band" integer DEFAULT 0 NOT NULL,
+	"bond_band" integer DEFAULT 0 NOT NULL,
+	"initiative_band" integer DEFAULT 0 NOT NULL,
+	"observed_capabilities" jsonb DEFAULT '[]'::jsonb NOT NULL,
 	"treats" integer DEFAULT 0 NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );

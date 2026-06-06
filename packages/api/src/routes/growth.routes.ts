@@ -1,11 +1,12 @@
 /**
  * Growth & feeding routes (Phase 5, development-plan.md §3). The companion's
- * bond/growth made visible (`GET /growth` — lazily recomputes from substrate and
- * persists any transition) and the feeding economy (`POST /feed` — spends earned
- * treats to top up a vitality pool). All owner-scoped.
+ * bond/growth made visible (`GET /growth` — a READ-ONLY snapshot of the live derived
+ * standing; the mark advances + reflections post only post-turn via the `GrowthRunner`)
+ * and the feeding economy (`POST /feed` — spends earned treats to top up a vitality
+ * pool). All owner-scoped.
  */
 
-import { feedSchema, type GrowthDto, type StaminaEnergyDto } from '@cobble/shared';
+import { feedSchema, type FeedResultDto } from '@cobble/shared';
 import { feed } from '@cobble/core';
 import type { FastifyInstance } from 'fastify';
 import type { AppDeps } from '../app.js';
@@ -16,12 +17,6 @@ interface CompanionParams {
   readonly companionId: string;
 }
 
-/** The feed route's reply: the updated vitality meter + full growth standing. */
-interface FeedResultDto {
-  readonly budget: StaminaEnergyDto;
-  readonly growth: GrowthDto;
-}
-
 export function registerGrowthRoutes(
   app: FastifyInstance,
   deps: AppDeps,
@@ -29,7 +24,8 @@ export function registerGrowthRoutes(
 ): void {
   const { identity, growth, growthStore, quota, energy, logger } = deps;
 
-  // The companion's four-axis growth standing (lazily recomputes + persists).
+  // The companion's four-axis growth standing — read-only (the runner advances the
+  // mark + posts reflections post-turn; a GET never mutates the transcript).
   app.get(
     '/companions/:companionId/growth',
     { preHandler: requireAuth },

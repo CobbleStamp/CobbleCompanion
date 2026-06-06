@@ -151,9 +151,15 @@ export class GrowthService {
     return transition;
   }
 
-  /** Lazily recompute, then return the companion's full growth standing for the surface. */
+  /**
+   * Return the companion's full growth standing for the surface. READ-ONLY: it never
+   * advances the mark, awards treats, or posts a reflection — those are the side
+   * effects of {@link recompute}, driven only post-turn by the `GrowthRunner`, so a
+   * `GET` (or a client poll) can never mutate the transcript. The axis readings are
+   * derived fresh on every call, so they stay live regardless of when the last
+   * recompute ran.
+   */
   async snapshot(companionId: string): Promise<GrowthDto> {
-    await this.recompute(companionId);
     const view = await this.computeView(companionId);
     if (!view) {
       throw new Error(`growth snapshot requested for unknown companion ${companionId}`);
@@ -236,6 +242,7 @@ export class GrowthService {
     const weights = resolveWeights(view.driveWeights);
     return {
       band: view.character.band,
+      fill: view.character.fill,
       drives: DRIVES.map((key) => ({ key, label: DRIVE_LABELS[key], weight: weights[key] })),
       evolvedPersona: view.evolvedPersona,
     };

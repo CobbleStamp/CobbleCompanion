@@ -6,6 +6,7 @@ import type {
   CreateNoteSourceBody,
   EpisodeDto,
   EpisodeSearchResultDto,
+  FeedResultDto,
   FoodType,
   GrowthDto,
   IngestionJobDto,
@@ -216,12 +217,6 @@ export async function topUpBudget(
 /** The companion's four-axis growth standing (Phase 5). */
 export async function fetchGrowth(companionId: string): Promise<GrowthDto> {
   return request<GrowthDto>(`/companions/${companionId}/growth`);
-}
-
-/** Outcome of feeding: the updated vitality meter + growth standing (treats). */
-export interface FeedResultDto {
-  readonly budget: StaminaEnergyDto;
-  readonly growth: GrowthDto;
 }
 
 /** Give the companion a food (Phase 5 feeding economy) — spends treats, tops up a pool. */

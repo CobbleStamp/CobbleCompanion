@@ -1,5 +1,5 @@
 {
-  "id": "3bfb052d-808e-4c81-a632-3e1d06925744",
+  "id": "8ff7da37-e603-4cbd-bd98-7c7630fa1a30",
   "prevId": "0336c091-ff20-4109-83f6-3b75fa3ee716",
   "version": "7",
   "dialect": "postgresql",
@@ -133,33 +133,33 @@
           "primaryKey": true,
           "notNull": true
         },
-        "knowledge_level": {
-          "name": "knowledge_level",
+        "knowledge_band": {
+          "name": "knowledge_band",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "default": 0
         },
-        "relationship_level": {
-          "name": "relationship_level",
+        "bond_band": {
+          "name": "bond_band",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "default": 0
         },
-        "unlocked_abilities": {
-          "name": "unlocked_abilities",
+        "initiative_band": {
+          "name": "initiative_band",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "observed_capabilities": {
+          "name": "observed_capabilities",
           "type": "jsonb",
           "primaryKey": false,
           "notNull": true,
           "default": "'[]'::jsonb"
-        },
-        "overall_stage": {
-          "name": "overall_stage",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
         },
         "treats": {
           "name": "treats",
