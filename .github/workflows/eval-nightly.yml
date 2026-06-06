@@ -13,11 +13,15 @@ on:
         required: false
         default: 'all'
 
+permissions:
+  contents: read
+
 jobs:
   eval:
     runs-on: ubuntu-latest
-    # Skips cleanly on forks / when the key is absent rather than failing red.
-    if: ${{ github.repository_owner != '' }}
+    # Fail fast and loud: if OPENROUTER_API_KEY is absent the eval throws and the
+    # job goes red, so a human notices the misconfiguration immediately. We do
+    # NOT skip silently — a green-but-skipped nightly hides a broken eval.
     steps:
       - uses: actions/checkout@v4
 
