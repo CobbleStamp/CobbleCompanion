@@ -35,6 +35,18 @@ export {
   type SourceRegistrationPort,
 } from './tools/ingest-source.js';
 
+// MCP tool acquisition (companion-tools.md — Phase 9): connect whitelisted MCP
+// servers at runtime and expose their tools through the registry.
+export {
+  McpGatewayError,
+  type McpCallResult,
+  type McpGateway,
+  type McpServerSpec,
+  type McpToolDef,
+} from './mcp/gateway.js';
+export { mcpToolName, mcpToolToTool, type McpToolAdapterOptions } from './mcp/adapter.js';
+export { FakeMcpGateway, type FakeMcpCall, type FakeMcpServer } from './mcp/fake.js';
+
 // Identity (the companion "home")
 export {
   DrizzleIdentityStore,
