@@ -29,6 +29,7 @@ read docs/product-overview.md
 | Ontology contract & governance | `docs/ontology.md`                 |
 | Proactivity & motivation mechanism | `docs/companion-motivation.md`  |
 | Feeding economy (treats & foods) | `docs/companion-economy.md`        |
+| Tool acquisition & use (MCP/CLI) | `docs/companion-tools.md`          |
 | Prompt management & iteration | `docs/guide-prompts.md`             |
 | Running evals (offline harness) | `docs/howto-run-evals.md`         |
 | Online tracing / observability | `docs/runbook-tracing.md`          |

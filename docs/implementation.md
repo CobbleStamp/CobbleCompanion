@@ -495,6 +495,16 @@ Out of scope for this release; the roadmap is owned by `development-plan.md`.
 **Out of scope / future.**
 - **Onboarding personality seed** — drive weights stay neutral so the character card is *earned*.
 - **Deeper reinforcement** — a contextual-bandit policy beyond the additive change-as-reward nudge.
+- **Runtime tool acquisition** — the implementation behind `companion-tools.md`: a per-companion
+  **`learned_tools` / tool-connection** store (MCP endpoint, auth-secret *reference* — never the
+  value, last `tools/list` snapshot, status; learned CLI usages) rebuilt into the registry at
+  startup; an **HTTP-MCP adapter** (MCP tool def → the existing `Tool` interface §2.1, with
+  `tools/call` proxied, results sanitized as untrusted like §2.1 grounding); a **CLI policy engine**
+  (binary + argument-pattern whitelist → binary allow/deny) and a **`run_command` sandbox**
+  (per-tenant working dir, no cross-tenant data/secrets, CPU/time/output ceilings); a **retrieval
+  tool-arm** composed alongside the existing arms (§2.2); and new config (whitelist source, MCP
+  server specs, per-server auth-secret refs). Authoritative DDL (§1) and config keys (§3) land here
+  when built. Mechanism → `companion-tools.md`; scope → `development-plan.md`.
 - **Auth** — an app-issued session JWT and silent refresh / 401-driven re-auth beyond the ~1h
   Google ID token.
 - **Background workers & push** — worker tuning and push-notification credentials.

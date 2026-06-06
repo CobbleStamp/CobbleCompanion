@@ -144,6 +144,12 @@ assigned a role**. It adapts to its master.
 - **General tool/skill/MCP use:** like a modern coding agent, Cobble can wield tools and
   connect to external services (maps, calendar, search, booking, email, and MCP servers).
   Web-crawling and OS access are just two such tools.
+- **Acquires new abilities at runtime:** beyond the tools it ships with, Cobble can be *given* a
+  new primitive ability — a command-line program or an MCP server the developer has whitelisted —
+  and **learn to use it without any code change or redeploy**, preserving that know-how so it
+  reaches for the right tool when the need arises. This is how it **acquires** new primitives,
+  complementing procedural memory, which **combines** the ones it already has (mechanism →
+  `companion-tools.md`).
 - **Acts, doesn't just answer:** it can carry out multi-step tasks (research → plan → execute),
   e.g. find a hotel, book a ticket, set a reminder.
 - **Propose → approve trust model:** anything with **commitment or external side-effects** (book ·
@@ -264,6 +270,7 @@ threat model: `architecture.md` / `implementation.md`.)
 | **Home** | The cloud-resident canonical identity + long-term memory — the companion's persistent "self" |
 | **Semantic / episodic / procedural memory** | The three kinds of long-term memory the companion accumulates (§2.1) |
 | **Propose → approve** | The trust model: consequential/outward actions are proposed and await the user's confirmation (§5.3) |
+| **Tool acquisition** | Gaining a new primitive ability at runtime — a developer-whitelisted CLI or MCP server — and learning to use it without a code change or redeploy (§5.3, `companion-tools.md`) |
 | **Proactivity** | The companion initiating contact or action from its own motivations (§5.4) |
 | **Presence spectrum** | How "here" the user is (active / attentive / away / absent) — the environment signal that shapes proactive behaviour (§5.4) |
 | **Stamina / Energy** | The companion's two vitality pools — *stamina* powers user-initiated work, *energy* powers its self-initiated proactivity; provisioned by the user (§5.6) |
@@ -281,5 +288,6 @@ threat model: `architecture.md` / `implementation.md`.)
 | [`companion-memory.md`](./companion-memory.md) | The memory mechanism — browsing it, evaluating memory vs performance |
 | [`companion-motivation.md`](./companion-motivation.md) | The motivation/proactivity mechanism — drives, arbitration, seeding, learning |
 | [`companion-economy.md`](./companion-economy.md) | The feeding economy — earning treats, spending them on foods to top up vitality |
+| [`companion-tools.md`](./companion-tools.md) | Tool acquisition & use — acquiring whitelisted CLIs/MCP servers at runtime and learning to use them |
 | [`../README.md`](../README.md) | Orientation & setup |
 | [`../AGENTS.md`](../AGENTS.md) · [`../CLAUDE.md`](../CLAUDE.md) | Working rules · AI-agent entry point |

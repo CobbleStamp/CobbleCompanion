@@ -43,8 +43,14 @@ being is proven, because they add platform cost without changing whether the cor
 | **6** | Mobile surface | + Mobile | Summon model, GPS recall, push, OS-as-tools | Planned |
 | **7** | Desktop surface | + Desktop | File/workspace OS tools, heavier local storage | Planned |
 | **8** | Hardening & launch readiness | All | Security, scale, privacy controls, monetization | Planned |
+| **9** | Tool acquisition — MCP | Web / server-host | Whitelisted HTTP MCP servers connected & used at runtime, no redeploy | Planned |
+| **10** | Tool acquisition — CLI | Web / server-host | Whitelisted host CLIs learned & driven at runtime, no redeploy | Planned |
 
 ⭐ = the differentiators the web PoC exists to prove. **Phases 0–5 are the PoC.**
+
+> **Phases 9–10 are a server-host capability workstream, independent of the native-surface phases
+> (6–8).** They extend the existing web/cloud surface — they don't depend on mobile/desktop — so the
+> numbering is a label, not a strict ordering after Phase 8. Full design → `companion-tools.md`.
 
 ## 3. Phases (Web PoC)
 
@@ -335,6 +341,71 @@ surface-portable architecture holds across three clients.
 Security & threat-model review, encryption in transit/at rest, data inspection/management/delete
 controls, scale/cost work, and monetization. Resolve remaining open questions (§5).
 
+## 4b. Tool-Acquisition Workstream (post-PoC, server-host)
+
+Lets the companion's toolset **grow at runtime without code or redeploy** — it *acquires* new
+primitive abilities, complementing procedural memory, which *combines* the ones it has. A
+server-host capability track, **independent of** the native-surface phases (6–8). Full design,
+trust model, and security: `companion-tools.md`; architecture placement: `architecture.md` §9;
+implementation design: `implementation.md` §6. Both phases share one spine — generic primitives, a
+per-companion **dynamic tool/connection registry** (composed behind the existing registry interface,
+no loop change — invariant #3), and a retrieval **tool-arm** on the `RetrieveContext` hook
+(`architecture.md` §4.3). The trust model is the **developer's whitelist**: whitelisted + valid →
+runs free; otherwise denied — a separate system from propose→approve, which still governs outward
+actions (`architecture.md` §4.4).
+
+### Phase 9 — Runtime Tool Acquisition: MCP
+**Goal:** a developer can whitelist an HTTP MCP server and the companion uses its tools at runtime —
+no code change, no redeploy — retrieving the right server when a turn calls for it.
+
+**Scope**
+- Refactor the static boot registry into a **composition of capability sources** (native + MCP)
+  behind the unchanged `list()`/`get()` interface (invariant #3, no loop change).
+- **HTTP/SSE MCP client + adapter:** `initialize` + `tools/list` on connect; adapt each MCP tool to
+  the existing `Tool` interface; proxy `tools/call`; results re-enter context as **untrusted**
+  (injection-hardened like §2.1 grounding).
+- **`connect_mcp`** primitive (developer-whitelisted servers only) + a per-companion **connection
+  registry**, persisted and rebuilt at startup (endpoint, auth-secret *reference*, `tools/list`
+  snapshot, status).
+- **Retrieval tool-arm** surfacing the relevant connected server(s)/tool(s) per turn, so a turn
+  advertises the generic limbs + a retrieved shortlist rather than every tool.
+- **Trust/security:** developer whitelist → binary allow/deny; **HTTP/SSE only**, SSRF-guarded; no
+  stdio; credentials via the secret manager (never stored/sent to the model).
+
+**Done when:** a developer whitelists an HTTP MCP server; the companion connects and the connection
+**survives a restart**; on a relevant user turn it **retrieves and calls** a tool from that server; an
+**off-whitelist** server is denied; `tools/call` results are sanitized as untrusted; every call is
+logged (`tool_calls`).
+
+**Key risks:** per-turn tool-list explosion (mitigated by the retrieval shortlist), server
+availability/latency, and untrusted tool output — validate the SSRF boundary and injection-hardening
+on MCP results.
+
+### Phase 10 — Runtime Tool Acquisition: CLI
+**Goal:** a developer can whitelist a host CLI; given the tool's docs, the companion learns to drive
+it and preserves the working invocation — no code change, no redeploy.
+
+**Scope**
+- **`run_command`** primitive driving any whitelisted CLI.
+- **Whitelist / argument-validation policy engine** — specific binary + validated argument patterns,
+  binary allow/deny; entries are narrow (the policy is the trust boundary, no runtime approval).
+- **Host sandbox** — per-tenant working directory, no cross-tenant data/secrets, CPU/time/output
+  ceilings (mirrors the `web_fetch` byte-cap posture).
+- **Experimentation / learning loop** — ingest the tool's docs into **semantic memory**; record a
+  working invocation into **procedural memory**; both surfaced via the retrieval tool-arm.
+  Experimentation is bounded by the whitelist (it can try only *validated* invocations).
+- **Trust/security:** same developer-whitelist binary model; output sandboxed and treated as
+  untrusted.
+
+**Done when:** a developer whitelists a CLI (binary + argument patterns); given the tool's docs, the
+companion gets a **valid invocation working**, the know-how **persists** (semantic + procedural), and
+it **reuses** the CLI on a later relevant turn without re-deliberating; **off-whitelist / invalid
+arguments are denied**; output is sandboxed and untrusted; every run is logged.
+
+**Key risks:** host-execution safety (mitigated by whitelist + sandbox on the multi-tenant host),
+experimentation token cost (drawn from the energy/stamina budget), and prompt-injection-to-execution
+(bounded by the whitelist — no invocation can escape it).
+
 ## 5. Open Questions to Resolve (owned here)
 Owned here (single-source). Each is assigned a decision point:
 
@@ -348,6 +419,9 @@ Owned here (single-source). Each is assigned a decision point:
 | Surface rollout confirmed (web → mobile → desktop) | Phase 5 decision gate |
 | Monetization model (subscription, ability packs) | Phase 8 |
 | Push-notification cadence & away-proactivity rules | Phase 6 |
+| Tool whitelist governance — where the CLI/MCP whitelist lives (config vs DB) and the operator flow to admit a tool | Phase 9 (`companion-tools.md` §6) |
+| User-addable tools (vs developer-whitelisted only) | Deferred — after the tool-acquisition workstream (`companion-tools.md` §9) |
+| External-tool cost metering (the monetary cost of CLI/MCP calls, beyond LLM tokens) | Deferred — revisit with the workstream / Phase 8 |
 
 ## 6. Out of Scope (this plan)
 - Internal implementation detail and data schemas → `architecture.md`,

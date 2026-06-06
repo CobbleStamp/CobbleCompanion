@@ -716,6 +716,16 @@ owned by `development-plan.md`.
   check-ins) and a stronger sense of purpose/agenda; continuous work-while-away (needs push for an
   audience); a deeper contextual-bandit reinforcement policy (`companion-motivation.md`).
 - **Onboarding personality seed** — drive weights stay neutral so the character card is *earned*.
+- **Runtime tool acquisition** — letting the toolset **grow at runtime without code or redeploy**,
+  so the companion *acquires* new primitives (not only *combines* the three it ships with). The
+  designed spine: generic **`run_command`** + **MCP-connector** primitives; a per-companion
+  **dynamic tool/connection registry** composed behind the existing registry interface (§3); a
+  retrieval **tool-arm** on the `RetrieveContext` hook (§4.3) that surfaces relevant learned tools
+  per turn (so a turn advertises a few generic limbs + a retrieved shortlist — invariant #3, no loop
+  change); and a **developer-whitelist** trust model — binary allow/deny — sitting *beside*
+  propose→approve (§4.4), not replacing it. Server-host only; CLI **sandboxed**, MCP **HTTP/SSE +
+  SSRF-guarded** (§8), tool outputs treated as untrusted (`implementation.md` §2.1). Design →
+  `companion-tools.md`; scope/sequencing → `development-plan.md`.
 - **Native surfaces** — Mobile/Desktop clients, OS-tool bridges, and the Sync Courier.
 - **Transcript compaction** — summarizing the compactible remainder when the context window fills.
 - **Security hardening** — encryption-at-rest specifics, data inspection/management/delete controls,
