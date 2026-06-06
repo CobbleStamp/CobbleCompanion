@@ -59,6 +59,6 @@ export function createMcpRegistryResolver(
         mcpTools.push(mcpToolToTool({ gateway: options.gateway, spec, mcpTool, logger }));
       }
     }
-    return new ToolRegistry([...options.nativeTools, ...mcpTools]);
+    return new ToolRegistry([...options.nativeTools, ...mcpTools], logger);
   };
 }

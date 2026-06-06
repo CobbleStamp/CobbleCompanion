@@ -31,6 +31,23 @@ describe('mcpToolName', () => {
     // Each disallowed char becomes "_": the space and the "." both map through.
     expect(mcpToolName('my server', 'a.b')).toBe('mcp__my_server__a_b');
   });
+
+  it('caps an over-length name at the provider limit', () => {
+    const name = mcpToolName('stocks', 'x'.repeat(100));
+    expect(name.length).toBe(64);
+    expect(name).toMatch(/^[a-zA-Z0-9_-]{1,64}$/u);
+  });
+
+  it('keeps distinct tools distinct when truncating a shared prefix', () => {
+    // Same server, two tools agreeing on the first 64 chars: bare truncation
+    // would collapse them to one name and silently shadow a tool in dispatch.
+    const longPrefix = 'a'.repeat(80);
+    const first = mcpToolName('stocks', `${longPrefix}_one`);
+    const second = mcpToolName('stocks', `${longPrefix}_two`);
+    expect(first).not.toBe(second);
+    // Deterministic: the retrieval arm recomputes the name independently.
+    expect(mcpToolName('stocks', `${longPrefix}_one`)).toBe(first);
+  });
 });
 
 describe('mcpToolToTool', () => {

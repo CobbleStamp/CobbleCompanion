@@ -8,6 +8,8 @@
  * whitelist is the gate for these tools, not propose→approve (§6).
  */
 
+import { createHash } from 'node:crypto';
+
 import type { ToolResult } from '../harness/hooks.js';
 import { stripSentinels, UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../ingestion/untrusted.js';
 import { consoleLogger, type Logger } from '../logging.js';
@@ -19,6 +21,9 @@ const DEFAULT_MAX_CHARS = 8000;
 
 /** Provider tool-name limit (OpenAI-compatible): `^[a-zA-Z0-9_-]{1,64}$`. */
 const MAX_TOOL_NAME_LENGTH = 64;
+
+/** Hex length of the disambiguating hash appended to an over-length tool name. */
+const NAME_HASH_LENGTH = 8;
 
 export interface McpToolAdapterOptions {
   readonly gateway: McpGateway;
@@ -36,7 +41,18 @@ export interface McpToolAdapterOptions {
  */
 export function mcpToolName(ref: string, toolName: string): string {
   const clean = (value: string): string => value.replace(/[^a-zA-Z0-9_-]/gu, '_');
-  return `mcp__${clean(ref)}__${clean(toolName)}`.slice(0, MAX_TOOL_NAME_LENGTH);
+  const full = `mcp__${clean(ref)}__${clean(toolName)}`;
+  if (full.length <= MAX_TOOL_NAME_LENGTH) {
+    return full;
+  }
+  // Bare truncation would let two distinct tools that share a 64-char prefix
+  // collapse to the same name — and a duplicate name silently shadows a tool in
+  // the registry's by-name dispatch (registry.ts) while both still advertise.
+  // Anchor the truncated name with a short hash of the *full* name so distinct
+  // tools stay distinct. Deterministic by construction: the retrieval arm
+  // recomputes this name independently (tool-retrieve.ts) and must agree.
+  const suffix = `_${createHash('sha256').update(full).digest('hex').slice(0, NAME_HASH_LENGTH)}`;
+  return `${full.slice(0, MAX_TOOL_NAME_LENGTH - suffix.length)}${suffix}`;
 }
 
 /** Build a {@link Tool} that proxies to one MCP tool on a whitelisted server. */

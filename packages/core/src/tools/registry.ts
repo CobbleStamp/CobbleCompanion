@@ -5,14 +5,30 @@
  * tools advertised → the model never calls one).
  */
 
+import { consoleLogger, type Logger } from '../logging.js';
 import type { ToolDef } from '../llm/gateway.js';
 import { type Tool, toToolDef } from './tool.js';
 
 export class ToolRegistry {
   private readonly byName: Map<string, Tool>;
 
-  constructor(private readonly tools: readonly Tool[] = []) {
-    this.byName = new Map(tools.map((tool) => [tool.name, tool]));
+  constructor(
+    private readonly tools: readonly Tool[] = [],
+    logger: Logger = consoleLogger,
+  ) {
+    this.byName = new Map();
+    for (const tool of tools) {
+      if (this.byName.has(tool.name)) {
+        // A duplicate advertised name silently shadows the earlier tool in
+        // by-name dispatch (the later one wins) while both still appear in
+        // list() — surface it rather than dropping a tool quietly.
+        logger.warn('tool name collision in registry; later tool shadows earlier', {
+          operation: 'tools.registry',
+          name: tool.name,
+        });
+      }
+      this.byName.set(tool.name, tool);
+    }
   }
 
   /** The tools advertised to the model this turn (empty → a text-only call). */
