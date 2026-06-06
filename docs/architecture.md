@@ -30,10 +30,11 @@ in-character report note; a **reinforcement** loop learns per-drive weights from
 user's mood across their reaction to that note — sensed in the agent loop on every turn (Phase 4.2),
 which also **attunes** each reply to the user's mood (full mechanism → `companion-motivation.md`).
 
-Phase 5 adds **bond & growth**: a `GrowthService` derives four-axis growth (knowledge, relationship,
-abilities, an emerged-personality card) from substrate that already exists, surfaces a blended stage
-+ a feeding economy (treats → typed foods top up the two pools), and makes procedural memory
-functional via a retrieval-as-hint arm (§4.3) — all without changing the loop.
+Phase 5 adds **bond & growth**: a `GrowthService` derives the four MIRROR axes (knowledge, bond,
+initiative, character) + an observed-capabilities checklist from substrate that already exists — a
+readout that may move either way, never floored — plus a feeding economy (treats → typed foods top up
+the two pools), and makes procedural memory functional via a retrieval-as-hint arm (§4.3) — all
+without changing the loop.
 
 **Non-goals / scope boundaries (Phases 0–5):** no unprompted conversation beyond the autonomous
 report note (a later phase), no native surfaces or OS tools (Phase 6–7). See `development-plan.md`.
@@ -143,11 +144,12 @@ and the **Reinforcement** outcome store + additive change-as-reward weight updat
 
 **Phase 5 ✅ components** (now wired, `development-plan.md` §3): **Growth Service + Store + Runner**
 (above), the **feeding economy** (`POST /feed` — treats → typed foods top up the two pools via the
-existing atomic top-ups), and the **procedural retrieval-as-hint** arm (§4.3). The four growth axes
-read off substrate that already exists (semantic/episodic counts, tool/procedure/reward/affect logs,
-learned `drive_weights`); the web Growth view renders them + the kitchen.
+existing atomic top-ups), and the **procedural retrieval-as-hint** arm (§4.3). The four mirror axes
+(knowledge, bond, initiative, character) read off substrate that already exists (semantic/episodic
+counts, the tool/procedure/affect logs, the proactive-outcome log, learned `drive_weights`); the web
+Growth view renders the axis readings + capabilities checklist + character card + the kitchen.
 
-**_Deferred — later phases:_** onboarding personality seed (kept neutral so the emerged-personality
+**_Deferred — later phases:_** onboarding personality seed (kept neutral so the character
 card stays *earned*), unprompted conversation beyond the autonomous report note (a later phase),
 Mobile/Desktop clients, OS-tool bridges & Sync Courier (P6–7).
 
@@ -682,7 +684,7 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
       personality/     evolvedPersona synthesis from episodes (P2)
       identity/        companion "home" model + store
       motivation/      the "will" (P4, §4.4–§4.5): drives × presence arbitration, autonomous explore burst, engine runner/sweep, affect perception + change-as-reward reinforcement
-      growth/          four-axis growth derived from substrate + the feeding economy (P5, §4.3 hint arm): levels, abilities registry, growth store/service/runner, treats/foods
+      growth/          four mirror axes derived from substrate + the feeding economy (P5, §4.3 hint arm): axis readings (band+fill), capabilities registry, growth store/service/runner, treats/foods
       quota/           two-pool token budget: per-user daily stamina (P1) + per-companion energy (P4); §4.8
     api/               BFF / surface boundary (Fastify); memory + source + usage + proposal/inventory routes (P3); presence + proactivity (dial/energy) routes (P4); growth + feed routes (P5)
       tracing/         Langfuse Cloud TraceSink adapter (fetch-based; sampling + redaction before export) — runbook-tracing.md

@@ -293,7 +293,7 @@ Presence is **not** a table — it is a volatile, heartbeat-fed in-memory signal
   earn→spend **feeding economy** these constants drive (treats, foods, the feed flow), see
   `companion-economy.md`.
 
-**_Deferred:_** onboarding personality seed (weights kept neutral so the emerged-personality card
+**_Deferred:_** onboarding personality seed (weights kept neutral so the character card
 stays *earned*); deeper RL policy beyond the v1 additive change-as-reward nudge. Added via new migrations.
 
 ## 2. Harness & Agent-Loop Internals

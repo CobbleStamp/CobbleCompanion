@@ -39,7 +39,7 @@ being is proven, because they add platform cost without changing whether the cor
 | **2** | Memory & continuity | Web | Episodic memory, companion identity, cloud "home" | ✅ **Done** |
 | **3** | Tools, action & trust | Web | Tool/MCP use + propose→approve approval queue | ✅ **Done** |
 | **4** | Proactivity engine | Web | Motivated, tunable initiative ⭐ | ✅ **Done** |
-| **5** | Bond & growth | Web | Four-axis growth + visual character — the PoC complete | ✅ **Done** |
+| **5** | Bond & growth | Web | Four-axis growth mirror + character card — the PoC complete | ✅ **Done** |
 | **6** | Mobile surface | + Mobile | Summon model, GPS recall, push, OS-as-tools | Planned |
 | **7** | Desktop surface | + Desktop | File/workspace OS tools, heavier local storage | Planned |
 | **8** | Hardening & launch readiness | All | Security, scale, privacy controls, monetization | Planned |
