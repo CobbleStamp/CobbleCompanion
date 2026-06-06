@@ -537,6 +537,21 @@ export interface LeadDto {
   readonly createdAt: string;
 }
 
+/** Status of a companion's connection to a whitelisted MCP server (companion-tools.md §4). */
+export type McpConnectionStatus = 'connected' | 'error';
+
+/**
+ * One tool advertised by a connected MCP server, snapshotted into the connection
+ * registry so the companion's tool registry rebuilds at turn time without a network
+ * round-trip (companion-tools.md §4). Structurally the core `McpToolDef`.
+ */
+export interface McpToolSnapshot {
+  readonly name: string;
+  readonly description: string;
+  /** JSON Schema for the call arguments (MCP `inputSchema`). */
+  readonly inputSchema: Record<string, unknown>;
+}
+
 /**
  * A read-only snapshot of everything a companion "holds", grouped by memory kind
  * so new kinds slot in without reshaping the client (architecture.md invariant #2).

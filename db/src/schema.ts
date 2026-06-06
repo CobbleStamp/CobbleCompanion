@@ -4,6 +4,8 @@ import type {
   DriveWeights,
   IngestionStatus,
   LeadStatus,
+  McpConnectionStatus,
+  McpToolSnapshot,
   MessageKind,
   MessageMetadata,
   MessageRole,
@@ -585,6 +587,34 @@ export const companionGrowth = pgTable('companion_growth', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * Per-companion MCP connection registry (companion-tools.md §4) — which whitelisted
+ * servers a companion has connected to, plus the last `tools/list` snapshot so the
+ * tool registry rebuilds at turn time without a network round-trip. One row per
+ * (companion, server_ref); re-connecting replaces it. No secrets are stored — auth
+ * is resolved from the whitelist's env reference at connect time (§7).
+ */
+export const mcpConnections = pgTable(
+  'mcp_connections',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companionId: uuid('companion_id')
+      .notNull()
+      .references(() => companions.id, { onDelete: 'cascade' }),
+    serverRef: text('server_ref').notNull(),
+    toolsSnapshot: jsonb('tools_snapshot')
+      .$type<readonly McpToolSnapshot[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    status: text('status').$type<McpConnectionStatus>().notNull().default('connected'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('mcp_connections_companion_ref_uniq').on(table.companionId, table.serverRef),
+  ],
+);
+
 export const schema = {
   users,
   companions,
@@ -603,4 +633,5 @@ export const schema = {
   companionAffect,
   proactiveOutcomes,
   companionGrowth,
+  mcpConnections,
 };

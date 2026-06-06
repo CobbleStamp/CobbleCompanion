@@ -844,3 +844,55 @@ describe('Harness inner loop (P3 tools)', () => {
     expect(isBlock({ name: 'a', args: {} })).toBe(false);
   });
 });
+
+describe('Harness per-companion registry (Phase 9 — tool acquisition)', () => {
+  it('advertises and dispatches tools from the resolved per-companion registry', async () => {
+    // No static tools; the per-companion resolver supplies an acquired (MCP) tool.
+    const acquired = recordingTool('mcp__stocks__get_quote', false, 'AAPL $190');
+    const gateway = new FakeLlmGateway([
+      { toolCalls: [call('mcp__stocks__get_quote', { symbol: 'AAPL' })] },
+      { chunks: ['It is $190.'] },
+    ]);
+    const harness = new Harness({
+      gateway,
+      memory: memory(),
+      model: 'm',
+      resolveRegistry: async () => new ToolRegistry([acquired]),
+      logger: silentLogger,
+    });
+
+    const events = await collect(
+      harness.runTurn({ companion, userContent: 'price?', ownerId: 'u1' }),
+    );
+
+    expect(acquired.calls).toEqual([{ symbol: 'AAPL' }]);
+    // The resolved tool was advertised to the provider this turn.
+    expect(gateway.calls[0]!.tools?.map((t) => t.name)).toEqual(['mcp__stocks__get_quote']);
+    const done = events.find((e) => e.type === 'done');
+    expect(done && done.type === 'done' && done.message.content).toBe('It is $190.');
+  });
+
+  it('degrades to the static registry when the resolver throws (acquisition never breaks a turn)', async () => {
+    const staticTool = recordingTool('web_fetch', false, 'PAGE');
+    const gateway = new FakeLlmGateway([
+      { toolCalls: [call('web_fetch', { url: 'https://x.dev' })] },
+      { chunks: ['done'] },
+    ]);
+    const harness = new Harness({
+      gateway,
+      memory: memory(),
+      model: 'm',
+      registry: new ToolRegistry([staticTool]),
+      resolveRegistry: async () => {
+        throw new Error('registry resolve failed');
+      },
+      logger: silentLogger,
+    });
+
+    const events = await collect(harness.runTurn({ companion, userContent: 'go', ownerId: 'u1' }));
+
+    // The turn still ran on the static registry.
+    expect(staticTool.calls).toEqual([{ url: 'https://x.dev' }]);
+    expect(events.some((e) => e.type === 'done')).toBe(true);
+  });
+});

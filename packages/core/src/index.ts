@@ -48,6 +48,7 @@ export { mcpToolName, mcpToolToTool, type McpToolAdapterOptions } from './mcp/ad
 export { FakeMcpGateway, type FakeMcpCall, type FakeMcpServer } from './mcp/fake.js';
 export { McpWhitelist, type McpWhitelistEntry } from './mcp/whitelist.js';
 export {
+  DrizzleMcpConnectionStore,
   type McpConnectionRecord,
   type McpConnectionStatus,
   type McpConnectionStore,

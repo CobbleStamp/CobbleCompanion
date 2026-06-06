@@ -8,6 +8,13 @@
       "when": 1780748293052,
       "tag": "0000_fixed_mister_sinister",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1780758708923,
+      "tag": "0001_parallel_felicia_hardy",
+      "breakpoints": true
     }
   ]
 }
