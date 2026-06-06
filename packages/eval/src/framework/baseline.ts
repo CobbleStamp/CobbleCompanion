@@ -1,9 +1,13 @@
 /**
  * Baseline regression comparison (companionmemory.md §5). LLM outputs are
  * nondeterministic, so a regression is a drop beyond a tolerance BAND, not an
- * inequality. A baseline is the machine-readable DatasetReport from a prior run
- * (committed under docs/eval/<dataset>-<date>.json); compareToBaseline flags
- * pass-rate or mean-metric regressions for the nightly live tier to fail on.
+ * inequality. A baseline is the machine-readable DatasetReport from a prior run;
+ * compareToBaseline flags pass-rate or mean-metric regressions between two
+ * reports.
+ *
+ * NOTE: this is currently a manual/offline utility — the nightly tier writes and
+ * uploads reports but does not yet call this to gate on regressions. See
+ * docs/howto-run-evals.md "Baselines & regression".
  */
 
 import type { DatasetReport } from './dataset.js';

@@ -76,7 +76,9 @@ async function main(): Promise<void> {
     logger,
   };
   // When EVAL_REPORT_DIR is set (the nightly tier), also write the machine-
-  // readable DatasetReport JSON — the baseline artifact compareToBaseline diffs.
+  // readable DatasetReport JSON. The nightly uploads these as artifacts; diffing
+  // them against a baseline (compareToBaseline) is currently a manual/offline
+  // step, not an automated gate — see docs/howto-run-evals.md.
   const reportDir = process.env.EVAL_REPORT_DIR;
   if (reportDir) {
     mkdirSync(reportDir, { recursive: true });
