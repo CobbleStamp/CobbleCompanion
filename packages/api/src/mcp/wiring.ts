@@ -108,7 +108,7 @@ export function buildMcpWiring(options: BuildMcpWiringOptions): McpWiring | null
     authHeaders: envAuthHeaders,
     logger,
   });
-  const equippedArm = createEquippedSummaryContext({ equipped, logger });
+  const equippedArm = createEquippedSummaryContext({ equipped, whitelist, logger });
   const loadAdvisor = createToolLoadAdvisor({ catalog, equipped, logger });
 
   return {
