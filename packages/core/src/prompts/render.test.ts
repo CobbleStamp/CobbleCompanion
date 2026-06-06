@@ -61,4 +61,34 @@ describe('versionOf', () => {
   it('returns a stable version across calls', () => {
     expect(versionOf(toolTemplate)).toEqual(versionOf(toolTemplate));
   });
+
+  it('resolves each template by its own content, even when two share an id', () => {
+    // Two distinct templates that share one id but differ in wording + semver.
+    // (The id type is a closed union, so a test template must reuse a real id —
+    // that reuse is exactly what makes the collision reachable.)
+    const original: PromptTemplate<Greeting> = {
+      id: 'judge',
+      semver: '1.0.0',
+      description: 'First template registered under a shared id.',
+      sample: { name: 'sample' },
+      build: (input) => ({
+        messages: [{ role: 'user', content: `Original ${input.name}.` }],
+      }),
+    };
+    const reworded: PromptTemplate<Greeting> = {
+      ...original,
+      semver: '2.0.0',
+      build: (input) => ({
+        messages: [{ role: 'user', content: `Reworded ${input.name}.` }],
+      }),
+    };
+
+    const originalVersion = versionOf(original);
+    const rewordedVersion = versionOf(reworded);
+
+    // Each version must reflect its OWN wording and semver. With a cache keyed
+    // by id alone, `reworded` gets `original`'s cached version and these collide.
+    expect(rewordedVersion.contentHash).not.toBe(originalVersion.contentHash);
+    expect(rewordedVersion.semver).toBe('2.0.0');
+  });
 });
