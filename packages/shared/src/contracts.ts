@@ -657,6 +657,18 @@ export interface StreamDoneEvent {
   readonly message: MessageDto;
 }
 
+/**
+ * An in-character reflection the companion posts right AFTER its reply, the moment
+ * a turn crosses a growth band (Phase 5 — "growth, felt"). Emitted into the same
+ * stream, after `done`, so the note lands in place instead of waiting for the next
+ * transcript fetch; carries the persisted message so the live line and the
+ * reloaded one are identical (mirrors `tool_step`).
+ */
+export interface StreamReflectionEvent {
+  readonly type: 'reflection';
+  readonly message: MessageDto;
+}
+
 /** Terminal failure event — failures are data (architecture.md §4.7). */
 export interface StreamErrorEvent {
   readonly type: 'error';
@@ -692,6 +704,7 @@ export type ChatStreamEvent =
   | StreamToolStepEvent
   | StreamProposalEvent
   | StreamDoneEvent
+  | StreamReflectionEvent
   | StreamErrorEvent;
 
 // --- Generic API envelope (patterns.md "API Response Format") ---

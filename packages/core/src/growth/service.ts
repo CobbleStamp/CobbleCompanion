@@ -17,6 +17,7 @@ import {
   type CharacterDto,
   type DriveWeights,
   type GrowthDto,
+  type MessageDto,
 } from '@cobble/shared';
 import type { IdentityStore } from '../identity/store.js';
 import type { Logger } from '../logging.js';
@@ -47,6 +48,12 @@ export interface GrowthTransition {
   readonly initiativeAdvanced: boolean;
   readonly newCapabilities: readonly CapabilityKey[];
   readonly treatsEarned: number;
+  /**
+   * The in-character reflections actually posted this recompute (persisted
+   * assistant messages). Empty when nothing advanced. The caller streams these
+   * into the open turn so the note is felt in place (architecture: "growth, felt").
+   */
+  readonly reflections: readonly MessageDto[];
 }
 
 /** The derived view a recompute produces, used to build the DTO. */
@@ -82,6 +89,7 @@ const EMPTY_TRANSITION: GrowthTransition = {
   initiativeAdvanced: false,
   newCapabilities: [],
   treatsEarned: 0,
+  reflections: [],
 };
 
 export class GrowthService {
@@ -146,16 +154,18 @@ export class GrowthService {
       initiativeAdvanced: initiativeSteps > 0,
       newCapabilities,
       treatsEarned,
+      reflections: [],
     };
-    await this.announce(companionId, transition);
-    return transition;
+    const reflections = await this.announce(companionId, transition);
+    return { ...transition, reflections };
   }
 
   /**
    * Return the companion's full growth standing for the surface. READ-ONLY: it never
    * advances the mark, awards treats, or posts a reflection — those are the side
-   * effects of {@link recompute}, driven only post-turn by the `GrowthRunner`, so a
-   * `GET` (or a client poll) can never mutate the transcript. The axis readings are
+   * effects of {@link recompute}, which runs only post-turn (inline at the tail of
+   * the message stream), so a `GET` (or a client poll) can never mutate the
+   * transcript. The axis readings are
    * derived fresh on every call, so they stay live regardless of when the last
    * recompute ran.
    */
@@ -248,8 +258,15 @@ export class GrowthService {
     };
   }
 
-  /** Post one in-character reflection per kind of transition (best-effort, never throws). */
-  private async announce(companionId: string, transition: GrowthTransition): Promise<void> {
+  /**
+   * Post one in-character reflection per kind of transition and return the
+   * persisted messages (so the caller can stream them into the open turn).
+   * Best-effort: a failed post is logged and skipped, never thrown.
+   */
+  private async announce(
+    companionId: string,
+    transition: GrowthTransition,
+  ): Promise<readonly MessageDto[]> {
     const notes: string[] = [];
     if (transition.knowledgeAdvanced) {
       notes.push(growthReflectionNote('knowledge'));
@@ -263,9 +280,10 @@ export class GrowthService {
     for (const key of transition.newCapabilities) {
       notes.push(capabilityObservedNote(capabilityLabel(key)));
     }
+    const posted: MessageDto[] = [];
     for (const note of notes) {
       try {
-        await this.deps.memory.appendMessage(companionId, 'assistant', note);
+        posted.push(await this.deps.memory.appendMessage(companionId, 'assistant', note));
       } catch (error) {
         this.deps.logger.error('failed to post growth reflection', {
           operation: 'growth.announce',
@@ -274,6 +292,7 @@ export class GrowthService {
         });
       }
     }
+    return posted;
   }
 }
 

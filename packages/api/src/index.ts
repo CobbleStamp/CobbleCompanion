@@ -35,7 +35,6 @@ import {
   DrizzleGrowthStore,
   FakeEmbeddingGateway,
   FakeLlmGateway,
-  GrowthRunner,
   GrowthService,
   DEFAULT_GROWTH_CONFIG,
   Harness,
@@ -283,7 +282,6 @@ async function main(): Promise<void> {
     memory,
     logger: consoleLogger,
   });
-  const growthRunner = new GrowthRunner(growth, consoleLogger);
 
   const app = await buildApp({
     identity,
@@ -307,7 +305,6 @@ async function main(): Promise<void> {
     affect: affectStore,
     growth,
     growthStore,
-    growthRunner,
     tokenVerifier: createTokenVerifier(config),
     config,
     logger: consoleLogger,
@@ -368,7 +365,6 @@ async function main(): Promise<void> {
     await harness.whenIdle();
     await consolidation.close();
     await motivation.close();
-    await growthRunner.close();
   });
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     process.once(signal, () => {

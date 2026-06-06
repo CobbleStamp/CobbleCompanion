@@ -268,7 +268,7 @@ Presence is **not** a table — it is a volatile, heartbeat-fed in-memory signal
   reflected on), `observed_capabilities` (jsonb `CapabilityKey[]`) — plus the earned **`treats`** balance
   (the one stored, non-derived value). The mark exists ONLY to make reflections **idempotent**: `advance`
   is a compare-and-set on the monotonic band indices + observed-capability set (the same trick as the
-  consolidation cursor), so two concurrent post-turn recomputes (e.g. overlapping `GrowthRunner` ticks,
+  consolidation cursor), so two concurrent post-turn recomputes (e.g. rapid back-to-back turns,
   or two app instances) can never double-award treats or double-post a growth reflection. (`GET /growth`
   itself is read-only — it never recomputes — so a read can never award or post.) The row is created
   lazily on first recompute, seeded with `initialTreats` so feeding works on day one. `treats` moves by atomic SQL

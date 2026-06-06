@@ -1,7 +1,7 @@
 /**
  * Growth & feeding routes (Phase 5, development-plan.md §3). The companion's
  * bond/growth made visible (`GET /growth` — a READ-ONLY snapshot of the live derived
- * standing; the mark advances + reflections post only post-turn via the `GrowthRunner`)
+ * standing; the mark advances + reflections post only post-turn, inline on the message stream)
  * and the feeding economy (`POST /feed` — spends earned treats to top up a vitality
  * pool). All owner-scoped.
  */

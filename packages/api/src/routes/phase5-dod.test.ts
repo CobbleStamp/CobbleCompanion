@@ -5,9 +5,9 @@
  * service + feeding economy + routes through the app's stores and asserts:
  *   1. A substrate change → the axis band rises and capabilities are observed,
  *      surfaced via the read-only GET /growth (the visible four axes).
- *   2. Crossing a threshold (on the post-turn recompute, driven here via the
- *      GrowthRunner as the message route does) awards treats AND posts an
- *      in-character growth note to the transcript (growth, felt).
+ *   2. Crossing a threshold (on the post-turn recompute, driven here by calling
+ *      growth.recompute directly as the message route does inline) awards treats
+ *      AND posts an in-character growth note to the transcript (growth, felt).
  *   3. Recompute is idempotent — a repeat recompute never double-awards treats or
  *      re-posts a note (and the read-only GET never mutates anything).
  *   4. Feeding spends treats and tops up the favoured pool; out of treats → 409.
@@ -55,10 +55,9 @@ describe('Phase 5 DoD — bond & growth', () => {
     return messages.filter((m) => m.role === 'assistant').map((m) => m.content);
   }
 
-  /** Drive the post-turn growth recompute the way the message route does, then await it. */
+  /** Drive the post-turn growth recompute the way the message route does (inline). */
   async function runGrowth(): Promise<void> {
-    ctx.deps.growthRunner.request(companionId);
-    await ctx.deps.growthRunner.whenIdle();
+    await ctx.deps.growth.recompute(companionId);
   }
 
   /** Seed enough substrate to cross a knowledge level and unlock several abilities. */

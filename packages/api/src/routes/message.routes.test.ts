@@ -133,6 +133,44 @@ describe('message routes', () => {
     expect(usage.usedTokens).toBeGreaterThan(0);
   });
 
+  // The fix for "growth, felt": when a turn crosses a growth band, the post-turn
+  // recompute runs as the tail of THIS stream and the reflection is streamed in
+  // place (a `reflection` event), not deferred to the next transcript fetch.
+  it('streams a growth reflection in place when a turn crosses a band', async () => {
+    // Seed enough substrate that the post-turn recompute crosses the knowledge band.
+    for (let i = 0; i < 4; i += 1) {
+      await ctx.deps.semantic.createSource(companionId, {
+        kind: 'note',
+        title: `note ${i}`,
+        rawText: 'hello world',
+      });
+    }
+
+    await ctx.app.listen({ port: 0, host: '127.0.0.1' });
+    const { port } = ctx.app.server.address() as AddressInfo;
+
+    const response = await fetch(`http://127.0.0.1:${port}/companions/${companionId}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...auth },
+      body: JSON.stringify({ content: 'hello there' }),
+    });
+    const body = await response.text();
+
+    // The reflection arrives in the same stream, after the reply's `done`.
+    expect(body).toContain('"type":"reflection"');
+    expect(body.indexOf('"type":"done"')).toBeLessThan(body.indexOf('"type":"reflection"'));
+
+    // And it's a real persisted assistant turn — the live line equals a reload.
+    const messages = await ctx.app.inject({
+      method: 'GET',
+      url: `/companions/${companionId}/messages`,
+      headers: auth,
+    });
+    const roles = (messages.json().messages as Array<{ role: string }>).map((m) => m.role);
+    // user + assistant reply + at least one growth reflection.
+    expect(roles.filter((r) => r === 'assistant').length).toBeGreaterThanOrEqual(2);
+  });
+
   // Opening the transcript is a "return" trigger (P4): the GET handler nudges the
   // motivation engine before responding, so this fires within inject.
   it('nudges the motivation engine when the transcript is opened (return trigger)', async () => {

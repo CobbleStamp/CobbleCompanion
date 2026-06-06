@@ -197,6 +197,11 @@ export function Chat({
           // The authoritative persisted reply (server id + final content) replaces
           // whatever the token deltas built, and gives the line a stable key.
           setLines((prev) => finalizeLast(prev, event_.message));
+        } else if (event_.type === 'reflection') {
+          // A growth reflection posted right after the reply (P5, "growth, felt").
+          // Append it as its own assistant line; it carries the persisted message,
+          // so its id matches a later refetch and never duplicates.
+          setLines((prev) => [...prev, messageToLine(event_.message)]);
         } else if (event_.type === 'proposal') {
           // The turn EXITed proposing an effectful action; it's now a transcript
           // row, and the live queue needs the pending entry for its Approve card.

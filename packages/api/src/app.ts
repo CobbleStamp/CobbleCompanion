@@ -4,7 +4,6 @@ import type {
   ConsolidationRunner,
   EmbeddingGateway,
   EpisodicMemoryStore,
-  GrowthRunner,
   GrowthService,
   GrowthStore,
   Harness,
@@ -85,12 +84,14 @@ export interface AppDeps {
   readonly rewards: ProactiveOutcomeStore;
   /** The rolling read of the user's mood, sensed in the agent loop (P4.2). */
   readonly affect: CompanionAffectStore;
-  /** Four-axis growth derived from substrate; builds the growth standing + notes (P5). */
+  /**
+   * Four-axis growth derived from substrate; builds the growth standing + notes
+   * (P5). The message route recomputes it inline as the tail of each turn's stream,
+   * so a crossed-band reflection is felt in place.
+   */
   readonly growth: GrowthService;
   /** The growth high-water mark + treats balance — used by the feeding economy (P5). */
   readonly growthStore: GrowthStore;
-  /** Off-request growth recompute — the message route requests it post-turn (P5). */
-  readonly growthRunner: GrowthRunner;
   readonly tokenVerifier: TokenVerifier;
   readonly config: AppConfig;
   readonly logger: Logger;

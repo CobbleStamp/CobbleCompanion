@@ -33,7 +33,6 @@ import {
   FakeEmbeddingGateway,
   FakeLlmGateway,
   type FakeTurn,
-  GrowthRunner,
   GrowthService,
   Harness,
   InMemoryPresenceStore,
@@ -219,7 +218,6 @@ export async function makeTestApp(
     memory,
     logger: silentLogger,
   });
-  const growthRunner = new GrowthRunner(growth, silentLogger);
   const motivation = new MotivationRunner(
     new MotivationEngine(
       {
@@ -258,7 +256,6 @@ export async function makeTestApp(
     rewards,
     growth,
     growthStore,
-    growthRunner,
     harness: new Harness({
       gateway: llmGateway,
       memory,
@@ -321,8 +318,8 @@ export async function makeTestApp(
       // Drain proactive ticks (GET/POST messages request them) before the db
       // closes, so a background tick can't write to a torn-down database.
       await motivation.close();
-      // Same for the post-turn growth recompute (requested by the message route).
-      await growthRunner.close();
+      // Growth recompute runs inline as the tail of each turn's stream, so there's
+      // no background runner to drain here.
       await app.close();
       await closeDb();
     },

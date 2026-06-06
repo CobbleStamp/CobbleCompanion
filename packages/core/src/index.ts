@@ -313,7 +313,6 @@ export {
   type GrowthTarget,
 } from './growth/growth-store.js';
 export { GrowthService, type GrowthServiceDeps, type GrowthTransition } from './growth/service.js';
-export { GrowthRunner, type GrowthRecomputeTarget } from './growth/growth-runner.js';
 export { feed, type FeedDeps, type FeedParams, type FeedResult } from './growth/economy.js';
 
 // Personality evolution (Phase 2)

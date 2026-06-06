@@ -120,6 +120,13 @@ describe('GrowthService', () => {
 
     const notes = await assistantNotes();
     expect(notes).toContain(growthReflectionNote('knowledge'));
+
+    // The transition carries the persisted reflections so the caller can stream
+    // them in place; they match what landed in the transcript.
+    expect(transition.reflections.length).toBeGreaterThan(0);
+    const reflectionContents = transition.reflections.map((m) => m.content);
+    expect(reflectionContents).toContain(growthReflectionNote('knowledge'));
+    expect(reflectionContents.every((c) => notes.includes(c))).toBe(true);
   });
 
   it('is idempotent — a second recompute neither re-awards treats nor re-posts reflections', async () => {
@@ -134,6 +141,7 @@ describe('GrowthService', () => {
     const second = await service.recompute(companionId);
     expect(second.newCapabilities).toEqual([]);
     expect(second.treatsEarned).toBe(0);
+    expect(second.reflections).toEqual([]);
     expect((await service.snapshot(companionId)).treats).toBe(treatsAfterFirst);
     expect((await assistantNotes()).length).toBe(notesAfterFirst);
   });
