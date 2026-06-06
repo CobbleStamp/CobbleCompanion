@@ -55,6 +55,10 @@ export {
   type UpsertConnectionInput,
 } from './mcp/connection-store.js';
 export { createConnectMcpTool, type ConnectMcpOptions } from './mcp/connect-tool.js';
+export {
+  createMcpRegistryResolver,
+  type McpRegistryResolverOptions,
+} from './mcp/registry-resolver.js';
 
 // Identity (the companion "home")
 export {

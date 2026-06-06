@@ -63,6 +63,8 @@ import {
   type TokenVerifier,
 } from './auth/jwt-verifier.js';
 import { loadConfig, type AppConfig } from './config.js';
+import { StreamableHttpMcpGateway } from './mcp/sdk-client.js';
+import { buildMcpWiring } from './mcp/wiring.js';
 import { createTraceSink } from './tracing/langfuse-sink.js';
 
 function createGateway(config: AppConfig): LlmGateway {
@@ -148,7 +150,7 @@ async function main(): Promise<void> {
   // Volatile presence (P4) — fed by the heartbeat route and message sends; the
   // motivation engine reads it to decide whether/how to initiate.
   const presence = new InMemoryPresenceStore();
-  const tools = new ToolRegistry([
+  const baseTools = [
     // web_fetch harvests outbound links into the reading list (the P4 substrate).
     createWebFetchTool({
       resolver: createHttpLinkResolver({ maxBytes: config.ingestionMaxBytes }),
@@ -163,7 +165,44 @@ async function main(): Promise<void> {
       logger: consoleLogger,
     }),
     createIngestSourceTool({ semantic, ingestion, logger: consoleLogger }),
-  ]);
+  ];
+  // Phase 9: runtime MCP tool acquisition. Off unless MCP_SERVERS is configured —
+  // then `connect_mcp` joins the native tools, a per-companion resolver adds each
+  // companion's connected MCP tools, and a retrieval arm hints the fitting one.
+  const mcpGateway = new StreamableHttpMcpGateway(consoleLogger);
+  const mcpWiring = buildMcpWiring({
+    config,
+    db,
+    gateway: mcpGateway,
+    baseTools,
+    logger: consoleLogger,
+  });
+  const tools = new ToolRegistry(mcpWiring ? mcpWiring.nativeTools : baseTools);
+  const retrieveArms = [
+    createEpisodicRetrieveContext({
+      episodic,
+      // Both arms embed the same query; a shared one-entry memo collapses the
+      // duplicate into one provider round-trip (the arms run sequentially).
+      embeddings: retrievalEmbeddings,
+      embeddingModel: config.embeddingModel,
+      embeddingDimensions: config.embeddingDimensions,
+      logger: consoleLogger,
+    }),
+    // Procedural retrieval-as-hint (P5): surface a relevant learned routine so
+    // the capabilities checklist is functional. Grounding-only (no recency).
+    createProceduralRetrieveContext({ procedural, logger: consoleLogger }),
+    // Phase 9: hint the relevant connected MCP tool (grounding-only), before the
+    // semantic arm, which appends the recency window last.
+    ...(mcpWiring ? [mcpWiring.toolArm] : []),
+    createSemanticRetrieveContext({
+      memory,
+      semantic,
+      embeddings: retrievalEmbeddings,
+      embeddingModel: config.embeddingModel,
+      embeddingDimensions: config.embeddingDimensions,
+      logger: consoleLogger,
+    }),
+  ];
 
   const harness = new Harness({
     gateway: llmGateway,
@@ -187,35 +226,16 @@ async function main(): Promise<void> {
     // P3: the tools the model may call, the propose→approve gate (effectful calls
     // are held for approval), and the audit log (every call is logged).
     registry: tools,
+    // Phase 9: when MCP is configured, the turn's effective registry is resolved
+    // per companion (native + that companion's connected MCP tools). The gate keeps
+    // the native registry — MCP tools are non-effectful and pass through it.
+    ...(mcpWiring ? { resolveRegistry: mcpWiring.resolveRegistry } : {}),
     beforeToolCall: createApprovalGate(proposals, tools, consoleLogger),
     afterToolCall: createLoggingAfterToolCall(toolCallLog, consoleLogger),
-    // The memory-retrieval hook (invariant #3): episodic recall (P2) first, then
-    // semantic recall (P1) which appends the recency transcript window last — so
-    // a turn carries persona + memories + grounding + recent transcript, in order.
-    retrieveContext: composeRetrieveContext(
-      consoleLogger,
-      createEpisodicRetrieveContext({
-        episodic,
-        // Both arms embed the same query; a shared one-entry memo collapses the
-        // duplicate into one provider round-trip (the arms run sequentially).
-        embeddings: retrievalEmbeddings,
-        embeddingModel: config.embeddingModel,
-        embeddingDimensions: config.embeddingDimensions,
-        logger: consoleLogger,
-      }),
-      // Procedural retrieval-as-hint (P5): surface a relevant learned routine so
-      // the capabilities checklist is functional. Grounding-only (no recency), so it
-      // sits before the semantic arm, which appends the recency window last.
-      createProceduralRetrieveContext({ procedural, logger: consoleLogger }),
-      createSemanticRetrieveContext({
-        memory,
-        semantic,
-        embeddings: retrievalEmbeddings,
-        embeddingModel: config.embeddingModel,
-        embeddingDimensions: config.embeddingDimensions,
-        logger: consoleLogger,
-      }),
-    ),
+    // The memory-retrieval hook (invariant #3): episodic + procedural + (MCP tool
+    // hint) grounding arms, then the semantic arm which appends the recency window
+    // last — so a turn carries persona + memories + grounding + recent transcript.
+    retrieveContext: composeRetrieveContext(consoleLogger, ...retrieveArms),
   });
 
   // Episodic consolidation (P2): a metered reflection pass turns the transcript
@@ -365,6 +385,7 @@ async function main(): Promise<void> {
     await harness.whenIdle();
     await consolidation.close();
     await motivation.close();
+    await mcpGateway.close();
   });
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     process.once(signal, () => {

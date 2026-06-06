@@ -32,6 +32,7 @@ import {
   DrizzleToolCallLog,
   FakeEmbeddingGateway,
   FakeLlmGateway,
+  FakeMcpGateway,
   type FakeTurn,
   GrowthService,
   Harness,
@@ -41,15 +42,18 @@ import {
   type IngestionTarget,
   DrizzleProactiveOutcomeStore,
   LlmIngestionAnnouncer,
+  type McpGateway,
   MotivationEngine,
   MotivationRunner,
   reinforceFromDelta,
+  type RetrieveContext,
   ToolRegistry,
   TranscriptMemoryStore,
   type Logger,
 } from '@cobble/core';
 import type { FastifyInstance } from 'fastify';
 import { buildApp, type AppDeps } from '../app.js';
+import { buildMcpWiring } from '../mcp/wiring.js';
 import type { TokenVerifier, VerifiedClaims } from '../auth/jwt-verifier.js';
 import type { AppConfig } from '../config.js';
 
@@ -89,6 +93,7 @@ export const testConfig: AppConfig = {
   useContextHeader: true,
   ingestionQueueMax: 100,
   tokenCapPerDay: 1_000_000,
+  mcpServers: [],
   appUrl: 'http://localhost:3001',
   authMode: 'google',
   googleClientId: 'test-google-client-id',
@@ -123,6 +128,18 @@ export interface TestAppOptions {
    * a fake that marks the job done and bills the meter (Phase 4.1).
    */
   readonly motivationPipeline?: IngestionTarget;
+  /**
+   * Inject an MCP gateway (a FakeMcpGateway) for Phase 9 tests. Combined with a
+   * `config.mcpServers` whitelist, this wires connect_mcp + the per-companion
+   * resolver + the tool-retrieval arm over the fake (fakes-over-mocks).
+   */
+  readonly mcpGateway?: McpGateway;
+  /**
+   * Omit the per-turn affect read (Phase 4.2). It shares the FakeLlmGateway, so a
+   * test that drives several messages and asserts an exact scripted-turn sequence
+   * (e.g. the Phase 9 DoD) sets this to keep the sequence deterministic.
+   */
+  readonly disableAffect?: boolean;
 }
 
 export async function makeTestApp(
@@ -184,7 +201,7 @@ export async function makeTestApp(
   // The Phase 3 tool surface: read-only memory_search + effectful ingest_source
   // (web_fetch is omitted here — it needs a live resolver and isn't exercised by
   // route tests). The proposal store + audit log back the approval queue.
-  const tools = new ToolRegistry([
+  const baseTools = [
     createMemorySearchTool({
       semantic,
       embeddings,
@@ -193,7 +210,17 @@ export async function makeTestApp(
       logger: silentLogger,
     }),
     createIngestSourceTool({ semantic, ingestion, logger: silentLogger }),
-  ]);
+  ];
+  // Phase 9: wire MCP tool acquisition when the test configures a whitelist +
+  // injects a (fake) gateway; off otherwise (behaviour identical to pre-Phase-9).
+  const mcpWiring = buildMcpWiring({
+    config,
+    db,
+    gateway: options.mcpGateway ?? new FakeMcpGateway(),
+    baseTools,
+    logger: silentLogger,
+  });
+  const tools = new ToolRegistry(mcpWiring ? mcpWiring.nativeTools : baseTools);
   const proposals = new DrizzleProposalStore(db);
   const toolCallLog = new DrizzleToolCallLog(db);
   const leads = new DrizzleLeadStore(db);
@@ -263,33 +290,41 @@ export async function makeTestApp(
       quota,
       logger: silentLogger,
       // P4.2 affect loop: sense mood each turn, attune, and learn from the change.
-      affect: {
-        store: affectStore,
-        model: config.ingestionModel,
-        reinforce: (companionId, delta) =>
-          reinforceFromDelta({ rewards, identity, logger: silentLogger }, companionId, delta),
-      },
+      ...(options.disableAffect
+        ? {}
+        : {
+            affect: {
+              store: affectStore,
+              model: config.ingestionModel,
+              reinforce: (companionId, delta) =>
+                reinforceFromDelta({ rewards, identity, logger: silentLogger }, companionId, delta),
+            },
+          }),
       registry: tools,
+      ...(mcpWiring ? { resolveRegistry: mcpWiring.resolveRegistry } : {}),
       beforeToolCall: createApprovalGate(proposals, tools, silentLogger),
       afterToolCall: createLoggingAfterToolCall(toolCallLog, silentLogger),
       retrieveContext: composeRetrieveContext(
         silentLogger,
-        createEpisodicRetrieveContext({
-          episodic,
-          embeddings: retrievalEmbeddings,
-          embeddingModel: config.embeddingModel,
-          embeddingDimensions: config.embeddingDimensions,
-          logger: silentLogger,
-        }),
-        createProceduralRetrieveContext({ procedural, logger: silentLogger }),
-        createSemanticRetrieveContext({
-          memory,
-          semantic,
-          embeddings: retrievalEmbeddings,
-          embeddingModel: config.embeddingModel,
-          embeddingDimensions: config.embeddingDimensions,
-          logger: silentLogger,
-        }),
+        ...([
+          createEpisodicRetrieveContext({
+            episodic,
+            embeddings: retrievalEmbeddings,
+            embeddingModel: config.embeddingModel,
+            embeddingDimensions: config.embeddingDimensions,
+            logger: silentLogger,
+          }),
+          createProceduralRetrieveContext({ procedural, logger: silentLogger }),
+          ...(mcpWiring ? [mcpWiring.toolArm] : []),
+          createSemanticRetrieveContext({
+            memory,
+            semantic,
+            embeddings: retrievalEmbeddings,
+            embeddingModel: config.embeddingModel,
+            embeddingDimensions: config.embeddingDimensions,
+            logger: silentLogger,
+          }),
+        ] satisfies RetrieveContext[]),
       ),
     }),
     quota,
