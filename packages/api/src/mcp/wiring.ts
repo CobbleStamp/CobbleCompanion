@@ -43,7 +43,9 @@ export interface BuildMcpWiringOptions {
 }
 
 /** Resolve a server's bearer-token from its whitelisted env-var name (server host). */
-function envAuthHeaders(entry: McpWhitelistEntry): Readonly<Record<string, string>> | undefined {
+export function envAuthHeaders(
+  entry: McpWhitelistEntry,
+): Readonly<Record<string, string>> | undefined {
   if (!entry.authTokenEnv) {
     return undefined;
   }

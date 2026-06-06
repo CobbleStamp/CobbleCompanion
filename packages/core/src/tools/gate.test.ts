@@ -5,6 +5,9 @@ import { describe, expect, it } from 'vitest';
 import type { ToolCall } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import { isBlock, type TurnCtx } from '../harness/hooks.js';
+import { mcpToolToTool } from '../mcp/adapter.js';
+import { FakeMcpGateway } from '../mcp/fake.js';
+import type { McpServerSpec, McpToolDef } from '../mcp/gateway.js';
 import { createApprovalGate, createLoggingAfterToolCall } from './gate.js';
 import type { CreateProposalInput, ProposalRecord, ProposalStore } from './proposal-store.js';
 import { ToolRegistry } from './registry.js';
@@ -127,6 +130,28 @@ describe('createApprovalGate', () => {
   it('passes an unknown tool through (dispatch turns it into an error result)', async () => {
     const gate = createApprovalGate(fakeProposals(), new ToolRegistry(), silentLogger);
     expect(isBlock(await gate(aCall('mystery'), ctx))).toBe(false);
+  });
+
+  it('passes an MCP-adapted tool through without proposing (whitelist is the gate)', async () => {
+    // Contract lock (companion-tools.md §6): MCP tools are `effectful: false`, so
+    // the developer whitelist — not propose→approve — gates them. A future change
+    // that made MCP tools effectful would break this and must be a deliberate one.
+    const spec: McpServerSpec = { ref: 'stocks', endpoint: 'https://mcp.example.com' };
+    const getQuote: McpToolDef = {
+      name: 'get_quote',
+      description: 'Get a realtime stock quote.',
+      inputSchema: { type: 'object', properties: { symbol: { type: 'string' } } },
+    };
+    const mcpTool = mcpToolToTool({
+      gateway: new FakeMcpGateway({ stocks: { tools: [getQuote] } }),
+      spec,
+      mcpTool: getQuote,
+    });
+    const proposals = fakeProposals();
+    const gate = createApprovalGate(proposals, new ToolRegistry([mcpTool]), silentLogger);
+    const result = await gate(aCall(mcpTool.name, { symbol: 'AAPL' }), ctx);
+    expect(isBlock(result)).toBe(false);
+    expect(proposals.created).toEqual([]);
   });
 });
 

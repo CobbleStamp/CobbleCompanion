@@ -49,12 +49,49 @@ export function mcpTransportOptions(spec: McpServerSpec): StreamableHTTPClientTr
 /** A text/non-text content block as the SDK returns it from `tools/call`. */
 type McpContentBlock = { readonly type: string; readonly text?: string };
 
-export class StreamableHttpMcpGateway implements McpGateway {
-  private readonly clients = new Map<string, Promise<Client>>();
-  private readonly logger: Logger;
+/**
+ * The slice of the MCP SDK `Client` this gateway actually depends on. Connecting
+ * is the one piece that needs a live network + the concrete SDK, so it is the
+ * seam: the default connector ({@link connectSdkClient}) speaks real Streamable
+ * HTTP, while tests inject a fake to exercise listTools/callTool/the client cache
+ * without a server.
+ */
+export interface McpClientLike {
+  listTools(): Promise<{
+    tools: readonly { name: string; description?: string; inputSchema: Record<string, unknown> }[];
+  }>;
+  callTool(req: {
+    name: string;
+    arguments: Record<string, unknown>;
+  }): Promise<{ content: unknown; isError?: boolean }>;
+  close(): Promise<void>;
+}
 
-  constructor(logger: Logger = consoleLogger) {
+/** Connect to a whitelisted server and return a ready client. Injectable for tests. */
+export type McpClientConnector = (spec: McpServerSpec) => Promise<McpClientLike>;
+
+/** The production connector: real Streamable HTTP through the SSRF-guarded fetch. */
+export async function connectSdkClient(spec: McpServerSpec): Promise<McpClientLike> {
+  const transport = new StreamableHTTPClientTransport(
+    new URL(spec.endpoint),
+    mcpTransportOptions(spec),
+  );
+  const client = new Client(CLIENT_INFO);
+  // The SDK's StreamableHTTPClientTransport exposes `sessionId: string | undefined`,
+  // which trips our exactOptionalPropertyTypes against its own `Transport` type — a
+  // library typing quirk, not a real incompatibility. Assert at the seam.
+  await client.connect(transport as unknown as Parameters<typeof client.connect>[0]);
+  return client as unknown as McpClientLike;
+}
+
+export class StreamableHttpMcpGateway implements McpGateway {
+  private readonly clients = new Map<string, Promise<McpClientLike>>();
+  private readonly logger: Logger;
+  private readonly connector: McpClientConnector;
+
+  constructor(logger: Logger = consoleLogger, connector: McpClientConnector = connectSdkClient) {
     this.logger = logger;
+    this.connector = connector;
   }
 
   async listTools(spec: McpServerSpec): Promise<readonly McpToolDef[]> {
@@ -102,30 +139,17 @@ export class StreamableHttpMcpGateway implements McpGateway {
     );
   }
 
-  /** One connected {@link Client} per server ref; the connect handshake runs once. */
-  private clientFor(spec: McpServerSpec): Promise<Client> {
+  /** One connected client per server ref; the connect handshake runs once. */
+  private clientFor(spec: McpServerSpec): Promise<McpClientLike> {
     const existing = this.clients.get(spec.ref);
     if (existing) {
       return existing;
     }
-    const connecting = this.connect(spec);
+    const connecting = this.connector(spec);
     this.clients.set(spec.ref, connecting);
     // Don't cache a failed connect — drop it so a later call retries cleanly.
     void connecting.catch(() => this.clients.delete(spec.ref));
     return connecting;
-  }
-
-  private async connect(spec: McpServerSpec): Promise<Client> {
-    const transport = new StreamableHTTPClientTransport(
-      new URL(spec.endpoint),
-      mcpTransportOptions(spec),
-    );
-    const client = new Client(CLIENT_INFO);
-    // The SDK's StreamableHTTPClientTransport exposes `sessionId: string | undefined`,
-    // which trips our exactOptionalPropertyTypes against its own `Transport` type — a
-    // library typing quirk, not a real incompatibility. Assert at the seam.
-    await client.connect(transport as unknown as Parameters<typeof client.connect>[0]);
-    return client;
   }
 }
 

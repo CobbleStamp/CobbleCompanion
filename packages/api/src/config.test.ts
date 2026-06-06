@@ -121,4 +121,76 @@ describe('loadConfig', () => {
     });
     expect(config.isProduction).toBe(true);
   });
+
+  describe('MCP_SERVERS', () => {
+    it('defaults to no whitelisted servers (acquisition off)', () => {
+      expect(loadConfig({ ...base, ...fakeProviders }).mcpServers).toEqual([]);
+    });
+
+    it('parses a valid array, carrying optional label + authTokenEnv through', () => {
+      const config = loadConfig({
+        ...base,
+        ...fakeProviders,
+        MCP_SERVERS: JSON.stringify([
+          {
+            ref: 'stocks',
+            endpoint: 'https://mcp.example.com/mcp',
+            label: 'Stocks',
+            authTokenEnv: 'STOCKS_TOKEN',
+          },
+        ]),
+      });
+      expect(config.mcpServers).toEqual([
+        {
+          ref: 'stocks',
+          endpoint: 'https://mcp.example.com/mcp',
+          label: 'Stocks',
+          authTokenEnv: 'STOCKS_TOKEN',
+        },
+      ]);
+    });
+
+    it('omits absent optional keys rather than setting them undefined', () => {
+      const [server] = loadConfig({
+        ...base,
+        ...fakeProviders,
+        MCP_SERVERS: JSON.stringify([{ ref: 'stocks', endpoint: 'https://mcp.example.com/mcp' }]),
+      }).mcpServers;
+      // exactOptionalPropertyTypes: the key must be absent, not present-and-undefined.
+      expect(server && 'label' in server).toBe(false);
+      expect(server && 'authTokenEnv' in server).toBe(false);
+    });
+
+    it('throws a clear error on malformed JSON', () => {
+      expect(() => loadConfig({ ...base, ...fakeProviders, MCP_SERVERS: 'not json' })).toThrow(
+        /MCP_SERVERS must be a JSON array/,
+      );
+    });
+
+    it('rejects an entry missing the required endpoint', () => {
+      expect(() =>
+        loadConfig({ ...base, ...fakeProviders, MCP_SERVERS: JSON.stringify([{ ref: 'stocks' }]) }),
+      ).toThrow();
+    });
+
+    it('rejects an entry whose endpoint is not a URL', () => {
+      expect(() =>
+        loadConfig({
+          ...base,
+          ...fakeProviders,
+          MCP_SERVERS: JSON.stringify([{ ref: 'stocks', endpoint: 'not-a-url' }]),
+        }),
+      ).toThrow();
+    });
+
+    it('rejects a JSON object that is not an array', () => {
+      expect(() =>
+        loadConfig({
+          ...base,
+          ...fakeProviders,
+          MCP_SERVERS: JSON.stringify({ ref: 'stocks', endpoint: 'https://mcp.example.com/mcp' }),
+        }),
+      ).toThrow();
+    });
+  });
 });
