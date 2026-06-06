@@ -28,7 +28,8 @@ import {
   ZERO_USAGE,
   type TokenUsage,
 } from '../usage.js';
-import { assembleContext, PERSONA_REF } from './context.js';
+import { assembleContext, coPromptRefs, PERSONA_REF } from './context.js';
+import type { PromptRef } from '../prompts/index.js';
 import {
   isBlock,
   passthroughAfterToolCall,
@@ -117,6 +118,10 @@ interface PreparedTurn {
   readonly messages: LlmMessage[];
   readonly citations: readonly Citation[];
   readonly retrievalUsage: TokenUsage;
+  /** Prompts that co-occur with the persona on the turn's LLM call (e.g. the
+   *  attunement line), stamped alongside {@link PERSONA_REF} so the trace
+   *  describes the whole call. Empty when only the persona is sent. */
+  readonly coPromptRefs: readonly PromptRef[];
 }
 
 /**
@@ -405,7 +410,7 @@ export class Harness {
       span.end({
         attributes: { blocks: history.length, citations: citations.length },
       });
-      return { messages, citations, retrievalUsage };
+      return { messages, citations, retrievalUsage, coPromptRefs: coPromptRefs(affect) };
     } catch (error) {
       span.end({ error: error instanceof Error ? error.message : String(error) });
       throw error;
@@ -426,7 +431,7 @@ export class Harness {
     signal: AbortSignal | undefined,
     trace: TraceHandle,
   ): AsyncGenerator<ChatStreamEvent> {
-    const { messages, citations, retrievalUsage } = prep;
+    const { messages, citations, retrievalUsage, coPromptRefs } = prep;
     // Citations are retrieval-time data: surface the grounding sources as soon
     // as they are known, before (and independent of) the token stream.
     if (citations.length > 0) {
@@ -475,6 +480,7 @@ export class Harness {
           messages,
           model: this.model,
           promptRef: PERSONA_REF,
+          ...(coPromptRefs.length > 0 ? { coPromptRefs } : {}),
           ...(toolDefs.length > 0 ? { tools: toolDefs } : {}),
           ...(signal ? { signal } : {}),
         });

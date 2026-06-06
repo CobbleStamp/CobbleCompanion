@@ -7,8 +7,9 @@
 
 import { FakeLlmGateway, type Logger } from '@cobble/core';
 import { describe, expect, it } from 'vitest';
+import { affectSenseDataset, type AffectCase } from '../datasets/affect-sense.js';
 import { injectionDataset } from '../datasets/injection.js';
-import type { Dataset, EvalRuntime } from './dataset.js';
+import type { CaseReport, Dataset, EvalRuntime } from './dataset.js';
 import { runDataset } from './runner.js';
 import { composeScorers, type Scorer } from './scorer.js';
 import { factsScorer } from './scorers/facts.js';
@@ -178,5 +179,58 @@ describe('injectionDataset (deterministic guard)', () => {
   it('fails a null / declined read (no report_affect call)', async () => {
     // Plain text, no tool call → senseAffect returns null → not a genuine read.
     expect(await scoreWith(new FakeLlmGateway(['I will not answer.']))).toBe(false);
+  });
+});
+
+describe('affectSenseDataset (deterministic tier)', () => {
+  const positiveCase = affectSenseDataset.cases.find((c) => c.expectedSign === 'positive')!;
+  const negativeCase = affectSenseDataset.cases.find((c) => c.expectedSign === 'negative')!;
+
+  // Drive the real senseAffect call site through a scripted gateway (mirrors the
+  // injection test), then score the resulting AffectReading | null. Exercises
+  // valenceSignScorer's branches without touching OpenRouter.
+  async function scoreWith(evalCase: AffectCase, gateway: FakeLlmGateway): Promise<CaseReport> {
+    const runtime: EvalRuntime = { gateway, model: 'fake', logger: silent };
+    const output = await affectSenseDataset.run(runtime, evalCase);
+    const score = await affectSenseDataset.scorer.score({ case: evalCase, output });
+    return {
+      caseId: evalCase.id,
+      pass: score.pass,
+      metrics: score.metrics,
+      note: score.note,
+    };
+  }
+
+  function affectTurn(valence: number, note: string): FakeLlmGateway {
+    return new FakeLlmGateway([
+      { toolCalls: [{ name: 'report_affect', args: { valence, note } }] },
+    ]);
+  }
+
+  it('passes a positive case when the read is positive', async () => {
+    const result = await scoreWith(positiveCase, affectTurn(0.8, 'delighted'));
+    expect(result.pass).toBe(true);
+    expect(result.metrics.valence).toBe(0.8);
+  });
+
+  it('passes a negative case when the read is negative', async () => {
+    const result = await scoreWith(negativeCase, affectTurn(-0.7, 'frustrated'));
+    expect(result.pass).toBe(true);
+    expect(result.metrics.valence).toBe(-0.7);
+  });
+
+  it('fails a positive case on a neutral read (the neutral-sign branch)', async () => {
+    // valence 0 → sign 'neutral', which matches no expectedSign → fail.
+    const result = await scoreWith(positiveCase, affectTurn(0, 'flat'));
+    expect(result.pass).toBe(false);
+    expect(result.note).toContain('neutral');
+  });
+
+  it('fails on a null / declined read (the null-read branch)', async () => {
+    // Plain text, no report_affect call → senseAffect returns null.
+    const result = await scoreWith(positiveCase, new FakeLlmGateway(['no read here']));
+    expect(result.pass).toBe(false);
+    expect(result.note).toBe('no read (null)');
+    expect(result.metrics.valence).toBe(0);
   });
 });

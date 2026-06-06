@@ -87,6 +87,9 @@ describe('enrichSection', () => {
     expect(enrichment.facts).toHaveLength(1);
     // The prompt carries the verbatim text and metadata for reference resolution.
     expect(gateway.lastParams?.messages[1]?.content).toContain('He then moved the capital');
+    // The call is stamped with its prompt version (prompts/registry) for tracing.
+    expect(gateway.lastParams?.promptRef?.id).toBe('enricher');
+    expect(gateway.lastParams?.promptRef?.version.contentHash).toMatch(/^[0-9a-f]{16}$/);
   });
 
   it('drops facts whose core type is outside the closed ontology set', async () => {

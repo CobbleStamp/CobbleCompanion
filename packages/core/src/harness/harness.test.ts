@@ -115,6 +115,9 @@ describe('Harness.runTurn (Phase 0 single-pass loop)', () => {
       role: 'user',
       content: 'remember this',
     });
+    // The main chat turn is stamped with the persona prompt version (prompts/registry).
+    expect(params?.promptRef?.id).toBe('persona');
+    expect(params?.promptRef?.version.contentHash).toMatch(/^[0-9a-f]{16}$/);
   });
 
   it('surfaces a provider failure as a terminal error event', async () => {

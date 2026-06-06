@@ -61,6 +61,9 @@ describe('consolidateWindow', () => {
     // occurred span comes from the real turns in [1,3], not the model.
     expect(episode?.occurredStart.toISOString()).toBe('2026-01-10T00:01:00.000Z');
     expect(episode?.occurredEnd.toISOString()).toBe('2026-01-10T00:03:00.000Z');
+    // The call is stamped with its prompt version (prompts/registry) for tracing.
+    expect(llm.lastParams?.promptRef?.id).toBe('consolidation');
+    expect(llm.lastParams?.promptRef?.version.contentHash).toMatch(/^[0-9a-f]{16}$/);
   });
 
   it('returns [] for an empty window without calling the model', async () => {

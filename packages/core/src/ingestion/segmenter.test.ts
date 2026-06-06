@@ -78,6 +78,9 @@ describe('segmentParagraphs', () => {
     ]);
     // The prompt numbers paragraphs so the model can only reference whole ones.
     expect(gateway.lastParams?.messages[1]?.content).toContain('[5] Paragraph 5.');
+    // The call is stamped with its prompt version (prompts/registry) for tracing.
+    expect(gateway.lastParams?.promptRef?.id).toBe('segmenter');
+    expect(gateway.lastParams?.promptRef?.version.contentHash).toMatch(/^[0-9a-f]{16}$/);
   });
 
   it('falls back to fixed-size grouping covering everything on invalid output', async () => {

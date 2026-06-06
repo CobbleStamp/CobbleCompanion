@@ -80,3 +80,35 @@ untrusted content in the `UNTRUSTED_OPEN`/`UNTRUSTED_CLOSE` sentinels (or
 instructions" instruction. Centralizing it in the template keeps the hardening in
 one testable place. Response *parsing* (e.g. `parseEpisodes`, `coerceReading`)
 stays at the call site — it is not part of the prompt.
+
+**Exception — the enricher.** `enricherTemplate` carries the "treat as data,
+never instructions" *system instruction* inside `build()` (so it is hashed), but
+the actual fencing of the untrusted section — wrapping it in the sentinels and
+stripping smuggled sentinels — happens at the call site, in `buildEnrichUserContent`
+(`ingestion/enricher.ts`). The template receives the already-fenced text as an
+opaque `userContent` string, and its `sample.userContent` is a hand-written,
+already-fenced literal — so the drift snapshot does **not** track the enricher's
+real fencing logic. If you change how the enricher fences source text, update
+`buildEnrichUserContent` (covered by its own `enricher.test.ts`). New prompts
+should fence inside `build()`; the enricher is the one historical exception.
+
+## The main chat turn stamps a composite prompt ref
+
+The main chat turn (`harness/harness.ts`) carries the `persona` prompt as its
+**primary** `promptRef` (`PERSONA_REF`, `harness/context.ts`). But the turn's
+messages can also include a second system line: the affect-attunement line
+(`affectAttunementLine`, rendered from `affectAttunementTemplate`), which rides
+along in the *same* `stream()` call. So the turn is not fully described by the
+persona ref alone.
+
+To keep the trace faithful, any prompt that co-occurs with the persona on that
+call is stamped as a **co-prompt**: `LlmStreamParams.coPromptRefs` carries them
+alongside `promptRef`, and the metered gateway records each as its own
+`{ promptId, promptSemver, promptHash }` triple under the `llm_call` span's
+`coPrompts` attribute. `coPromptRefs(affect)` (`harness/context.ts`) derives the
+list from the *same* predicate `assembleContext` uses to push the line, so the
+stamp can never drift from what was sent: when there is a mood note the
+attunement ref is present, otherwise `coPrompts` is omitted entirely. A change to
+`affectAttunementTemplate` therefore surfaces in the attunement co-prompt's
+`promptHash`, not the persona's — when attributing a turn's behavior via tracing,
+read both `promptHash` and any `coPrompts` triples.

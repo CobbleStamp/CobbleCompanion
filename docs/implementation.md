@@ -341,8 +341,9 @@ semantic arm). Each arm degrades independently. **P3:** the registry's tool list
 the gateway via `LlmStreamParams.tools` (not the prompt text); prior tool-call/result turns are
 replayed into the message array in the OpenAI wire shape.
 
-**Prompt registry (code-as-truth).** The persona, attunement, and every other system/tool prompt
-are no longer inline strings — each is a typed `PromptTemplate<I>` in `core/src/prompts/catalog/`,
+**Prompt registry (code-as-truth).** The persona, attunement, and every other prompt that defines a
+turn's *instruction* (the system/user message that tells the model what to do) are no longer inline
+strings — each is a typed `PromptTemplate<I>` in `core/src/prompts/catalog/`,
 rendered at its call site via `render(template, input)`. A template carries an `id`, an
 author-declared `semver`, and a pure `build(input)`; `render` stamps the call with a
 `PromptRef = { id, version }` where `version = { semver, contentHash }`. The `contentHash` is a
@@ -350,7 +351,13 @@ sha256 (16 hex) over the rendered output of the template's fixed `sample` — st
 reformatting, sensitive to wording/tool-schema changes, so a reworded prompt that forgot its semver
 bump is caught by the registry drift snapshot. `LlmStreamParams.promptRef` (optional, metadata only —
 never sent to the provider) carries it through `meteredLlmGateway` for metering and tracing; the
-main chat turn is stamped `persona`. The how-to (changing/adding a prompt) lives in `guide-prompts.md`.
+main chat turn is stamped `persona` and also passes `LlmStreamParams.coPromptRefs` — co-occurring
+prompt refs (today the affect-attunement line) recorded as `coPrompts` triples on the `llm_call` span
+so the stamp describes the whole call, not just the primary prompt (`coPromptRefs(affect)`,
+`harness/context.ts`). **Deliberate exclusion:** the episodic and semantic *retrieval context blocks*
+(`harness/episodic-retrieve.ts`, `harness/semantic-retrieve.ts`) are not registry templates — they
+are fenced, untrusted *data* assembled per turn, not instructions, so each keeps its inline sentinel
+fencing. The how-to (changing/adding a prompt) lives in `guide-prompts.md`.
 
 ### 2.3 Turn & loop mechanics (Phases 0–3)
 

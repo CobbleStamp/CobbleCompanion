@@ -131,8 +131,10 @@ OPENROUTER_API_KEY=… EVAL_WINDOWS=2,12,200 EVAL_SEMANTIC=false \
   LLM_MODEL=anthropic/claude-3.5-sonnet INGESTION_MODEL=google/gemini-2.5-flash pnpm eval
 ```
 
-It is live (hits OpenRouter, costs tokens, non-deterministic) and so is **not**
-wired into CI.
+It is live (hits OpenRouter, costs tokens, non-deterministic), so it is **not**
+on the per-PR gate. It does run nightly (and on demand) via
+`.github/workflows/eval-nightly.yml` — the live tier, which runs memory-recall
+(plus the stateless datasets) via `--dataset=all`. See `howto-run-evals.md`.
 
 **What it does** (`src/run.ts`, fixtures in `src/fixtures/recall.json`): each case
 seeds a transcript — and, for the Phase 1 cases, **ingests `sources` through the

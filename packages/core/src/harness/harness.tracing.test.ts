@@ -13,6 +13,8 @@ import type { MemoryStore, TranscriptEntry } from '../memory/store.js';
 import { ToolRegistry } from '../tools/registry.js';
 import type { Tool } from '../tools/tool.js';
 import type { SpanKind, SpanStart, TraceSink, TraceStart } from '../tracing/trace-sink.js';
+import type { AffectReading } from '../motivation/affect.js';
+import type { CompanionAffectStore } from '../motivation/affect-store.js';
 import { Harness } from './harness.js';
 
 const silentLogger: Logger = { error: () => {}, warn: () => {}, info: () => {} };
@@ -134,9 +136,50 @@ describe('Harness tracing (Phase C)', () => {
     const llm = sink.spans.find((s) => s.kind === 'llm_call');
     expect(llm).toBeDefined();
     expect(llm?.ended).toBe(true);
-    // The main turn is stamped with the persona prompt version.
+    // The main turn is stamped with the full persona prompt version triple
+    // (id + author semver + content hash) so a trace pins the exact prompt.
     expect(llm?.attributes.promptId).toBe('persona');
+    expect(llm?.attributes.promptSemver).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(llm?.attributes.promptHash).toMatch(/^[0-9a-f]{16}$/);
     expect(llm?.attributes.totalTokens).toBeTypeOf('number');
+    // No mood note → only the persona was sent, so no co-prompt is stamped.
+    expect(llm?.attributes.coPrompts).toBeUndefined();
+  });
+
+  it('stamps the affect-attunement line as a co-prompt when a mood note is present', async () => {
+    const sink = new CapturingSink();
+    // A prior rolling read with a note → assembleContext pushes the attunement
+    // line, so the turn's LLM call carries persona + attunement.
+    const affectStore: CompanionAffectStore = {
+      async get(): Promise<AffectReading | null> {
+        return { valence: 0.4, note: 'relieved' };
+      },
+      async upsert(): Promise<void> {},
+    };
+    const harness = new Harness({
+      gateway: new FakeLlmGateway(['hello']),
+      memory: memory(),
+      model: 'm',
+      logger: silentLogger,
+      traceSink: sink,
+      affect: { store: affectStore, model: 'cheap' },
+    });
+
+    await drain(harness.runTurn({ companion, userContent: 'hi', ownerId: 'u1' }));
+
+    // The persona call (not the background affect-sense call) now also stamps the
+    // co-occurring attunement line, so the trace fully describes what was sent.
+    const llm = sink.spans.find(
+      (s) => s.kind === 'llm_call' && s.attributes.promptId === 'persona',
+    );
+    expect(llm).toBeDefined();
+    const coPrompts = llm?.attributes.coPrompts as
+      | ReadonlyArray<{ promptId: string; promptSemver: string; promptHash: string }>
+      | undefined;
+    expect(coPrompts).toHaveLength(1);
+    expect(coPrompts?.[0]?.promptId).toBe('affect-attunement');
+    expect(coPrompts?.[0]?.promptSemver).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(coPrompts?.[0]?.promptHash).toMatch(/^[0-9a-f]{16}$/);
   });
 
   it('emits a tool_call span for each executed tool', async () => {

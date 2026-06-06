@@ -110,6 +110,18 @@ export function meteredLlmGateway(
                 promptHash: params.promptRef.version.contentHash,
               }
             : {}),
+          // Co-occurring prompts (e.g. the affect-attunement line beside the
+          // persona) so the stamp describes the whole call, not just the
+          // primary prompt. One triple per co-prompt; omitted when there are none.
+          ...(params.coPromptRefs && params.coPromptRefs.length > 0
+            ? {
+                coPrompts: params.coPromptRefs.map((ref) => ({
+                  promptId: ref.id,
+                  promptSemver: ref.version.semver,
+                  promptHash: ref.version.contentHash,
+                })),
+              }
+            : {}),
         },
         content: { messages: params.messages },
       });

@@ -51,6 +51,14 @@ export interface LlmStreamParams {
    * so ad-hoc/test calls and the FakeLlmGateway need no change.
    */
   readonly promptRef?: PromptRef;
+  /**
+   * Additional prompts that co-occur on this *same* provider call beyond the
+   * primary {@link promptRef} — e.g. the affect-attunement system line stamped
+   * alongside the persona. Recorded in the trace so the call's prompt stamp
+   * fully describes what was sent; like {@link promptRef}, never sent to the
+   * provider. Omitted/empty when the call is a single prompt.
+   */
+  readonly coPromptRefs?: readonly PromptRef[];
 }
 
 /**

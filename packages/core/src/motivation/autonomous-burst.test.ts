@@ -87,7 +87,10 @@ describe('runAutonomousBurst — best-effort per lead', () => {
     await close();
   });
 
-  function deps(pipeline: IngestionTarget) {
+  function deps(
+    pipeline: IngestionTarget,
+    llm: FakeLlmGateway = new FakeLlmGateway(['Read ', 'what I could.']),
+  ) {
     return {
       leads,
       semantic,
@@ -95,7 +98,7 @@ describe('runAutonomousBurst — best-effort per lead', () => {
       energy,
       memory,
       rewards,
-      llm: new FakeLlmGateway(['Read ', 'what I could.']),
+      llm,
       model: 'fake-model',
       logger: silent,
     };
@@ -111,8 +114,9 @@ describe('runAutonomousBurst — best-effort per lead', () => {
     await leads.record(companionId, 'https://boom.dev'); // pipeline throws on this one
     await leads.record(companionId, 'https://c.dev');
 
+    const llm = new FakeLlmGateway(['Read ', 'what I could.']);
     const result = await runAutonomousBurst(
-      deps(new FlakyReadPipeline(semantic, new Set(['https://boom.dev']))),
+      deps(new FlakyReadPipeline(semantic, new Set(['https://boom.dev'])), llm),
       {
         companionId,
         companion: VOICE,
@@ -139,6 +143,10 @@ describe('runAutonomousBurst — best-effort per lead', () => {
     expect(result.noteMessageId).not.toBeNull();
     const notes = await assistantNotes();
     expect(notes).toEqual(['Read what I could.']);
+
+    // The report-note call is stamped with its prompt version (prompts/registry).
+    expect(llm.lastParams?.promptRef?.id).toBe('autonomous-note');
+    expect(llm.lastParams?.promptRef?.version.contentHash).toMatch(/^[0-9a-f]{16}$/);
 
     // One pending outcome linked to the note, awaiting the user's reaction.
     const outcomes = await rewards.list(companionId, 10);

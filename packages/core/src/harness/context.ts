@@ -26,10 +26,33 @@ function singleContent(rendered: RenderedPrompt): string {
 
 /**
  * The prompt version stamped on the main chat turn (prompts/registry). The
- * persona is the turn's primary prompt; the attunement line co-occurs on the
- * same call. Static — depends only on the template version, not the companion.
+ * persona is the turn's *primary* prompt; the affect-attunement line, when
+ * present, co-occurs on the same call and is stamped alongside as a co-prompt
+ * (see {@link coPromptRefs}) so the trace fully describes what went to the
+ * provider. Static — depends only on the template version, not the companion.
  */
 export const PERSONA_REF: PromptRef = { id: 'persona', version: versionOf(personaTemplate) };
+
+/**
+ * The fast-loop attunement line's prompt version (prompts/registry). Stamped on
+ * the chat turn as a co-prompt only when the line is actually present — see
+ * {@link coPromptRefs}. Static — depends only on the template version.
+ */
+export const AFFECT_ATTUNEMENT_REF: PromptRef = {
+  id: 'affect-attunement',
+  version: versionOf(affectAttunementTemplate),
+};
+
+/**
+ * The prompts that co-occur with the persona on a chat turn's single LLM call,
+ * *beyond* the primary {@link PERSONA_REF}. Today that is the affect-attunement
+ * line, included iff there is a mood note — the exact same predicate
+ * {@link assembleContext} uses to push it (via {@link affectAttunementLine}), so
+ * the stamped trace ref can never drift from the messages actually sent.
+ */
+export function coPromptRefs(affect?: AffectReading | null): readonly PromptRef[] {
+  return affectAttunementLine(affect) ? [AFFECT_ATTUNEMENT_REF] : [];
+}
 
 /**
  * The fast-loop attunement line (Phase 4.2, companion-motivation.md §7): the

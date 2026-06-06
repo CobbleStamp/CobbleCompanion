@@ -21,6 +21,7 @@ import {
   isKnownDataset,
   parseDataset,
   resolveStatelessNames,
+  runStatelessDatasets,
   STATELESS,
 } from './dispatch.js';
 
@@ -83,30 +84,22 @@ async function main(): Promise<void> {
   if (reportDir) {
     mkdirSync(reportDir, { recursive: true });
   }
-  // Run each dataset independently: one dataset's failure is logged and recorded
-  // (so CI still fails) but must not lose the reports of the others.
-  let failures = 0;
-  for (const name of statelessNames) {
-    try {
-      const report = await runDataset(STATELESS[name]!, runtime);
-      out(renderReport(report));
-      if (reportDir) {
-        try {
-          writeFileSync(join(reportDir, `${name}.json`), `${JSON.stringify(report, null, 2)}\n`);
-        } catch (error) {
-          failures += 1;
-          logger.error('failed to write eval report', {
-            operation: 'eval.report',
-            dataset: name,
-            error,
-          });
+  // The error-isolation run loop lives in dispatch.ts (runStatelessDatasets) so it
+  // is unit-testable with fakes. Here we just inject the live side effects: run a
+  // dataset over real OpenRouter, print its report, and — when EVAL_REPORT_DIR is
+  // set — write its machine-readable JSON.
+  const failures = await runStatelessDatasets(statelessNames, {
+    runOne: (name) => runDataset(STATELESS[name]!, runtime),
+    render: (report) => out(renderReport(report)),
+    ...(reportDir
+      ? {
+          writeReport: (name: string, report: DatasetReport): void => {
+            writeFileSync(join(reportDir, `${name}.json`), `${JSON.stringify(report, null, 2)}\n`);
+          },
         }
-      }
-    } catch (error) {
-      failures += 1;
-      logger.error('dataset run failed', { operation: 'eval.run', dataset: name, error });
-    }
-  }
+      : {}),
+    logger,
+  });
   if (failures > 0) {
     throw new Error(`${failures} dataset(s) failed — see logged errors above`);
   }
