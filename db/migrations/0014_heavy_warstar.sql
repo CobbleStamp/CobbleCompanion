@@ -1,2 +1,0 @@
-ALTER TABLE "proactive_outcomes" ADD COLUMN "note_message_id" uuid;--> statement-breakpoint
-ALTER TABLE "proactive_outcomes" ADD CONSTRAINT "proactive_outcomes_note_message_id_messages_id_fk" FOREIGN KEY ("note_message_id") REFERENCES "public"."messages"("id") ON DELETE set null ON UPDATE no action;

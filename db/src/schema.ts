@@ -48,6 +48,14 @@ import {
  */
 export const EMBEDDING_DIMENSIONS = 1024;
 
+/**
+ * NOTE: the `vector` columns below require the pgvector extension. `drizzle-kit
+ * generate` does NOT emit `CREATE EXTENSION`, so any regenerated migration must
+ * have `CREATE EXTENSION IF NOT EXISTS vector;` prepended by hand as its first
+ * statement (the current 0000 migration does). The db.test.ts cosine-ordering
+ * test fails if it is missing.
+ */
+
 /** Postgres `tsvector` column type for full-text search (not built into drizzle). */
 const tsvector = customType<{ data: string }>({
   dataType() {

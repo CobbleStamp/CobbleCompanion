@@ -296,7 +296,7 @@ Bond, Initiative, Character) — each a descriptive **band** + an intra-band gau
 **capabilities checklist** (6 capabilities flipped from real logs: web research, memory recall, reading
 sources, a learned routine, multi-step tasks, mood attunement) and the **character card** ("Who *X* has
 become" — per-drive weights + `evolved_persona`). Young axes read honestly empty ("Hasn't ventured out
-yet", "Still forming"). A `companion_growth` row (migration `0017`) stores only the
+yet", "Still forming"). A `companion_growth` row stores only the
 **idempotent high-water mark** (highest band per axis + observed capabilities) **+ treats** — the
 readings recompute freely and the mark **never floors** the surface; it exists only so a reflection
 fires **exactly once** per band/capability reached (a compare-and-set on the monotonic band indices +

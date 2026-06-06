@@ -1,1 +1,0 @@
-ALTER TABLE "user_token_usage" ADD COLUMN "top_up_tokens" bigint DEFAULT 0 NOT NULL;
