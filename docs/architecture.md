@@ -252,7 +252,7 @@ flowchart LR
 > (grounding-only, so the recency window still appends last). It surfaces a relevant **learned
 > routine** (`procedural_memories`) as a "you've done this before, like so" system hint, matched
 > cheaply by title/keyword overlap (no embeddings — procedures are short and few). This is what makes
-> the **abilities** growth axis *functional* rather than only observed: a learned workflow resurfaces
+> the **capabilities** checklist *functional* rather than only observed: a learned workflow resurfaces
 > and can be reused. Degrades to no hint on failure (recall never breaks the conversation). No loop
 > change — another arm in the one memory hook (invariant #3).
 

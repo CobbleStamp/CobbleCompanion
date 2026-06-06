@@ -204,8 +204,8 @@ async function main(): Promise<void> {
         logger: consoleLogger,
       }),
       // Procedural retrieval-as-hint (P5): surface a relevant learned routine so
-      // the "abilities" axis is functional. Grounding-only (no recency), so it sits
-      // before the semantic arm, which appends the recency window last.
+      // the capabilities checklist is functional. Grounding-only (no recency), so it
+      // sits before the semantic arm, which appends the recency window last.
       createProceduralRetrieveContext({ procedural, logger: consoleLogger }),
       createSemanticRetrieveContext({
         memory,

@@ -2,7 +2,7 @@
  * Procedural retrieval-as-hint (Phase 5) — fills another arm of the memory hook
  * (invariant #3, no loop change) so a learned, reusable workflow RESURFACES when
  * it's relevant, instead of only being browsable. This is what makes the
- * "abilities" growth axis functional rather than cosmetic: the companion is
+ * capabilities checklist functional rather than cosmetic: the companion is
  * reminded "you've done this before, like so" and can reuse the routine.
  *
  * Matching is deliberately cheap for the PoC — lexical word overlap between the

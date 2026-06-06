@@ -17,7 +17,7 @@ export interface ToolCallRecord {
   readonly createdAt: Date;
 }
 
-/** Distinct tools used + total calls — the substrate behind tool-fluency abilities (P5). */
+/** Distinct tools used + total calls — the substrate behind tool-fluency capabilities (P5). */
 export interface ToolCallStats {
   readonly distinctNames: readonly string[];
   readonly total: number;
@@ -34,9 +34,9 @@ export interface ToolCallLog {
   /** The companion's recent tool calls, newest first (audit/browse). */
   list(companionId: string, limit: number): Promise<readonly ToolCallRecord[]>;
   /**
-   * Aggregate tool-use shape for the Phase 5 abilities axis: the distinct tool
-   * names the companion has run and the total number of calls. Derived from the
-   * audit log, so abilities reflect what it has actually done.
+   * Aggregate tool-use shape for the Phase 5 capabilities checklist: the distinct
+   * tool names the companion has run and the total number of calls. Derived from the
+   * audit log, so capabilities reflect what it has actually done.
    */
   stats(companionId: string): Promise<ToolCallStats>;
 }

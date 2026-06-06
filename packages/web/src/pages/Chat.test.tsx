@@ -63,8 +63,6 @@ vi.mock('../api/client.js', () => ({
   fetchBudget: vi.fn(() => Promise.reject(new Error('no budget'))),
   topUpBudget: vi.fn(() => Promise.resolve()),
   setProactivityDial: vi.fn(() => Promise.resolve('gentle')),
-  // The growth badge (P5) fetches this; reject so it stays hidden in these tests.
-  fetchGrowth: vi.fn(() => Promise.reject(new Error('no growth'))),
   // The approval-queue hook polls this; default to empty so no cards show.
   listProposals: vi.fn(() => Promise.resolve([])),
   confirmProposal: vi.fn(),

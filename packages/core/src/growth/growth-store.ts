@@ -1,11 +1,11 @@
 /**
  * Growth snapshot store (Phase 5) — persists the *acknowledged high-water mark*
- * (the last levels/abilities/stage already celebrated) and the earned `treats`
- * balance. The mark exists only to make the progression pass's side effects
- * idempotent: `advance` is a compare-and-set on the monotonic levels/stage/unlock
- * count, so two concurrent recomputes (a background trigger and a `GET /growth`)
- * can never double-award treats or double-fire a growth note. Mirrors the
- * energy-store's atomic-increment + conditional-update concurrency model.
+ * (the highest band index per axis + the capabilities already observed) and the
+ * earned `treats` balance. The mark exists only to make the progression pass's side
+ * effects idempotent: `advance` is a compare-and-set on the monotonic band indices +
+ * observed-capability count, so two concurrent post-turn recomputes can never
+ * double-award treats or double-fire a growth reflection. Mirrors the energy-store's
+ * atomic-increment + conditional-update concurrency model.
  */
 
 import { type Database, companionGrowth } from '@cobble/db';
