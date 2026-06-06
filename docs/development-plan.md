@@ -300,8 +300,8 @@ yet", "Still forming"). A `companion_growth` row (migration `0017`) stores only 
 **idempotent high-water mark** (highest band per axis + observed capabilities) **+ treats** — the
 readings recompute freely and the mark **never floors** the surface; it exists only so a reflection
 fires **exactly once** per band/capability reached (a compare-and-set on the monotonic band indices +
-observed set, mirroring the P2 cursor). Recompute runs **post-turn only**, via a `GrowthRunner` (off the
-request path), posting one in-character **growth reflection** to the transcript on a genuine advance
+observed set, mirroring the P2 cursor). Recompute runs **post-turn only**, inline off the message
+stream (off the request path), posting one in-character **growth reflection** to the transcript on a genuine advance
 (reusing the announcer pattern; canned, numberless text since the pass is token-free);
 `GET /companions/:id/growth` is a **read-only** snapshot of the live derived standing, so a read (or a
 client poll) never advances the mark or writes to the transcript. The **feeding economy** (the one deliberate game loop — `companion-economy.md`)

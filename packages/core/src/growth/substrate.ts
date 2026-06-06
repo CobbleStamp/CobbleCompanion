@@ -2,7 +2,7 @@
  * The growth substrate — a point-in-time snapshot of the real memory/activity
  * tables the four growth axes are DERIVED from (development-plan.md §3). Growth is
  * never a parallel score: it is computed from these counts every time. The
- * `GrowthService` gathers this from the existing stores; the pure level/ability
+ * `GrowthService` gathers this from the existing stores; the pure band/capability
  * functions read it. An object so new signals stay additive.
  */
 

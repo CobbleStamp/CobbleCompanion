@@ -93,7 +93,7 @@ export interface EpisodicMemoryStore {
   countEpisodes(companionId: string): Promise<number>;
   /**
    * Average salience across the companion's episodes (0 when it has none) — a
-   * cheap measure of shared-history depth for the Phase 5 relationship axis.
+   * cheap measure of shared-history depth for the Phase 5 bond axis.
    */
   averageSalience(companionId: string): Promise<number>;
   /** The highest transcript `seq` already rolled into episodes (the cursor). */

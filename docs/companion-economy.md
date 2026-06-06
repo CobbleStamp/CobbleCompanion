@@ -65,7 +65,7 @@ zero). They come from two sources, both centralized in `config.ts` (`DEFAULT_GRO
 
 Milestone rewards are awarded **exactly once** per genuine forward step. This is guaranteed by the
 `companion_growth` high-water mark — a compare-and-set on the monotonic band indices + observed-
-capability set — so two concurrent post-turn recomputes (e.g. overlapping `GrowthRunner` ticks) can
+capability set — so two concurrent post-turn recomputes (e.g. overlapping post-turn stream tails) can
 never double-award. (`GET /growth` is read-only and never recomputes.) The mark's mechanics live in `implementation.md` §1; the growth-derivation pass that
 drives it lives in `packages/core/src/growth/service.ts`.
 

@@ -265,8 +265,8 @@ async function main(): Promise<void> {
   const motivation = new MotivationRunner(motivationEngine, consoleLogger);
 
   // Growth & feeding economy (P5): four-axis growth DERIVED from substrate, with an
-  // idempotent high-water mark + earned treats. The service recomputes on GET and
-  // post-turn (via the runner); feeding spends treats to top up the pools.
+  // idempotent high-water mark + earned treats. The service recomputes post-turn off
+  // the message stream (GET is read-only); feeding spends treats to top up the pools.
   const growthStore = new DrizzleGrowthStore(db, {
     initialTreats: DEFAULT_GROWTH_CONFIG.initialTreats,
   });

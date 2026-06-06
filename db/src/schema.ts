@@ -545,9 +545,10 @@ export const proactiveOutcomes = pgTable(
  * standing, made visible and felt. Growth itself is DERIVED from substrate that
  * already exists (sources/sections/episodes counts, learned drive weights, tool &
  * procedure logs); this row is NOT a parallel score. It is the *acknowledged
- * high-water mark* — the last levels/abilities/stage the progression pass already
- * celebrated — so transitions (a level-up, a new ability) fire EXACTLY ONCE and
- * the treats they award are not double-granted on a re-run. This mirrors the P2
+ * high-water mark* — the highest band per axis + observed capabilities the
+ * derivation pass already acknowledged — so an advance (a new band, a newly
+ * observed capability) fires EXACTLY ONCE and the treats it awards are not
+ * double-granted on a re-run. This mirrors the P2
  * `consolidated_through_seq` cursor: derived truth recomputes freely, the cursor
  * makes the side effects idempotent.
  *
