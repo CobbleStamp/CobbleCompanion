@@ -46,6 +46,14 @@ export {
 } from './mcp/gateway.js';
 export { mcpToolName, mcpToolToTool, type McpToolAdapterOptions } from './mcp/adapter.js';
 export { FakeMcpGateway, type FakeMcpCall, type FakeMcpServer } from './mcp/fake.js';
+export { McpWhitelist, type McpWhitelistEntry } from './mcp/whitelist.js';
+export {
+  type McpConnectionRecord,
+  type McpConnectionStatus,
+  type McpConnectionStore,
+  type UpsertConnectionInput,
+} from './mcp/connection-store.js';
+export { createConnectMcpTool, type ConnectMcpOptions } from './mcp/connect-tool.js';
 
 // Identity (the companion "home")
 export {
