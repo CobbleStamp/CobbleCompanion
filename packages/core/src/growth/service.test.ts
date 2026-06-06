@@ -7,7 +7,7 @@
 import { type Database } from '@cobble/db';
 import { createTestDatabase } from '@cobble/db/testing';
 import { growthReflectionNote } from '@cobble/shared';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DrizzleIdentityStore } from '../identity/store.js';
 import { DrizzleEpisodicMemoryStore } from '../memory/episodic-store.js';
 import { TranscriptMemoryStore } from '../memory/store.js';
@@ -205,6 +205,29 @@ describe('GrowthService', () => {
       (n) => n === growthReflectionNote('knowledge'),
     ).length;
     expect(knowledgeNotesAfterRecover).toBe(1);
+  });
+
+  it('reads the stored snapshot exactly once per recompute and per snapshot', async () => {
+    // Substrate that genuinely advances the mark, so recompute runs its full path
+    // (read → compare → advance), not just the early no-progress return.
+    await semantic.createSource(companionId, { kind: 'note', title: 'n', rawText: 'hi' });
+    await toolCallLog.record(companionId, 'web_fetch', {}, 'ok');
+
+    // The service holds a reference to this same store instance; advance() does NOT
+    // call getSnapshot internally, so the spy counts only the service's own reads.
+    const getSnapshot = vi.spyOn(growthStore, 'getSnapshot');
+
+    const transition = await service.recompute(companionId);
+    expect(transition.treatsEarned).toBeGreaterThan(0); // the advance path actually ran
+    // The crux: one read for the CAS `from`. (Before the fix, computeView read it a
+    // second time only to populate a `treats` field recompute never uses → 2 reads.)
+    expect(getSnapshot).toHaveBeenCalledTimes(1);
+
+    getSnapshot.mockClear();
+    await service.snapshot(companionId);
+    expect(getSnapshot).toHaveBeenCalledTimes(1);
+
+    getSnapshot.mockRestore();
   });
 
   it('reflects an Initiative reading from the proactive-outcome log', async () => {

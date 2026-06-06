@@ -56,7 +56,12 @@ export interface GrowthTransition {
   readonly reflections: readonly MessageDto[];
 }
 
-/** The derived view a recompute produces, used to build the DTO. */
+/**
+ * The derived view a recompute produces, used to build the DTO. Note: this holds
+ * only DERIVED axis readings — it deliberately does NOT read the stored snapshot
+ * (treats / high-water mark). Callers that need the stored snapshot read it once
+ * themselves, so neither path reads it twice.
+ */
 interface GrowthView {
   readonly knowledge: AxisReading;
   readonly bond: AxisReading;
@@ -65,7 +70,6 @@ interface GrowthView {
   readonly observed: readonly CapabilityKey[];
   readonly driveWeights: DriveWeights | null;
   readonly evolvedPersona: string | null;
-  readonly treats: number;
   readonly substrate: GrowthSubstrate;
 }
 
@@ -174,7 +178,8 @@ export class GrowthService {
     if (!view) {
       throw new Error(`growth snapshot requested for unknown companion ${companionId}`);
     }
-    return this.toDto(view);
+    const stored = await this.deps.growth.getSnapshot(companionId);
+    return this.toDto(view, stored.treats);
   }
 
   /** Gather substrate and compute the derived view; null if the companion is gone. */
@@ -193,7 +198,6 @@ export class GrowthService {
         this.deps.rewards.stats(companionId),
         this.deps.affect.get(companionId),
       ]);
-    const stored = await this.deps.growth.getSnapshot(companionId);
 
     const substrate: GrowthSubstrate = {
       sourceCount: counts.sources,
@@ -218,12 +222,11 @@ export class GrowthService {
       observed: computeObserved(substrate),
       driveWeights: companion.driveWeights,
       evolvedPersona: companion.evolvedPersona,
-      treats: stored.treats,
       substrate,
     };
   }
 
-  private toDto(view: GrowthView): GrowthDto {
+  private toDto(view: GrowthView, treats: number): GrowthDto {
     const s = view.substrate;
     return {
       knowledge: {
@@ -243,7 +246,7 @@ export class GrowthService {
       },
       character: this.characterDto(view),
       capabilities: capabilityChecklist(view.observed),
-      treats: view.treats,
+      treats,
     };
   }
 
