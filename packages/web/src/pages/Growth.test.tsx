@@ -1,4 +1,4 @@
-/** Growth view: renders the axes/abilities/personality and feeds via the kitchen. */
+/** Growth view: renders the mirror axes/capabilities/character and feeds via the kitchen. */
 
 import type { GrowthDto } from '@cobble/shared';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -14,26 +14,21 @@ vi.mock('../api/client.js', () => ({
 }));
 
 const baseGrowth: GrowthDto = {
-  knowledge: { level: 2, progress: 0.5, detail: '4 sources · 3 episodes' },
-  relationship: { level: 1, progress: 0.25, detail: '3 shared episodes' },
-  abilities: [
-    { key: 'web_research', label: 'Web research', unlocked: true },
-    { key: 'memory_recall', label: 'Memory recall', unlocked: false },
-  ],
-  personality: {
-    weights: {
-      curiosity: 0.9,
-      bond: 0.7,
-      understanding: 0.5,
-      approval: 0.5,
-      helpfulness: 0.5,
-      upkeep: 0.5,
-    },
-    spread: 0.3,
+  knowledge: { band: 'Broad', fill: 0.5, detail: '4 sources · 3 memories' },
+  bond: { band: 'Familiar', fill: 0.25, detail: '3 shared episodes' },
+  initiative: { band: 'Tentative', fill: 0.4, detail: '2 self-directed moves' },
+  character: {
+    band: 'Emerging',
+    drives: [
+      { key: 'curiosity', label: 'Curiosity', weight: 0.9 },
+      { key: 'bond', label: 'Bond', weight: 0.7 },
+    ],
     evolvedPersona: 'a curious, warm companion',
   },
-  overallStage: 2,
-  emoji: '🦊',
+  capabilities: [
+    { key: 'web_research', label: 'Web research', observed: true },
+    { key: 'memory_recall', label: 'Memory recall', observed: false },
+  ],
   treats: 4,
 };
 
@@ -43,10 +38,11 @@ describe('Growth view', () => {
     vi.mocked(feedCompanion).mockReset();
   });
 
-  it('renders the stage, axes, abilities, and personality', async () => {
+  it('renders the mirror axes, capabilities, and character', async () => {
     render(<Growth companionName="Pebble" companionId="c1" onBack={() => {}} />);
-    expect(await screen.findByText('Stage 2')).toBeTruthy();
-    expect(screen.getByText('Knowledge')).toBeTruthy();
+    expect(await screen.findByText('Knowledge')).toBeTruthy();
+    expect(screen.getByText('Initiative')).toBeTruthy();
+    expect(screen.getByText('Broad')).toBeTruthy();
     expect(screen.getByText('Web research')).toBeTruthy();
     expect(screen.getByText('Who Pebble has become')).toBeTruthy();
     expect(screen.getByText(/curious, warm companion/)).toBeTruthy();

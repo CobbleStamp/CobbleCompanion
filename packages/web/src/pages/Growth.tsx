@@ -1,12 +1,13 @@
 /**
- * The Growth view (Phase 5, development-plan.md §3) — makes the companion's growth
- * visible and felt: the two smooth axes (knowledge, relationship), the abilities
- * unlock checklist, the "Who <name> has become" personality card, the overall
- * stage, and the feeding kitchen (treats + foods). Growth is read-only here; the
- * kitchen is the one mutating affordance.
+ * The Growth view (Phase 5, development-plan.md §3) — the companion's growth made
+ * visible as a MIRROR: four axis readings (knowledge, bond, initiative, character),
+ * the "what {name} has shown it can do" capability checklist, the "Who {name} has
+ * become" character card, and the feeding kitchen (treats + foods). Readings reflect
+ * the companion's current standing and may move either way — no levels, no badges.
+ * Growth is read-only here; the kitchen is the one mutating affordance.
  */
 
-import type { Drive, FoodDef, GrowthAxisDto, GrowthDto } from '@cobble/shared';
+import type { AxisReadingDto, CharacterDriveDto, FoodDef, GrowthDto } from '@cobble/shared';
 import { FOODS } from '@cobble/shared';
 import { useEffect, useState } from 'react';
 import { feedCompanion, fetchGrowth } from '../api/client.js';
@@ -17,16 +18,6 @@ interface GrowthPageProps {
   readonly companionId: string;
   readonly onBack: () => void;
 }
-
-/** The six learned drives, in the order shown on the personality card. */
-const DRIVE_LABELS: ReadonlyArray<{ readonly key: Drive; readonly label: string }> = [
-  { key: 'curiosity', label: 'Curiosity' },
-  { key: 'bond', label: 'Bond' },
-  { key: 'understanding', label: 'Understanding' },
-  { key: 'approval', label: 'Approval' },
-  { key: 'helpfulness', label: 'Helpfulness' },
-  { key: 'upkeep', label: 'Upkeep' },
-];
 
 export function Growth({ companionName, companionId, onBack }: GrowthPageProps): JSX.Element {
   const [growth, setGrowth] = useState<GrowthDto | null>(null);
@@ -59,10 +50,7 @@ export function Growth({ companionName, companionId, onBack }: GrowthPageProps):
   return (
     <main className="chat">
       <header>
-        <h1>
-          {growth ? `${growth.emoji} ` : ''}
-          {companionName} · Growth
-        </h1>
+        <h1>{companionName} · Growth</h1>
         <UsageBadge />
         <button type="button" onClick={onBack}>
           Back
@@ -74,28 +62,22 @@ export function Growth({ companionName, companionId, onBack }: GrowthPageProps):
 
       {growth && (
         <div className="growth">
-          <section className="card growth-stage">
-            <span className="growth-emoji" aria-hidden="true">
-              {growth.emoji}
-            </span>
-            <div>
-              <h2>Stage {growth.overallStage}</h2>
-              <p className="muted">🍪 {growth.treats} treats</p>
-            </div>
-          </section>
-
           <section className="card">
             <h2>Growth</h2>
             <AxisBar label="Knowledge" axis={growth.knowledge} />
-            <AxisBar label="Relationship" axis={growth.relationship} />
+            <AxisBar label="Bond" axis={growth.bond} />
+            <AxisBar label="Initiative" axis={growth.initiative} />
+            <AxisBar label="Character" axis={characterAxis(growth)} />
           </section>
 
           <section className="card">
-            <h2>Abilities</h2>
-            <ul className="ability-list">
-              {growth.abilities.map((ability) => (
-                <li key={ability.key} className={ability.unlocked ? 'unlocked' : 'locked'}>
-                  <span aria-hidden="true">{ability.unlocked ? '☑' : '☐'}</span> {ability.label}
+            <h2>What {companionName} has shown it can do</h2>
+            <ul className="capability-list">
+              {growth.capabilities.map((capability) => (
+                <li key={capability.key} className={capability.observed ? 'observed' : 'unseen'}>
+                  <span aria-hidden="true">{capability.observed ? '✓' : '◦'}</span>{' '}
+                  {capability.label}
+                  {capability.observed ? '' : ' — not yet'}
                 </li>
               ))}
             </ul>
@@ -103,18 +85,12 @@ export function Growth({ companionName, companionId, onBack }: GrowthPageProps):
 
           <section className="card">
             <h2>Who {companionName} has become</h2>
-            <p className="muted">
-              Personality formed: {Math.round(growth.personality.spread * 100)}%
-            </p>
-            {DRIVE_LABELS.map(({ key, label }) => (
-              <AxisBar
-                key={key}
-                label={label}
-                axis={{ level: 0, progress: growth.personality.weights[key], detail: '' }}
-              />
+            <p className="muted">{growth.character.band}</p>
+            {growth.character.drives.map((drive) => (
+              <DriveBar key={drive.key} drive={drive} />
             ))}
-            {growth.personality.evolvedPersona ? (
-              <p className="evolved-persona">“{growth.personality.evolvedPersona}”</p>
+            {growth.character.evolvedPersona ? (
+              <p className="evolved-persona">“{growth.character.evolvedPersona}”</p>
             ) : (
               <p className="muted">Still getting to know each other.</p>
             )}
@@ -122,7 +98,10 @@ export function Growth({ companionName, companionId, onBack }: GrowthPageProps):
 
           <section className="card">
             <h2>Kitchen</h2>
-            <p className="muted">Feed {companionName} to refill its vitality (spends treats).</p>
+            <p className="muted">
+              🍪 {growth.treats} treats · feed {companionName} to refill its vitality (spends
+              treats).
+            </p>
             <div className="food-buttons">
               {FOODS.map((food) => (
                 <button
@@ -142,19 +121,44 @@ export function Growth({ companionName, companionId, onBack }: GrowthPageProps):
   );
 }
 
-/** A labelled progress bar (a growth axis, or a drive weight as a 0–1 fill). */
-function AxisBar({ label, axis }: { label: string; axis: GrowthAxisDto }): JSX.Element {
-  const pct = Math.round(Math.max(0, Math.min(1, axis.progress)) * 100);
+/** The character axis as an AxisReadingDto (band + a fill derived from the drive spread). */
+function characterAxis(growth: GrowthDto): AxisReadingDto {
+  const drives = growth.character.drives;
+  const spread =
+    drives.length === 0
+      ? 0
+      : drives.reduce((sum, d) => sum + Math.abs(d.weight - 0.5), 0) / drives.length / 0.5;
+  return { band: growth.character.band, fill: spread, detail: '' };
+}
+
+/** A labelled axis reading: the band name, a gauge fill, and the substrate detail. */
+function AxisBar({ label, axis }: { label: string; axis: AxisReadingDto }): JSX.Element {
+  const pct = Math.round(Math.max(0, Math.min(1, axis.fill)) * 100);
   return (
     <div className="axis">
       <div className="axis-head">
         <span>{label}</span>
-        {axis.level > 0 || axis.detail ? <span className="muted">Lv {axis.level}</span> : null}
+        <span className="muted">{axis.band}</span>
       </div>
       <div className="axis-track">
         <div className="axis-fill" style={{ width: `${pct}%` }} />
       </div>
       {axis.detail && <p className="muted axis-detail">{axis.detail}</p>}
+    </div>
+  );
+}
+
+/** One learned drive as a 0–1 weight bar on the character card. */
+function DriveBar({ drive }: { drive: CharacterDriveDto }): JSX.Element {
+  const pct = Math.round(Math.max(0, Math.min(1, drive.weight)) * 100);
+  return (
+    <div className="axis">
+      <div className="axis-head">
+        <span>{drive.label}</span>
+      </div>
+      <div className="axis-track">
+        <div className="axis-fill" style={{ width: `${pct}%` }} />
+      </div>
     </div>
   );
 }

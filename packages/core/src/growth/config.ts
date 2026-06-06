@@ -1,65 +1,81 @@
 /**
- * Growth tuning — every constant the Phase 5 progression curves and feeding
- * economy depend on, centralized in one named, typed object (AGENTS.md: nothing
- * hardcoded — config, never scattered literals). These are product-tuning values,
- * not environment secrets, so they live as a code constant (like
- * `DEFAULT_DRIVE_WEIGHTS`), tunable in one place. The per-day vitality caps remain
- * server config; only the growth/economy shape lives here.
+ * Growth tuning — every constant the Phase 5 mirror readings and feeding economy
+ * depend on, centralized in one named, typed object (AGENTS.md: nothing hardcoded —
+ * config, never scattered literals). These are product-tuning values, not environment
+ * secrets, so they live as a code constant (like `DEFAULT_DRIVE_WEIGHTS`), tunable in
+ * one place. The per-day vitality caps remain server config; only the growth/economy
+ * shape lives here.
+ *
+ * The four axes are MIRROR readings, not game levels: a raw measure maps to a
+ * descriptive **band** (+ an intra-band fill for the gauge). Knowledge and bond map
+ * by a linear points-per-band width; initiative and character map by ascending
+ * thresholds. Band-name arrays double as the band ladder — index 0 is the honest
+ * "empty" read.
  */
 
 export interface GrowthConfig {
-  // --- Knowledge axis (curve over sources/sections/episodes) ---
+  // --- Knowledge axis (points over sources/sections/episodes → band) ---
   /** Points one ingested source contributes to knowledge. */
   readonly knowledgeSourcePoints: number;
   /** Points one retrieval section contributes to knowledge. */
   readonly knowledgeSectionPoints: number;
   /** Points one consolidated episode contributes to knowledge. */
   readonly knowledgeEpisodePoints: number;
-  /** Points required per knowledge level (linear; predictable + testable). */
-  readonly knowledgePointsPerLevel: number;
+  /** Points per band step (linear; predictable + testable). */
+  readonly knowledgeBandWidth: number;
+  /** The knowledge band ladder, low → high (index 0 = "empty"). */
+  readonly knowledgeBands: readonly string[];
 
-  // --- Relationship axis (curve over shared-history depth) ---
-  /** Points one episode contributes to the relationship (shared history). */
-  readonly relationshipEpisodePoints: number;
-  /** Scale applied to average episode salience (0–1) → bonus relationship points. */
-  readonly relationshipSalienceScale: number;
-  /** Points required per relationship level. */
-  readonly relationshipPointsPerLevel: number;
+  // --- Bond axis (shared-history depth → band) ---
+  /** Points one episode contributes to the bond (shared history). */
+  readonly bondEpisodePoints: number;
+  /** Scale applied to average episode salience (0–1) → bonus bond points. */
+  readonly bondSalienceScale: number;
+  /** Points per band step. */
+  readonly bondBandWidth: number;
+  /** The bond band ladder, low → high. */
+  readonly bondBands: readonly string[];
 
-  /** Hard ceiling on any single axis level (keeps the bars bounded). */
-  readonly maxAxisLevel: number;
+  // --- Initiative axis (autonomous-act count → band) ---
+  /** Minimum initiation count for each band (ascending; index 0 starts at 0). */
+  readonly initiativeBandThresholds: readonly number[];
+  /** The initiative band ladder, low → high. */
+  readonly initiativeBands: readonly string[];
 
-  // --- Overall stage (blend of the two axes + ability unlocks) ---
-  /** Combined points (knowledgeLevel + relationshipLevel + unlockedCount) per stage. */
-  readonly stagePointsPerStage: number;
-  /** Emoji/badge ladder indexed by overall stage (clamped to the last). */
-  readonly stageEmoji: readonly string[];
+  // --- Character axis (personality spread 0–1 → band) ---
+  /** Minimum spread (0–1) for each band (ascending; index 0 starts at 0). */
+  readonly characterBandThresholds: readonly number[];
+  /** The character band ladder, low → high. */
+  readonly characterBands: readonly string[];
 
-  // --- Feeding economy (treats currency) ---
+  // --- Feeding economy (treats currency — companion-economy.md) ---
   /** Treats a brand-new companion starts with (so feeding works on day one). */
   readonly initialTreats: number;
-  /** Treats granted per axis level gained. */
-  readonly treatsPerLevel: number;
-  /** Treats granted per ability unlocked. */
-  readonly treatsPerUnlock: number;
+  /** Treats granted per axis band gained (knowledge / bond / initiative). */
+  readonly treatsPerBand: number;
+  /** Treats granted per capability first observed. */
+  readonly treatsPerCapability: number;
 }
 
 export const DEFAULT_GROWTH_CONFIG: GrowthConfig = {
   knowledgeSourcePoints: 3,
   knowledgeSectionPoints: 1,
   knowledgeEpisodePoints: 2,
-  knowledgePointsPerLevel: 10,
+  knowledgeBandWidth: 10,
+  knowledgeBands: ['Sparse', 'Growing', 'Broad', 'Deep', 'Vast'],
 
-  relationshipEpisodePoints: 2,
-  relationshipSalienceScale: 10,
-  relationshipPointsPerLevel: 8,
+  bondEpisodePoints: 2,
+  bondSalienceScale: 10,
+  bondBandWidth: 8,
+  bondBands: ['New', 'Acquainted', 'Familiar', 'Close', 'Inseparable'],
 
-  maxAxisLevel: 50,
+  initiativeBandThresholds: [0, 1, 4, 10],
+  initiativeBands: ["Hasn't ventured out yet", 'Tentative', 'Active', 'Self-directed'],
 
-  stagePointsPerStage: 3,
-  stageEmoji: ['🥚', '🐣', '🦊', '🦊✨', '🌟', '💫'],
+  characterBandThresholds: [0, 0.25, 0.5, 0.75],
+  characterBands: ['Still forming', 'Emerging', 'Distinct', 'Strongly formed'],
 
   initialTreats: 5,
-  treatsPerLevel: 2,
-  treatsPerUnlock: 1,
+  treatsPerBand: 2,
+  treatsPerCapability: 1,
 };

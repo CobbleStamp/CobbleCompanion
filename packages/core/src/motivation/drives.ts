@@ -25,6 +25,16 @@ export const DRIVES: readonly Drive[] = [
   'upkeep',
 ];
 
+/** Human labels for the drives, in `DRIVES` order — the character card's display names. */
+export const DRIVE_LABELS: Record<Drive, string> = {
+  curiosity: 'Curiosity',
+  bond: 'Bond',
+  understanding: 'Understanding',
+  approval: 'Approval',
+  helpfulness: 'Helpfulness',
+  upkeep: 'Upkeep',
+};
+
 /** Neutral starting weight — a Cobble is raised into its disposition (§7). */
 export const NEUTRAL_WEIGHT = 0.5;
 

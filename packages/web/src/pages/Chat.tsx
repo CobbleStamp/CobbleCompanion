@@ -25,7 +25,6 @@ import { IngestionStatusButton } from '../components/IngestionStatusButton.js';
 import { Modal } from '../components/Modal.js';
 import { ProposalCard } from '../components/ProposalCard.js';
 import { BudgetMeter } from '../components/BudgetMeter.js';
-import { GrowthBadge } from '../components/GrowthBadge.js';
 import { ProactivityDial } from '../components/ProactivityDial.js';
 import { useIngestionJobs } from '../components/useIngestionJobs.js';
 import { usePresenceHeartbeat } from '../components/usePresenceHeartbeat.js';
@@ -355,7 +354,6 @@ export function Chat({
           />
           <ProactivityDial companionId={companion.id} initial={companion.proactivityDial} />
           <BudgetMeter companionId={companion.id} />
-          <GrowthBadge companionId={companion.id} onOpen={onOpenGrowth} />
           <button type="button" onClick={onOpenSources}>
             Sources
           </button>

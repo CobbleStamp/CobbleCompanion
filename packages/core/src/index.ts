@@ -216,6 +216,7 @@ export { type MotivationSweepDeps, sweepMotivation } from './motivation/engine-s
 export {
   DrizzleProactiveOutcomeStore,
   type ProactiveOutcomeRecord,
+  type ProactiveOutcomeStats,
   type ProactiveOutcomeStore,
   type RecordOutcomeInput,
 } from './motivation/reward-store.js';
@@ -289,16 +290,21 @@ export {
 export { DEFAULT_GROWTH_CONFIG, type GrowthConfig } from './growth/config.js';
 export { type GrowthSubstrate } from './growth/substrate.js';
 export {
-  type AxisLevel,
-  computeKnowledgeLevel,
-  computeOverallStage,
-  computeRelationshipLevel,
+  type AxisReading,
+  bondPoints,
+  computeBondReading,
+  computeCharacterReading,
+  computeInitiativeReading,
+  computeKnowledgeReading,
   knowledgePoints,
   personalitySpread,
-  relationshipPoints,
-  stageEmoji,
 } from './growth/levels.js';
-export { ABILITIES, abilityChecklist, abilityLabel, computeUnlocked } from './growth/abilities.js';
+export {
+  CAPABILITIES,
+  capabilityChecklist,
+  capabilityLabel,
+  computeObserved,
+} from './growth/capabilities.js';
 export {
   DrizzleGrowthStore,
   type DrizzleGrowthStoreOptions,

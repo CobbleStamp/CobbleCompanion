@@ -9,24 +9,24 @@
  */
 
 import { type Database, companionGrowth } from '@cobble/db';
-import type { AbilityKey } from '@cobble/shared';
+import type { CapabilityKey } from '@cobble/shared';
 import { and, eq, sql } from 'drizzle-orm';
 
-/** The persisted high-water mark + treats balance for a companion. */
+/** The persisted high-water mark (highest band already reflected on) + treats balance. */
 export interface GrowthSnapshot {
-  readonly knowledgeLevel: number;
-  readonly relationshipLevel: number;
-  readonly unlockedAbilities: readonly AbilityKey[];
-  readonly overallStage: number;
+  readonly knowledgeBand: number;
+  readonly bondBand: number;
+  readonly initiativeBand: number;
+  readonly observedCapabilities: readonly CapabilityKey[];
   readonly treats: number;
 }
 
 /** The derived target a recompute wants to advance the mark to. */
 export interface GrowthTarget {
-  readonly knowledgeLevel: number;
-  readonly relationshipLevel: number;
-  readonly unlockedAbilities: readonly AbilityKey[];
-  readonly overallStage: number;
+  readonly knowledgeBand: number;
+  readonly bondBand: number;
+  readonly initiativeBand: number;
+  readonly observedCapabilities: readonly CapabilityKey[];
 }
 
 export interface GrowthStore {
@@ -91,10 +91,10 @@ export class DrizzleGrowthStore implements GrowthStore {
     const rolled = await this.db
       .update(companionGrowth)
       .set({
-        knowledgeLevel: target.knowledgeLevel,
-        relationshipLevel: target.relationshipLevel,
-        unlockedAbilities: target.unlockedAbilities,
-        overallStage: target.overallStage,
+        knowledgeBand: target.knowledgeBand,
+        bondBand: target.bondBand,
+        initiativeBand: target.initiativeBand,
+        observedCapabilities: target.observedCapabilities,
         treats: sql`${companionGrowth.treats} + ${treatsEarned}`,
         updatedAt: this.now(),
       })
@@ -103,10 +103,10 @@ export class DrizzleGrowthStore implements GrowthStore {
           eq(companionGrowth.companionId, companionId),
           // Guard on the monotonic mark we read — a concurrent advance changes one
           // of these, so the loser's WHERE misses and it awards nothing.
-          eq(companionGrowth.knowledgeLevel, from.knowledgeLevel),
-          eq(companionGrowth.relationshipLevel, from.relationshipLevel),
-          eq(companionGrowth.overallStage, from.overallStage),
-          sql`jsonb_array_length(${companionGrowth.unlockedAbilities}) = ${from.unlockedAbilities.length}`,
+          eq(companionGrowth.knowledgeBand, from.knowledgeBand),
+          eq(companionGrowth.bondBand, from.bondBand),
+          eq(companionGrowth.initiativeBand, from.initiativeBand),
+          sql`jsonb_array_length(${companionGrowth.observedCapabilities}) = ${from.observedCapabilities.length}`,
         ),
       )
       .returning();
@@ -143,20 +143,20 @@ export class DrizzleGrowthStore implements GrowthStore {
       return null;
     }
     return {
-      knowledgeLevel: row.knowledgeLevel,
-      relationshipLevel: row.relationshipLevel,
-      unlockedAbilities: (row.unlockedAbilities ?? []) as readonly AbilityKey[],
-      overallStage: row.overallStage,
+      knowledgeBand: row.knowledgeBand,
+      bondBand: row.bondBand,
+      initiativeBand: row.initiativeBand,
+      observedCapabilities: (row.observedCapabilities ?? []) as readonly CapabilityKey[],
       treats: row.treats,
     };
   }
 
   private empty(): GrowthSnapshot {
     return {
-      knowledgeLevel: 0,
-      relationshipLevel: 0,
-      unlockedAbilities: [],
-      overallStage: 0,
+      knowledgeBand: 0,
+      bondBand: 0,
+      initiativeBand: 0,
+      observedCapabilities: [],
       treats: this.initialTreats,
     };
   }

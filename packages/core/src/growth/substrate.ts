@@ -13,13 +13,16 @@ export interface GrowthSubstrate {
   readonly sourceCount: number;
   readonly sectionCount: number;
   readonly episodeCount: number;
-  // Relationship axis.
+  // Bond axis (shared-history depth).
   readonly averageSalience: number;
-  // Abilities (observed capabilities, from the tool/procedure/reward/affect logs).
+  // Initiative axis (autonomous behaviour, from the proactive-outcome log).
+  readonly initiationCount: number;
+  readonly resolvedReactionCount: number;
+  readonly positiveReactionCount: number;
+  // Capabilities (observed, from the tool/procedure/affect logs).
   readonly procedureCount: number;
   readonly distinctToolNames: readonly string[];
   readonly toolCallTotal: number;
-  readonly hasAutonomousWork: boolean;
   readonly hasMoodSense: boolean;
   // Personality (the emerged-character card). Null until reinforcement runs —
   // a never-reinforced Cobble reads as genuinely unformed (neutral).

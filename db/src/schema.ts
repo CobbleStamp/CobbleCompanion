@@ -1,5 +1,5 @@
 import type {
-  AbilityKey,
+  CapabilityKey,
   Drive,
   DriveWeights,
   IngestionStatus,
@@ -560,17 +560,18 @@ export const companionGrowth = pgTable('companion_growth', {
   companionId: uuid('companion_id')
     .primaryKey()
     .references(() => companions.id, { onDelete: 'cascade' }),
-  // Smooth axes — last celebrated level (the high-water mark for level-up events).
-  knowledgeLevel: integer('knowledge_level').notNull().default(0),
-  relationshipLevel: integer('relationship_level').notNull().default(0),
-  // Discrete axis — the set of capability unlocks already acknowledged.
-  unlockedAbilities: jsonb('unlocked_abilities')
-    .$type<readonly AbilityKey[]>()
+  // Mirror axes — the highest BAND index already reflected on (the high-water mark
+  // for once-only growth-reflection notes). Growth itself is derived & may dip; this
+  // mark only prevents a reflection firing twice for the same band.
+  knowledgeBand: integer('knowledge_band').notNull().default(0),
+  bondBand: integer('bond_band').notNull().default(0),
+  initiativeBand: integer('initiative_band').notNull().default(0),
+  // Capabilities already announced (the set whose "observed" note has fired).
+  observedCapabilities: jsonb('observed_capabilities')
+    .$type<readonly CapabilityKey[]>()
     .notNull()
     .default(sql`'[]'::jsonb`),
-  // Blended headline stage (drives the emoji/badge); last celebrated value.
-  overallStage: integer('overall_stage').notNull().default(0),
-  // The earned feeding currency — the one stored, non-derived value.
+  // The earned feeding currency — the one stored, non-derived value (companion-economy.md).
   treats: integer('treats').notNull().default(0),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

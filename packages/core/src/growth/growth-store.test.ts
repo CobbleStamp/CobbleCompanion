@@ -35,10 +35,10 @@ describe('DrizzleGrowthStore', () => {
   it('lazily creates the row seeded with the initial treats', async () => {
     const snapshot = await growth.getSnapshot(companionId);
     expect(snapshot).toEqual<GrowthSnapshot>({
-      knowledgeLevel: 0,
-      relationshipLevel: 0,
-      unlockedAbilities: [],
-      overallStage: 0,
+      knowledgeBand: 0,
+      bondBand: 0,
+      initiativeBand: 0,
+      observedCapabilities: [],
       treats: INITIAL_TREATS,
     });
   });
@@ -49,17 +49,17 @@ describe('DrizzleGrowthStore', () => {
       companionId,
       from,
       {
-        knowledgeLevel: 2,
-        relationshipLevel: 1,
-        unlockedAbilities: ['web_research'],
-        overallStage: 1,
+        knowledgeBand: 2,
+        bondBand: 1,
+        initiativeBand: 0,
+        observedCapabilities: ['web_research'],
       },
       4,
     );
     expect(won).toBe(true);
     const after = await growth.getSnapshot(companionId);
-    expect(after.knowledgeLevel).toBe(2);
-    expect(after.unlockedAbilities).toEqual(['web_research']);
+    expect(after.knowledgeBand).toBe(2);
+    expect(after.observedCapabilities).toEqual(['web_research']);
     expect(after.treats).toBe(INITIAL_TREATS + 4);
   });
 
@@ -68,14 +68,14 @@ describe('DrizzleGrowthStore', () => {
     await growth.advance(
       companionId,
       from,
-      { knowledgeLevel: 1, relationshipLevel: 0, unlockedAbilities: [], overallStage: 0 },
+      { knowledgeBand: 1, bondBand: 0, initiativeBand: 0, observedCapabilities: [] },
       2,
     );
     // A second caller still holding the OLD snapshot loses the compare-and-set.
     const wonAgain = await growth.advance(
       companionId,
       from,
-      { knowledgeLevel: 1, relationshipLevel: 0, unlockedAbilities: [], overallStage: 0 },
+      { knowledgeBand: 1, bondBand: 0, initiativeBand: 0, observedCapabilities: [] },
       2,
     );
     expect(wonAgain).toBe(false);

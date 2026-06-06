@@ -269,67 +269,76 @@ export interface StaminaEnergyDto {
 // --- Phase 5 — bond & growth (development-plan.md §3) ---
 
 /**
- * The fixed catalogue of "abilities" — capabilities the companion has DEMONSTRATED
- * (development-plan.md §3). The set is closed; each is unlocked once, from existing
- * logs, and never re-locks. Surfaced as a checklist, not a smooth bar — abilities
- * are genuinely chunky ("unlockable abilities", product-overview.md §5.5).
+ * The closed catalogue of capabilities the companion has DEMONSTRATED, read off the
+ * existing tool/procedure/affect logs (development-plan.md §3). A MIRROR, not an
+ * achievement board: `observed` reflects what the logs currently show — it is not a
+ * reward that locks in. Surfaced as a checklist ("what {name} has shown it can do"),
+ * since capabilities are genuinely chunky (product-overview.md §5.5). Autonomous work
+ * is reflected by the Initiative axis, not here.
  */
-export type AbilityKey =
+export type CapabilityKey =
   | 'web_research'
   | 'memory_recall'
   | 'reading_sources'
-  | 'self_directed_work'
   | 'first_routine'
   | 'multi_step_task'
   | 'mood_attunement';
 
-/** One ability in the checklist — its stable key, its human label, and whether it's unlocked. */
-export interface AbilityDto {
-  readonly key: AbilityKey;
+/** One capability in the checklist — its stable key, its human label, and whether it's been observed. */
+export interface CapabilityDto {
+  readonly key: CapabilityKey;
   readonly label: string;
-  readonly unlocked: boolean;
+  readonly observed: boolean;
 }
 
 /**
- * One smooth growth axis (knowledge or relationship). `level` is the current whole
- * level; `progress` is the fraction (0–1) accumulated toward the next one, for a
- * progress bar; `detail` is a short human gloss of the substrate behind it
- * ("12 sources · 34 episodes").
+ * One growth axis as a MIRROR reading — a readout of the companion's current
+ * accumulated standing, NOT a game level. `band` is the qualitative standing
+ * ("Sparse" … "Vast", "New" … "Inseparable"); `fill` is the 0–1 position WITHIN that
+ * band for a gauge bar — a reading that may move in either direction, not progress
+ * toward a goal; `detail` is a short human gloss of the substrate behind it
+ * ("12 sources · 34 memories").
  */
-export interface GrowthAxisDto {
-  readonly level: number;
-  readonly progress: number;
+export interface AxisReadingDto {
+  readonly band: string;
+  readonly fill: number;
   readonly detail: string;
 }
 
+/** One learned drive on the character card — its key, human label, and 0–1 weight. */
+export interface CharacterDriveDto {
+  readonly key: Drive;
+  readonly label: string;
+  readonly weight: number;
+}
+
 /**
- * The companion's emerged character — the "Who <name> has become" card. Distinct
- * from the relationship axis: `weights` are the learned per-drive disposition
- * (raised from neutral by the reinforcement loop, P4), `spread` is how far they
- * have diverged from neutral overall (0 = still neutral, 1 = fully formed), and
- * `evolvedPersona` is the synthesized self-description (P2). Because every Cobble
- * starts neutral, this spread is genuinely *earned*.
+ * The companion's emerged character — the "Who {name} has become" card, and the
+ * backing detail of the Character axis. `band` is the qualitative standing
+ * ("Still forming" … "Strongly formed"); `drives` is the learned per-drive
+ * disposition (each weight 0–1, raised from neutral by the P4 reinforcement loop);
+ * `evolvedPersona` is the synthesized self-description (P2). Every Cobble starts
+ * neutral, so a formed character is genuinely earned — and, being a mirror, may also
+ * soften.
  */
-export interface PersonalityDto {
-  readonly weights: DriveWeights;
-  readonly spread: number;
+export interface CharacterDto {
+  readonly band: string;
+  readonly drives: readonly CharacterDriveDto[];
   readonly evolvedPersona: string | null;
 }
 
 /**
- * The companion's full growth standing (development-plan.md §3): two smooth axes,
- * the abilities checklist, the emerged-personality card, the blended headline
- * `overallStage` (with its `emoji`/badge), and the earned `treats` currency. All
- * but `treats` are derived from substrate; `treats` is the feeding-economy balance.
+ * The companion's full growth standing (development-plan.md §3) as a MIRROR: four
+ * axis readings (knowledge, bond, initiative, character), the capabilities checklist,
+ * and the earned `treats` currency. All but `treats` are DERIVED from substrate and
+ * may move either way; `treats` is the feeding-economy balance (`companion-economy.md`).
  */
 export interface GrowthDto {
-  readonly knowledge: GrowthAxisDto;
-  readonly relationship: GrowthAxisDto;
-  readonly abilities: readonly AbilityDto[];
-  readonly personality: PersonalityDto;
-  readonly overallStage: number;
-  /** The stage emoji/badge shown on the companion (the visible visual axis, PoC). */
-  readonly emoji: string;
+  readonly knowledge: AxisReadingDto;
+  readonly bond: AxisReadingDto;
+  readonly initiative: AxisReadingDto;
+  readonly character: CharacterDto;
+  readonly capabilities: readonly CapabilityDto[];
   readonly treats: number;
 }
 
@@ -392,18 +401,29 @@ export function foodDef(type: FoodType): FoodDef | null {
   return FOODS.find((food) => food.type === type) ?? null;
 }
 
+/** The growth axes that post an in-character reflection when they first reach a higher band. */
+export type ReflectionAxis = 'knowledge' | 'bond' | 'initiative';
+
 /**
- * Canned in-character growth notes posted to the transcript when the companion
- * crosses a meaningful threshold (development-plan.md §3 — "growth, felt"). Single
- * sourced so the note reads the same wherever it's produced; the progression pass
- * is token-free, so these are templated rather than LLM-voiced.
+ * Canned in-character REFLECTIONS the companion posts when a growth axis first
+ * reaches a higher band, or a capability is first observed (development-plan.md §3 —
+ * "growth, felt"). Reflections, not score announcements: no levels, bands, or numbers
+ * leak into the wording. Single sourced so the note reads the same wherever it's
+ * produced; the progression pass is token-free, so these are templated, not LLM-voiced.
  */
-export function growthLevelUpNote(axisLabel: string, level: number): string {
-  return `Something's shifted — I feel like I've grown. ${axisLabel} just reached level ${level}. ✨`;
+export function growthReflectionNote(axis: ReflectionAxis): string {
+  switch (axis) {
+    case 'knowledge':
+      return "I've been taking a lot in lately — I feel like I understand more of your world now. ✨";
+    case 'bond':
+      return "I feel like we've grown closer. ✨";
+    case 'initiative':
+      return "I've been finding things worth doing on my own lately. ✨";
+  }
 }
 
-export function abilityUnlockedNote(abilityLabel: string): string {
-  return `I think I just learned something new: ${abilityLabel}. I can do that for you now.`;
+export function capabilityObservedNote(label: string): string {
+  return `I noticed I just did something new for you — ${label}.`;
 }
 
 /** A retrieval section: verbatim original text plus its location in the source. */

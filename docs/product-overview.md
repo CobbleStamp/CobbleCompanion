@@ -189,21 +189,27 @@ or an opportunity is expiring). Frequency and intensity are **tunable** so it fe
 annoying.
 
 ### 5.5 The Bond & Growth
-You don't just use Cobble — you raise it. Its growth *is* its accumulating memory, visible
-along four axes:
-- **Knowledge = growth:** it levels up as its **semantic & episodic** memory and recall expand.
-- **Relationship & personality:** seeded at creation (name, form, temperament), its character
-  deepens through your shared **episodic** history, in-jokes, and accumulated understanding of you.
-- **Unlockable abilities:** new skills, tools, and routines (**procedural** memory) open up as
-  you engage — surfaced as a checklist of capabilities the companion has demonstrated, and *used*
-  (a learned routine resurfaces when it fits, not just displayed).
-- **Visual / character evolution:** the character itself evolves (appearance, home,
-  accessories) as a tangible sign of how far you've come together. *(The web PoC realizes this as
-  an evolving stage emoji/badge tied to the other three axes; richer art is a later surface.)*
+You don't just use Cobble — you raise it. The growth surface is a **mirror**: a readout that reflects
+the companion's *current* accumulated standing (it can move in either direction — it is not a game
+ladder you climb). Each axis reads as a descriptive **band**, not a level:
+- **Knowledge:** how much it knows, as its **semantic & episodic** memory and recall expand
+  (*Sparse → Growing → Broad → Deep → Vast*).
+- **Bond:** the depth of your shared **episodic** history — seeded at creation (name, form,
+  temperament) and deepened by in-jokes and accumulated understanding (*New → Acquainted → Familiar
+  → Close → Inseparable*).
+- **Initiative:** how much, and how well, it acts on its **own** — read from its autonomous-work log
+  and how you received those moves (*Hasn't ventured out yet → … → Self-directed*).
+- **Character:** the disposition it has been *raised* into — how distinctly its drive weights have
+  formed away from neutral (*Still forming → … → Strongly formed*), surfaced as its own "Who I've
+  become" card.
 
-> Growth is **derived from accumulated memory**, never an arbitrary score; the companion's emerged
-> personality (the disposition it was *raised* into) is surfaced as its own "who I've become" card,
-> distinct from the relationship axis. Mechanics & realization: `development-plan.md` §3.
+Alongside the axes, a **capabilities** checklist mirrors what the companion has actually been observed
+doing (web research, memory recall, a learned routine, …) — and those capabilities are *used* (a
+learned routine resurfaces when it fits, not just displayed).
+
+> Growth is **derived from accumulated activity**, never an arbitrary score, and the surface never
+> hides a dip — a young or quiet companion reads honestly empty. Mechanics & realization:
+> `development-plan.md` §3; the feeding economy (the one deliberate game loop) is `companion-economy.md`.
 
 ### 5.6 Vitality: Stamina & Energy
 Cobble's thinking runs on a real resource (the AI behind it costs tokens), and the product makes

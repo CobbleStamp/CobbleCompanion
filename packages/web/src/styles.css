@@ -337,7 +337,7 @@ button:disabled {
   gap: 0.5rem;
 }
 
-/* Growth view (Phase 5): four-axis growth, abilities, personality, kitchen. */
+/* Growth view (Phase 5): four mirror axes, capabilities, character, kitchen. */
 .muted {
   color: #6b7280;
   font-size: 0.85rem;
@@ -346,15 +346,6 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 1rem;
-}
-.growth-stage {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-.growth-emoji {
-  font-size: 2.5rem;
-  line-height: 1;
 }
 .axis {
   margin: 0.6rem 0;
@@ -380,7 +371,7 @@ button:disabled {
 .axis-detail {
   margin: 0.2rem 0 0;
 }
-.ability-list {
+.capability-list {
   list-style: none;
   padding: 0;
   margin: 0;
@@ -388,10 +379,10 @@ button:disabled {
   flex-direction: column;
   gap: 0.3rem;
 }
-.ability-list .locked {
+.capability-list .unseen {
   color: #9ca3af;
 }
-.ability-list .unlocked {
+.capability-list .observed {
   color: #111827;
 }
 .evolved-persona {
@@ -402,13 +393,4 @@ button:disabled {
   display: flex;
   gap: 0.5rem;
   flex-wrap: wrap;
-}
-.growth-badge {
-  font-size: 0.8rem;
-  background: #eef2f7;
-  border: none;
-  border-radius: 999px;
-  padding: 0.15rem 0.6rem;
-  cursor: pointer;
-  white-space: nowrap;
 }

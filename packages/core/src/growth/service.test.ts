@@ -6,6 +6,7 @@
 
 import { type Database } from '@cobble/db';
 import { createTestDatabase } from '@cobble/db/testing';
+import { growthReflectionNote } from '@cobble/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DrizzleIdentityStore } from '../identity/store.js';
 import { DrizzleEpisodicMemoryStore } from '../memory/episodic-store.js';
@@ -76,18 +77,18 @@ describe('GrowthService', () => {
     return messages.filter((m) => m.role === 'assistant').map((m) => m.content);
   }
 
-  it('reports a fresh, unformed companion at stage 0', async () => {
+  it('reports a fresh, unformed companion in the empty bands', async () => {
     const dto = await service.snapshot(companionId);
-    expect(dto.overallStage).toBe(0);
-    expect(dto.emoji).toBe(DEFAULT_GROWTH_CONFIG.stageEmoji[0]);
     expect(dto.treats).toBe(DEFAULT_GROWTH_CONFIG.initialTreats);
-    expect(dto.knowledge.level).toBe(0);
-    expect(dto.personality.spread).toBe(0);
-    expect(dto.abilities.every((a) => !a.unlocked)).toBe(true);
+    expect(dto.knowledge.band).toBe('Sparse');
+    expect(dto.bond.band).toBe('New');
+    expect(dto.initiative.band).toBe("Hasn't ventured out yet");
+    expect(dto.character.band).toBe('Still forming');
+    expect(dto.capabilities.every((c) => !c.observed)).toBe(true);
   });
 
-  it('derives axes/abilities from substrate, awards treats, and posts growth notes', async () => {
-    // Knowledge: 4 sources × 3 points = 12 ≥ 10 → level 1, unlocks reading_sources.
+  it('derives axes/capabilities from substrate, awards treats, and posts reflections', async () => {
+    // Knowledge: 4 sources × 3 points = 12 ≥ 10 → band 1 (Growing), observes reading_sources.
     for (let i = 0; i < 4; i += 1) {
       await semantic.createSource(companionId, {
         kind: 'note',
@@ -95,46 +96,54 @@ describe('GrowthService', () => {
         rawText: 'hello world',
       });
     }
-    // Abilities from the tool/procedure/affect/reward logs.
+    // Capabilities from the tool/procedure/affect logs.
     await toolCallLog.record(companionId, 'web_fetch', {}, 'ok');
     await toolCallLog.record(companionId, 'memory_search', {}, 'ok');
     await procedural.record(companionId, 'book a hotel', ['web_fetch', 'ingest_source']);
     await affect.upsert(companionId, { valence: 0.4, note: 'pleased' });
-    await rewards.record(companionId, { drive: 'curiosity' });
 
     const transition = await service.recompute(companionId);
-    expect(transition.knowledgeLevelUps).toBe(1);
-    expect(transition.newAbilities).toContain('reading_sources');
-    expect(transition.newAbilities).toContain('web_research');
+    expect(transition.knowledgeAdvanced).toBe(true);
+    expect(transition.newCapabilities).toContain('reading_sources');
+    expect(transition.newCapabilities).toContain('web_research');
     expect(transition.treatsEarned).toBeGreaterThan(0);
 
     const dto = await service.snapshot(companionId);
-    expect(dto.knowledge.level).toBe(1);
-    expect(dto.abilities.find((a) => a.key === 'web_research')?.unlocked).toBe(true);
-    expect(dto.abilities.find((a) => a.key === 'first_routine')?.unlocked).toBe(true);
+    expect(dto.knowledge.band).toBe('Growing');
+    expect(dto.capabilities.find((c) => c.key === 'web_research')?.observed).toBe(true);
+    expect(dto.capabilities.find((c) => c.key === 'first_routine')?.observed).toBe(true);
     expect(dto.treats).toBe(DEFAULT_GROWTH_CONFIG.initialTreats + transition.treatsEarned);
 
     const notes = await assistantNotes();
-    expect(notes.some((n) => n.includes('Knowledge'))).toBe(true);
+    expect(notes).toContain(growthReflectionNote('knowledge'));
   });
 
-  it('is idempotent — a second recompute neither re-awards treats nor re-posts notes', async () => {
+  it('is idempotent — a second recompute neither re-awards treats nor re-posts reflections', async () => {
     await semantic.createSource(companionId, { kind: 'note', title: 'n', rawText: 'hi' });
     await toolCallLog.record(companionId, 'web_fetch', {}, 'ok');
 
     const first = await service.recompute(companionId);
-    expect(first.newAbilities.length).toBeGreaterThan(0);
+    expect(first.newCapabilities.length).toBeGreaterThan(0);
     const treatsAfterFirst = (await service.snapshot(companionId)).treats;
     const notesAfterFirst = (await assistantNotes()).length;
 
     const second = await service.recompute(companionId);
-    expect(second.newAbilities).toEqual([]);
+    expect(second.newCapabilities).toEqual([]);
     expect(second.treatsEarned).toBe(0);
     expect((await service.snapshot(companionId)).treats).toBe(treatsAfterFirst);
     expect((await assistantNotes()).length).toBe(notesAfterFirst);
   });
 
-  it('surfaces the emerged personality once weights diverge from neutral', async () => {
+  it('reflects an Initiative reading from the proactive-outcome log', async () => {
+    await rewards.record(companionId, { drive: 'curiosity' });
+    const transition = await service.recompute(companionId);
+    expect(transition.initiativeAdvanced).toBe(true);
+    const dto = await service.snapshot(companionId);
+    expect(dto.initiative.band).toBe('Tentative');
+    expect(dto.initiative.detail).toContain('1 self-directed');
+  });
+
+  it('surfaces the emerged character once weights diverge from neutral', async () => {
     await identity.updateDriveWeights(companionId, {
       curiosity: 0.9,
       bond: 0.8,
@@ -144,7 +153,7 @@ describe('GrowthService', () => {
       upkeep: 0.5,
     });
     const dto = await service.snapshot(companionId);
-    expect(dto.personality.spread).toBeGreaterThan(0);
-    expect(dto.personality.weights.curiosity).toBeCloseTo(0.9);
+    expect(dto.character.drives.find((d) => d.key === 'curiosity')?.weight).toBeCloseTo(0.9);
+    expect(dto.character.drives).toHaveLength(6);
   });
 });

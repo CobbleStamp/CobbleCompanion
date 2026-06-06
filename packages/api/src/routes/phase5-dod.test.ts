@@ -15,7 +15,7 @@
  */
 
 import { createProceduralRetrieveContext, DEFAULT_GROWTH_CONFIG } from '@cobble/core';
-import type { GrowthDto } from '@cobble/shared';
+import { growthReflectionNote, type GrowthDto } from '@cobble/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { makeTestApp, silentLogger, type TestApp } from '../test/helpers.js';
 
@@ -67,30 +67,31 @@ describe('Phase 5 DoD — bond & growth', () => {
     await ctx.deps.toolCallLog.record(companionId, 'memory_search', {}, 'ok');
   }
 
-  it('starts unformed at stage 0 with all abilities locked', async () => {
+  it('starts unformed in the empty bands with nothing observed', async () => {
     const growth = await getGrowth();
-    expect(growth.overallStage).toBe(0);
-    expect(growth.emoji).toBe(DEFAULT_GROWTH_CONFIG.stageEmoji[0]);
+    expect(growth.knowledge.band).toBe('Sparse');
+    expect(growth.bond.band).toBe('New');
+    expect(growth.initiative.band).toBe("Hasn't ventured out yet");
+    expect(growth.character.band).toBe('Still forming');
     expect(growth.treats).toBe(DEFAULT_GROWTH_CONFIG.initialTreats);
-    expect(growth.abilities.every((a) => !a.unlocked)).toBe(true);
-    expect(growth.personality.spread).toBe(0);
+    expect(growth.capabilities.every((c) => !c.observed)).toBe(true);
   });
 
-  it('raises the axis + unlocks abilities + awards treats + posts a note (DoD 1+2)', async () => {
+  it('raises the axis + observes capabilities + awards treats + posts a reflection (DoD 1+2)', async () => {
     await seedSubstrate();
     const growth = await getGrowth();
 
-    // Knowledge axis rose; abilities unlocked from real tool/source logs.
-    expect(growth.knowledge.level).toBeGreaterThanOrEqual(1);
-    expect(growth.abilities.find((a) => a.key === 'reading_sources')?.unlocked).toBe(true);
-    expect(growth.abilities.find((a) => a.key === 'web_research')?.unlocked).toBe(true);
-    expect(growth.abilities.find((a) => a.key === 'memory_recall')?.unlocked).toBe(true);
-    expect(growth.abilities.find((a) => a.key === 'multi_step_task')?.unlocked).toBe(true);
+    // Knowledge axis rose; capabilities observed from real tool/source logs.
+    expect(growth.knowledge.band).not.toBe('Sparse');
+    expect(growth.capabilities.find((c) => c.key === 'reading_sources')?.observed).toBe(true);
+    expect(growth.capabilities.find((c) => c.key === 'web_research')?.observed).toBe(true);
+    expect(growth.capabilities.find((c) => c.key === 'memory_recall')?.observed).toBe(true);
+    expect(growth.capabilities.find((c) => c.key === 'multi_step_task')?.observed).toBe(true);
     // Treats were earned beyond the starting balance.
     expect(growth.treats).toBeGreaterThan(DEFAULT_GROWTH_CONFIG.initialTreats);
-    // A growth note landed in the transcript (growth, felt).
+    // A growth reflection landed in the transcript (growth, felt).
     const notes = await assistantNotes();
-    expect(notes.some((n) => n.includes('Knowledge') || n.includes('learned'))).toBe(true);
+    expect(notes).toContain(growthReflectionNote('knowledge'));
   });
 
   it('is idempotent — re-reading growth never double-awards or re-posts (DoD 3)', async () => {
@@ -100,7 +101,7 @@ describe('Phase 5 DoD — bond & growth', () => {
 
     const second = await getGrowth();
     expect(second.treats).toBe(first.treats);
-    expect(second.knowledge.level).toBe(first.knowledge.level);
+    expect(second.knowledge.band).toBe(first.knowledge.band);
     expect((await assistantNotes()).length).toBe(notesAfterFirst);
   });
 

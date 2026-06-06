@@ -38,8 +38,8 @@ note and the open question this raises.
 
 ```
 companion grows  ──►  system mints TREATS  ──►  user spends treats on a FOOD  ──►  food tops up a
-(axis milestone /      (starting balance +       (the Kitchen, POST /feed —          VITALITY pool
- ability observed)      milestone reward)          1 treat per food)                  (stamina / energy)
+(axis band gained /    (starting balance +       (the Kitchen, POST /feed —          VITALITY pool
+ capability observed)   milestone reward)          1 treat per food)                  (stamina / energy)
                                                                                           │
                                                                           powers ◄────────┘
                                                                   conversation (stamina) /
@@ -55,18 +55,18 @@ Treats are a per-companion balance persisted on the `companion_growth` row (sche
 `implementation.md` §1; the column moves only by guarded atomic SQL increment/decrement, never below
 zero). They come from two sources, both centralized in `config.ts` (`DEFAULT_GROWTH_CONFIG`):
 
-| Source                | Constant          | Default | Notes                                                              |
-|-----------------------|-------------------|---------|--------------------------------------------------------------------|
-| Starting balance      | `initialTreats`   | `5`     | Seeded on the row's first creation, so feeding works on day one.   |
-| Per growth milestone  | `treatsPerLevel`  | `2`     | Granted once per axis level gained (knowledge / relationship).     |
-| Per ability observed  | `treatsPerUnlock` | `1`     | Granted once the companion is first observed demonstrating it.     |
+| Source                | Constant              | Default | Notes                                                                       |
+|-----------------------|-----------------------|---------|-----------------------------------------------------------------------------|
+| Starting balance      | `initialTreats`       | `5`     | Seeded on the row's first creation, so feeding works on day one.            |
+| Per growth milestone  | `treatsPerBand`       | `2`     | Granted once per axis band gained (knowledge / bond / initiative).          |
+| Per capability        | `treatsPerCapability` | `1`     | Granted once the companion is first observed demonstrating it.              |
 
 > Values are illustrative of the current defaults; `config.ts` is the canonical, tunable source.
 
 Milestone rewards are awarded **exactly once** per genuine forward step. This is guaranteed by the
-`companion_growth` high-water mark — a compare-and-set on the monotonic levels/stage/unlock-count —
-so two concurrent recomputes (a `GET /growth` and the post-turn `GrowthRunner`) can never
-double-award. The mark's mechanics live in `implementation.md` §1; the growth-derivation pass that
+`companion_growth` high-water mark — a compare-and-set on the monotonic band indices + observed-
+capability set — so two concurrent recomputes (a `GET /growth` and the post-turn `GrowthRunner`) can
+never double-award. The mark's mechanics live in `implementation.md` §1; the growth-derivation pass that
 drives it lives in `packages/core/src/growth/service.ts`.
 
 ## 4. Foods — the catalogue
