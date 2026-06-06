@@ -91,6 +91,12 @@ export const testConfig: AppConfig = {
   devBypassEmail: 'dev@cobble.local',
   port: 0,
   isProduction: false,
+  tracingProvider: 'none',
+  langfusePublicKey: '',
+  langfuseSecretKey: '',
+  langfuseHost: 'https://cloud.langfuse.com',
+  tracingSampleRate: 0,
+  tracingRedact: 'strict',
 };
 
 export interface TestApp {

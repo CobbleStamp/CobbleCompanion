@@ -97,6 +97,44 @@ export {
 export { OpenRouterGateway, type OpenRouterConfig } from './llm/openrouter.js';
 export { FakeLlmGateway, type FakeTurn } from './llm/fake.js';
 
+// Prompt registry (code-as-truth, versioned prompts — guide-prompts.md)
+export {
+  type PromptBuild,
+  type PromptEntry,
+  type PromptId,
+  type PromptRef,
+  type PromptTemplate,
+  type PromptVersion,
+  type RenderedPrompt,
+  contentHash,
+  getPromptEntry,
+  judgeTemplate,
+  type JudgeInput,
+  listPrompts,
+  render,
+  versionOf,
+} from './prompts/index.js';
+
+// Tracing seam (online observability — runbook-tracing.md). The Langfuse adapter
+// lives in the api package; core exposes only the interface, redaction, sampling.
+export {
+  guardedTraceSink,
+  noopTraceSink,
+  type RedactionMode,
+  scrubContent,
+  scrubError,
+  shouldSample,
+  type SpanEnd,
+  type SpanHandle,
+  type SpanKind,
+  type SpanStart,
+  type TraceAttributes,
+  type TraceContent,
+  type TraceHandle,
+  type TraceSink,
+  type TraceStart,
+} from './tracing/index.js';
+
 // Embedding gateway
 export {
   type EmbeddingGateway,

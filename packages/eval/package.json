@@ -3,10 +3,10 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "main": "./src/run.ts",
+  "main": "./src/bin/eval.ts",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "start": "tsx src/run.ts",
+    "start": "tsx src/bin/eval.ts",
     "test": "vitest run"
   },
   "dependencies": {

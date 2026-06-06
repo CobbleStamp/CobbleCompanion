@@ -1,0 +1,52 @@
+name: Eval (nightly, live)
+
+# Live offline eval against real OpenRouter — NOT a per-PR gate (cost +
+# nondeterminism). Runs nightly and on demand; uploads the dataset reports.
+# See docs/howto-run-evals.md.
+on:
+  schedule:
+    - cron: '0 7 * * *' # 07:00 UTC daily
+  workflow_dispatch:
+    inputs:
+      dataset:
+        description: 'Which dataset to run (memory-recall | affect-sense | injection | all)'
+        required: false
+        default: 'all'
+
+permissions:
+  contents: read
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    # Fail fast and loud: if OPENROUTER_API_KEY is absent the eval throws and the
+    # job goes red, so a human notices the misconfiguration immediately. We do
+    # NOT skip silently — a green-but-skipped nightly hides a broken eval.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run live eval
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          EVAL_REPORT_DIR: ${{ github.workspace }}/eval-reports
+        run: pnpm eval --dataset=${{ github.event.inputs.dataset || 'all' }}
+
+      - name: Upload eval reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-reports
+          path: eval-reports/
+          if-no-files-found: ignore

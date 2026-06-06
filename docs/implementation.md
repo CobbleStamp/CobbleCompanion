@@ -341,6 +341,24 @@ semantic arm). Each arm degrades independently. **P3:** the registry's tool list
 the gateway via `LlmStreamParams.tools` (not the prompt text); prior tool-call/result turns are
 replayed into the message array in the OpenAI wire shape.
 
+**Prompt registry (code-as-truth).** The persona, attunement, and every other prompt that defines a
+turn's *instruction* (the system/user message that tells the model what to do) are no longer inline
+strings — each is a typed `PromptTemplate<I>` in `core/src/prompts/catalog/`,
+rendered at its call site via `render(template, input)`. A template carries an `id`, an
+author-declared `semver`, and a pure `build(input)`; `render` stamps the call with a
+`PromptRef = { id, version }` where `version = { semver, contentHash }`. The `contentHash` is a
+sha256 (16 hex) over the rendered output of the template's fixed `sample` — stable across source
+reformatting, sensitive to wording/tool-schema changes, so a reworded prompt that forgot its semver
+bump is caught by the registry drift snapshot. `LlmStreamParams.promptRef` (optional, metadata only —
+never sent to the provider) carries it through `meteredLlmGateway` for metering and tracing; the
+main chat turn is stamped `persona` and also passes `LlmStreamParams.coPromptRefs` — co-occurring
+prompt refs (today the affect-attunement line) recorded as `coPrompts` triples on the `llm_call` span
+so the stamp describes the whole call, not just the primary prompt (`coPromptRefs(affect)`,
+`harness/context.ts`). **Deliberate exclusion:** the episodic and semantic *retrieval context blocks*
+(`harness/episodic-retrieve.ts`, `harness/semantic-retrieve.ts`) are not registry templates — they
+are fenced, untrusted *data* assembled per turn, not instructions, so each keeps its inline sentinel
+fencing. The how-to (changing/adding a prompt) lives in `guide-prompts.md`.
+
 ### 2.3 Turn & loop mechanics (Phases 0–3)
 
 - A **turn** = one streamed LLM call; the gateway returns a `StreamResult { usage, toolCalls }`. With
@@ -397,6 +415,19 @@ Loaded from environment / a secret manager; required values validated at startup
 | `USE_CONTEXT_HEADER` | `true` (default) \| `false` — prefix the Pass-2 context header onto embedding inputs (the eval A/B knob, `companionmemory.md` §5) |
 | `TOKEN_CAP_PER_DAY` | Per-user daily token cap (LLM + embedding) — the cost guardrail across all routes; fixed daily UTC window, overage carries as clamped debt (default 1 000 000). Per-account override → `user_token_usage.cap_override` |
 | `INGESTION_QUEUE_MAX` | Backstop cap on queued+in-flight ingestion runs across all owners; submissions past it get 429 (default 100) |
+| `TRACING_PROVIDER` | Online tracing backend: `none` (default) \| `langfuse` (`runbook-tracing.md`) |
+| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | Langfuse credentials (secret; required when `TRACING_PROVIDER=langfuse`) |
+| `LANGFUSE_HOST` | Langfuse base URL (default `https://cloud.langfuse.com`) — **HTTPS only** (it carries the keys + payload); `http://` permitted solely for `localhost` |
+| `TRACING_SAMPLE_RATE` | Fraction of turns traced, deterministic per trace id, `0`–`1` (default `0` — nothing sent until raised) |
+| `TRACING_REDACT` | `strict` (default, metadata only — no content) \| `metadata_only` (same as `strict` today) \| `off` (sends content with a defensive PII/secret scrub) |
+
+**Tracing seam (Phase C).** The harness opens one `TraceSink` trace per turn and nests
+`assemble_context` / `llm_call` (one per call, via `meteredLlmGateway`, stamped with the
+`promptRef` + token usage) / `tool_call` spans. `TraceSink` (`core/src/tracing`) mirrors the
+`Logger`/`UsageSink` seam — no-op by default, wrapped in `guardedTraceSink` so a sink fault never
+breaks a turn. The Langfuse Cloud adapter (`api/src/tracing/langfuse-sink.ts`) applies deterministic
+sampling + content redaction (`scrubContent`) before any third-party export. Operational + privacy
+detail: `runbook-tracing.md`.
 
 **P3 tuning constants** are in-code defaults (not secrets, so not env-wired): the loop ceilings
 `DEFAULT_MAX_TOOL_ITERATIONS` (default 6) + the optional per-run token budget (`harness.ts`,

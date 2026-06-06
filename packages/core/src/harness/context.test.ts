@@ -1,6 +1,6 @@
 import type { CompanionDto } from '@cobble/shared';
 import { describe, expect, it } from 'vitest';
-import { affectAttunementLine, assembleContext, buildPersona } from './context.js';
+import { affectAttunementLine, assembleContext, buildPersona, coPromptRefs } from './context.js';
 
 const companion: CompanionDto = {
   id: 'c1',
@@ -75,6 +75,22 @@ describe('assembleContext', () => {
   it('omits attunement for a neutral/empty mood read', () => {
     expect(assembleContext(companion, [], { valence: 0, note: '' })).toHaveLength(1);
     expect(assembleContext(companion, [], null)).toHaveLength(1);
+  });
+});
+
+describe('coPromptRefs', () => {
+  // The trace co-prompt list must track the SAME predicate assembleContext uses
+  // to push the attunement line, or the stamp drifts from what was actually sent.
+  it('lists the attunement ref exactly when a mood note is present', () => {
+    const refs = coPromptRefs({ valence: -0.6, note: 'frustrated, terse' });
+    expect(refs).toHaveLength(1);
+    expect(refs[0]?.id).toBe('affect-attunement');
+  });
+
+  it('is empty for a neutral/empty/absent mood read', () => {
+    expect(coPromptRefs({ valence: 0, note: '' })).toHaveLength(0);
+    expect(coPromptRefs(null)).toHaveLength(0);
+    expect(coPromptRefs(undefined)).toHaveLength(0);
   });
 });
 

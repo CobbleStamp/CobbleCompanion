@@ -7,6 +7,7 @@
  */
 
 import type { LlmGateway, LlmMessage, StreamResult } from './llm/gateway.js';
+import type { TraceHandle } from './tracing/trace-sink.js';
 
 /** Prompt/completion/total token counts for one LLM or embedding call. */
 export interface TokenUsage {
@@ -86,13 +87,49 @@ function promptText(messages: readonly LlmMessage[]): string {
  * Either way the inner stream's `.return()` is invoked so it cancels its
  * connection — manual iteration does not forward that automatically.
  */
-export function meteredLlmGateway(inner: LlmGateway, sink: UsageSink): LlmGateway {
+export function meteredLlmGateway(
+  inner: LlmGateway,
+  sink: UsageSink,
+  trace?: TraceHandle,
+): LlmGateway {
   return {
     async *stream(params) {
       const iterator = inner.stream(params);
+      // Open an llm_call span (no-op unless a real trace is wired). The prompt
+      // version is metadata; the messages are redactable content. The span is
+      // closed in `finally` with the call's usage + any error.
+      const span = trace?.startSpan({
+        kind: 'llm_call',
+        name: params.model,
+        attributes: {
+          model: params.model,
+          ...(params.promptRef
+            ? {
+                promptId: params.promptRef.id,
+                promptSemver: params.promptRef.version.semver,
+                promptHash: params.promptRef.version.contentHash,
+              }
+            : {}),
+          // Co-occurring prompts (e.g. the affect-attunement line beside the
+          // persona) so the stamp describes the whole call, not just the
+          // primary prompt. One triple per co-prompt; omitted when there are none.
+          ...(params.coPromptRefs && params.coPromptRefs.length > 0
+            ? {
+                coPrompts: params.coPromptRefs.map((ref) => ({
+                  promptId: ref.id,
+                  promptSemver: ref.version.semver,
+                  promptHash: ref.version.contentHash,
+                })),
+              }
+            : {}),
+        },
+        content: { messages: params.messages },
+      });
       let settled = false; // saw the terminating return value (clean completion)
       let faulted = false; // the inner stream threw — a provider/infra fault
       let streamedText = '';
+      let usage: TokenUsage = ZERO_USAGE;
+      let faultError: unknown;
       try {
         for (;;) {
           let step: IteratorResult<string, StreamResult>;
@@ -100,11 +137,13 @@ export function meteredLlmGateway(inner: LlmGateway, sink: UsageSink): LlmGatewa
             step = await iterator.next();
           } catch (error) {
             faulted = true;
+            faultError = error;
             throw error;
           }
           if (step.done) {
             const result = step.value ?? ZERO_STREAM_RESULT;
             sink.add(result.usage);
+            usage = result.usage;
             settled = true;
             return result;
           }
@@ -113,10 +152,25 @@ export function meteredLlmGateway(inner: LlmGateway, sink: UsageSink): LlmGatewa
         }
       } finally {
         if (!settled && !faulted) {
-          sink.add(estimateUsage(promptText(params.messages), streamedText));
+          usage = estimateUsage(promptText(params.messages), streamedText);
+          sink.add(usage);
         }
+        span?.end({
+          attributes: {
+            promptTokens: usage.promptTokens,
+            completionTokens: usage.completionTokens,
+            totalTokens: usage.totalTokens,
+          },
+          content: { output: streamedText },
+          ...(faulted ? { error: errorMessage(faultError) } : {}),
+        });
         await iterator.return?.(ZERO_STREAM_RESULT).catch(() => undefined);
       }
     },
   };
+}
+
+/** A safe string for a thrown value (no secrets — just the message/type). */
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

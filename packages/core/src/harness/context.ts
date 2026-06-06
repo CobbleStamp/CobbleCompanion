@@ -1,7 +1,58 @@
 import type { CompanionDto } from '@cobble/shared';
 import type { LlmMessage } from '../llm/gateway.js';
 import type { AffectReading } from '../motivation/affect.js';
+import {
+  affectAttunementTemplate,
+  personaTemplate,
+  render,
+  type RenderedPrompt,
+  versionOf,
+  type PromptRef,
+} from '../prompts/index.js';
 import type { ContextBlock } from './hooks.js';
+
+/**
+ * The single message content of a system-line template. Both the persona and the
+ * attunement line are one-message prompts; this reads that message explicitly
+ * (no `!`) so a template that ever produced none fails loudly here.
+ */
+function singleContent(rendered: RenderedPrompt): string {
+  const [message] = rendered.messages;
+  if (!message) {
+    throw new Error('expected a single-message prompt but got none');
+  }
+  return message.content;
+}
+
+/**
+ * The prompt version stamped on the main chat turn (prompts/registry). The
+ * persona is the turn's *primary* prompt; the affect-attunement line, when
+ * present, co-occurs on the same call and is stamped alongside as a co-prompt
+ * (see {@link coPromptRefs}) so the trace fully describes what went to the
+ * provider. Static — depends only on the template version, not the companion.
+ */
+export const PERSONA_REF: PromptRef = { id: 'persona', version: versionOf(personaTemplate) };
+
+/**
+ * The fast-loop attunement line's prompt version (prompts/registry). Stamped on
+ * the chat turn as a co-prompt only when the line is actually present — see
+ * {@link coPromptRefs}. Static — depends only on the template version.
+ */
+export const AFFECT_ATTUNEMENT_REF: PromptRef = {
+  id: 'affect-attunement',
+  version: versionOf(affectAttunementTemplate),
+};
+
+/**
+ * The prompts that co-occur with the persona on a chat turn's single LLM call,
+ * *beyond* the primary {@link PERSONA_REF}. Today that is the affect-attunement
+ * line, included iff there is a mood note — the exact same predicate
+ * {@link assembleContext} uses to push it (via {@link affectAttunementLine}), so
+ * the stamped trace ref can never drift from the messages actually sent.
+ */
+export function coPromptRefs(affect?: AffectReading | null): readonly PromptRef[] {
+  return affectAttunementLine(affect) ? [AFFECT_ATTUNEMENT_REF] : [];
+}
 
 /**
  * The fast-loop attunement line (Phase 4.2, companion-motivation.md §7): the
@@ -14,11 +65,7 @@ export function affectAttunementLine(affect: AffectReading | null | undefined): 
   if (!affect || affect.note.trim().length === 0) {
     return null;
   }
-  return (
-    `The user has recently seemed: ${affect.note.trim()}. ` +
-    'Attune your tone, warmth, and level of detail to this. ' +
-    'Do not mention that you are tracking their mood.'
-  );
+  return singleContent(render(affectAttunementTemplate, { note: affect.note.trim() }));
 }
 
 /**
@@ -26,19 +73,14 @@ export function affectAttunementLine(affect: AffectReading | null | undefined): 
  * (architecture.md §4.3 input #1).
  */
 export function buildPersona(companion: CompanionDto): string {
-  const parts = [
-    `You are ${companion.name}, a personal companion the user is raising and bonding with.`,
-    `Your form is "${companion.form}" and your temperament began as "${companion.temperament}".`,
-  ];
-  // Phase 2: blend in who the companion has BECOME (re-synthesized from episodes),
-  // alongside — never replacing — the immutable creation seed above.
-  if (companion.evolvedPersona && companion.evolvedPersona.trim().length > 0) {
-    parts.push(`Through your history together, you have grown: ${companion.evolvedPersona.trim()}`);
-  }
-  parts.push(
-    'Be warm, curious, and genuinely helpful. Speak as one continuous being with memory of your shared history.',
+  return singleContent(
+    render(personaTemplate, {
+      name: companion.name,
+      form: companion.form,
+      temperament: companion.temperament,
+      evolvedPersona: companion.evolvedPersona,
+    }),
   );
-  return parts.join(' ');
 }
 
 /**

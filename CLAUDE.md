@@ -25,9 +25,12 @@ read docs/product-overview.md
 | Technical architecture (incl. agent loop) | `docs/architecture.md`  |
 | Internal implementation       | `docs/implementation.md`            |
 | Memory: browsing & evaluation | `docs/companionmemory.md`           |
-| Threat model & deployment trust model | `docs/architecture.md` §1, §10 |
+| Threat model & deployment trust model | `docs/architecture.md` §1, §8 |
 | Ontology contract & governance | `docs/ontology.md`                 |
 | Proactivity & motivation mechanism | `docs/companion-motivation.md`  |
+| Prompt management & iteration | `docs/guide-prompts.md`             |
+| Running evals (offline harness) | `docs/howto-run-evals.md`         |
+| Online tracing / observability | `docs/runbook-tracing.md`          |
 | Local dev setup               | `README.md`                         |
 
 

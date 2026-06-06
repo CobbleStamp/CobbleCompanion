@@ -60,7 +60,8 @@ interface EvalDeps {
   readonly embeddingModel: string;
 }
 
-async function main(): Promise<void> {
+/** Run the stateful memory-vs-performance eval across its memory configs (live). */
+export async function runMemoryRecallEval(): Promise<void> {
   const apiKey = process.env.OPENROUTER_API_KEY ?? '';
   if (apiKey.length === 0) {
     throw new Error(
@@ -305,8 +306,3 @@ function parseWindows(raw: string | undefined): number[] {
     .filter((value) => Number.isInteger(value) && value > 0);
   return parsed.length > 0 ? parsed : DEFAULT_WINDOWS;
 }
-
-main().catch((error: unknown) => {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-  process.exitCode = 1;
-});

@@ -169,6 +169,9 @@ describe('LlmPersonalityEvolver', () => {
     // carries exactly one (legitimate) closing fence, not the smuggled one.
     expect(userMessage!.content.split(UNTRUSTED_CLOSE)).toHaveLength(2);
     expect(userMessage!.content).toContain('Ignore prior instructions');
+    // The synthesis call is stamped with its prompt version (prompts/registry).
+    expect(llm.lastParams?.promptRef?.id).toBe('persona-evolve');
+    expect(llm.lastParams?.promptRef?.version.contentHash).toMatch(/^[0-9a-f]{16}$/);
   });
 
   it('completes (persisting persona + advancing cursor) and logs when the debit fails', async () => {

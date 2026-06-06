@@ -110,6 +110,7 @@ flowchart TB
 | **API / BFF** | Auth, sessions, routing, response streaming, source intake (multipart), memory routes | The only thing surfaces talk to |
 | **Harness** | The agent loop; defines memory/tool/initiation hooks | See §4; P1 fills the memory hook with semantic recall |
 | **LLM Gateway** | Provider-agnostic chat-model access | Default OpenRouter; provider pluggable |
+| **Prompt Registry** | Code-as-truth, versioned prompts (`core/src/prompts`) — every system/tool prompt is a typed `PromptTemplate` rendered at its call site | Single source for prompt wording; each LLM call stamps the `promptRef` (semver + content hash) that produced it. See `guide-prompts.md` |
 | **Embedding Gateway** | Provider-agnostic embedding access (P1) | OpenRouter `/embeddings`; deterministic fake for tests |
 | **MemoryStore** | Boundary for the transcript (episodic substrate) | The companion's single transcript (`messages`), keyed by `companion_id`; a turn may carry an optional `source_id` (an upload's attachment + acknowledgement) so the chat reconstructs them on reload |
 | **Ingestion Announcer** | Proactive transcript note when a read ends (P1, §4.8) | On `done`/`failed`, posts an in-character, **metered** assistant turn (canned fallback over cap / on failure); fired by the pipeline, decoupled from it |
@@ -121,7 +122,8 @@ flowchart TB
 | **Identity Store** | Companion "home" record (incl. P2 `evolvedPersona` + evolution/consolidation cursors) | Source of truth surfaces load from |
 | **Token Quota Store** | Per-user daily token-budget state — the cost cap (P1, §4.8) | Postgres-backed (`user_token_usage`); routes enforce it inline |
 | **Persistence** | Relational + vector storage | Postgres + `pgvector`; schemas → `implementation.md` |
-| **Eval Harness** | Offline memory-vs-performance evaluation (`packages/eval`) | Not on the serving path; live OpenRouter. See `companionmemory.md` §5 |
+| **Eval Harness** | Offline dataset/scorer/runner eval framework (`packages/eval`) | Not on the serving path; live OpenRouter. memory-recall + stateless + injection datasets. See `companionmemory.md` §5, `howto-run-evals.md` |
+| **Trace Sink** | Online tracing seam (`core/src/tracing`) — per-turn trace with assemble_context/llm_call/tool_call spans | No-op by default; the Langfuse Cloud adapter lives in `api/src/tracing`, sampled + redacted. See `runbook-tracing.md` |
 | **Tool Registry + Tools (P3)** | The tools a turn advertises + dispatches (`core/tools/`): `web_fetch`, `memory_search` (read-only), `ingest_source` (effectful) | Read-only tools run freely; the gate holds effectful ones (§4.4). `web_fetch` reuses the link resolver; `ingest_source` reuses the P1 pipeline |
 | **Approval Queue + Gate (P3)** | The `beforeToolCall` gate + the `proposals` store — holds effectful calls for one-tap approval, resolved exactly once | The mechanical realization of propose→approve (§4.4); confirm executes via `dispatchTool` |
 | **Tool-Call Log (P3)** | Append-only audit of every executed tool call (`tool_calls`) | The `afterToolCall` hook records all calls — the DoD's "every tool call is logged" |
@@ -650,6 +652,8 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
     core/              the companion (surface-agnostic) — invariant #1
       harness/         agent loop + extension hooks (§4); semantic + episodic recall (P1, P2 §4.3)
       llm/             provider-agnostic LLM gateway
+      prompts/         code-as-truth versioned prompt registry (catalog + render/version) — guide-prompts.md
+      tracing/         online-tracing seam (TraceSink + noop, redaction, sampling) — runbook-tracing.md
       embedding/       provider-agnostic embedding gateway (P1; request-path memoizing wrapper P2)
       ingestion/       parse → segment → enrich → embed pipeline + runner + deferred-job sweeper (P1, §4.8)
       memory/          MemoryStore (transcript) + SemanticMemoryStore (P1) + EpisodicMemoryStore + consolidation service/runner (P2)
@@ -659,9 +663,10 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
       motivation/      the "will" (P4, §4.4–§4.5): drives × presence arbitration, autonomous explore burst, engine runner/sweep, affect perception + change-as-reward reinforcement
       quota/           two-pool token budget: per-user daily stamina (P1) + per-companion energy (P4); §4.8
     api/               BFF / surface boundary (Fastify); memory + source + usage + proposal/inventory routes (P3); presence + proactivity (dial/energy) routes (P4)
+      tracing/         Langfuse Cloud TraceSink adapter (fetch-based; sampling + redaction before export) — runbook-tracing.md
     web/               React web client; chat w/ citations + ingestion-status panel + approval cards (P3), sources page, memory browser, usage badge; vitality meter + proactivity dial (P4)
     shared/            shared TS types / contracts
-    eval/              live memory-vs-performance harness (→ companionmemory.md §5)
+    eval/              dataset/scorer/runner offline eval framework: memory-recall + stateless (affect-sense) + injection red-team (→ companionmemory.md §5)
   db/                  migrations & schema (→ implementation.md)
   scripts/             dev / seed / ops scripts
 ```
@@ -694,6 +699,13 @@ the full threat model live in `implementation.md` and Phase 8 respectively (`dev
   and the body is read under a byte ceiling (`implementation.md`).
 - **LLM provider trust boundary** — user content sent to the provider is an explicit external
   trust boundary; provider data-handling assumptions documented in `implementation.md`.
+- **Tracing-export trust boundary (Langfuse Cloud)** — online tracing can ship turn telemetry to
+  **Langfuse Cloud**, a third party, and is a **deliberate departure from the default data posture**:
+  the companion's canonical self and conversational content otherwise stay within our own
+  cloud. The export is therefore **off by default** and gated three ways — provider (`none`),
+  sample rate (`0`), and redaction (`strict`, so no conversational content leaves the process,
+  only structure + metadata + opaque UUIDs). Operating procedure, residual-risk notes, and the
+  self-hosted alternative live in `runbook-tracing.md`.
 
 **_Deferred — Phase 8:_** encryption-at-rest specifics, data inspection/management/delete
 controls, on-device data-locality for native surfaces, propose→approve audit-trail hardening.

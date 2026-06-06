@@ -16,6 +16,7 @@ import type { IdentityStore } from '../identity/store.js';
 import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import type { MemoryStore } from '../memory/store.js';
+import { ingestionAnnounceTemplate, render } from '../prompts/index.js';
 import type { TokenQuotaStore } from '../quota/stamina-store.js';
 import { createUsageAccumulator, meteredLlmGateway } from '../usage.js';
 
@@ -100,25 +101,19 @@ export class LlmIngestionAnnouncer implements IngestionAnnouncer {
   ): Promise<string> {
     const usage = createUsageAccumulator();
     const llm = meteredLlmGateway(this.options.llm, usage.sink);
-    const system =
-      `You are ${companion.name}, ${companion.form}. Your temperament: ${companion.temperament}. ` +
-      `You speak directly, in your own voice, to the person you accompany.`;
-    const user =
-      outcome.outcome === 'done'
-        ? `You've just finished reading the document they shared, titled "${outcome.sourceTitle}". ` +
-          `Send a brief, in-character heads-up (one or two sentences) that you're done and can now ` +
-          `answer questions about it. Plain text only, no markdown.`
-        : `You tried to read the document they shared, titled "${outcome.sourceTitle}", but ran into ` +
-          `trouble and couldn't finish. Send a brief, in-character note (one or two sentences) letting ` +
-          `them know, and gently suggest they try uploading it again. Plain text only, no markdown.`;
+    const prompt = render(ingestionAnnounceTemplate, {
+      name: companion.name,
+      form: companion.form,
+      temperament: companion.temperament,
+      sourceTitle: outcome.sourceTitle,
+      outcome: outcome.outcome,
+    });
 
     let text = '';
     for await (const delta of llm.stream({
       model: this.options.model,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: user },
-      ],
+      messages: prompt.messages,
+      promptRef: prompt.ref,
     })) {
       text += delta;
     }

@@ -91,6 +91,9 @@ describe('LlmIngestionAnnouncer', () => {
     // The persona drives the system prompt; the title reaches the instruction.
     expect(llm.lastParams?.messages[0]?.content).toContain('Pebble');
     expect(llm.lastParams?.messages[1]?.content).toContain('Peru book');
+    // The call is stamped with its prompt version (prompts/registry) for tracing.
+    expect(llm.lastParams?.promptRef?.id).toBe('ingestion-announce');
+    expect(llm.lastParams?.promptRef?.version.contentHash).toMatch(/^[0-9a-f]{16}$/);
     // Generation spent tokens, so the owner was debited (positive amount).
     expect(quota.recorded.length).toBe(1);
     expect(quota.recorded[0]!).toBeGreaterThan(0);

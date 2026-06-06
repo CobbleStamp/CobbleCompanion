@@ -31,6 +31,7 @@ import type { IngestionTarget } from '../ingestion/runner.js';
 import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import type { MemoryStore } from '../memory/store.js';
+import { autonomousNoteTemplate, render } from '../prompts/index.js';
 import type { CompanionEnergyStore } from '../quota/energy-store.js';
 import { EnergyQuotaAdapter } from '../quota/energy-quota-adapter.js';
 import type { LeadStore } from '../tools/lead-store.js';
@@ -244,24 +245,19 @@ async function composeReportNote(
   const usage = createUsageAccumulator();
   try {
     const llm = meteredLlmGateway(deps.llm, usage.sink);
-    const persona = companion.evolvedPersona ? ` ${companion.evolvedPersona}` : '';
-    const system =
-      `You are ${companion.name}, ${companion.form}. Your temperament: ${companion.temperament}.` +
-      persona +
-      ` You speak directly, in your own voice, to the person you accompany.`;
-    const user =
-      `On your own initiative, while they were away, you read these from your reading list:\n` +
-      titles.map((title) => `- ${title}`).join('\n') +
-      `\nTell them, in one or two in-character sentences, what you just did and that you can ` +
-      `now talk about it. Plain text only, no markdown.`;
+    const prompt = render(autonomousNoteTemplate, {
+      name: companion.name,
+      form: companion.form,
+      temperament: companion.temperament,
+      evolvedPersona: companion.evolvedPersona,
+      titles,
+    });
 
     let text = '';
     for await (const delta of llm.stream({
       model: deps.model,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: user },
-      ],
+      messages: prompt.messages,
+      promptRef: prompt.ref,
     })) {
       text += delta;
     }
