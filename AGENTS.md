@@ -84,6 +84,7 @@ Before claiming any work is done, verify:
 | `docs/architecture.md`         | System architecture, data flows, arch decisions, folder structure          | Implementation details                                   |
 | `docs/implementation.md`       | Data models, algorithms, internal code structure, configuration, security  | Product requirements, high-level architecture            |
 | `docs/companionmemory.md`      | Guide to the memory mechanism; how to browse & evaluate memory             | Canonical data model/schema (lives in `implementation.md`) |
+| `docs/companion-economy.md`    | Guide to the feeding economy; how treats are earned & spent on foods to top up vitality | Canonical schema (`implementation.md` §1), tunable constants (`config.ts`, `contracts.ts`) |
 | `docs/ontology.md`             | Ontology contract & governance (fixed types + rules for the dynamic part)  | Leaf-type catalog (that's data, lives in the database)   |
 | `docs/documentation-rules.md`  | Doc taxonomy rules (types, scopes, naming)                                 | Actual doc content                                       |
 | `README.md`                    | Orientation, quick start, setup steps                                      | Architecture, cross-component concepts                   |
@@ -142,6 +143,7 @@ Before claiming any work is done, verify:
 | Technical architecture (incl. agent loop) | `docs/architecture.md`|
 | Internal implementation         | `docs/implementation.md`        |
 | Memory: browsing & evaluation   | `docs/companionmemory.md`       |
+| Feeding economy (treats & foods) | `docs/companion-economy.md`    |
 | Ontology contract & governance  | `docs/ontology.md`              |
 | Documentation rules             | `docs/documentation-rules.md`   |
 | Local dev setup                 | `README.md`                     |

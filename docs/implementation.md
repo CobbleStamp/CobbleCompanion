@@ -286,7 +286,9 @@ Presence is **not** a table — it is a volatile, heartbeat-fed in-memory signal
   recompute, seeded with `initialTreats` so feeding works on day one. `treats` moves by atomic SQL
   increment (milestone reward) / guarded decrement (feeding, never below zero) — mirrors the energy
   top-up. Growth curves, the abilities catalogue, food grants, and treat rewards are centralized in
-  `core/src/growth/config.ts` (`DEFAULT_GROWTH_CONFIG`) — no scattered literals.
+  `core/src/growth/config.ts` (`DEFAULT_GROWTH_CONFIG`) — no scattered literals. For the
+  earn→spend **feeding economy** these constants drive (treats, foods, the feed flow), see
+  `companion-economy.md`.
 
 **_Deferred:_** onboarding personality seed (weights kept neutral so the emerged-personality card
 stays *earned*); deeper RL policy beyond the v1 additive change-as-reward nudge. Added via new migrations.
