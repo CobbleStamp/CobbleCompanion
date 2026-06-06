@@ -698,6 +698,13 @@ the full threat model live in `implementation.md` and Phase 8 respectively (`dev
   and the body is read under a byte ceiling (`implementation.md`).
 - **LLM provider trust boundary** — user content sent to the provider is an explicit external
   trust boundary; provider data-handling assumptions documented in `implementation.md`.
+- **Tracing-export trust boundary (Langfuse Cloud)** — online tracing can ship turn telemetry to
+  **Langfuse Cloud**, a third party, and is a **deliberate departure from the default data posture**:
+  the companion's canonical self and conversational content otherwise stay within our own
+  cloud. The export is therefore **off by default** and gated three ways — provider (`none`),
+  sample rate (`0`), and redaction (`strict`, so no conversational content leaves the process,
+  only structure + metadata + opaque UUIDs). Operating procedure, residual-risk notes, and the
+  self-hosted alternative live in `runbook-tracing.md`.
 
 **_Deferred — Phase 8:_** encryption-at-rest specifics, data inspection/management/delete
 controls, on-device data-locality for native surfaces, propose→approve audit-trail hardening.

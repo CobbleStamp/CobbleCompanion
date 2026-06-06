@@ -15,7 +15,7 @@ is `packages/api/src/tracing/langfuse-sink.ts`, which ships to **Langfuse Cloud*
 ## ⚠️ Privacy posture (read before enabling)
 
 Langfuse Cloud is a **third party**. This is a deliberate departure from the
-default data posture (`architecture.md` §10), so the export is gated three ways
+default data posture (`architecture.md` §8), so the export is gated three ways
 and defaults to fully off:
 
 - **`TRACING_PROVIDER=none`** (default) → the no-op sink; nothing is emitted.
