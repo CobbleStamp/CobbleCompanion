@@ -39,6 +39,9 @@ export interface AppConfig {
    * runtime tool acquisition off, so behaviour is unchanged unless servers are listed.
    */
   readonly mcpServers: readonly McpWhitelistEntry[];
+  /** Max tools a companion may carry equipped at once; the LRU evicts beyond it
+   *  (companion-tools.md §4). Only meaningful when `mcpServers` is non-empty. */
+  readonly maxEquippedTools: number;
   readonly appUrl: string;
   readonly authMode: AuthMode;
   readonly googleClientId: string;
@@ -79,6 +82,9 @@ const envSchema = z
     // The MCP server whitelist as a JSON array (companion-tools.md §6); default
     // empty so runtime tool acquisition is off unless an operator lists servers.
     MCP_SERVERS: z.string().default('[]'),
+    // Max tools a companion carries equipped at once (companion-tools.md §4); the
+    // LRU evicts the least-recently-used tool beyond this.
+    MAX_EQUIPPED_TOOLS: z.coerce.number().int().positive().default(8),
     APP_URL: z.string().url().default('http://localhost:3001'),
     AUTH_MODE: z.enum(['google', 'dev_bypass']).default('google'),
     // Public OAuth Web client ID — shipped to the browser, not a secret.
@@ -186,6 +192,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     ingestionQueueMax: parsed.INGESTION_QUEUE_MAX,
     tokenCapPerDay: parsed.TOKEN_CAP_PER_DAY,
     mcpServers: parseMcpServers(parsed.MCP_SERVERS),
+    maxEquippedTools: parsed.MAX_EQUIPPED_TOOLS,
     appUrl: parsed.APP_URL,
     authMode: parsed.AUTH_MODE,
     googleClientId: parsed.GOOGLE_CLIENT_ID,

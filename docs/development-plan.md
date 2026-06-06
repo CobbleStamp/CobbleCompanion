@@ -347,37 +347,50 @@ Lets the companion's toolset **grow at runtime without code or redeploy** — it
 primitive abilities, complementing procedural memory, which *combines* the ones it has. A
 server-host capability track, **independent of** the native-surface phases (6–8). Full design,
 trust model, and security: `companion-tools.md`; architecture placement: `architecture.md` §9;
-implementation design: `implementation.md` §6. Both phases share one spine — generic primitives, a
-per-companion **dynamic tool/connection registry** (composed behind the existing registry interface,
-no loop change — invariant #3), and a retrieval **tool-arm** on the `RetrieveContext` hook
-(`architecture.md` §4.3). The trust model is the **developer's whitelist**: whitelisted + valid →
-runs free; otherwise denied — a separate system from propose→approve, which still governs outward
-actions (`architecture.md` §4.4).
+implementation design: `implementation.md` §6. Both phases share one spine — generic executors plus
+**`search_tools`**/**`load_tool`** discovery meta-tools; a **catalog** of whitelisted tools indexed
+off-context; a per-companion **equipped set** loaded on demand; and a **dynamic registry resolved
+per model step** so a mid-turn `load_tool` is callable on the next loop iteration (loop shape
+unchanged — invariant #3). The companion **discovers and loads only the tools a job needs** rather
+than carrying every tool in context, so the catalog scales to many servers. The trust model is the
+**developer's whitelist** (it defines the catalog): whitelisted + valid → runs free; otherwise
+denied — a separate system from propose→approve, which still governs outward actions
+(`architecture.md` §4.4).
 
 ### Phase 9 — Runtime Tool Acquisition: MCP
 **Goal:** a developer can whitelist an HTTP MCP server and the companion uses its tools at runtime —
-no code change, no redeploy — retrieving the right server when a turn calls for it.
+no code change, no redeploy — **discovering and loading** the right tool when a turn calls for it,
+without carrying every tool in context.
 
 **Scope**
-- Refactor the static boot registry into a **composition of capability sources** (native + MCP)
-  behind the unchanged `list()`/`get()` interface (invariant #3, no loop change).
-- **HTTP/SSE MCP client + adapter:** `initialize` + `tools/list` on connect; adapt each MCP tool to
-  the existing `Tool` interface; proxy `tools/call`; results re-enter context as **untrusted**
-  (injection-hardened like §2.1 grounding).
-- **`connect_mcp`** primitive (developer-whitelisted servers only) + a per-companion **connection
-  registry**, persisted and rebuilt at startup (endpoint, auth-secret *reference*, `tools/list`
-  snapshot, status).
-- **Retrieval tool-arm** surfacing the relevant connected server(s)/tool(s) per turn, so a turn
-  advertises the generic limbs + a retrieved shortlist rather than every tool.
-- **Trust/security:** developer whitelist → binary allow/deny; **HTTP/SSE only**, SSRF-guarded; no
-  stdio; credentials via the secret manager (never stored/sent to the model).
+- Refactor the static boot registry into a **composition of capability sources** (core + equipped),
+  behind the unchanged `list()`/`get()` interface, **resolved per model step** so a `load_tool` is
+  callable on the next loop iteration (loop shape unchanged — invariant #3).
+- **Tool catalog:** index every whitelisted server's tools as **lightweight entries** (id, name,
+  one-line description — no argument schemas), off-context; refreshed on whitelist change.
+- **`search_tools`** (cheap off-loop LLM lookup over the catalog → ranked candidate ids) +
+  **`load_tool`** (connect server if needed; fetch the **fresh** schema; equip it).
+- **HTTP/SSE MCP client + adapter:** `initialize` + `tools/list`; adapt each MCP tool to the existing
+  `Tool` interface; proxy `tools/call`; results re-enter context as **untrusted** (injection-hardened
+  like §2.1 grounding).
+- **Per-companion equipped set + connection registry**, persisted and rebuilt at startup (endpoint,
+  auth-secret *reference*, last fetched schema, status): a single tier bounded by `maxEquippedTools`
+  (LRU eviction). The fixed *core* tools live in code, never in this set. **Promotion = proactive
+  loading**: a recalled procedural routine names the tools it needs that aren't equipped, and the
+  companion `load_tool`s them up front — anticipation, not a frequency-pinned tier.
+- **Trust/security:** developer whitelist defines the catalog → binary allow/deny; **HTTP/SSE only**,
+  SSRF-guarded; no stdio; credentials via the secret manager (never stored/sent to the model).
 
-**Done when:** a developer whitelists an HTTP MCP server; the companion connects and the connection
-**survives a restart**; on a relevant user turn it **retrieves and calls** a tool from that server; an
-**off-whitelist** server is denied; `tools/call` results are sanitized as untrusted; every call is
-logged (`tool_calls`).
+**Done when:** a developer whitelists an HTTP MCP server; on a relevant user turn the companion
+**`search_tools` → `load_tool` → calls** a tool from that server, the loaded tool becoming callable
+on the next loop iteration; the equipped tool/connection **survives a restart**; an **off-whitelist**
+server never appears in the catalog and cannot be loaded; the catalog scales to many servers without
+inflating per-turn context; `tools/call` results are sanitized as untrusted; every call is logged
+(`tool_calls`).
 
-**Key risks:** per-turn tool-list explosion (mitigated by the retrieval shortlist), server
+**Key risks:** discovery latency (search→load adds round-trips — mitigated by proactive loading of a
+recalled routine's tools before the job starts), catalog staleness (mitigated by fetching the
+authoritative schema at load), server
 availability/latency, and untrusted tool output — validate the SSRF boundary and injection-hardening
 on MCP results.
 
@@ -392,7 +405,7 @@ it and preserves the working invocation — no code change, no redeploy.
 - **Host sandbox** — per-tenant working directory, no cross-tenant data/secrets, CPU/time/output
   ceilings (mirrors the `web_fetch` byte-cap posture).
 - **Experimentation / learning loop** — ingest the tool's docs into **semantic memory**; record a
-  working invocation into **procedural memory**; both surfaced via the retrieval tool-arm.
+  working invocation into **procedural memory**; both feed catalog discovery and proactive loading.
   Experimentation is bounded by the whitelist (it can try only *validated* invocations).
 - **Trust/security:** same developer-whitelist binary model; output sandboxed and treated as
   untrusted.

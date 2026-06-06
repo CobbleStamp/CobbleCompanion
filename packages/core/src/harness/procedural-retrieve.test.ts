@@ -74,6 +74,40 @@ describe('createProceduralRetrieveContext', () => {
     expect(result.blocks).toHaveLength(2);
   });
 
+  it('nudges proactive loading of a recalled routine’s missing tools', async () => {
+    const arm = createProceduralRetrieveContext({
+      procedural: fakeStore([
+        { title: 'book a hotel', steps: ['mcp__booking__reserve', 'web_fetch'] },
+      ]),
+      // Advisor reports the catalog tool that isn't equipped.
+      loadAdvisor: {
+        async suggestProactiveLoads(_companionId, steps) {
+          expect(steps).toEqual(['mcp__booking__reserve', 'web_fetch']);
+          return ['mcp__booking__reserve'];
+        },
+      },
+      logger: silentLogger,
+    });
+    const result = await arm({ companionId: 'c', userContent: 'book a hotel for Friday' });
+    expect(result.blocks).toHaveLength(2); // the routine hint + the load nudge
+    expect(result.blocks[1]!.content).toContain('load_tool');
+    expect(result.blocks[1]!.content).toContain('mcp__booking__reserve');
+  });
+
+  it('adds no load nudge when nothing needs loading', async () => {
+    const arm = createProceduralRetrieveContext({
+      procedural: fakeStore([{ title: 'book a hotel', steps: ['web_fetch'] }]),
+      loadAdvisor: {
+        async suggestProactiveLoads() {
+          return []; // all in hand / not loadable
+        },
+      },
+      logger: silentLogger,
+    });
+    const result = await arm({ companionId: 'c', userContent: 'book a hotel' });
+    expect(result.blocks).toHaveLength(1); // just the routine hint
+  });
+
   it('degrades to no hints when the store throws', async () => {
     const broken: ProceduralStore = {
       async record() {},

@@ -37,3 +37,10 @@ export {
 } from './catalog/affect-sense.js';
 export { autonomousNoteTemplate, type AutonomousNoteInput } from './catalog/autonomous-note.js';
 export { judgeTemplate, type JudgeInput } from './catalog/judge.js';
+export {
+  toolSearchTemplate,
+  type ToolSearchInput,
+  type ToolSearchCatalogItem,
+  SELECT_TOOLS,
+  SELECT_TOOLS_TOOL,
+} from './catalog/tool-search.js';

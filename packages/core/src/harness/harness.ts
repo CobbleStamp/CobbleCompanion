@@ -453,11 +453,6 @@ export class Harness {
     const acc = createUsageAccumulator();
     const llm = meteredLlmGateway(this.gateway, acc.sink, trace);
     const ctx: TurnCtx = { companionId: companion.id, ownerId: ownerId ?? '' };
-    // The effective registry for this turn: native tools + any per-companion
-    // acquired tools (Phase 9). Resolved once per turn so `list()` (advertising),
-    // dispatch, and the tool-step lookup all see the same set.
-    const registry = await this.resolveTurnRegistry(companion.id);
-    const toolDefs = registry.list();
 
     // A finish path debits once and sets this; any other exit (a client
     // disconnect that `.return()`s the generator, or a provider/infra fault that
@@ -488,6 +483,15 @@ export class Harness {
           );
           return;
         }
+
+        // The effective registry is resolved PER STEP (companion-tools.md §4), so a
+        // tool the model loads with load_tool mid-turn is advertised + dispatchable
+        // on the next iteration. The loop shape is unchanged (invariant #3); only
+        // *when* the tool set is computed moves from per-turn to per-step. The
+        // resolver reads cached snapshots — no network — and degrades to the static
+        // registry on error, so acquisition never breaks the turn.
+        const registry = await this.resolveTurnRegistry(companion.id);
+        const toolDefs = registry.list();
 
         let turnText = '';
         const stream = llm.stream({

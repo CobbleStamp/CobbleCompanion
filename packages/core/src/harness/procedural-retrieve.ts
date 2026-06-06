@@ -9,9 +9,18 @@
  * user's message and a procedure's title (no embeddings; procedures are short and
  * few). Procedures come from the companion's OWN recorded actions, not untrusted
  * external content, so the hint is rendered plainly (no source-fencing).
+ *
+ * **Proactive loading (companion-tools.md §5).** When a tool-load advisor is wired
+ * (i.e. runtime tool acquisition is on), the recalled routine drives *promotion*:
+ * the advisor names the routine's tools that exist in the catalog but aren't
+ * equipped, and this arm nudges the companion to `load_tool` them up front — so it
+ * picks up what the job needs *before* hitting a wall, rather than only
+ * reactively. Loading stays an explicit, model-driven act (§2); this only surfaces
+ * the candidates.
  */
 
 import type { Logger } from '../logging.js';
+import type { ToolLoadAdvisor } from '../mcp/load-advisor.js';
 import type { ProceduralStore } from '../tools/procedural-store.js';
 import { ZERO_USAGE } from '../usage.js';
 import type { ContextBlock, RetrieveContext } from './hooks.js';
@@ -22,6 +31,11 @@ export interface ProceduralRetrieveOptions {
   readonly scanLimit?: number;
   /** How many matching procedures to surface as hints. */
   readonly topK?: number;
+  /**
+   * When present (runtime tool acquisition on), turns a recalled routine into a
+   * proactive-load nudge for the tools it needs but the companion lacks.
+   */
+  readonly loadAdvisor?: ToolLoadAdvisor;
   readonly logger: Logger;
 }
 
@@ -67,7 +81,19 @@ export function createProceduralRetrieveContext(
         .sort((a, b) => b.overlap - a.overlap)
         .slice(0, topK);
 
-      return { blocks: scored.map((entry) => toHintBlock(entry.procedure)), usage: ZERO_USAGE };
+      const blocks = scored.map((entry) => toHintBlock(entry.procedure));
+
+      // Proactive loading: surface the recalled routines' tools that aren't in hand.
+      if (options.loadAdvisor && scored.length > 0) {
+        const steps = scored.flatMap((entry) => entry.procedure.steps);
+        const toLoad = await options.loadAdvisor.suggestProactiveLoads(companionId, steps);
+        const loadBlock = toLoadBlock(toLoad);
+        if (loadBlock) {
+          blocks.push(loadBlock);
+        }
+      }
+
+      return { blocks, usage: ZERO_USAGE };
     } catch (error) {
       // Recall never breaks the conversation — degrade this arm to no hints.
       options.logger.error('procedural recall failed; degrading to no hints', {
@@ -88,5 +114,19 @@ function toHintBlock(procedure: { title: string; steps: readonly string[] }): Co
     content:
       `You've done this before — a learned routine that may help here: ` +
       `"${procedure.title}"${steps}. Reuse it if it fits.`,
+  };
+}
+
+/** Nudge the companion to equip the recalled routine's missing tools up front. */
+function toLoadBlock(toolIds: readonly string[]): ContextBlock | null {
+  if (toolIds.length === 0) {
+    return null;
+  }
+  const ids = toolIds.map((id) => `\`${id}\``).join(', ');
+  return {
+    role: 'system',
+    content:
+      `That routine uses tools you don't have equipped yet: ${ids}. ` +
+      `Load them now with load_tool so they're ready before you need them.`,
   };
 }

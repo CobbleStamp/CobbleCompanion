@@ -94,6 +94,7 @@ export const testConfig: AppConfig = {
   ingestionQueueMax: 100,
   tokenCapPerDay: 1_000_000,
   mcpServers: [],
+  maxEquippedTools: 8,
   appUrl: 'http://localhost:3001',
   authMode: 'google',
   googleClientId: 'test-google-client-id',
@@ -130,8 +131,9 @@ export interface TestAppOptions {
   readonly motivationPipeline?: IngestionTarget;
   /**
    * Inject an MCP gateway (a FakeMcpGateway) for Phase 9 tests. Combined with a
-   * `config.mcpServers` whitelist, this wires connect_mcp + the per-companion
-   * resolver + the tool-retrieval arm over the fake (fakes-over-mocks).
+   * `config.mcpServers` whitelist, this wires the catalog + search_tools/load_tool
+   * + the per-step equipped resolver over the fake (fakes-over-mocks). The catalog
+   * is built from the whitelist at app construction.
    */
   readonly mcpGateway?: McpGateway;
   /**
@@ -228,9 +230,16 @@ export async function makeTestApp(
     config,
     db,
     gateway: options.mcpGateway ?? new FakeMcpGateway(),
+    llmGateway,
     baseTools,
+    quota,
     logger: silentLogger,
   });
+  // Mirror production startup: build the discovery catalog from the whitelist so a
+  // configured test can search_tools/load_tool immediately.
+  if (mcpWiring) {
+    await mcpWiring.refreshCatalog();
+  }
   const tools = new ToolRegistry(mcpWiring ? mcpWiring.nativeTools : baseTools);
   const proposals = new DrizzleProposalStore(db);
   const toolCallLog = new DrizzleToolCallLog(db);
@@ -325,8 +334,12 @@ export async function makeTestApp(
             embeddingDimensions: config.embeddingDimensions,
             logger: silentLogger,
           }),
-          createProceduralRetrieveContext({ procedural, logger: silentLogger }),
-          ...(mcpWiring ? [mcpWiring.toolArm] : []),
+          createProceduralRetrieveContext({
+            procedural,
+            logger: silentLogger,
+            ...(mcpWiring ? { loadAdvisor: mcpWiring.loadAdvisor } : {}),
+          }),
+          ...(mcpWiring ? [mcpWiring.equippedArm] : []),
           createSemanticRetrieveContext({
             memory,
             semantic,

@@ -718,14 +718,18 @@ owned by `development-plan.md`.
 - **Onboarding personality seed** — drive weights stay neutral so the character card is *earned*.
 - **Runtime tool acquisition** — letting the toolset **grow at runtime without code or redeploy**,
   so the companion *acquires* new primitives (not only *combines* the three it ships with). The
-  designed spine: generic **`run_command`** + **MCP-connector** primitives; a per-companion
-  **dynamic tool/connection registry** composed behind the existing registry interface (§3); a
-  retrieval **tool-arm** on the `RetrieveContext` hook (§4.3) that surfaces relevant learned tools
-  per turn (so a turn advertises a few generic limbs + a retrieved shortlist — invariant #3, no loop
-  change); and a **developer-whitelist** trust model — binary allow/deny — sitting *beside*
-  propose→approve (§4.4), not replacing it. Server-host only; CLI **sandboxed**, MCP **HTTP/SSE +
-  SSRF-guarded** (§8), tool outputs treated as untrusted (`implementation.md` §2.1). Design →
-  `companion-tools.md`; scope/sequencing → `development-plan.md`.
+  designed spine: generic **`run_command`** + **MCP-connector** executors plus
+  **`search_tools`**/**`load_tool`** discovery meta-tools; a **catalog** of whitelisted tools indexed
+  off-context (so hundreds of tools cost no per-turn tokens); a per-companion **equipped set** the
+  model loads into on demand; and a **dynamic registry** composed behind the existing registry
+  interface (§3) but **resolved per model step** so a tool loaded mid-turn is callable on the next
+  loop iteration — the loop *shape* is unchanged (§4.7), this stays within the tool-invocation
+  extension point (invariant #3). `search_tools` is a cheap off-loop LLM lookup over the lightweight
+  catalog (no embeddings on the critical path). Trust is a **developer-whitelist** — binary
+  allow/deny defining the catalog — sitting *beside* propose→approve (§4.4), not replacing it.
+  Server-host only; CLI **sandboxed**, MCP **HTTP/SSE + SSRF-guarded** (§8), tool outputs treated as
+  untrusted (`implementation.md` §2.1). Design → `companion-tools.md`; scope/sequencing →
+  `development-plan.md`.
 - **Native surfaces** — Mobile/Desktop clients, OS-tool bridges, and the Sync Courier.
 - **Transcript compaction** — summarizing the compactible remainder when the context window fills.
 - **Security hardening** — encryption-at-rest specifics, data inspection/management/delete controls,

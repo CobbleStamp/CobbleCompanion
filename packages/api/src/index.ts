@@ -167,16 +167,25 @@ async function main(): Promise<void> {
     createIngestSourceTool({ semantic, ingestion, logger: consoleLogger }),
   ];
   // Phase 9: runtime MCP tool acquisition. Off unless MCP_SERVERS is configured —
-  // then `connect_mcp` joins the native tools, a per-companion resolver adds each
-  // companion's connected MCP tools, and a retrieval arm hints the fitting one.
+  // then search_tools/load_tool join the native core tools, the catalog indexes the
+  // whitelisted tools off-context, a per-step resolver advertises the companion's
+  // equipped tools, and an arm lists what's currently equipped.
   const mcpGateway = new StreamableHttpMcpGateway(consoleLogger);
   const mcpWiring = buildMcpWiring({
     config,
     db,
     gateway: mcpGateway,
+    llmGateway,
     baseTools,
+    quota,
     logger: consoleLogger,
   });
+  if (mcpWiring) {
+    // Build the discovery catalog from the whitelist at startup (best-effort: a
+    // server that's down keeps its stale entries; the catalog never blocks boot).
+    const indexed = await mcpWiring.refreshCatalog();
+    consoleLogger.info('MCP tool catalog built', { operation: 'mcp.startup', tools: indexed });
+  }
   const tools = new ToolRegistry(mcpWiring ? mcpWiring.nativeTools : baseTools);
   const retrieveArms = [
     createEpisodicRetrieveContext({
@@ -190,10 +199,15 @@ async function main(): Promise<void> {
     }),
     // Procedural retrieval-as-hint (P5): surface a relevant learned routine so
     // the capabilities checklist is functional. Grounding-only (no recency).
-    createProceduralRetrieveContext({ procedural, logger: consoleLogger }),
-    // Phase 9: hint the relevant connected MCP tool (grounding-only), before the
-    // semantic arm, which appends the recency window last.
-    ...(mcpWiring ? [mcpWiring.toolArm] : []),
+    // With tool acquisition on, the routine also drives proactive loading (§5).
+    createProceduralRetrieveContext({
+      procedural,
+      logger: consoleLogger,
+      ...(mcpWiring ? { loadAdvisor: mcpWiring.loadAdvisor } : {}),
+    }),
+    // Phase 9: list the companion's currently-equipped tools (grounding-only),
+    // before the semantic arm, which appends the recency window last.
+    ...(mcpWiring ? [mcpWiring.equippedArm] : []),
     createSemanticRetrieveContext({
       memory,
       semantic,
@@ -227,8 +241,9 @@ async function main(): Promise<void> {
     // are held for approval), and the audit log (every call is logged).
     registry: tools,
     // Phase 9: when MCP is configured, the turn's effective registry is resolved
-    // per companion (native + that companion's connected MCP tools). The gate keeps
-    // the native registry — MCP tools are non-effectful and pass through it.
+    // PER STEP (core tools + the companion's equipped tools), so a load_tool mid-turn is
+    // callable next step. The gate keeps the native registry — MCP tools are
+    // non-effectful and pass through it.
     ...(mcpWiring ? { resolveRegistry: mcpWiring.resolveRegistry } : {}),
     beforeToolCall: createApprovalGate(proposals, tools, consoleLogger),
     afterToolCall: createLoggingAfterToolCall(toolCallLog, consoleLogger),

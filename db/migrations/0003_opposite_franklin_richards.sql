@@ -1,0 +1,1 @@
+ALTER TABLE "equipped_tools" DROP COLUMN "use_count";

@@ -35,8 +35,9 @@ export {
   type SourceRegistrationPort,
 } from './tools/ingest-source.js';
 
-// MCP tool acquisition (companion-tools.md — Phase 9): connect whitelisted MCP
-// servers at runtime and expose their tools through the registry.
+// MCP tool acquisition (companion-tools.md — Phase 9): a whitelisted catalog the
+// companion discovers (search_tools) and loads from (load_tool) on demand, with a
+// per-step registry over the equipped set.
 export {
   McpGatewayError,
   type McpCallResult,
@@ -48,17 +49,29 @@ export { mcpToolName, mcpToolToTool, type McpToolAdapterOptions } from './mcp/ad
 export { FakeMcpGateway, type FakeMcpCall, type FakeMcpServer } from './mcp/fake.js';
 export { McpWhitelist, type McpWhitelistEntry } from './mcp/whitelist.js';
 export {
-  DrizzleMcpConnectionStore,
-  type McpConnectionRecord,
-  type McpConnectionStatus,
-  type McpConnectionStore,
-  type UpsertConnectionInput,
-} from './mcp/connection-store.js';
-export { createConnectMcpTool, type ConnectMcpOptions } from './mcp/connect-tool.js';
+  DrizzleToolCatalogStore,
+  type ToolCatalogEntry,
+  type ToolCatalogStore,
+} from './mcp/tool-catalog-store.js';
 export {
-  createMcpRegistryResolver,
-  type McpRegistryResolverOptions,
-} from './mcp/registry-resolver.js';
+  DrizzleEquippedToolStore,
+  type EquipInput,
+  type EquippedStoreOptions,
+  type EquippedToolRecord,
+  type EquippedToolStore,
+} from './mcp/equipped-store.js';
+export { refreshToolCatalog, type RefreshCatalogOptions } from './mcp/catalog-builder.js';
+export { createSearchToolsTool, type SearchToolsOptions } from './mcp/search-tools.js';
+export { createLoadToolTool, type LoadToolOptions } from './mcp/load-tool.js';
+export {
+  createToolLoadAdvisor,
+  type ToolLoadAdvisor,
+  type ToolLoadAdvisorOptions,
+} from './mcp/load-advisor.js';
+export {
+  createEquippedRegistryResolver,
+  type EquippedRegistryResolverOptions,
+} from './mcp/equipped-resolver.js';
 
 // Identity (the companion "home")
 export {
@@ -310,7 +323,10 @@ export {
   createProceduralRetrieveContext,
   type ProceduralRetrieveOptions,
 } from './harness/procedural-retrieve.js';
-export { createToolRetrieveContext, type ToolRetrieveOptions } from './harness/tool-retrieve.js';
+export {
+  createEquippedSummaryContext,
+  type EquippedSummaryOptions,
+} from './harness/equipped-summary.js';
 
 // Growth & feeding economy (Phase 5 — bond & growth, development-plan.md §3)
 export { DEFAULT_GROWTH_CONFIG, type GrowthConfig } from './growth/config.js';
