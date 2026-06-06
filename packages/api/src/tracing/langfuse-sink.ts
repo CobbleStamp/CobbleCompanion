@@ -20,6 +20,7 @@ import {
   noopTraceSink,
   type RedactionMode,
   scrubContent,
+  scrubError,
   shouldSample,
   type SpanEnd,
   type SpanStart,
@@ -134,7 +135,7 @@ export function buildBatch(
       name: start.name,
       ...(start.ownerId ? { userId: start.ownerId } : {}),
       metadata: { companionId: start.companionId, ...start.attributes },
-      ...(traceError ? { level: 'ERROR', statusMessage: traceError } : {}),
+      ...errorBody(traceError, redact),
     },
   };
   const observations = spans.map((span) => {
@@ -154,11 +155,24 @@ export function buildBatch(
         metadata: { kind: span.start.kind, ...span.start.attributes, ...span.end?.attributes },
         ...(input !== undefined ? { input } : {}),
         ...(output !== undefined ? { output } : {}),
-        ...(span.end?.error ? { level: 'ERROR', statusMessage: span.end.error } : {}),
+        ...errorBody(span.end?.error, redact),
       },
     };
   });
   return [trace, ...observations];
+}
+
+/**
+ * Build the error fields of a trace/observation body. The ERROR level is kept
+ * whenever an error occurred (so failures stay visible under any redaction
+ * mode), but the free-form `statusMessage` runs through {@link scrubError} —
+ * dropped under strict/metadata_only, PII-scrubbed under off — since provider
+ * and tool errors routinely echo their (conversational) input.
+ */
+function errorBody(error: string | undefined, redact: RedactionMode): Record<string, unknown> {
+  if (error === undefined) return {};
+  const statusMessage = scrubError(error, redact);
+  return { level: 'ERROR', ...(statusMessage !== undefined ? { statusMessage } : {}) };
 }
 
 /** Take the first present key from redacted content (undefined when redacted out). */

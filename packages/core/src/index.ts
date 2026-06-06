@@ -122,6 +122,7 @@ export {
   noopTraceSink,
   type RedactionMode,
   scrubContent,
+  scrubError,
   shouldSample,
   type SpanEnd,
   type SpanHandle,

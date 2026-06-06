@@ -121,4 +121,45 @@ describe('Langfuse sink', () => {
     expect(offObs.body.input).toBe('visible prompt');
     expect(offObs.body.output).toBe('visible reply');
   });
+
+  it('keeps the ERROR level but drops the error message under strict', () => {
+    // A tool error that echoes its (conversational) args must not leak verbatim.
+    const { sink, batches } = capturing();
+    const trace = sink.startTrace({ traceId: 'e', name: 'turn', companionId: 'c' });
+    trace
+      .startSpan({ kind: 'tool_call', name: 'web.fetch' })
+      .end({ error: 'tool failed for query "secret prompt"' });
+    trace.end({ error: 'turn aborted: secret prompt' });
+
+    const batch = batches[0]!;
+    const traceBody = (batch[0] as { body: Record<string, unknown> }).body;
+    expect(traceBody.level).toBe('ERROR');
+    expect(traceBody.statusMessage).toBeUndefined();
+    const obsBody = (batch[1] as { body: Record<string, unknown> }).body;
+    expect(obsBody.level).toBe('ERROR');
+    expect(obsBody.statusMessage).toBeUndefined();
+  });
+
+  it('scrubs the error message (PII) but keeps it under off', () => {
+    const batches: (readonly unknown[])[] = [];
+    const offSink = createLangfuseTraceSink({
+      host: 'https://lf.test',
+      publicKey: 'pk',
+      secretKey: 'sk',
+      sampleRate: 1,
+      redact: 'off',
+      logger: silent,
+      poster: (batch) => batches.push(batch),
+      now: () => '2026-06-05T00:00:00.000Z',
+    });
+    const trace = offSink.startTrace({ traceId: 'e2', name: 'turn', companionId: 'c' });
+    trace
+      .startSpan({ kind: 'tool_call', name: 'web.fetch' })
+      .end({ error: 'rejected for a@b.com' });
+    trace.end();
+
+    const obsBody = (batches[0]![1] as { body: Record<string, unknown> }).body;
+    expect(obsBody.level).toBe('ERROR');
+    expect(obsBody.statusMessage).toBe('rejected for [redacted]');
+  });
 });

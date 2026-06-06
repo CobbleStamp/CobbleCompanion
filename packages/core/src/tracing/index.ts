@@ -17,5 +17,5 @@ export {
   type TraceSink,
   type TraceStart,
 } from './trace-sink.js';
-export { type RedactionMode, scrubContent } from './redaction.js';
+export { type RedactionMode, scrubContent, scrubError } from './redaction.js';
 export { shouldSample } from './sampling.js';
