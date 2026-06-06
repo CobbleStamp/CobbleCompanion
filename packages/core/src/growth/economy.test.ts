@@ -77,6 +77,22 @@ describe('feed', () => {
     expect((await quota.getUsage(ownerId)).capTokens).toBe(CAP + ration.staminaTokens);
   });
 
+  it('a treat spends one treat and tops up BOTH pools', async () => {
+    const treat = foodDef('treat')!;
+    // The treat is the only food that feeds stamina AND energy in one call — it also
+    // exercises the partial-grant accounting (`staminaToppedUp`) on the happy path.
+    expect(treat.staminaTokens).toBeGreaterThan(0);
+    expect(treat.energyTokens).toBeGreaterThan(0);
+
+    const result = await feed(deps, { companionId, ownerId, food: 'treat' });
+    expect(result.ok).toBe(true);
+    expect((await quota.getUsage(ownerId)).capTokens).toBe(CAP + treat.staminaTokens);
+    expect((await energy.getEnergy(companionId)).capTokens).toBe(CAP + treat.energyTokens);
+    expect((await growth.getSnapshot(companionId)).treats).toBe(
+      DEFAULT_GROWTH_CONFIG.initialTreats - treat.treatCost,
+    );
+  });
+
   it('fails without spending or topping up when treats run out', async () => {
     // Exhaust the starting balance (each food costs 1 treat).
     for (let i = 0; i < DEFAULT_GROWTH_CONFIG.initialTreats; i += 1) {

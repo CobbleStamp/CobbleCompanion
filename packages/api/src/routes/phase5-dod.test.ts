@@ -114,6 +114,30 @@ describe('Phase 5 DoD — bond & growth', () => {
     expect((await assistantNotes()).length).toBe(notesAfterFirst);
   });
 
+  it('GET /growth is read-only — a read never advances the mark, awards treats, or reflects (DoD 3)', async () => {
+    // Substrate that crosses a knowledge band + observes capabilities, but NO recompute.
+    await seedSubstrate();
+
+    // The surface shows the live derived reading (it rose)...
+    const first = await getGrowth();
+    expect(first.knowledge.band).not.toBe('Sparse');
+    expect(first.capabilities.find((c) => c.key === 'reading_sources')?.observed).toBe(true);
+
+    // ...yet repeated reads award no treats and post no reflection — those are the
+    // side effects of recompute (the stream tail) alone, never of a GET.
+    const second = await getGrowth();
+    expect(first.treats).toBe(DEFAULT_GROWTH_CONFIG.initialTreats);
+    expect(second.treats).toBe(DEFAULT_GROWTH_CONFIG.initialTreats);
+    expect(await assistantNotes()).not.toContain(growthReflectionNote('knowledge'));
+
+    // And the stored high-water mark is untouched: a GET never writes the mark, even
+    // when the live reading has already moved past it.
+    const mark = await ctx.deps.growthStore.getSnapshot(companionId);
+    expect(mark.knowledgeBand).toBe(0);
+    expect(mark.observedCapabilities).toEqual([]);
+    expect(mark.treats).toBe(DEFAULT_GROWTH_CONFIG.initialTreats);
+  });
+
   it('feeds: spends a treat and tops up the energy pool (DoD 4)', async () => {
     const before = await ctx.deps.energy.getEnergy(companionId);
     const res = await ctx.app.inject({
