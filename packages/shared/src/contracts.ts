@@ -469,7 +469,7 @@ export interface EpisodeSearchResultDto {
   readonly score: number;
 }
 
-// --- Memory snapshot (the read-only memory browser, companionmemory.md) ---
+// --- Memory snapshot (the read-only memory browser, companion-memory.md) ---
 
 /**
  * The episodic memory section — the companion's single continuous transcript
@@ -592,7 +592,7 @@ export const feedSchema = z.object({
 });
 export type FeedBody = z.infer<typeof feedSchema>;
 
-// --- Provenance (Phase 1 grounded recall, docs/companionmemory.md) ---
+// --- Provenance (Phase 1 grounded recall, docs/companion-memory.md) ---
 
 /**
  * Where a retrieved passage came from — renderable ("from your Peru book,

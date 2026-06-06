@@ -1,5 +1,5 @@
 /**
- * Deterministic expected-fact scorer (companionmemory.md §5): passes when every
+ * Deterministic expected-fact scorer (companion-memory.md §5): passes when every
  * expected fact appears in the output, using the word-boundary-aware match from
  * score.ts. No model — runs in the CI deterministic tier.
  */

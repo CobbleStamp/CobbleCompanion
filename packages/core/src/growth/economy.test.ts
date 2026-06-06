@@ -4,6 +4,7 @@ import { type Database } from '@cobble/db';
 import { createTestDatabase } from '@cobble/db/testing';
 import { foodDef, type FoodType } from '@cobble/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { Logger } from '../logging.js';
 import { DrizzleIdentityStore } from '../identity/store.js';
 import { DrizzleCompanionEnergyStore } from '../quota/energy-store.js';
 import { DrizzleTokenQuotaStore } from '../quota/stamina-store.js';
@@ -12,6 +13,19 @@ import { feed, type FeedDeps } from './economy.js';
 import { DrizzleGrowthStore } from './growth-store.js';
 
 const CAP = 1_000_000;
+
+/** A logger that records its `error` calls, so we can assert a lost treat is audited. */
+function recordingLogger(): Logger & {
+  errors: { message: string; context: Record<string, unknown> }[];
+} {
+  const errors: { message: string; context: Record<string, unknown> }[] = [];
+  return {
+    errors,
+    error: (message, context) => errors.push({ message, context }),
+    warn: () => {},
+    info: () => {},
+  };
+}
 
 describe('feed', () => {
   let db: Database;
@@ -22,6 +36,7 @@ describe('feed', () => {
   let energy: DrizzleCompanionEnergyStore;
   let quota: DrizzleTokenQuotaStore;
   let growth: DrizzleGrowthStore;
+  let logger: ReturnType<typeof recordingLogger>;
 
   beforeEach(async () => {
     const created = await createTestDatabase();
@@ -39,7 +54,8 @@ describe('feed', () => {
     energy = new DrizzleCompanionEnergyStore(db, { defaultCapTokens: CAP });
     quota = new DrizzleTokenQuotaStore(db, { defaultCapTokens: CAP });
     growth = new DrizzleGrowthStore(db, { initialTreats: DEFAULT_GROWTH_CONFIG.initialTreats });
-    deps = { growth, quota, energy };
+    logger = recordingLogger();
+    deps = { growth, quota, energy, logger };
   });
   afterEach(async () => {
     await close();
@@ -71,6 +87,29 @@ describe('feed', () => {
     expect(broke.ok).toBe(false);
     expect(broke.reason).toBe('not enough treats');
     expect((await energy.getEnergy(companionId)).capTokens).toBe(capBefore);
+  });
+
+  it('audits the lost treat (and rethrows) when a top-up fails after the debit', async () => {
+    const boom = new Error('energy store unavailable');
+    // Force the top-up to throw *after* the treat has already been debited.
+    energy.topUp = async () => {
+      throw boom;
+    };
+    const treatsBefore = (await growth.getSnapshot(companionId)).treats;
+
+    await expect(feed(deps, { companionId, ownerId, food: 'spark' })).rejects.toThrow(boom);
+
+    // The treat is gone (no refund) — that's exactly why it must be auditable.
+    expect((await growth.getSnapshot(companionId)).treats).toBe(
+      treatsBefore - foodDef('spark')!.treatCost,
+    );
+    expect(logger.errors).toHaveLength(1);
+    expect(logger.errors[0]?.context).toMatchObject({
+      companionId,
+      ownerId,
+      food: 'spark',
+      error: boom,
+    });
   });
 
   it('rejects an unknown food', async () => {

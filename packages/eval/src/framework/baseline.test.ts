@@ -1,5 +1,5 @@
 /**
- * Baseline tolerance-band regression tests (companionmemory.md §5). A regression
+ * Baseline tolerance-band regression tests (companion-memory.md §5). A regression
  * is a drop beyond the band, not any drop — these pin the direction (lower than
  * baseline), the band edge, and that only shared metrics are compared.
  */

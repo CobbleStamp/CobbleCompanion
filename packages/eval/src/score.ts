@@ -9,7 +9,7 @@ interface JudgeVerdict {
 }
 
 /**
- * Score a single answer. Two layers (companionmemory.md): a deterministic
+ * Score a single answer. Two layers (companion-memory.md): a deterministic
  * expected-fact check, then an LLM-as-judge for grounding and hallucination —
  * the parts a substring match can't see.
  */

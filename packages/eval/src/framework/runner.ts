@@ -1,5 +1,5 @@
 /**
- * The dataset runner (companionmemory.md §5): drives every case of a dataset
+ * The dataset runner (companion-memory.md §5): drives every case of a dataset
  * through run → score, then aggregates into a DatasetReport (pass rate + the
  * mean of each metric across cases). Dataset-agnostic — the same loop serves
  * stateless per-call-site datasets and (potentially) stateful ones.

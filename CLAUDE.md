@@ -24,7 +24,7 @@ read docs/product-overview.md
 | Priorities, requirements, roadmap | `docs/development-plan.md`       |
 | Technical architecture (incl. agent loop) | `docs/architecture.md`  |
 | Internal implementation       | `docs/implementation.md`            |
-| Memory: browsing & evaluation | `docs/companionmemory.md`           |
+| Memory: browsing & evaluation | `docs/companion-memory.md`           |
 | Threat model & deployment trust model | `docs/architecture.md` §1, §8 |
 | Ontology contract & governance | `docs/ontology.md`                 |
 | Proactivity & motivation mechanism | `docs/companion-motivation.md`  |

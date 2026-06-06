@@ -1,5 +1,5 @@
 /**
- * Live memory-vs-performance eval (companionmemory.md §5): runs the fixed eval
+ * Live memory-vs-performance eval (companion-memory.md §5): runs the fixed eval
  * set under several memory configurations against real OpenRouter models and
  * prints the comparison. Phase 0 axis: the transcript recency window. Phase 1
  * axis: semantic retrieval over sources ingested through the REAL pipeline,
@@ -65,7 +65,7 @@ export async function runMemoryRecallEval(): Promise<void> {
   const apiKey = process.env.OPENROUTER_API_KEY ?? '';
   if (apiKey.length === 0) {
     throw new Error(
-      'OPENROUTER_API_KEY is required — this is a LIVE eval against OpenRouter (companionmemory.md).',
+      'OPENROUTER_API_KEY is required — this is a LIVE eval against OpenRouter (companion-memory.md).',
     );
   }
   const model = process.env.LLM_MODEL ?? 'anthropic/claude-3.5-sonnet';
@@ -125,7 +125,7 @@ export async function runMemoryRecallEval(): Promise<void> {
     out(
       'Config axes: transcript recency window (P0), semantic retrieval over ingested\n' +
         'sources with the contextual-header A/B (P1), and episodic recall over\n' +
-        'consolidated memories (P2, companionmemory.md §5).\n' +
+        'consolidated memories (P2, companion-memory.md §5).\n' +
         'Note: window-* configs cannot reach source-grounded cases (sources are only\n' +
         'ingested for semantic-* configs); the episodic config pairs a tiny recency\n' +
         'window with episodic recall, so passing where window-2 fails shows episodic\n' +

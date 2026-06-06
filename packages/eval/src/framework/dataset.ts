@@ -1,5 +1,5 @@
 /**
- * Dataset + runtime contracts for the eval framework (companionmemory.md §5). A
+ * Dataset + runtime contracts for the eval framework (companion-memory.md §5). A
  * Dataset bundles its cases, how to produce an output for one case (a call into
  * core, against real OpenRouter — or a fake in tests), and the scorer that
  * judges that output. The runner (runner.ts) drives any dataset uniformly.

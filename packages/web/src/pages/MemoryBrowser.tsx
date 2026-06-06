@@ -26,7 +26,7 @@ interface MemoryBrowserProps {
 }
 
 /**
- * Read-only memory browser (companionmemory.md). Shows what the companion holds,
+ * Read-only memory browser (companion-memory.md). Shows what the companion holds,
  * grouped by memory kind: the episodic transcript, the semantic store's
  * source/section/fact counts (Phase 1), and procedural as "coming soon" so the
  * full knowledge-base shape is visible.

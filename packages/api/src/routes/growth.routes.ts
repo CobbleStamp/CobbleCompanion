@@ -27,7 +27,7 @@ export function registerGrowthRoutes(
   deps: AppDeps,
   requireAuth: RequireAuth,
 ): void {
-  const { identity, growth, growthStore, quota, energy } = deps;
+  const { identity, growth, growthStore, quota, energy, logger } = deps;
 
   // The companion's four-axis growth standing (lazily recomputes + persists).
   app.get(
@@ -55,7 +55,7 @@ export function registerGrowthRoutes(
       return reply.code(404).send({ error: 'companion not found' });
     }
     const result = await feed(
-      { growth: growthStore, quota, energy },
+      { growth: growthStore, quota, energy, logger },
       { companionId: companion.id, ownerId: request.userId!, food: parsed.data.food },
     );
     if (!result.ok) {

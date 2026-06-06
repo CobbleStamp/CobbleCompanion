@@ -127,7 +127,7 @@ loop change). **Personality evolution** re-synthesizes an `evolvedPersona` ("who
 you") from accumulated episodes and blends it into the persona prompt alongside the immutable
 seed temperament. Web adds the episode timeline + evolved persona to the memory browser; the eval
 harness gained a Phase-2 episodic config (tiny recency window + episodic recall) that
-`architecture.md` §4.3 / `companionmemory.md` §5 describe. **Gate passed** (2026-06-04,
+`architecture.md` §4.3 / `companion-memory.md` §5 describe. **Gate passed** (2026-06-04,
 `docs/eval/phase2-eval-20260604.txt`): the live eval shows the `episodic` config (recency
 window of **2**) recalling **100%** of buried facts at **0% hallucination** vs **33%** for
 `window-2` with the same window — episodic memory reaching beyond the recency window, the Phase 2

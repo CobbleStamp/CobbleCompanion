@@ -127,7 +127,7 @@ flowchart TB
 | **Identity Store** | Companion "home" record (incl. P2 `evolvedPersona` + evolution/consolidation cursors) | Source of truth surfaces load from |
 | **Token Quota Store** | Per-user daily token-budget state — the cost cap (P1, §4.8) | Postgres-backed (`user_token_usage`); routes enforce it inline |
 | **Persistence** | Relational + vector storage | Postgres + `pgvector`; schemas → `implementation.md` |
-| **Eval Harness** | Offline dataset/scorer/runner eval framework (`packages/eval`) | Not on the serving path; live OpenRouter. memory-recall + stateless + injection datasets. See `companionmemory.md` §5, `howto-run-evals.md` |
+| **Eval Harness** | Offline dataset/scorer/runner eval framework (`packages/eval`) | Not on the serving path; live OpenRouter. memory-recall + stateless + injection datasets. See `companion-memory.md` §5, `howto-run-evals.md` |
 | **Trace Sink** | Online tracing seam (`core/src/tracing`) — per-turn trace with assemble_context/llm_call/tool_call spans | No-op by default; the Langfuse Cloud adapter lives in `api/src/tracing`, sampled + redacted. See `runbook-tracing.md` |
 | **Tool Registry + Tools (P3)** | The tools a turn advertises + dispatches (`core/tools/`): `web_fetch`, `memory_search` (read-only), `ingest_source` (effectful) | Read-only tools run freely; the gate holds effectful ones (§4.4). `web_fetch` reuses the link resolver; `ingest_source` reuses the P1 pipeline |
 | **Approval Queue + Gate (P3)** | The `beforeToolCall` gate + the `proposals` store — holds effectful calls for one-tap approval, resolved exactly once | The mechanical realization of propose→approve (§4.4); confirm executes via `dispatchTool` |
@@ -509,7 +509,7 @@ flowchart LR
     EMB --> DONE["job done — recallable with citations"]
 ```
 
-Design rules (the "improved staged hybrid"; memory guide → `companionmemory.md`):
+Design rules (the "improved staged hybrid"; memory guide → `companion-memory.md`):
 
 - **Original text is canonical.** Sources are stored verbatim; sections are verbatim paragraph
   slices; the fact overlay (`ontology.md`) is an index *into* the text, rebuildable from it.
@@ -690,7 +690,7 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
       tracing/         Langfuse Cloud TraceSink adapter (fetch-based; sampling + redaction before export) — runbook-tracing.md
     web/               React web client; chat w/ citations + ingestion-status panel + approval cards (P3), sources page, memory browser, usage badge; vitality meter + proactivity dial (P4); growth view + kitchen (P5)
     shared/            shared TS types / contracts
-    eval/              dataset/scorer/runner offline eval framework: memory-recall + stateless (affect-sense) + injection red-team (→ companionmemory.md §5)
+    eval/              dataset/scorer/runner offline eval framework: memory-recall + stateless (affect-sense) + injection red-team (→ companion-memory.md §5)
   db/                  migrations & schema (→ implementation.md)
   scripts/             dev / seed / ops scripts
 ```

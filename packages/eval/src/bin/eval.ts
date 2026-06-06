@@ -1,5 +1,5 @@
 /**
- * Eval CLI entrypoint (companionmemory.md §5, howto-run-evals.md). Dispatches to
+ * Eval CLI entrypoint (companion-memory.md §5, howto-run-evals.md). Dispatches to
  * one dataset (or all) against REAL OpenRouter and prints the report. The
  * stateful memory-recall eval keeps its bespoke multi-config runner; the
  * stateless per-call-site datasets go through the generic framework runner.
@@ -58,7 +58,7 @@ async function main(): Promise<void> {
   const apiKey = process.env.OPENROUTER_API_KEY ?? '';
   if (apiKey.length === 0) {
     throw new Error(
-      'OPENROUTER_API_KEY is required — this is a LIVE eval against OpenRouter (companionmemory.md).',
+      'OPENROUTER_API_KEY is required — this is a LIVE eval against OpenRouter (companion-memory.md).',
     );
   }
   const model = process.env.LLM_MODEL ?? 'anthropic/claude-3.5-sonnet';
