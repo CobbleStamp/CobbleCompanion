@@ -61,8 +61,9 @@ definition (how the hash is computed, why both exist) is the data model, owned b
 2. Bump its `semver`.
 3. Run `pnpm --filter @cobble/core test src/prompts`. The drift snapshot fails;
    update it (`vitest -u`) and confirm the new hash is intended.
-4. Where it matters, A/B old vs new offline (`pnpm eval --prompt-version=…`,
-   Phase B) before merging.
+4. Where it matters, A/B old vs new offline before merging — run a dataset on
+   two worktrees (old vs new wording) and diff the reports, attributable by
+   `promptRef`. See `howto-run-evals.md` § "A/B-ing a prompt version".
 
 ## How to add a new prompt
 

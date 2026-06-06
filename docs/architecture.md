@@ -663,9 +663,10 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
       motivation/      the "will" (P4, §4.4–§4.5): drives × presence arbitration, autonomous explore burst, engine runner/sweep, affect perception + change-as-reward reinforcement
       quota/           two-pool token budget: per-user daily stamina (P1) + per-companion energy (P4); §4.8
     api/               BFF / surface boundary (Fastify); memory + source + usage + proposal/inventory routes (P3); presence + proactivity (dial/energy) routes (P4)
+      tracing/         Langfuse Cloud TraceSink adapter (fetch-based; sampling + redaction before export) — runbook-tracing.md
     web/               React web client; chat w/ citations + ingestion-status panel + approval cards (P3), sources page, memory browser, usage badge; vitality meter + proactivity dial (P4)
     shared/            shared TS types / contracts
-    eval/              live memory-vs-performance harness (→ companionmemory.md §5)
+    eval/              dataset/scorer/runner offline eval framework: memory-recall + stateless (affect-sense) + injection red-team (→ companionmemory.md §5)
   db/                  migrations & schema (→ implementation.md)
   scripts/             dev / seed / ops scripts
 ```
