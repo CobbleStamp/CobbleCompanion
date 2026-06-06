@@ -195,9 +195,15 @@ along four axes:
 - **Relationship & personality:** seeded at creation (name, form, temperament), its character
   deepens through your shared **episodic** history, in-jokes, and accumulated understanding of you.
 - **Unlockable abilities:** new skills, tools, and routines (**procedural** memory) open up as
-  you engage.
+  you engage — surfaced as a checklist of capabilities the companion has demonstrated, and *used*
+  (a learned routine resurfaces when it fits, not just displayed).
 - **Visual / character evolution:** the character itself evolves (appearance, home,
-  accessories) as a tangible sign of how far you've come together.
+  accessories) as a tangible sign of how far you've come together. *(The web PoC realizes this as
+  an evolving stage emoji/badge tied to the other three axes; richer art is a later surface.)*
+
+> Growth is **derived from accumulated memory**, never an arbitrary score; the companion's emerged
+> personality (the disposition it was *raised* into) is surfaced as its own "who I've become" card,
+> distinct from the relationship axis. Mechanics & realization: `development-plan.md` §3.
 
 ### 5.6 Vitality: Stamina & Energy
 Cobble's thinking runs on a real resource (the AI behind it costs tokens), and the product makes

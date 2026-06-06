@@ -266,6 +266,146 @@ export interface StaminaEnergyDto {
   readonly energy: UsageDto;
 }
 
+// --- Phase 5 — bond & growth (development-plan.md §3) ---
+
+/**
+ * The fixed catalogue of "abilities" — capabilities the companion has DEMONSTRATED
+ * (development-plan.md §3). The set is closed; each is unlocked once, from existing
+ * logs, and never re-locks. Surfaced as a checklist, not a smooth bar — abilities
+ * are genuinely chunky ("unlockable abilities", product-overview.md §5.5).
+ */
+export type AbilityKey =
+  | 'web_research'
+  | 'memory_recall'
+  | 'reading_sources'
+  | 'self_directed_work'
+  | 'first_routine'
+  | 'multi_step_task'
+  | 'mood_attunement';
+
+/** One ability in the checklist — its stable key, its human label, and whether it's unlocked. */
+export interface AbilityDto {
+  readonly key: AbilityKey;
+  readonly label: string;
+  readonly unlocked: boolean;
+}
+
+/**
+ * One smooth growth axis (knowledge or relationship). `level` is the current whole
+ * level; `progress` is the fraction (0–1) accumulated toward the next one, for a
+ * progress bar; `detail` is a short human gloss of the substrate behind it
+ * ("12 sources · 34 episodes").
+ */
+export interface GrowthAxisDto {
+  readonly level: number;
+  readonly progress: number;
+  readonly detail: string;
+}
+
+/**
+ * The companion's emerged character — the "Who <name> has become" card. Distinct
+ * from the relationship axis: `weights` are the learned per-drive disposition
+ * (raised from neutral by the reinforcement loop, P4), `spread` is how far they
+ * have diverged from neutral overall (0 = still neutral, 1 = fully formed), and
+ * `evolvedPersona` is the synthesized self-description (P2). Because every Cobble
+ * starts neutral, this spread is genuinely *earned*.
+ */
+export interface PersonalityDto {
+  readonly weights: DriveWeights;
+  readonly spread: number;
+  readonly evolvedPersona: string | null;
+}
+
+/**
+ * The companion's full growth standing (development-plan.md §3): two smooth axes,
+ * the abilities checklist, the emerged-personality card, the blended headline
+ * `overallStage` (with its `emoji`/badge), and the earned `treats` currency. All
+ * but `treats` are derived from substrate; `treats` is the feeding-economy balance.
+ */
+export interface GrowthDto {
+  readonly knowledge: GrowthAxisDto;
+  readonly relationship: GrowthAxisDto;
+  readonly abilities: readonly AbilityDto[];
+  readonly personality: PersonalityDto;
+  readonly overallStage: number;
+  /** The stage emoji/badge shown on the companion (the visible visual axis, PoC). */
+  readonly emoji: string;
+  readonly treats: number;
+}
+
+/**
+ * The feeding economy's "food" (development-plan.md §3) — typed top-ups the user
+ * gives, each favouring a vitality pool. The catalogue is a shared product
+ * contract (like {@link UPLOAD_FORMATS}) so the client's kitchen and the server's
+ * grant logic never drift. Each food costs `treatCost` treats and adds
+ * `staminaTokens`/`energyTokens` to the respective pools.
+ */
+export type FoodType = 'ration' | 'spark' | 'treat';
+
+export interface FoodDef {
+  readonly type: FoodType;
+  readonly label: string;
+  readonly emoji: string;
+  /** Tokens this food adds to the stamina pool (0 if it doesn't feed stamina). */
+  readonly staminaTokens: number;
+  /** Tokens this food adds to the energy pool (0 if it doesn't feed energy). */
+  readonly energyTokens: number;
+  /** Treats the food costs to give. */
+  readonly treatCost: number;
+}
+
+/**
+ * The foods the kitchen offers. A `ration` favours stamina (so you can keep
+ * talking), a `spark` favours energy (so it can go explore), a `treat` feeds both
+ * a little. Token grants are product constants single-sourced here; the per-day
+ * caps remain server config.
+ */
+export const FOODS: readonly FoodDef[] = [
+  {
+    type: 'ration',
+    label: 'Ration',
+    emoji: '🍞',
+    staminaTokens: 200_000,
+    energyTokens: 0,
+    treatCost: 1,
+  },
+  {
+    type: 'spark',
+    label: 'Spark',
+    emoji: '⚡',
+    staminaTokens: 0,
+    energyTokens: 200_000,
+    treatCost: 1,
+  },
+  {
+    type: 'treat',
+    label: 'Treat',
+    emoji: '🍪',
+    staminaTokens: 80_000,
+    energyTokens: 80_000,
+    treatCost: 1,
+  },
+];
+
+/** Look up a food definition by type; null if the type is unknown. */
+export function foodDef(type: FoodType): FoodDef | null {
+  return FOODS.find((food) => food.type === type) ?? null;
+}
+
+/**
+ * Canned in-character growth notes posted to the transcript when the companion
+ * crosses a meaningful threshold (development-plan.md §3 — "growth, felt"). Single
+ * sourced so the note reads the same wherever it's produced; the progression pass
+ * is token-free, so these are templated rather than LLM-voiced.
+ */
+export function growthLevelUpNote(axisLabel: string, level: number): string {
+  return `Something's shifted — I feel like I've grown. ${axisLabel} just reached level ${level}. ✨`;
+}
+
+export function abilityUnlockedNote(abilityLabel: string): string {
+  return `I think I just learned something new: ${abilityLabel}. I can do that for you now.`;
+}
+
 /** A retrieval section: verbatim original text plus its location in the source. */
 export interface SectionDto {
   readonly id: string;
@@ -419,12 +559,18 @@ export const setProactivityDialSchema = z.object({
 });
 export type SetProactivityDialBody = z.infer<typeof setProactivityDialSchema>;
 
-/** Manually add to a vitality pool — the simple feed control (Phase 4; the food economy is Phase 5). */
+/** Manually add to a vitality pool — the simple feed control (Phase 4; superseded by the food economy below). */
 export const topUpSchema = z.object({
   pool: z.enum(['stamina', 'energy']),
   amount: z.number().int().min(1).max(10_000_000),
 });
 export type TopUpBody = z.infer<typeof topUpSchema>;
+
+/** Give the companion a food (Phase 5 feeding economy) — spends treats, tops up a pool. */
+export const feedSchema = z.object({
+  food: z.enum(['ration', 'spark', 'treat']),
+});
+export type FeedBody = z.infer<typeof feedSchema>;
 
 // --- Provenance (Phase 1 grounded recall, docs/companionmemory.md) ---
 

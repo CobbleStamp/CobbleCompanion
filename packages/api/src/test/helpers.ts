@@ -16,8 +16,11 @@ import {
   createIngestSourceTool,
   createLoggingAfterToolCall,
   createMemorySearchTool,
+  createProceduralRetrieveContext,
   createSemanticRetrieveContext,
+  DEFAULT_GROWTH_CONFIG,
   DrizzleEpisodicMemoryStore,
+  DrizzleGrowthStore,
   DrizzleIdentityStore,
   DrizzleLeadStore,
   DrizzleProceduralStore,
@@ -30,6 +33,8 @@ import {
   FakeEmbeddingGateway,
   FakeLlmGateway,
   type FakeTurn,
+  GrowthRunner,
+  GrowthService,
   Harness,
   InMemoryPresenceStore,
   IngestionPipeline,
@@ -198,6 +203,23 @@ export async function makeTestApp(
   const energy = new DrizzleCompanionEnergyStore(db, { defaultCapTokens: config.tokenCapPerDay });
   const rewards = new DrizzleProactiveOutcomeStore(db);
   const affectStore = new DrizzleCompanionAffectStore(db);
+  // Growth & feeding economy (P5) — derived four-axis growth + treats over the same db.
+  const growthStore = new DrizzleGrowthStore(db, {
+    initialTreats: DEFAULT_GROWTH_CONFIG.initialTreats,
+  });
+  const growth = new GrowthService({
+    identity,
+    semantic,
+    episodic,
+    procedural,
+    toolCallLog,
+    rewards,
+    affect: affectStore,
+    growth: growthStore,
+    memory,
+    logger: silentLogger,
+  });
+  const growthRunner = new GrowthRunner(growth, silentLogger);
   const motivation = new MotivationRunner(
     new MotivationEngine(
       {
@@ -234,6 +256,9 @@ export async function makeTestApp(
     motivation,
     energy,
     rewards,
+    growth,
+    growthStore,
+    growthRunner,
     harness: new Harness({
       gateway: llmGateway,
       memory,
@@ -259,6 +284,7 @@ export async function makeTestApp(
           embeddingDimensions: config.embeddingDimensions,
           logger: silentLogger,
         }),
+        createProceduralRetrieveContext({ procedural, logger: silentLogger }),
         createSemanticRetrieveContext({
           memory,
           semantic,
@@ -295,6 +321,8 @@ export async function makeTestApp(
       // Drain proactive ticks (GET/POST messages request them) before the db
       // closes, so a background tick can't write to a torn-down database.
       await motivation.close();
+      // Same for the post-turn growth recompute (requested by the message route).
+      await growthRunner.close();
       await app.close();
       await closeDb();
     },

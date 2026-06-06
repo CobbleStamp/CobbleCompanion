@@ -1,4 +1,5 @@
 import type {
+  AbilityKey,
   Drive,
   DriveWeights,
   IngestionStatus,
@@ -539,6 +540,41 @@ export const proactiveOutcomes = pgTable(
   ],
 );
 
+/**
+ * Growth snapshot (Phase 5, development-plan.md §3) — the companion's bond/growth
+ * standing, made visible and felt. Growth itself is DERIVED from substrate that
+ * already exists (sources/sections/episodes counts, learned drive weights, tool &
+ * procedure logs); this row is NOT a parallel score. It is the *acknowledged
+ * high-water mark* — the last levels/abilities/stage the progression pass already
+ * celebrated — so transitions (a level-up, a new ability) fire EXACTLY ONCE and
+ * the treats they award are not double-granted on a re-run. This mirrors the P2
+ * `consolidated_through_seq` cursor: derived truth recomputes freely, the cursor
+ * makes the side effects idempotent.
+ *
+ * `treats` is the earned currency (the only stored, non-derived value): granted on
+ * growth milestones, spent on food in the feeding economy (an atomic SQL
+ * increment/decrement, mirroring the energy top-up). One row per companion,
+ * created lazily on first recompute.
+ */
+export const companionGrowth = pgTable('companion_growth', {
+  companionId: uuid('companion_id')
+    .primaryKey()
+    .references(() => companions.id, { onDelete: 'cascade' }),
+  // Smooth axes — last celebrated level (the high-water mark for level-up events).
+  knowledgeLevel: integer('knowledge_level').notNull().default(0),
+  relationshipLevel: integer('relationship_level').notNull().default(0),
+  // Discrete axis — the set of capability unlocks already acknowledged.
+  unlockedAbilities: jsonb('unlocked_abilities')
+    .$type<readonly AbilityKey[]>()
+    .notNull()
+    .default(sql`'[]'::jsonb`),
+  // Blended headline stage (drives the emoji/badge); last celebrated value.
+  overallStage: integer('overall_stage').notNull().default(0),
+  // The earned feeding currency — the one stored, non-derived value.
+  treats: integer('treats').notNull().default(0),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const schema = {
   users,
   companions,
@@ -556,4 +592,5 @@ export const schema = {
   companionEnergy,
   companionAffect,
   proactiveOutcomes,
+  companionGrowth,
 };

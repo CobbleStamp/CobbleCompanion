@@ -19,7 +19,17 @@ export function registerMessageRoutes(
   deps: AppDeps,
   requireAuth: RequireAuth,
 ): void {
-  const { identity, memory, harness, quota, consolidation, presence, motivation, logger } = deps;
+  const {
+    identity,
+    memory,
+    harness,
+    quota,
+    consolidation,
+    presence,
+    motivation,
+    growthRunner,
+    logger,
+  } = deps;
 
   // Read the companion's transcript (oldest-first).
   app.get(
@@ -86,6 +96,10 @@ export function registerMessageRoutes(
       // both an activity tick and a chance to line up post-conversation work. The
       // engine idles while the user is active; it acts once they go idle/away.
       motivation.request(companion.id);
+      // And recompute growth (P5): the turn may have crossed a level/ability
+      // threshold (e.g. a new tool used, a fact consolidated) — recompute off the
+      // request path so any growth note lands in this conversation. Idempotent.
+      growthRunner.request(companion.id);
     },
   );
 }

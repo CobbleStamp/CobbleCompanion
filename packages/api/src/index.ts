@@ -17,6 +17,7 @@ import {
   createIngestSourceTool,
   createLoggingAfterToolCall,
   createMemorySearchTool,
+  createProceduralRetrieveContext,
   createSemanticRetrieveContext,
   createSourceParser,
   createWebFetchTool,
@@ -31,8 +32,12 @@ import {
   DrizzleCompanionEnergyStore,
   DrizzleTokenQuotaStore,
   DrizzleToolCallLog,
+  DrizzleGrowthStore,
   FakeEmbeddingGateway,
   FakeLlmGateway,
+  GrowthRunner,
+  GrowthService,
+  DEFAULT_GROWTH_CONFIG,
   Harness,
   InMemoryPresenceStore,
   IngestionPipeline,
@@ -199,6 +204,10 @@ async function main(): Promise<void> {
         embeddingDimensions: config.embeddingDimensions,
         logger: consoleLogger,
       }),
+      // Procedural retrieval-as-hint (P5): surface a relevant learned routine so
+      // the "abilities" axis is functional. Grounding-only (no recency), so it sits
+      // before the semantic arm, which appends the recency window last.
+      createProceduralRetrieveContext({ procedural, logger: consoleLogger }),
       createSemanticRetrieveContext({
         memory,
         semantic,
@@ -256,6 +265,26 @@ async function main(): Promise<void> {
   });
   const motivation = new MotivationRunner(motivationEngine, consoleLogger);
 
+  // Growth & feeding economy (P5): four-axis growth DERIVED from substrate, with an
+  // idempotent high-water mark + earned treats. The service recomputes on GET and
+  // post-turn (via the runner); feeding spends treats to top up the pools.
+  const growthStore = new DrizzleGrowthStore(db, {
+    initialTreats: DEFAULT_GROWTH_CONFIG.initialTreats,
+  });
+  const growth = new GrowthService({
+    identity,
+    semantic,
+    episodic,
+    procedural,
+    toolCallLog,
+    rewards,
+    affect: affectStore,
+    growth: growthStore,
+    memory,
+    logger: consoleLogger,
+  });
+  const growthRunner = new GrowthRunner(growth, consoleLogger);
+
   const app = await buildApp({
     identity,
     memory,
@@ -276,6 +305,9 @@ async function main(): Promise<void> {
     energy,
     rewards,
     affect: affectStore,
+    growth,
+    growthStore,
+    growthRunner,
     tokenVerifier: createTokenVerifier(config),
     config,
     logger: consoleLogger,
@@ -336,6 +368,7 @@ async function main(): Promise<void> {
     await harness.whenIdle();
     await consolidation.close();
     await motivation.close();
+    await growthRunner.close();
   });
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     process.once(signal, () => {

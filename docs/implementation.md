@@ -238,7 +238,8 @@ hit carries provenance (source title, chapter, topic, para/page range) + the ver
 The schema the motivation engine uses (full mechanism → `companion-motivation.md`; migrations
 `0012` two-pool budget + companion knobs/dial/weights + proposals.origin, `0013` proactive_outcomes,
 `0014` `proactive_outcomes.note_message_id`, `0015` `companion_affect`, `0016` `user_token_usage.top_up_tokens`
-(the stamina-pool half of the manual feed, twin of energy's top-up)).
+(the stamina-pool half of the manual feed, twin of energy's top-up); `0017` `companion_growth` (the
+Phase 5 growth high-water mark + treats)).
 
 - **`proposals.origin`** — `text` enum `chat | explore | autonomous`, default `chat`. Lets the
   confirm route re-enter the loop only for `chat`-origin proposals (the §4.4 resolution) and bill
@@ -273,8 +274,22 @@ The schema the motivation engine uses (full mechanism → `companion-motivation.
 
 Presence is **not** a table — it is a volatile, heartbeat-fed in-memory signal (§4.5).
 
-**_Deferred:_** growth/progression records + the stamina/energy game economy (P5); deeper RL policy
-beyond the v1 additive change-as-reward nudge. Added via new migrations.
+- **`companion_growth`** (new, migration `0017`, Phase 5) — the bond/growth standing. Growth itself
+  is **DERIVED** every read from substrate that already exists (sources/sections/episode counts, the
+  tool/procedure/reward/affect logs, learned `drive_weights`); this row is **not** a parallel score.
+  It stores only the **acknowledged high-water mark** — `knowledge_level`, `relationship_level`,
+  `unlocked_abilities` (jsonb `AbilityKey[]`), `overall_stage` — plus the earned **`treats`** balance
+  (the one stored, non-derived value). The mark exists to make side effects **idempotent**: `advance`
+  is a compare-and-set on the monotonic levels/stage/unlock-count (the same trick as the P2
+  consolidation cursor), so two concurrent recomputes (a `GET /growth` and a post-turn `GrowthRunner`
+  tick) can never double-award treats or double-post a growth note. The row is created lazily on first
+  recompute, seeded with `initialTreats` so feeding works on day one. `treats` moves by atomic SQL
+  increment (milestone reward) / guarded decrement (feeding, never below zero) — mirrors the energy
+  top-up. Growth curves, the abilities catalogue, food grants, and treat rewards are centralized in
+  `core/src/growth/config.ts` (`DEFAULT_GROWTH_CONFIG`) — no scattered literals.
+
+**_Deferred:_** onboarding personality seed (weights kept neutral so the emerged-personality card
+stays *earned*); deeper RL policy beyond the v1 additive change-as-reward nudge. Added via new migrations.
 
 ## 2. Harness & Agent-Loop Internals
 

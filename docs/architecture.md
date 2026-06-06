@@ -30,9 +30,13 @@ in-character report note; a **reinforcement** loop learns per-drive weights from
 user's mood across their reaction to that note — sensed in the agent loop on every turn (Phase 4.2),
 which also **attunes** each reply to the user's mood (full mechanism → `companion-motivation.md`).
 
-**Non-goals / scope boundaries (Phases 0–4):** no growth/visual system or stamina/energy game economy
-(Phase 5), no unprompted conversation beyond the autonomous report note (a later phase), no native
-surfaces or OS tools (Phase 6–7). See `development-plan.md`.
+Phase 5 adds **bond & growth**: a `GrowthService` derives four-axis growth (knowledge, relationship,
+abilities, an emerged-personality card) from substrate that already exists, surfaces a blended stage
++ a feeding economy (treats → typed foods top up the two pools), and makes procedural memory
+functional via a retrieval-as-hint arm (§4.3) — all without changing the loop.
+
+**Non-goals / scope boundaries (Phases 0–5):** no unprompted conversation beyond the autonomous
+report note (a later phase), no native surfaces or OS tools (Phase 6–7). See `development-plan.md`.
 
 ## 2. Architectural Invariants (design decisions)
 
@@ -128,7 +132,8 @@ flowchart TB
 | **Approval Queue + Gate (P3)** | The `beforeToolCall` gate + the `proposals` store — holds effectful calls for one-tap approval, resolved exactly once | The mechanical realization of propose→approve (§4.4); confirm executes via `dispatchTool` |
 | **Tool-Call Log (P3)** | Append-only audit of every executed tool call (`tool_calls`) | The `afterToolCall` hook records all calls — the DoD's "every tool call is logged" |
 | **Lead Inventory (P3)** | The companion's reading list (`leads`) — discovered-but-unread URLs | Populated by `web_fetch` link harvest; worked on command in P3 (`/explore`), by the motivation engine on idle in P4 (§4.5) |
-| **Procedural Store (P3)** | Learned, reusable workflows seeded from approved actions (`procedural_memories`) | Browse-only seed; retrieval-as-hint deferred to P5 |
+| **Procedural Store (P3)** | Learned, reusable workflows seeded from approved actions (`procedural_memories`) | Browse-only seed in P3; surfaced as a `RetrieveContext` hint arm in P5 (§4.3) so a routine resurfaces and is reused |
+| **Growth Service (P5)** | Derives four-axis growth (knowledge, relationship, abilities checklist, emerged-personality card) + blended stage from substrate (`core/src/growth/`); owns the feeding economy | Growth is DERIVED, not scored; `companion_growth` stores only the idempotent high-water mark + earned **treats**. Recompute lazily on `GET /growth` and post-turn via a **Growth Runner** (mirrors consolidation); a genuine transition posts one canned **growth note** (announcer pattern) |
 
 **Phase 4 ✅ components** (now wired, `companion-motivation.md`): **Motivation Engine** (fills the
 `Initiator` seam — drives × presence → bounded autonomous explore burst), **Presence model**
@@ -136,9 +141,15 @@ flowchart TB
 the §4.8 two-pool budget), **Motivation Runner + Sweep** (off-request ticks, mirrors consolidation),
 and the **Reinforcement** outcome store + additive change-as-reward weight update.
 
-**_Deferred — later phases:_** Growth/Progression service incl. the **stamina/energy game economy**
-+ onboarding personality seed (P5), unprompted conversation beyond the autonomous report note (a
-later phase), Mobile/Desktop clients, OS-tool bridges & Sync Courier (P6–7).
+**Phase 5 ✅ components** (now wired, `development-plan.md` §3): **Growth Service + Store + Runner**
+(above), the **feeding economy** (`POST /feed` — treats → typed foods top up the two pools via the
+existing atomic top-ups), and the **procedural retrieval-as-hint** arm (§4.3). The four growth axes
+read off substrate that already exists (semantic/episodic counts, tool/procedure/reward/affect logs,
+learned `drive_weights`); the web Growth view renders them + the kitchen.
+
+**_Deferred — later phases:_** onboarding personality seed (kept neutral so the emerged-personality
+card stays *earned*), unprompted conversation beyond the autonomous report note (a later phase),
+Mobile/Desktop clients, OS-tool bridges & Sync Courier (P6–7).
 
 ## 4. The Agent Loop & Harness
 
@@ -252,6 +263,14 @@ flowchart LR
 > attune your tone and detail." The mood *note* is surfaced; the valence number never is. Omitted
 > when there's no meaningful read, and loaded best-effort so a store hiccup costs attunement, never
 > the reply. This is the **fast loop** of the affect mechanism (§4.5, `companion-motivation.md` §7).
+
+> **Phase 5 (procedural-as-hint):** the same hook gains a **procedural arm** composed ahead of the
+> semantic arm (grounding-only, so the recency window still appends last). It surfaces a relevant
+> **learned routine** (`procedural_memories`, P3) as a "you've done this before, like so" system
+> hint, matched cheaply by title/keyword overlap (no embeddings — procedures are short and few).
+> This is what makes the Phase 5 **abilities** growth axis *functional* rather than only observed:
+> a learned workflow resurfaces and can be reused. Degrades to no hint on failure (recall never
+> breaks the conversation). No loop change — another arm in the one memory hook (invariant #3).
 
 ### 4.4 Human-in-the-loop & propose→approve
 
@@ -548,7 +567,9 @@ Design rules (the "improved staged hybrid"; memory guide → `companionmemory.md
     a counter, so autonomous work can **never starve interaction**: when energy is exhausted the
     engine stops initiating (`Initiator` idles, §4.5) while chat keeps running on stamina. The user
     **provisions** both — a visible meter + manual top-up replace the hard-coded daily cap as the
-    spend control (the food/feeding **game economy** that grows this is P5, `development-plan.md`).
+    spend control. **Phase 5** grows that top-up into the food/feeding **game economy**: typed foods
+    (`ration`→stamina, `spark`→energy, `treat`→both) spend earned **treats** via these same atomic
+    top-ups (`POST /feed`, `development-plan.md` §3).
     Each pool still rolls on a fixed window. **Autonomous reads spend real tokens** billed to energy
     via a per-run **meter override** on the shared ingestion pipeline (`pipeline.ts`: the run carries
     `meter = { quota: energyAdapter, accountId: companionId }`, and skips deferral — the engine gates
@@ -661,10 +682,11 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
       personality/     evolvedPersona synthesis from episodes (P2)
       identity/        companion "home" model + store
       motivation/      the "will" (P4, §4.4–§4.5): drives × presence arbitration, autonomous explore burst, engine runner/sweep, affect perception + change-as-reward reinforcement
+      growth/          four-axis growth derived from substrate + the feeding economy (P5, §4.3 hint arm): levels, abilities registry, growth store/service/runner, treats/foods
       quota/           two-pool token budget: per-user daily stamina (P1) + per-companion energy (P4); §4.8
-    api/               BFF / surface boundary (Fastify); memory + source + usage + proposal/inventory routes (P3); presence + proactivity (dial/energy) routes (P4)
+    api/               BFF / surface boundary (Fastify); memory + source + usage + proposal/inventory routes (P3); presence + proactivity (dial/energy) routes (P4); growth + feed routes (P5)
       tracing/         Langfuse Cloud TraceSink adapter (fetch-based; sampling + redaction before export) — runbook-tracing.md
-    web/               React web client; chat w/ citations + ingestion-status panel + approval cards (P3), sources page, memory browser, usage badge; vitality meter + proactivity dial (P4)
+    web/               React web client; chat w/ citations + ingestion-status panel + approval cards (P3), sources page, memory browser, usage badge; vitality meter + proactivity dial (P4); growth view + kitchen (P5)
     shared/            shared TS types / contracts
     eval/              dataset/scorer/runner offline eval framework: memory-recall + stateless (affect-sense) + injection red-team (→ companionmemory.md §5)
   db/                  migrations & schema (→ implementation.md)

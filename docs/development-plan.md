@@ -39,7 +39,7 @@ being is proven, because they add platform cost without changing whether the cor
 | **2** | Memory & continuity | Web | Episodic memory, companion identity, cloud "home" | ✅ **Done** |
 | **3** | Tools, action & trust | Web | Tool/MCP use + propose→approve approval queue | ✅ **Done** |
 | **4** | Proactivity engine | Web | Motivated, tunable initiative ⭐ | ✅ **Done** |
-| **5** | Bond & growth | Web | Four-axis growth + visual character — the PoC complete | Planned |
+| **5** | Bond & growth | Web | Four-axis growth + visual character — the PoC complete | ✅ **Done** |
 | **6** | Mobile surface | + Mobile | Summon model, GPS recall, push, OS-as-tools | Planned |
 | **7** | Desktop surface | + Desktop | File/workspace OS tools, heavier local storage | Planned |
 | **8** | Hardening & launch readiness | All | Security, scale, privacy controls, monetization | Planned |
@@ -285,6 +285,31 @@ shift. Full suite green at ≥80% coverage. Canonical mechanism: `docs/companion
 **Done when:** a returning user can see and feel how their Cobble has grown; the web PoC
 demonstrates all three differentiators (knowledge organism, embodiment groundwork, proactivity)
 end-to-end. **Decision gate:** validate the concept before funding native surfaces.
+
+**Implemented** (this branch): growth is **derived from substrate that already exists** — never an
+XP grind. A `GrowthService` (`packages/core/src/growth/`) reads the semantic/episodic counts, the
+tool/procedure/reward/affect logs, and the learned `drive_weights`, and computes **two smooth axes**
+(Knowledge, Relationship), a **discrete abilities checklist** (7 capabilities flipped from real logs:
+web research, memory recall, reading sources, self-directed work, a learned routine, multi-step
+tasks, mood attunement), the **emerged-personality card** ("Who *X* has become" — drive-weight spread
+from neutral + `evolved_persona`), and a blended **overall stage** with an emoji/badge (the visible
+visual axis, PoC). A `companion_growth` row (migration `0017`) stores only the **idempotent
+high-water mark + treats** — the derived levels recompute freely; the mark (a compare-and-set on the
+monotonic levels/stage/unlock-count, mirroring the P2 cursor) makes treat awards and growth notes
+fire **exactly once**. Recompute runs lazily on `GET /companions/:id/growth` and post-turn via a
+`GrowthRunner` (off the request path), posting one in-character **growth note** to the transcript on a
+genuine transition (reusing the announcer pattern; canned text since the pass is token-free). The
+**feeding economy** turns the P4 vitality meters into a kitchen: typed **foods** (`ration`→stamina,
+`spark`→energy, `treat`→both) spend earned **treats** (a starting balance + milestone rewards) via the
+existing atomic top-ups (`POST /companions/:id/feed`). **Procedural retrieval-as-hint** makes the
+abilities axis *functional*: a new `RetrieveContext` arm surfaces a relevant learned routine into
+context (no loop change — invariant #3). Web adds a **Growth view** (axis bars, abilities checklist,
+personality card, kitchen) + a header stage badge. **Gate passed** (offline, deterministic — growth is
+mechanical, not a recall-quality score): the DoD test (`packages/api/src/routes/phase5-dod.test.ts`)
+proves substrate change → axis rises + abilities unlock + treats earned + growth note posted; feeding
+spends treats and tops up the right pool (out of treats → 409); recompute is idempotent (no
+double-award/double-note); and a learned procedure resurfaces as a context hint. Full suite green at
+≥80% coverage.
 
 ## 4. Phases (Full Product)
 

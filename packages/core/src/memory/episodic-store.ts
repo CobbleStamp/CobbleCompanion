@@ -91,6 +91,11 @@ export interface EpisodicMemoryStore {
   /** The episode timeline for the memory browser — most recent first. */
   listEpisodes(companionId: string, opts?: { limit?: number }): Promise<readonly EpisodeRecord[]>;
   countEpisodes(companionId: string): Promise<number>;
+  /**
+   * Average salience across the companion's episodes (0 when it has none) — a
+   * cheap measure of shared-history depth for the Phase 5 relationship axis.
+   */
+  averageSalience(companionId: string): Promise<number>;
   /** The highest transcript `seq` already rolled into episodes (the cursor). */
   consolidatedThroughSeq(companionId: string): Promise<number>;
   /**
@@ -218,6 +223,16 @@ export class DrizzleEpisodicMemoryStore implements EpisodicMemoryStore {
       .from(episodes)
       .where(eq(episodes.companionId, companionId));
     return row?.value ?? 0;
+  }
+
+  async averageSalience(companionId: string): Promise<number> {
+    // COALESCE so a companion with no episodes (or all-null salience) reads 0
+    // rather than null — the relationship curve treats "no history" as no depth.
+    const [row] = await this.db
+      .select({ value: sql<number>`coalesce(avg(${episodes.salience}), 0)` })
+      .from(episodes)
+      .where(eq(episodes.companionId, companionId));
+    return Number(row?.value ?? 0);
   }
 
   async consolidatedThroughSeq(companionId: string): Promise<number> {

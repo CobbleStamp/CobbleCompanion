@@ -13,6 +13,7 @@ export {
   DrizzleToolCallLog,
   type ToolCallLog,
   type ToolCallRecord,
+  type ToolCallStats,
 } from './tools/tool-call-log.js';
 export { createApprovalGate, createLoggingAfterToolCall } from './tools/gate.js';
 export { DrizzleLeadStore, type LeadRecord, type LeadStore } from './tools/lead-store.js';
@@ -279,6 +280,35 @@ export {
   type EpisodicRetrieveOptions,
 } from './harness/episodic-retrieve.js';
 export { composeRetrieveContext } from './harness/compose-retrieve.js';
+export {
+  createProceduralRetrieveContext,
+  type ProceduralRetrieveOptions,
+} from './harness/procedural-retrieve.js';
+
+// Growth & feeding economy (Phase 5 — bond & growth, development-plan.md §3)
+export { DEFAULT_GROWTH_CONFIG, type GrowthConfig } from './growth/config.js';
+export { type GrowthSubstrate } from './growth/substrate.js';
+export {
+  type AxisLevel,
+  computeKnowledgeLevel,
+  computeOverallStage,
+  computeRelationshipLevel,
+  knowledgePoints,
+  personalitySpread,
+  relationshipPoints,
+  stageEmoji,
+} from './growth/levels.js';
+export { ABILITIES, abilityChecklist, abilityLabel, computeUnlocked } from './growth/abilities.js';
+export {
+  DrizzleGrowthStore,
+  type DrizzleGrowthStoreOptions,
+  type GrowthSnapshot,
+  type GrowthStore,
+  type GrowthTarget,
+} from './growth/growth-store.js';
+export { GrowthService, type GrowthServiceDeps, type GrowthTransition } from './growth/service.js';
+export { GrowthRunner, type GrowthRecomputeTarget } from './growth/growth-runner.js';
+export { feed, type FeedDeps, type FeedParams, type FeedResult } from './growth/economy.js';
 
 // Personality evolution (Phase 2)
 export {

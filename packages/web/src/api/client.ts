@@ -6,6 +6,8 @@ import type {
   CreateNoteSourceBody,
   EpisodeDto,
   EpisodeSearchResultDto,
+  FoodType,
+  GrowthDto,
   IngestionJobDto,
   LeadDto,
   MemorySnapshotDto,
@@ -208,6 +210,25 @@ export async function topUpBudget(
   return request<StaminaEnergyDto>(`/companions/${companionId}/budget/topup`, {
     method: 'POST',
     body: JSON.stringify({ pool, amount }),
+  });
+}
+
+/** The companion's four-axis growth standing (Phase 5). */
+export async function fetchGrowth(companionId: string): Promise<GrowthDto> {
+  return request<GrowthDto>(`/companions/${companionId}/growth`);
+}
+
+/** Outcome of feeding: the updated vitality meter + growth standing (treats). */
+export interface FeedResultDto {
+  readonly budget: StaminaEnergyDto;
+  readonly growth: GrowthDto;
+}
+
+/** Give the companion a food (Phase 5 feeding economy) — spends treats, tops up a pool. */
+export async function feedCompanion(companionId: string, food: FoodType): Promise<FeedResultDto> {
+  return request<FeedResultDto>(`/companions/${companionId}/feed`, {
+    method: 'POST',
+    body: JSON.stringify({ food }),
   });
 }
 

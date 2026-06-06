@@ -61,8 +61,9 @@ the fact overlay's contract: [`ontology.md`](./ontology.md).
 | Episodic transcript | ✅ Built (Phase 0) | —                                              |
 | Semantic memory     | ✅ Built (Phase 1) | —                                              |
 | Episodic store      | ✅ Built (Phase 2) — consolidated episodes + personality evolution | — |
-| Procedural memory   | ✅ Built (Phase 3) — seeded from approved actions; browse-only | retrieval-as-hint: Phase 5 |
+| Procedural memory   | ✅ Built (Phase 3) — seeded from approved actions; ✅ retrieval-as-hint (Phase 5) — a relevant learned routine resurfaces in context (`architecture.md` §4.3) | — |
 | Lead inventory      | ✅ Built (Phase 3) — the reading list (discovered URLs); the body-then-will substrate | motivation-driven on idle: Phase 4 |
+| Bond & growth       | ✅ Built (Phase 5) — four-axis growth derived from memory + the feeding economy (`development-plan.md` §3) | — |
 | Approval queue      | ✅ Built (Phase 3) — propose→approve, exactly-once | —                          |
 | Manage/delete UI    | ❌ Not built       | Phase 8                                        |
 

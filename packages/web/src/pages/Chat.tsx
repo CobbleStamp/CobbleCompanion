@@ -25,6 +25,7 @@ import { IngestionStatusButton } from '../components/IngestionStatusButton.js';
 import { Modal } from '../components/Modal.js';
 import { ProposalCard } from '../components/ProposalCard.js';
 import { BudgetMeter } from '../components/BudgetMeter.js';
+import { GrowthBadge } from '../components/GrowthBadge.js';
 import { ProactivityDial } from '../components/ProactivityDial.js';
 import { useIngestionJobs } from '../components/useIngestionJobs.js';
 import { usePresenceHeartbeat } from '../components/usePresenceHeartbeat.js';
@@ -35,6 +36,7 @@ interface ChatProps {
   readonly onSignOut: () => void;
   readonly onOpenMemory: () => void;
   readonly onOpenSources: () => void;
+  readonly onOpenGrowth: () => void;
 }
 
 interface ChatLine {
@@ -93,6 +95,7 @@ export function Chat({
   onSignOut,
   onOpenMemory,
   onOpenSources,
+  onOpenGrowth,
 }: ChatProps): JSX.Element {
   const [lines, setLines] = useState<ChatLine[]>([]);
   const [input, setInput] = useState('');
@@ -352,11 +355,15 @@ export function Chat({
           />
           <ProactivityDial companionId={companion.id} initial={companion.proactivityDial} />
           <BudgetMeter companionId={companion.id} />
+          <GrowthBadge companionId={companion.id} onOpen={onOpenGrowth} />
           <button type="button" onClick={onOpenSources}>
             Sources
           </button>
           <button type="button" onClick={onOpenMemory}>
             Memory
+          </button>
+          <button type="button" onClick={onOpenGrowth}>
+            Growth
           </button>
           <button type="button" onClick={onSignOut}>
             Sign out
