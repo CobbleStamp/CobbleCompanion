@@ -102,8 +102,10 @@ repertoire *functional* rather than merely stored, exactly as the procedural arm
 ## 6. Trust model — the developer's whitelist
 
 The entire trust decision is the **developer's whitelist**, made once, ahead of time. The developer
-curates which CLIs (and which argument patterns) and which MCP servers (and which operations) the
-companion may use. At runtime the outcome is **binary**:
+curates which CLIs (and which argument patterns) and which MCP servers the companion may use. The
+two tracks differ in granularity: CLI admission is **per-argument-pattern**, but MCP admission is
+**per-server** — whitelisting a server admits **every tool it advertises** in `tools/list`, with no
+per-operation filtering. At runtime the outcome is **binary**:
 
 | Usage | Outcome |
 |---|---|
@@ -119,10 +121,15 @@ capabilities exist at all*; propose→approve governs *named effectful tools*.
 Two consequences are load-bearing:
 
 - **Whitelist entries must be narrow** — a specific binary, constrained arguments, sandboxed output;
-  specific MCP endpoints/operations. Because there is no runtime approval backstop, curation carries
-  the full trust weight. A narrow whitelist also **bounds the experimentation space**: the companion
-  may try different *validated* invocations to learn a tool, but no manipulation — including prompt
-  injection through ingested content — can escape the whitelist into arbitrary execution.
+  for MCP, a specific server endpoint. Granularity stops at the server: there is **no per-operation
+  filtering**, so admitting a server admits *every* tool it exposes — including any
+  outward/destructive operations (`send` · `pay` · `delete`) it advertises, which run free with no
+  per-call approval. Curation must therefore weigh the server's **entire** surface, not just the
+  operations the companion is expected to use. Because there is no runtime approval backstop,
+  curation carries the full trust weight. A narrow whitelist also **bounds the experimentation
+  space**: the companion may try different *validated* invocations to learn a tool, but no
+  manipulation — including prompt injection through ingested content — can escape the whitelist into
+  arbitrary execution.
 - **Both tracks are developer-whitelisted, identically.** A user cannot point the companion at a
   brand-new CLI or MCP server on their own on the server host; admitting a tool is an operator
   action (data/policy, no code change, no redeploy). Learning to *use* a whitelisted tool is then
