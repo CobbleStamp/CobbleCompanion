@@ -43,18 +43,16 @@ for await (const delta of gateway.stream({
 
 ## Versioning: semver **and** content hash
 
-Both, deliberately:
+A prompt is versioned by both a `semver` and a `contentHash` — the precise
+definition (how the hash is computed, why both exist) is the data model, owned by
+`implementation.md` §2.2. In practice, as a prompt author:
 
-- **`semver`** is what humans read and what eval references ("persona@1 vs @2").
-  Bump it in the PR that changes a prompt's meaning.
-- **`contentHash`** is computed from the *rendered output of the sample* (sha256,
-  16 hex chars) — i.e. what the model actually sees. It is robust to source
-  reformatting (prettier, line wrapping) but changes whenever the instruction
-  wording or a tool schema changes. It catches the failure semver can't: a
-  reworded prompt that forgot its semver bump.
-
-`prompts/registry.test.ts` snapshots the `{ id → version }` map, so any wording
-change fails CI until the snapshot is updated — the prompt to also bump `semver`.
+- Bump **`semver`** in the PR that changes a prompt's meaning — it's the human
+  label and the axis eval A/Bs on ("persona@1 vs @2").
+- You never set the **`contentHash`**; it's derived from the rendered sample. But
+  `prompts/registry.test.ts` snapshots the `{ id → version }` map, so any wording
+  change fails CI until you update the snapshot — your prompt to also bump
+  `semver`. That snapshot is what catches a reworded-but-unbumped prompt.
 
 ## How to change a prompt
 

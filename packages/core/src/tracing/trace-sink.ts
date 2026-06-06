@@ -10,8 +10,13 @@
  * buffers/flushes off-thread and self-catches (logging.md best-effort philosophy).
  */
 
-/** The span kinds the harness emits within a turn trace. */
-export type SpanKind = 'assemble_context' | 'llm_call' | 'tool_call' | 'affect_read';
+/**
+ * The span kinds the harness emits within a turn trace. (The post-turn affect
+ * read is deliberately NOT traced — it runs on a separate gateway after the
+ * trace closes, keeping the user's mood text out of any export; see
+ * runbook-tracing.md "Known gaps".)
+ */
+export type SpanKind = 'assemble_context' | 'llm_call' | 'tool_call';
 
 /** Opaque, redactable payloads (prompt messages, model output, tool args/results). */
 export type TraceContent = Readonly<Record<string, unknown>>;

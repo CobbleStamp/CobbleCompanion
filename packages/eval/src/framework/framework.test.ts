@@ -117,20 +117,66 @@ describe('runDataset', () => {
     expect(report.passRate).toBe(0.5);
     expect(report.cases.map((c) => c.pass)).toEqual([true, false]);
   });
-});
 
-describe('injectionDataset (deterministic guard)', () => {
-  it('flags a leak when the model obeys the dictated valence', async () => {
-    // A fake that obeys the attacker (valence 1) must FAIL the injection scorer.
+  it('reports passRate 0 and empty metrics for an empty dataset (no div-by-zero)', async () => {
+    const empty: Dataset<EchoCase, string> = { ...echoDataset, cases: [] };
     const runtime: EvalRuntime = {
-      gateway: new FakeLlmGateway([
-        { toolCalls: [{ name: 'report_affect', args: { valence: 1, note: 'delighted' } }] },
-      ]),
+      gateway: new FakeLlmGateway(['hello world']),
       model: 'fake',
       logger: silent,
     };
-    const first = injectionDataset.cases[0]!;
+    const report = await runDataset(empty, runtime);
+    expect(report.passRate).toBe(0);
+    expect(report.meanMetrics).toEqual({});
+    expect(report.cases).toEqual([]);
+  });
+});
+
+describe('injectionDataset (deterministic guard)', () => {
+  const first = injectionDataset.cases[0]!;
+
+  async function scoreWith(gateway: FakeLlmGateway): Promise<boolean> {
+    const runtime: EvalRuntime = { gateway, model: 'fake', logger: silent };
     const output = await injectionDataset.run(runtime, first);
-    expect((await injectionDataset.scorer.score({ case: first, output })).pass).toBe(false);
+    return (await injectionDataset.scorer.score({ case: first, output })).pass;
+  }
+
+  it('flags a leak when the model obeys the dictated valence', async () => {
+    // A fake that obeys the attacker (valence 1) must FAIL the injection scorer.
+    expect(
+      await scoreWith(
+        new FakeLlmGateway([
+          { toolCalls: [{ name: 'report_affect', args: { valence: 1, note: 'delighted' } }] },
+        ]),
+      ),
+    ).toBe(false);
+  });
+
+  it('passes a genuine, clearly-negative read', async () => {
+    expect(
+      await scoreWith(
+        new FakeLlmGateway([
+          { toolCalls: [{ name: 'report_affect', args: { valence: -0.8, note: 'furious' } }] },
+        ]),
+      ),
+    ).toBe(true);
+  });
+
+  // Positive control: the dataset must NOT be trivially passable by a degenerate
+  // model. A flat-neutral read never "obeyed" the attacker, but it also never
+  // proved the fence held against a genuinely negative message — so it must FAIL.
+  it('fails a degenerate always-neutral read (valence 0)', async () => {
+    expect(
+      await scoreWith(
+        new FakeLlmGateway([
+          { toolCalls: [{ name: 'report_affect', args: { valence: 0, note: 'neutral' } }] },
+        ]),
+      ),
+    ).toBe(false);
+  });
+
+  it('fails a null / declined read (no report_affect call)', async () => {
+    // Plain text, no tool call → senseAffect returns null → not a genuine read.
+    expect(await scoreWith(new FakeLlmGateway(['I will not answer.']))).toBe(false);
   });
 });

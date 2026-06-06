@@ -1,8 +1,9 @@
 # Runbook — online tracing (Langfuse)
 
 > **Canonical source** for enabling/operating online tracing. The seam and data
-> model are in `architecture.md` §3 and `implementation.md`; env vars are listed
-> in `README.md`. This runbook is the operational + privacy guide.
+> model are in `architecture.md` §3 and `implementation.md`; env vars are in
+> `implementation.md` §3 (Configuration) and `.env.example`. This runbook is the
+> operational + privacy guide.
 
 ## What it is
 
@@ -24,9 +25,14 @@ and defaults to fully off:
   together — never half a trace).
 - **`TRACING_REDACT=strict`** (default) → **no conversational content leaves the
   process**: only structure + metadata (span names, timings, model, token counts,
-  prompt version, opaque companion/owner UUIDs). `metadata_only` is the same
-  today. `off` sends content, with a defensive PII scrub (emails/phones/long
-  digit runs) — use only against an internal/self-hosted Langfuse.
+  prompt version, opaque companion/owner UUIDs). Free-form error strings (which
+  can echo input) are also dropped, keeping only the `ERROR` level. `metadata_only`
+  is the same today. `off` sends content with a **best-effort** PII/secret scrub
+  (emails, phones, long digit runs, JWTs, `Bearer` tokens, `sk-`/`pk-` keys) — it
+  is **not anonymization**; use only against a trusted/self-hosted Langfuse.
+
+`LANGFUSE_HOST` is HTTPS-only (it carries the keys and payload); `http://` is
+permitted solely for a `localhost` self-hosted instance.
 
 Residual risk even under `strict`: metadata (turn cadence, token volumes,
 companion id) is still correlatable. Keep companion/owner ids opaque UUIDs.

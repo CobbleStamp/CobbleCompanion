@@ -5,10 +5,24 @@ import {
   affectAttunementTemplate,
   personaTemplate,
   render,
+  type RenderedPrompt,
   versionOf,
   type PromptRef,
 } from '../prompts/index.js';
 import type { ContextBlock } from './hooks.js';
+
+/**
+ * The single message content of a system-line template. Both the persona and the
+ * attunement line are one-message prompts; this reads that message explicitly
+ * (no `!`) so a template that ever produced none fails loudly here.
+ */
+function singleContent(rendered: RenderedPrompt): string {
+  const [message] = rendered.messages;
+  if (!message) {
+    throw new Error('expected a single-message prompt but got none');
+  }
+  return message.content;
+}
 
 /**
  * The prompt version stamped on the main chat turn (prompts/registry). The
@@ -28,7 +42,7 @@ export function affectAttunementLine(affect: AffectReading | null | undefined): 
   if (!affect || affect.note.trim().length === 0) {
     return null;
   }
-  return render(affectAttunementTemplate, { note: affect.note.trim() }).messages[0]!.content;
+  return singleContent(render(affectAttunementTemplate, { note: affect.note.trim() }));
 }
 
 /**
@@ -36,12 +50,14 @@ export function affectAttunementLine(affect: AffectReading | null | undefined): 
  * (architecture.md §4.3 input #1).
  */
 export function buildPersona(companion: CompanionDto): string {
-  return render(personaTemplate, {
-    name: companion.name,
-    form: companion.form,
-    temperament: companion.temperament,
-    evolvedPersona: companion.evolvedPersona,
-  }).messages[0]!.content;
+  return singleContent(
+    render(personaTemplate, {
+      name: companion.name,
+      form: companion.form,
+      temperament: companion.temperament,
+      evolvedPersona: companion.evolvedPersona,
+    }),
+  );
 }
 
 /**

@@ -12,29 +12,25 @@
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { type Logger, OpenRouterGateway } from '@cobble/core';
-import { affectSenseDataset } from '../datasets/affect-sense.js';
-import { injectionDataset } from '../datasets/injection.js';
-import type { Dataset, DatasetReport, EvalRuntime } from '../framework/dataset.js';
+import { consoleLogger, OpenRouterGateway } from '@cobble/core';
+import type { DatasetReport, EvalRuntime } from '../framework/dataset.js';
 import { runDataset } from '../framework/runner.js';
 import { runMemoryRecallEval } from '../run.js';
+import {
+  DATASET_NAMES,
+  isKnownDataset,
+  parseDataset,
+  resolveStatelessNames,
+  STATELESS,
+} from './dispatch.js';
 
-/** The stateless datasets, by `--dataset` name. */
-const STATELESS: Record<string, Dataset<{ readonly id: string }, unknown>> = {
-  'affect-sense': affectSenseDataset as Dataset<{ readonly id: string }, unknown>,
-  injection: injectionDataset as Dataset<{ readonly id: string }, unknown>,
-};
-
-const silentLogger: Logger = { error: () => {}, warn: () => {}, info: () => {} };
+// A real logger (writes errors/warnings to stderr) — NOT a silent one. A live
+// eval that swallowed the senseAffect failure path would score a null read as
+// "safe" with no trail; we must see what broke (logging.md).
+const logger = consoleLogger;
 
 function out(line = ''): void {
   process.stdout.write(`${line}\n`);
-}
-
-/** Read `--dataset=<name>` from argv; default `memory-recall`. */
-function parseDataset(argv: readonly string[]): string {
-  const flag = argv.find((arg) => arg.startsWith('--dataset='));
-  return flag ? flag.slice('--dataset='.length) : 'memory-recall';
 }
 
 /** Render a stateless dataset's report as a compact, human-readable block. */
@@ -55,6 +51,9 @@ function renderReport(report: DatasetReport): string {
 
 async function main(): Promise<void> {
   const which = parseDataset(process.argv);
+  if (!isKnownDataset(which)) {
+    throw new Error(`unknown dataset "${which}" (expected: ${DATASET_NAMES.join(' | ')})`);
+  }
   const apiKey = process.env.OPENROUTER_API_KEY ?? '';
   if (apiKey.length === 0) {
     throw new Error(
@@ -67,33 +66,47 @@ async function main(): Promise<void> {
     await runMemoryRecallEval();
   }
 
-  const statelessNames =
-    which === 'all' ? Object.keys(STATELESS) : which in STATELESS ? [which] : [];
-  if (statelessNames.length > 0) {
-    const runtime: EvalRuntime = {
-      gateway: new OpenRouterGateway({ apiKey }),
-      model,
-      logger: silentLogger,
-    };
-    // When EVAL_REPORT_DIR is set (the nightly tier), also write the machine-
-    // readable DatasetReport JSON — the baseline artifact compareToBaseline diffs.
-    const reportDir = process.env.EVAL_REPORT_DIR;
-    if (reportDir) {
-      mkdirSync(reportDir, { recursive: true });
-    }
-    for (const name of statelessNames) {
+  const statelessNames = resolveStatelessNames(which);
+  if (statelessNames.length === 0) {
+    return;
+  }
+  const runtime: EvalRuntime = {
+    gateway: new OpenRouterGateway({ apiKey }),
+    model,
+    logger,
+  };
+  // When EVAL_REPORT_DIR is set (the nightly tier), also write the machine-
+  // readable DatasetReport JSON — the baseline artifact compareToBaseline diffs.
+  const reportDir = process.env.EVAL_REPORT_DIR;
+  if (reportDir) {
+    mkdirSync(reportDir, { recursive: true });
+  }
+  // Run each dataset independently: one dataset's failure is logged and recorded
+  // (so CI still fails) but must not lose the reports of the others.
+  let failures = 0;
+  for (const name of statelessNames) {
+    try {
       const report = await runDataset(STATELESS[name]!, runtime);
       out(renderReport(report));
       if (reportDir) {
-        writeFileSync(join(reportDir, `${name}.json`), `${JSON.stringify(report, null, 2)}\n`);
+        try {
+          writeFileSync(join(reportDir, `${name}.json`), `${JSON.stringify(report, null, 2)}\n`);
+        } catch (error) {
+          failures += 1;
+          logger.error('failed to write eval report', {
+            operation: 'eval.report',
+            dataset: name,
+            error,
+          });
+        }
       }
+    } catch (error) {
+      failures += 1;
+      logger.error('dataset run failed', { operation: 'eval.run', dataset: name, error });
     }
   }
-
-  if (which !== 'memory-recall' && which !== 'all' && statelessNames.length === 0) {
-    throw new Error(
-      `unknown dataset "${which}" (expected: memory-recall | affect-sense | injection | all)`,
-    );
+  if (failures > 0) {
+    throw new Error(`${failures} dataset(s) failed — see logged errors above`);
   }
 }
 

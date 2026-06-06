@@ -85,6 +85,34 @@ describe('loadConfig', () => {
     expect(config.useContextHeader).toBe(false);
   });
 
+  it('rejects a non-localhost http LANGFUSE_HOST (must be https)', () => {
+    expect(() =>
+      loadConfig({ ...base, ...fakeProviders, LANGFUSE_HOST: 'http://traces.evil.example' }),
+    ).toThrow();
+  });
+
+  it('accepts an https LANGFUSE_HOST and an http localhost host', () => {
+    expect(
+      loadConfig({ ...base, ...fakeProviders, LANGFUSE_HOST: 'https://cloud.langfuse.com' })
+        .langfuseHost,
+    ).toBe('https://cloud.langfuse.com');
+    expect(
+      loadConfig({ ...base, ...fakeProviders, LANGFUSE_HOST: 'http://localhost:3030' })
+        .langfuseHost,
+    ).toBe('http://localhost:3030');
+  });
+
+  it('requires both Langfuse keys when TRACING_PROVIDER=langfuse', () => {
+    expect(() =>
+      loadConfig({
+        ...base,
+        ...fakeProviders,
+        TRACING_PROVIDER: 'langfuse',
+        LANGFUSE_PUBLIC_KEY: 'pk',
+      }),
+    ).toThrow();
+  });
+
   it('marks production from NODE_ENV', () => {
     const config = loadConfig({
       ...base,

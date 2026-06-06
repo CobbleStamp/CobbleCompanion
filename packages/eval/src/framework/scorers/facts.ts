@@ -17,9 +17,11 @@ export function factsScorer<Case extends { readonly expectedFacts: readonly stri
     async score({ case: evalCase, output }) {
       const total = evalCase.expectedFacts.length;
       const hit = evalCase.expectedFacts.filter((fact) => factPresent(output, fact)).length;
+      // Emit a per-case recall ratio (not the raw `total`) so the runner's
+      // cross-case mean is meaningful — "mean recall", not "avg facts/case".
       return {
         pass: total > 0 && hit === total,
-        metrics: { factsHit: hit, factsTotal: total },
+        metrics: { factsHit: hit, factsRecall: total === 0 ? 0 : hit / total },
         note: `${hit}/${total} expected facts present`,
       };
     },

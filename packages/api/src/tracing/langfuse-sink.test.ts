@@ -122,6 +122,31 @@ describe('Langfuse sink', () => {
     expect(offObs.body.output).toBe('visible reply');
   });
 
+  it('leaks NO conversational content under strict — across content, span error, and trace error', () => {
+    // The whole privacy guarantee in one assertion: a unique sentinel placed in
+    // every content/error channel must not appear anywhere in the exported batch.
+    const SENTINEL = 'SENTINEL_secret_9c3f1a';
+    const { sink, batches } = capturing(); // strict, sampleRate 1
+    const trace = sink.startTrace({ traceId: 't', name: 'turn', companionId: 'c', ownerId: 'u' });
+    const span = trace.startSpan({
+      kind: 'llm_call',
+      name: 'model',
+      content: { messages: `prompt ${SENTINEL} — reach me at a@b.com` },
+    });
+    span.end({
+      content: { output: `reply ${SENTINEL}` },
+      error: `tool failed for ${SENTINEL}, call 555-123-4567`,
+    });
+    trace.end({ error: `turn aborted: ${SENTINEL}` });
+
+    const json = JSON.stringify(batches[0]);
+    expect(json).not.toContain(SENTINEL);
+    expect(json).not.toContain('a@b.com');
+    expect(json).not.toContain('555-123-4567');
+    // ...but structure/metadata survive: the ERROR level is still recorded.
+    expect(json).toContain('"level":"ERROR"');
+  });
+
   it('keeps the ERROR level but drops the error message under strict', () => {
     // A tool error that echoes its (conversational) args must not leak verbatim.
     const { sink, batches } = capturing();

@@ -21,6 +21,19 @@ describe('scrubContent', () => {
     expect(scrubbed.valence).toBe(1);
   });
 
+  it('scrubs secret-shaped substrings (JWT, Bearer token, api key) under off', () => {
+    const secrets = {
+      a: 'token eyJhbGciOiJ.eyJzdWIiOiIx.SflKxwRJSMeKKF2',
+      b: 'Authorization: Bearer sk-live-abcdef123456',
+      c: 'key sk-proj-ABCD1234efgh',
+    };
+    const scrubbed = scrubContent(secrets, 'off') as Record<string, string>;
+    expect(scrubbed.a).not.toContain('eyJhbGciOiJ');
+    expect(scrubbed.b).not.toContain('sk-live-abcdef123456');
+    expect(scrubbed.c).not.toContain('sk-proj-ABCD1234efgh');
+    expect(scrubbed.a).toContain('[redacted]');
+  });
+
   it('recurses into nested arrays and objects', () => {
     const nested = scrubContent({ turns: [{ text: 'reach me: x@y.io' }] }, 'off') as {
       turns: { text: string }[];
@@ -54,5 +67,12 @@ describe('scrubError', () => {
   it('returns undefined when there is no error', () => {
     expect(scrubError(undefined, 'strict')).toBeUndefined();
     expect(scrubError(undefined, 'off')).toBeUndefined();
+  });
+
+  it('caps an oversized error string so it cannot bloat a batch', () => {
+    const huge = 'x'.repeat(5000);
+    const scrubbed = scrubError(huge, 'off') ?? '';
+    expect(scrubbed.length).toBeLessThanOrEqual(501); // 500 chars + the ellipsis
+    expect(scrubbed.endsWith('…')).toBe(true);
   });
 });

@@ -80,7 +80,18 @@ const envSchema = z
     TRACING_PROVIDER: z.enum(['none', 'langfuse']).default('none'),
     LANGFUSE_PUBLIC_KEY: z.string().default(''),
     LANGFUSE_SECRET_KEY: z.string().default(''),
-    LANGFUSE_HOST: z.string().url().default('https://cloud.langfuse.com'),
+    // HTTPS only — the host receives the Basic-auth keys + (redacted) trace
+    // payload, so it must not travel in cleartext (security.md). `http://` is
+    // permitted solely for a localhost self-hosted Langfuse during dev.
+    LANGFUSE_HOST: z
+      .string()
+      .url()
+      .refine(
+        (value) =>
+          value.startsWith('https://') || /^http:\/\/(localhost|127\.0\.0\.1)([:/]|$)/.test(value),
+        'LANGFUSE_HOST must use https (http allowed only for localhost)',
+      )
+      .default('https://cloud.langfuse.com'),
     TRACING_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0),
     TRACING_REDACT: z.enum(['strict', 'metadata_only', 'off']).default('strict'),
   })

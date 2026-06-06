@@ -410,9 +410,9 @@ Loaded from environment / a secret manager; required values validated at startup
 | `INGESTION_QUEUE_MAX` | Backstop cap on queued+in-flight ingestion runs across all owners; submissions past it get 429 (default 100) |
 | `TRACING_PROVIDER` | Online tracing backend: `none` (default) \| `langfuse` (`runbook-tracing.md`) |
 | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | Langfuse credentials (secret; required when `TRACING_PROVIDER=langfuse`) |
-| `LANGFUSE_HOST` | Langfuse base URL (default `https://cloud.langfuse.com`) |
+| `LANGFUSE_HOST` | Langfuse base URL (default `https://cloud.langfuse.com`) — **HTTPS only** (it carries the keys + payload); `http://` permitted solely for `localhost` |
 | `TRACING_SAMPLE_RATE` | Fraction of turns traced, deterministic per trace id, `0`–`1` (default `0` — nothing sent until raised) |
-| `TRACING_REDACT` | `strict` (default, metadata only — no content) \| `metadata_only` \| `off` (send PII-scrubbed content) |
+| `TRACING_REDACT` | `strict` (default, metadata only — no content) \| `metadata_only` (same as `strict` today) \| `off` (sends content with a defensive PII/secret scrub) |
 
 **Tracing seam (Phase C).** The harness opens one `TraceSink` trace per turn and nests
 `assemble_context` / `llm_call` (one per call, via `meteredLlmGateway`, stamped with the

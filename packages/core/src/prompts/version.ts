@@ -15,6 +15,11 @@ const HASH_LENGTH = 16;
 /**
  * Compute the canonical content hash of a built prompt: sha256 over a stable
  * JSON serialization of its messages (role + content) and advertised tools.
+ *
+ * NOTE: a tool's `parameters` are serialized by their object key *insertion*
+ * order. That is stable for today's static literal schemas, but a template that
+ * assembled `parameters` dynamically could churn the hash with no wording change
+ * — canonicalize (sort keys) here first if that ever happens.
  */
 export function contentHash(build: PromptBuild): string {
   const canonical = JSON.stringify({
