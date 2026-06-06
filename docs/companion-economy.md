@@ -5,7 +5,7 @@
 > This is the one **deliberately gamified loop** in the PoC; it does not *reflect* anything about the
 > companion (unlike the four growth axes, which are a mirror — see below).
 >
-> For *scope, acceptance, and sequencing* see `development-plan.md` §3 (Phase 5); for the
+> For *scope, acceptance, and sequencing* see `development-plan.md` §3; for the
 > `companion_growth` **schema** and the atomic treat/feed mechanics see `implementation.md` §1; for
 > the **tunable constants** (treat rewards, food grants) see `packages/core/src/growth/config.ts`
 > (`DEFAULT_GROWTH_CONFIG`) and the food catalogue in `packages/shared/src/contracts.ts` (`FOODS`);
@@ -14,7 +14,7 @@
 > this doc owns the **earn→spend loop** and the **food catalogue's behaviour**; it does not redefine
 > the schema, the constants, or the budget pools.
 >
-> **Status: implemented (Phase 5).** Code lives in `packages/core/src/growth/economy.ts` (the feed),
+> **Where it lives.** `packages/core/src/growth/economy.ts` (the feed),
 > `growth-store.ts` (the `treats` balance + atomic spend), the food catalogue in `contracts.ts`
 > (`FOODS`), and the route `POST /companions/:companionId/feed`
 > (`packages/api/src/routes/growth.routes.ts`). The Growth view's "Kitchen"
@@ -32,7 +32,7 @@ budget tangible and connecting growth to vitality.
 It is **not a mirror.** The four growth axes (knowledge, bond, initiative, character) are a *readout*
 of the companion's accumulated state — they describe what is true and may move in either direction.
 The economy is the opposite: an *incentive loop* deliberately laid on top. See §6 for the design
-note and the open question this raises.
+note and §7 for the open question it raises.
 
 ## 2. The loop
 
@@ -101,13 +101,12 @@ is never granted for free:
 The route replies with the updated vitality meter **and** the full growth standing, so the Kitchen
 reflects the spend immediately.
 
-## 6. Design note & open question
+## 6. Design note
 
-The economy is the one piece of the Phase 5 growth surface that is a **genuine game loop** rather
-than a reflection, and that is intentional for the PoC — it makes the invisible token budget
-tangible and gives the growth surface something to *do*. Two things are worth recording as honest
-caveats, because they are in tension with the engine's logic and with the mirror framing of the
-axes:
+The economy is the one piece of the growth surface that is a **genuine game loop** rather than a
+reflection, and that is intentional — it makes the invisible token budget tangible and gives the
+growth surface something to *do*. Two things are worth recording as honest caveats, because they are
+in tension with the engine's logic and with the mirror framing of the axes:
 
 - **It rewards growth with operating budget.** There is no real-world reason a companion that has
   grown should receive *more tokens to spend*. Vitality is a *cost/resource* the companion consumes
@@ -116,9 +115,10 @@ axes:
 - **The grant numbers are arbitrary game-balance values** (1 treat = 200k tokens), single-sourced as
   product constants in `config.ts` / `contracts.ts`.
 
-**Open question (deferred):** whether the mirror PoC should keep a currency game at all. The honest
-alternative is to surface vitality directly as a *readout* — "budget remaining today to talk / to
-explore" — with a direct top-up control rather than an earned-and-spent currency, decoupling growth
-(a reflection) from vitality (a resource). This was deliberately left **out of scope** for the
-mirror-reframe pass that retired the game vocabulary on the four growth axes; the economy was kept
-as-is. Revisit before the engine is reused under a real game.
+## 7. Beyond the PoC
+
+**Open question:** whether the mirror should keep a currency game at all. The honest alternative is
+to surface vitality directly as a *readout* — "budget remaining today to talk / to explore" — with a
+direct top-up control rather than an earned-and-spent currency, decoupling growth (a reflection) from
+vitality (a resource). The four growth axes use no game vocabulary; the economy is the deliberate
+exception. Revisit before the engine is reused under a real game.

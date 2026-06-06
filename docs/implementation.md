@@ -4,13 +4,10 @@
 > implementation — enough for a developer to modify the system using only this doc. For *what the
 > system is* (components, flows, decisions) see `architecture.md`; for *what we're building and in
 > what order* see `development-plan.md`.
->
-> **Status: incremental.** Specifies **Phases 0–4** (`development-plan.md` §3); later phases are
-> marked **_Deferred — Phase N_**.
 
-## 1. Data Model (Phases 0–4)
+## 1. Data Model
 
-Postgres (with `pgvector` available for later phases). Multi-tenant: every row is scoped by owner
+Postgres (with `pgvector`). Multi-tenant: every row is scoped by owner
 (`architecture.md` §2, invariant #5). Field types are indicative; authoritative DDL lives in
 migrations under `db/`.
 
@@ -34,9 +31,9 @@ migrations under `db/`.
 | `name` | text | user-chosen |
 | `form` | text | species/appearance archetype (seed) |
 | `temperament` | text | **immutable** starting personality seed (`product-overview.md` §5.5) |
-| `evolved_persona` | text, nullable (P2) | "who I've become with you" — re-synthesized from episodes, blended into the persona prompt beside the seed; null until the first evolution |
-| `persona_updated_through_seq` | bigint, default 0 (P2) | transcript `seq` the evolved persona was last synthesized from (evolution cursor) |
-| `consolidated_through_seq` | bigint, default 0 (P2) | highest transcript `seq` already rolled into episodes (consolidation cursor) |
+| `evolved_persona` | text, nullable | "who I've become with you" — re-synthesized from episodes, blended into the persona prompt beside the seed; null until the first evolution |
+| `persona_updated_through_seq` | bigint, default 0 | transcript `seq` the evolved persona was last synthesized from (evolution cursor) |
+| `consolidated_through_seq` | bigint, default 0 | highest transcript `seq` already rolled into episodes (consolidation cursor) |
 | `created_at` | timestamptz | |
 
 ### `messages` — transcript (episodic-memory substrate)
@@ -47,10 +44,10 @@ migrations under `db/`.
 | `companion_id` | uuid (FK → `companions.id`) | indexed with `seq` (`messages_companion_idx`) for recency recall |
 | `role` | text | `user` \| `assistant` \| `system` |
 | `content` | text | |
-| `kind` | text | `message` \| `tool_step` \| `proposal` — `$type<MessageKind>()`, default `message` (P3). What the row *is*, so the rich conversation (grounded answers, read-only look-ups, held actions) reconstructs identically on reload. **Only `message` rows enter the LLM-context projection** (`getMessagesSince` and the recency window filter to `kind='message'`); `tool_step`/`proposal` are UI chrome — never re-fed to the model nor consolidated into episodes |
-| `metadata` | jsonb | nullable `MessageMetadata` (P3): `citations` on a grounded `message`; `toolName` on a `tool_step`; `toolName`+`proposalId` on a `proposal` (the id wires the row to the live approval queue). Lets the surface re-render the row faithfully |
+| `kind` | text | `message` \| `tool_step` \| `proposal` — `$type<MessageKind>()`, default `message`. What the row *is*, so the rich conversation (grounded answers, read-only look-ups, held actions) reconstructs identically on reload. **Only `message` rows enter the LLM-context projection** (`getMessagesSince` and the recency window filter to `kind='message'`); `tool_step`/`proposal` are UI chrome — never re-fed to the model nor consolidated into episodes |
+| `metadata` | jsonb | nullable `MessageMetadata`: `citations` on a grounded `message`; `toolName` on a `tool_step`; `toolName`+`proposalId` on a `proposal` (the id wires the row to the live approval queue). Lets the surface re-render the row faithfully |
 | `source_id` | uuid (FK → `sources.id`, **`ON DELETE SET NULL`**) | nullable; set on a file upload's attachment chip (a `user` turn) and its acknowledgement (an `assistant` turn) so the chat reconstructs the 📎 chip + "View status →" link on reload. `SET NULL` (not cascade): deleting a source must never delete an append-only transcript turn — it just drops the link |
-| `created_at` | timestamptz | episodic memory (P2) builds on these timestamped turns |
+| `created_at` | timestamptz | episodic memory builds on these timestamped turns |
 
 > **Proactive ingestion notes.** A successful or failed read appends a single `assistant` turn
 > here via the **Ingestion Announcer** (`packages/core/src/ingestion/announcer.ts`): an
@@ -70,15 +67,15 @@ migrations under `db/`.
 > `created_at` at sub-millisecond resolution, so a monotonic ordinal is the source of truth for
 > transcript order. `seq` is a single global sequence, so it orders the whole transcript.
 
-### `episodes` — consolidated episodic memory (Phase 2)
+### `episodes` — consolidated episodic memory
 | Field | Type | Notes |
 |---|---|---|
 | `id` | uuid (PK) | |
 | `companion_id` | uuid (FK → `companions.id`, cascade) | tenancy scope; indexed `(companion_id, occurred_end)` for the time-window filter + "latest episodes" scans, and `(companion_id, seq_end)` for the cursor |
 | `summary` | text | the consolidated narrative ("you loved the ceviche in Lima…") |
 | `seq_start` / `seq_end` | bigint | transcript `seq` range this episode consolidated — idempotent, incremental rebuilds |
-| `occurred_start` / `occurred_end` | timestamptz | wall-clock span the episode covers; rendered as the date on each recalled block. The store can also filter recall to a time window, but no recall path passes one yet (see note) |
-| `salience` | real, nullable | self-reported 0–1 weight, stored and displayed only. Filler is dropped at consolidation (the reflection pass omits it); recall ranking (RRF) does **not** use this value (see note) |
+| `occurred_start` / `occurred_end` | timestamptz | wall-clock span the episode covers; rendered as the date on each recalled block |
+| `salience` | real, nullable | self-reported 0–1 weight, stored and displayed only. Filler is dropped at consolidation (the reflection pass omits it); recall ranking (RRF) does **not** use this value (§6) |
 | `embedding` | `vector(1024)`, nullable | HNSW `vector_cosine_ops`; nullable → recalled lexically until embedded |
 | `fts` | tsvector (generated from `summary`) | GIN-indexed |
 | `created_at` | timestamptz | |
@@ -88,18 +85,10 @@ migrations under `db/`.
 > un-consolidated tail (`seq > companions.consolidated_through_seq`) into episodes and advances
 > the cursor atomically; recall is the same vector + FTS hybrid (RRF) as `sections` —
 > **topic-only** in production (`architecture.md` §4.3, §4.8). Personality evolution reads recent
-> episodes to re-synthesize `companions.evolved_persona`.
->
-> **Recall scope (P2).** Two episode signals exist in the store but are **not wired into recall**:
-> (1) the **wall-clock time window** — `EpisodicStore.searchEpisodes` accepts an optional
-> `after`/`before` filter (unit-tested), but neither the harness episodic arm nor the
-> `/episodes/search` API passes one (`episodeSearchSchema` has no time fields, and nothing parses
-> time from a turn), so production recall is topic-only and the `occurred_*` span is only a date
-> annotation on the rendered block; (2) **salience** is ignored by RRF — it ranks by fused
-> vector/FTS rank alone. Filler never reaches recall because the consolidation pass omits it, not
-> because salience down-weights it. Wiring either into recall is deferred.
+> episodes to re-synthesize `companions.evolved_persona`. (Two stored signals — the wall-clock time
+> window and salience — do not steer recall; see §6.)
 
-### `sources` — Layer 0: verbatim originals (Phase 1)
+### `sources` — Layer 0: verbatim originals
 | Field | Type | Notes |
 |---|---|---|
 | `id` | uuid (PK) | |
@@ -111,7 +100,7 @@ migrations under `db/`.
 | `byte_size` | integer, nullable | |
 | `created_at` | timestamptz | |
 
-### `ingestion_jobs` — reading-progress surface (Phase 1)
+### `ingestion_jobs` — reading-progress surface
 | Field | Type | Notes |
 |---|---|---|
 | `id` / `companion_id` / `source_id` | uuid | cascade FKs |
@@ -124,7 +113,7 @@ migrations under `db/`.
 > The durable status surface is what makes the in-process runner replaceable by a real worker
 > with no schema/API change (`architecture.md` §4.8, §8), and lets deferred jobs survive a restart.
 
-### `user_token_usage` — daily token cap state (Phase 1)
+### `user_token_usage` — daily token cap state
 | Field | Type | Notes |
 |---|---|---|
 | `user_id` | uuid (PK, FK → `users.id`, cascade) | one row per user |
@@ -140,7 +129,7 @@ migrations under `db/`.
 > raises `top_up_tokens`; the per-user stamina store is the structural twin of the per-companion
 > energy store (`packages/core/src/quota/stamina-store.ts` ↔ `energy-store.ts`).
 
-### `sections` — Layer 1: retrieval units (Phase 1)
+### `sections` — Layer 1: retrieval units
 | Field | Type | Notes |
 |---|---|---|
 | `id` / `companion_id` / `source_id` | uuid | cascade FKs; companion denormalized for filtered retrieval |
@@ -158,16 +147,16 @@ Indexes: HNSW (`vector_cosine_ops`) on `embedding` — chosen over IVFFlat becau
 training set and fits incremental ingestion; GIN on `fts`; btree on `(companion_id)` and
 `(source_id, ord)`.
 
-### `facts` — Layer 2: typed knowledge overlay (Phase 1)
+### `facts` — Layer 2: typed knowledge overlay
 | Field | Type | Notes |
 |---|---|---|
 | `id` / `companion_id` | uuid | cascade FK |
 | `section_id` | uuid (FK → `sections.id`, cascade) | **provenance — non-nullable by contract** (`ontology.md` §4) |
 | `fact_type` | text | closed core set, validated at ingestion (`ontology.md` §2) |
-| `subject` / `predicate` / `object` | text (predicate nullable) | entities are denormalized strings (normalization deferred, `ontology.md` §5) |
+| `subject` / `predicate` / `object` | text (predicate nullable) | entities are denormalized strings; normalization is owned by `ontology.md` §5 |
 | `confidence` | real, nullable | extraction self-reported (0–1), advisory |
 
-### Hybrid retrieval (Phase 1 mechanism)
+### Hybrid retrieval
 
 `SemanticMemoryStore.search` runs two arms over `sections` scoped by `companion_id` —
 **vector** (`embedding <=> query` cosine, top-K) and **lexical** (`fts @@ plainto_tsquery`,
@@ -177,7 +166,7 @@ Optional metadata filters: `source_id`, and `entity` (an EXISTS over the fact ov
 subject/object — how a section whose text only says "he" is still found by "Pizarro"). Every
 hit carries provenance (source title, chapter, topic, para/page range) + the verbatim text.
 
-### `proposals` — approval queue (Phase 3)
+### `proposals` — approval queue
 | Field | Type | Notes |
 |---|---|---|
 | `id` / `companion_id` | uuid | cascade FK |
@@ -197,7 +186,7 @@ hit carries provenance (source title, chapter, topic, para/page range) + the ver
 > marks the lead `ingested`, a reject marks it `discarded` (best-effort, never fails the user's action).
 > Without the link a lead would be stranded at `read` forever — clogging `/leads` and never re-proposed.
 
-### `tool_calls` — audit log (Phase 3)
+### `tool_calls` — audit log
 | Field | Type | Notes |
 |---|---|---|
 | `id` / `companion_id` | uuid | cascade FK |
@@ -205,7 +194,7 @@ hit carries provenance (source title, chapter, topic, para/page range) + the ver
 | `name` / `args` / `result` | text / jsonb / text | one row per executed call — the DoD's "every tool call is logged" |
 | `created_at` | timestamptz | |
 
-### `leads` — reading-list inventory (Phase 3)
+### `leads` — reading-list inventory
 | Field | Type | Notes |
 |---|---|---|
 | `id` / `companion_id` | uuid | cascade FK |
@@ -215,14 +204,14 @@ hit carries provenance (source title, chapter, topic, para/page range) + the ver
 | `status` | text `$type<LeadStatus>` | `new` → `read` → `ingested`/`discarded` |
 | `created_at` | timestamptz | |
 
-> The body-then-will substrate: filled by `web_fetch` link harvest, worked on command in P3
-> (`/explore`), and by the motivation engine on idle in P4 (`architecture.md` §4.5).
+> The body-then-will substrate: filled by `web_fetch` link harvest, worked on command
+> (`/explore`), and by the motivation engine on idle (`architecture.md` §4.5).
 >
 > **Lifecycle:** `/explore` advances `new`→`read` and enqueues a proposal carrying the lead's id; the
 > terminal states are written when that proposal resolves — confirm→`ingested`, reject→`discarded` (see
 > `proposals.lead_id`). `/leads` lists only `new`+`read`, so a resolved lead leaves the reading list.
 
-### `procedural_memories` — learned workflows (Phase 3 seed)
+### `procedural_memories` — learned workflows
 | Field | Type | Notes |
 |---|---|---|
 | `id` / `companion_id` | uuid | cascade FK |
@@ -231,28 +220,25 @@ hit carries provenance (source title, chapter, topic, para/page range) + the ver
 | `steps` | jsonb | ordered tool names the workflow ran |
 | `created_at` | timestamptz | |
 
-> Seeded on a successful approved action; browse-only — retrieval-as-hint is deferred to P5.
+> Seeded on a successful approved action; browseable, and a relevant routine also resurfaces as a
+> retrieval-as-hint in context (`architecture.md` §4.3).
 
-### Phase 4 — Proactivity Engine (✅ built)
+### Proactivity & growth
 
-The schema the motivation engine uses (full mechanism → `companion-motivation.md`; migrations
-`0012` two-pool budget + companion knobs/dial/weights + proposals.origin, `0013` proactive_outcomes,
-`0014` `proactive_outcomes.note_message_id`, `0015` `companion_affect`, `0016` `user_token_usage.top_up_tokens`
-(the stamina-pool half of the manual feed, twin of energy's top-up); `0017` `companion_growth` (the
-Phase 5 growth high-water mark — band indices per axis + `observed_capabilities` — plus treats)).
+The schema the motivation engine and growth service use (full mechanisms →
+`companion-motivation.md`, `companion-economy.md`; authoritative DDL → `db/`).
 
 - **`proposals.origin`** — `text` enum `chat | explore | autonomous`, default `chat`. Lets the
   confirm route re-enter the loop only for `chat`-origin proposals (the §4.4 resolution) and bill
   effectful work to the right budget pool (chat→stamina, explore/autonomous→energy).
-- **`companions`** gains: `proactivity_dial` (`off | gentle | active`, default `gentle` — the
+- **`companions`** also carries: `proactivity_dial` (`off | gentle | active`, default `gentle` — the
   tunability dial); `personality_knobs` (jsonb `{focusLength, boredom, distractibility}` — the
-  "creature" constants; **default constants in the PoC**, personalized via onboarding later, null →
-  defaults); `drive_weights` (jsonb — per-drive weights the reinforcement loop updates; **starts
-  neutral**, null → neutral defaults).
+  "creature" constants, at shared defaults, null → defaults); `drive_weights` (jsonb — per-drive
+  weights the reinforcement loop updates; **starts neutral**, null → neutral defaults).
 - **`companion_energy`** (new) — the **energy** pool (self-initiated work), mirroring
   `user_token_usage` (which becomes the **stamina** pool) but keyed per **companion**: window reset,
   used tokens, a manual top-up grant. Separate counters so autonomy can't starve interaction (§4.8).
-- **`companion_affect`** (new, migration `0015`, Phase 4.2) — the companion's **rolling read of the
+- **`companion_affect`** — the companion's **rolling read of the
   user's mood**, one row per companion: `valence` ∈ [−1, 1] + a short natural-language `note`. The
   agent loop upserts it on every *successful* read (last-write-wins); the prior read is fed forward to
   attune the next reply, and the turn-over-turn change is the reinforcement signal
@@ -262,19 +248,18 @@ Phase 5 growth high-water mark — band indices per axis + `observed_capabilitie
   (`null`): the prior baseline is kept and nothing is learned, so a transient hiccup can't masquerade as
   a neutral mood and fabricate a reward delta. The user's message is **fenced in `<user_message>` tags**
   in the read prompt so it cannot dictate its own valence.
-- **`proactive_outcomes`** (new) — one row per initiation for the reinforcement loop: the served
+- **`proactive_outcomes`** — one row per initiation for the reinforcement loop: the served
   drive, a drive snapshot at initiation, the linked **`note_message_id`** (the report note the user
-  reacts to — migration `0014`), and the **reward** once resolved. **Phase 4.2: the reward is the
-  *change* in the user's mood** across their reaction to the note (`delta = valence_now −
-  valence_before`, sensed in the agent loop), applied as an additive nudge — not approve/reject, and
-  not the 4.1 absolute-valence critic. Doubles as the helpful-vs-annoying measurement. (`proposal_id`
-  is retained nullable for legacy rows.) Resolution is an **atomic claim** — the reward write is
-  conditioned on `reward IS NULL`, so two racing reactions can't both score one outcome; only the
-  winning claim goes on to nudge the drive weights (no lost update).
+  reacts to), and the **reward** once resolved. The reward is the **change** in the user's mood
+  across their reaction to the note (`delta = valence_now − valence_before`, sensed in the agent
+  loop), applied as an additive nudge — not approve/reject. Doubles as the helpful-vs-annoying
+  measurement. Resolution is an **atomic claim** — the reward write is conditioned on
+  `reward IS NULL`, so two racing reactions can't both score one outcome; only the winning claim goes
+  on to nudge the drive weights (no lost update).
 
 Presence is **not** a table — it is a volatile, heartbeat-fed in-memory signal (§4.5).
 
-- **`companion_growth`** (new, migration `0017`, Phase 5) —
+- **`companion_growth`** —
   the bond/growth standing as a **MIRROR**. Growth itself is **DERIVED** every read from substrate
   that already exists (sources/sections/episode counts, the tool/procedure/affect logs, the
   proactive-outcome log, learned `drive_weights`) and **may move in either direction**; this row is
@@ -282,7 +267,7 @@ Presence is **not** a table — it is a volatile, heartbeat-fed in-memory signal
   high-water mark** — `knowledge_band`, `bond_band`, `initiative_band` (the highest band index already
   reflected on), `observed_capabilities` (jsonb `CapabilityKey[]`) — plus the earned **`treats`** balance
   (the one stored, non-derived value). The mark exists ONLY to make reflections **idempotent**: `advance`
-  is a compare-and-set on the monotonic band indices + observed-capability set (the same trick as the P2
+  is a compare-and-set on the monotonic band indices + observed-capability set (the same trick as the
   consolidation cursor), so two concurrent post-turn recomputes (e.g. overlapping `GrowthRunner` ticks,
   or two app instances) can never double-award treats or double-post a growth reflection. (`GET /growth`
   itself is read-only — it never recomputes — so a read can never award or post.) The row is created
@@ -293,47 +278,43 @@ Presence is **not** a table — it is a volatile, heartbeat-fed in-memory signal
   earn→spend **feeding economy** these constants drive (treats, foods, the feed flow), see
   `companion-economy.md`.
 
-**_Deferred:_** onboarding personality seed (weights kept neutral so the character card
-stays *earned*); deeper RL policy beyond the v1 additive change-as-reward nudge. Added via new migrations.
-
 ## 2. Harness & Agent-Loop Internals
 
 The design and diagrams of the loop live in `architecture.md` §4; this is the concrete mechanism.
 
 ### 2.1 Extension-point signatures
 
-The loop defines these typed hooks (invariant #3). Phase 0 registers default no-op/passthrough
-implementations; later phases supply real ones without changing the loop.
+The loop defines these typed hooks (invariant #3); filling them is additive and does not change the
+loop.
 
 ```ts
 // memory-retrieval hook — assembles prior context for a turn. Takes the
-// current user content because query-dependent recall (P1 semantic memory
-// embeds the question) needs it; the P0 recency window ignores it. The object
-// param keeps future fields additive. P1 changed both ends of this signature:
-// the new `userContent` param AND the return — it now yields a RetrieveResult
-// carrying the blocks plus the `usage` spent recalling them (the query
-// embedding), so the harness can meter the whole turn against the daily
-// cap (`user_token_usage`, §1).
+// current user content because query-dependent recall (semantic memory
+// embeds the question) needs it; the recency window ignores it. The object
+// param keeps future fields additive. The return is a RetrieveResult carrying
+// the blocks plus the `usage` spent recalling them (the query embedding), so
+// the harness can meter the whole turn against the daily cap
+// (`user_token_usage`, §1).
 interface RetrieveParams { companionId: string; userContent: string }
 interface RetrieveResult { blocks: readonly ContextBlock[]; usage: TokenUsage }
 type RetrieveContext = (params: RetrieveParams) => Promise<RetrieveResult>;
 
-// a context block may carry provenance (P1 semantic recall); the harness
+// a context block may carry provenance (semantic recall); the harness
 // surfaces a turn's provenance as a `citations` stream event before `done`
 interface ContextBlock { role: MessageRole; content: string; provenance?: Citation[] }
 
-// tool hooks — gate around every tool call (P3 ✅). The gate writes a pending
+// tool hooks — gate around every tool call. The gate writes a pending
 // proposal + returns Block for an effectful call (→ exit-to-approve); afterToolCall
 // receives the executed call so it can log name+args+result.
 type BeforeToolCall = (call: ToolCall, ctx: TurnCtx) => Promise<ToolCall | Block>;
 type AfterToolCall  = (result: ToolResult, call: ToolCall, ctx: TurnCtx) => Promise<ToolResult>;
 // TurnCtx carries { companionId, ownerId } so tools scope tenant state + bill tokens.
 
-// initiation hook — produces a non-human ENTRY (P4)
+// initiation hook — produces a non-human ENTRY
 type Initiator = (companionId: string) => Promise<Entry | null>;                   // null → stay idle
 ```
 
-**Phase 1 implementation** (`packages/core/src/harness/semantic-retrieve.ts`): embeds
+**Semantic retrieval** (`packages/core/src/harness/semantic-retrieve.ts`): embeds
 `userContent` via the Embedding Gateway, hybrid-searches the semantic store (§1), renders each
 hit as a system-role grounding block with structured `provenance`, then appends the recency
 window. Embedding-provider failure logs and degrades to recency-only — recall never breaks the
@@ -349,20 +330,20 @@ length capped. Only numeric locators (paragraph/page ranges) render as trusted t
 `provenance` carries titles verbatim — sanitization is prompt-only; UI rendering escapes
 separately.
 
-### 2.2 Context assembly (Phases 0–2)
+### 2.2 Context assembly
 
 A turn's prompt is composed, in order, from: **(1)** the companion identity row (`name`, `form`,
-`temperament` → persona system prompt — P2 blends in `evolved_persona` beside the seed when
+`temperament` → persona system prompt — `evolved_persona` is blended in beside the seed when
 present), **(2)** the base system prompt, **(3)** `RetrieveContext` output. The hook is one slot;
-`composeRetrieveContext` runs the arms in order — **P2 episodic** memory blocks (time-anchored,
-fenced), then **P1** top-K semantic grounding blocks (verbatim sections with source/para
+`composeRetrieveContext` runs the arms in order — **episodic** memory blocks (time-anchored,
+fenced), then top-K **semantic** grounding blocks (verbatim sections with source/para
 preambles), then the most-recent N transcript messages (the recency window, appended once by the
-semantic arm). Each arm degrades independently. **P3:** the registry's tool list is advertised to
+semantic arm). Each arm degrades independently. The registry's tool list is advertised to
 the gateway via `LlmStreamParams.tools` (not the prompt text); prior tool-call/result turns are
 replayed into the message array in the OpenAI wire shape.
 
 **Prompt registry (code-as-truth).** The persona, attunement, and every other prompt that defines a
-turn's *instruction* (the system/user message that tells the model what to do) are no longer inline
+turn's *instruction* (the system/user message that tells the model what to do) are not inline
 strings — each is a typed `PromptTemplate<I>` in `core/src/prompts/catalog/`,
 rendered at its call site via `render(template, input)`. A template carries an `id`, an
 author-declared `semver`, and a pure `build(input)`; `render` stamps the call with a
@@ -379,16 +360,16 @@ so the stamp describes the whole call, not just the primary prompt (`coPromptRef
 are fenced, untrusted *data* assembled per turn, not instructions, so each keeps its inline sentinel
 fencing. The how-to (changing/adding a prompt) lives in `guide-prompts.md`.
 
-### 2.3 Turn & loop mechanics (Phases 0–3)
+### 2.3 Turn & loop mechanics
 
 - A **turn** = one streamed LLM call; the gateway returns a `StreamResult { usage, toolCalls }`. With
-  no tools registered, `toolCalls` is empty → the inner loop exits after one turn (the P0 path).
-- **P3 inner loop:** when a turn returns tool calls, each is run through `beforeToolCall` — a read-only
+  no tools registered, `toolCalls` is empty → the inner loop exits after one turn.
+- **Inner loop:** when a turn returns tool calls, each is run through `beforeToolCall` — a read-only
   call dispatches via `dispatchTool` and its result re-enters as a `tool`-role message for the next
   turn; an **effectful** call is BLOCKED. **All** effectful calls in a turn are collected (not just the
   first) and each enqueues a `proposals` row; the loop then EXITs. `afterToolCall` logs every executed
   call. The model response **streams** throughout; usage accrues across all turns, debited once at exit.
-- **Transcript fidelity (P3):** the loop persists what the user sees so it survives reload — a grounded
+- **Transcript fidelity:** the loop persists what the user sees so it survives reload — a grounded
   answer carries its `citations` in `metadata`; each read-only call writes a friendly `tool_step` row
   (`Tool.stepSummary`) and emits a `tool_step` stream event; each held action writes a `proposal` row
   and emits a `proposal` event. `ChatStreamEvent` therefore spans `token` / `citations` / `tool_step` /
@@ -408,9 +389,8 @@ fencing. The how-to (changing/adding a prompt) lives in `guide-prompts.md`.
   exits-with-partial.
 - On exit, the turn is appended to `messages` (the transcript / episodic substrate, §1).
 
-The proactive `Initiator` seam is now wired (P4 — the motivation engine in `motivation/`; see §1
-and `companion-motivation.md`). **_Deferred:_** push notifications (P-later) and transcript
-compaction when the context window fills (P-later).
+The proactive `Initiator` seam is filled by the motivation engine in `motivation/` (see §1
+and `companion-motivation.md`).
 
 ## 3. Configuration
 
@@ -441,7 +421,7 @@ Loaded from environment / a secret manager; required values validated at startup
 | `TRACING_SAMPLE_RATE` | Fraction of turns traced, deterministic per trace id, `0`–`1` (default `0` — nothing sent until raised) |
 | `TRACING_REDACT` | `strict` (default, metadata only — no content) \| `metadata_only` (same as `strict` today) \| `off` (sends content with a defensive PII/secret scrub) |
 
-**Tracing seam (Phase C).** The harness opens one `TraceSink` trace per turn and nests
+**Tracing seam.** The harness opens one `TraceSink` trace per turn and nests
 `assemble_context` / `llm_call` (one per call, via `meteredLlmGateway`, stamped with the
 `promptRef` + token usage) / `tool_call` spans. `TraceSink` (`core/src/tracing`) mirrors the
 `Logger`/`UsageSink` seam — no-op by default, wrapped in `guardedTraceSink` so a sink fault never
@@ -449,19 +429,17 @@ breaks a turn. The Langfuse Cloud adapter (`api/src/tracing/langfuse-sink.ts`) a
 sampling + content redaction (`scrubContent`) before any third-party export. Operational + privacy
 detail: `runbook-tracing.md`.
 
-**P3 tuning constants** are in-code defaults (not secrets, so not env-wired): the loop ceilings
-`DEFAULT_MAX_TOOL_ITERATIONS` (default 6) + the optional per-run token budget (`harness.ts`,
+**Loop & tool tuning constants** are in-code defaults (not secrets, so not env-wired): the loop
+ceilings `DEFAULT_MAX_TOOL_ITERATIONS` (default 6) + the optional per-run token budget (`harness.ts`,
 overridable via `HarnessOptions`), `web_fetch`'s returned-text cap (`web-fetch.ts`, default 8000
 chars) and link-harvest cap (`MAX_HARVESTED_LINKS`, default 20), and the `/explore` burst size
 (`inventory.routes.ts`, default 3).
 
-**P4 tuning constants** are likewise in-code: the motivation **sweep cadence**
+**Motivation tuning constants** are likewise in-code: the motivation **sweep cadence**
 (`MOTIVATION_SWEEP_INTERVAL_MS`, `api/src/index.ts`) and the autonomous-burst focus length
 (`motivation/`). The per-companion **energy** pool reuses `TOKEN_CAP_PER_DAY` as its default cap
 (`api/src/index.ts`), and the post-turn **affect read** runs on `INGESTION_MODEL` (billed to
 stamina) — see §1 and `companion-motivation.md` §7–§8.
-
-**_Deferred:_** worker tuning and push-notification credentials (P-later).
 
 ## 4. Error Handling
 
@@ -471,7 +449,7 @@ stamina) — see §1 and `companion-motivation.md` §7–§8.
 - LLM Gateway handles provider failures explicitly (timeout, rate limit, unavailable) and surfaces
   a typed error to the harness rather than throwing raw provider errors.
 
-## 5. Security Implementation (Phase 0)
+## 5. Security Implementation
 
 Implements the trust-model boundaries in `architecture.md` §8.
 
@@ -481,8 +459,8 @@ Implements the trust-model boundaries in `architecture.md` §8.
   `Bearer` header; the Fastify API validates the RS256 token against Google's JWKS
   (issuer `accounts.google.com`, audience = `GOOGLE_CLIENT_ID`, expiry, `jose`), requires
   `email_verified === true`, and JIT-provisions the user from the verified `email` claim.
-  `AUTH_MODE=dev_bypass` skips all of this for local dev/tests. (ID tokens last ~1h; an app-issued
-  session JWT is a documented future upgrade.) An **expired** token is an expected client condition,
+  `AUTH_MODE=dev_bypass` skips all of this for local dev/tests. (ID tokens last ~1h, with no refresh
+  token, so a session lasts within that window.) An **expired** token is an expected client condition,
   not a server fault: the API guard classifies `jose`'s `ERR_JWT_EXPIRED` and logs it at `info`
   (no stack), reserving `error`-level logs for genuine verification anomalies (bad signature, wrong
   audience, missing claims).
@@ -493,7 +471,7 @@ Implements the trust-model boundaries in `architecture.md` §8.
   already-expired token is dropped rather than sent. `sessionStorage` (not `localStorage`) is a
   deliberate posture: the credential survives refresh and in-tab navigation but clears on tab/browser
   close. Because the ID token lives ~1h with no refresh token, this only restores a session within
-  that window; full silent refresh / 401-driven re-auth is a future upgrade.
+  that window (§6).
 - **Transport** — HTTPS/TLS for client traffic; secure (TLS) Postgres connections.
 - **Tenancy** — every query filtered by `owner_id`/`companion_id`; authorization checked at the
   API boundary before reaching the core.
@@ -502,5 +480,24 @@ Implements the trust-model boundaries in `architecture.md` §8.
 - **LLM provider data handling** — user content sent to the provider is an explicit external
   trust boundary; record the chosen provider's data-retention terms here once finalized.
 
-**_Deferred — Phase 8:_** encryption-at-rest, data inspection/management/delete controls,
-on-device data locality (native surfaces), propose→approve audit trail.
+## 6. Beyond the PoC
+
+Out of scope for this release; the roadmap is owned by `development-plan.md`.
+
+**Built, not yet wired (gaps).**
+- **Episodic recall steering.** `EpisodicStore.searchEpisodes` accepts an `after`/`before`
+  time-window filter (unit-tested), but no recall path passes one — neither the harness episodic arm
+  nor `/episodes/search` (`episodeSearchSchema` has no time fields, and nothing parses time from a
+  turn). Production recall is topic-only and the `occurred_*` span is only a date annotation.
+  Separately, **salience** is ignored by RRF — it ranks by fused vector/FTS rank alone; filler never
+  reaches recall because consolidation omits it, not because salience down-weights it.
+
+**Out of scope / future.**
+- **Onboarding personality seed** — drive weights stay neutral so the character card is *earned*.
+- **Deeper reinforcement** — a contextual-bandit policy beyond the additive change-as-reward nudge.
+- **Auth** — an app-issued session JWT and silent refresh / 401-driven re-auth beyond the ~1h
+  Google ID token.
+- **Background workers & push** — worker tuning and push-notification credentials.
+- **Transcript compaction** — summarizing the compactible remainder when the context window fills.
+- **Security hardening** — encryption-at-rest, data inspection/management/delete controls,
+  on-device data locality for native surfaces, and a propose→approve audit trail.

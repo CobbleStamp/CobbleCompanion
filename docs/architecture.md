@@ -5,45 +5,45 @@
 > `product-overview.md`; for *scope & priorities* see `development-plan.md`; for *internal
 > mechanisms* (data models, schemas, config, security implementation) see `implementation.md`.
 >
-> **Status: incremental.** Built up phase by phase; currently specifies **Phases 0–4**
-> (`development-plan.md` §3). Content for later phases is marked **_Deferred — Phase N_**. The
-> **Architectural Invariants** (§2) are the exception — load-bearing boundaries fixed now.
+> The **Architectural Invariants** (§2) are the load-bearing boundaries — the one-way-door
+> decisions that hold across the system.
 
 ## 1. Purpose & Scope
 
 CobbleCompanion is **one cloud-resident companion** (`model + harness + memory`) reached through
-**surfaces** it embodies in, one at a time (`product-overview.md` §2). The architecture's job is
-to keep that companion *core* surface-agnostic so surfaces (web now; mobile, desktop later) plug
-in as clients. **Phase 0** delivered the smallest end-to-end slice: a user creates a Cobble on the
-**web** surface and holds a persisted, single continuous conversation (§2, invariant #6).
-**Phase 1** adds the knowledge organism: sources are ingested into **semantic memory** (§4.8) and
-chat answers ground themselves in them with citations. **Phase 2** adds memory & continuity: a
-background pass consolidates the transcript into **episodic memory** (recalled by topic, §4.3) and
-the companion's **personality evolves** from those episodes. **Phase 3** adds tools, action & trust:
-the loop gains a real **inner loop** that calls tools (§4.1–4.2), and the **propose→approve** gate
-holds every effectful action in an **approval queue** for one-tap confirmation (§4.4); a **lead
-inventory** (reading list) and a **procedural-memory** seed land as the body the Phase 4 will drives.
-**Phase 4** adds the **will**: a **motivation engine** fills the `Initiator` seam (§4.5) and, on a
-lazy idle/return tick, **reads the lead inventory into memory on its own** (no approval — autonomy is
-autonomy), spending real tokens against a **stamina/energy** two-pool budget (§4.8), then posts an
-in-character report note; a **reinforcement** loop learns per-drive weights from the **change** in the
-user's mood across their reaction to that note — sensed in the agent loop on every turn (Phase 4.2),
-which also **attunes** each reply to the user's mood (full mechanism → `companion-motivation.md`).
+**surfaces** it embodies in, one at a time (`product-overview.md` §2). The architecture keeps that
+companion *core* surface-agnostic, so surfaces (web today; mobile and desktop as future clients)
+plug in without a core rewrite. A user creates a Cobble on the **web** surface and holds a
+persisted, single continuous conversation (§2, invariant #6).
 
-Phase 5 adds **bond & growth**: a `GrowthService` derives the four MIRROR axes (knowledge, bond,
+The companion is a **knowledge organism**: sources are ingested into **semantic memory** (§4.8) and
+chat answers ground themselves in them with citations. A background pass consolidates the transcript
+into **episodic memory** (recalled by topic, §4.3), and the companion's **personality evolves** from
+those episodes. The loop runs a real **inner loop** that calls tools (§4.1–4.2); the
+**propose→approve** gate holds every effectful action in an **approval queue** for one-tap
+confirmation (§4.4); a **lead inventory** (reading list) and **procedural memory** form the body that
+the will drives.
+
+That **will** is a **motivation engine** filling the `Initiator` seam (§4.5): on a lazy idle/return
+tick it **reads the lead inventory into memory on its own** (no approval — autonomy is autonomy),
+spending real tokens against a **stamina/energy** two-pool budget (§4.8), then posts an in-character
+report note. A **reinforcement** loop learns per-drive weights from the **change** in the user's mood
+across their reaction to that note — sensed in the agent loop on every turn, which also **attunes**
+each reply to the user's mood (full mechanism → `companion-motivation.md`).
+
+**Bond & growth** is a `GrowthService` that derives the four MIRROR axes (knowledge, bond,
 initiative, character) + an observed-capabilities checklist from substrate that already exists — a
 readout that may move either way, never floored — plus a feeding economy (treats → typed foods top up
 the two pools), and makes procedural memory functional via a retrieval-as-hint arm (§4.3) — all
 without changing the loop.
 
-**Non-goals / scope boundaries (Phases 0–5):** no unprompted conversation beyond the autonomous
-report note (a later phase), no native surfaces or OS tools (Phase 6–7). See `development-plan.md`.
+Scope boundaries and what lies beyond this release are collected in §9; the roadmap is owned by
+`development-plan.md`.
 
 ## 2. Architectural Invariants (design decisions)
 
-Fixed now to preserve extensibility. The implementation behind a seam may be a Phase 0 stub, but
-the **boundary** does not move — these are the one-way-door decisions; everything else is
-deferred to the phase that needs it.
+These preserve extensibility: the implementation behind a seam may evolve, but the **boundary**
+does not move — these are the one-way-door decisions.
 
 1. **Core ↔ surface boundary.** The companion core is surface-agnostic and exposed only through
    the API (§5). Surfaces are clients with no companion logic → native surfaces are added as
@@ -61,13 +61,12 @@ deferred to the phase that needs it.
    messages attach directly to the companion (`messages.companion_id`); the conversation *is*
    `messages WHERE companion_id = ? ORDER BY seq`. This is a product decision
    (`product-overview.md` §2) enforced structurally so duplicate/empty sessions cannot exist.
-   (In the MVP a user owns a single companion; multiple companions per user is a future
-   capability and does not change this per-companion invariant.)
+   (A user owns a single companion; this per-companion invariant holds regardless.)
 
 ## 3. Component Map
 
-Phase 0–1 components and the layers they belong to. Components introduced in later phases are
-listed below the diagram, not yet wired.
+The components and the layers they belong to. The diagram shows the core request path; the full
+component set follows in the table below it.
 
 ```mermaid
 flowchart TB
@@ -80,10 +79,10 @@ flowchart TB
   subgraph CORE["Companion Core — surface-agnostic"]
     H["Harness<br/>agent loop + extension hooks"]
     GW["LLM Gateway<br/>provider-agnostic"]
-    EGW["Embedding Gateway<br/>provider-agnostic (P1)"]
+    EGW["Embedding Gateway<br/>provider-agnostic"]
     MEM["MemoryStore (interface)<br/>transcript"]
-    SEM["Semantic Store (P1)<br/>sources · sections · facts"]
-    ING["Ingestion Pipeline + Runner (P1)<br/>parse → segment → enrich → embed"]
+    SEM["Semantic Store<br/>sources · sections · facts"]
+    ING["Ingestion Pipeline + Runner<br/>parse → segment → enrich → embed"]
     ID["Identity Store<br/>companion 'home'"]
   end
   subgraph DATA["Persistence"]
@@ -113,45 +112,30 @@ flowchart TB
 |---|---|---|
 | **Web Client** | Chat UI (incl. citations, in-chat ingestion-status panel, persisted upload turns + live proactive notes), create-a-companion, auth flows, sources page, memory browser + search | Thin client over the API (invariant #1) |
 | **API / BFF** | Auth, sessions, routing, response streaming, source intake (multipart), memory routes | The only thing surfaces talk to |
-| **Harness** | The agent loop; defines memory/tool/initiation hooks | See §4; P1 fills the memory hook with semantic recall |
+| **Harness** | The agent loop; defines memory/tool/initiation hooks | See §4; the memory hook is filled with semantic recall |
 | **LLM Gateway** | Provider-agnostic chat-model access | Default OpenRouter; provider pluggable |
 | **Prompt Registry** | Code-as-truth, versioned prompts (`core/src/prompts`) — every system/tool prompt is a typed `PromptTemplate` rendered at its call site | Single source for prompt wording; each LLM call stamps the `promptRef` (semver + content hash) that produced it. See `guide-prompts.md` |
-| **Embedding Gateway** | Provider-agnostic embedding access (P1) | OpenRouter `/embeddings`; deterministic fake for tests |
+| **Embedding Gateway** | Provider-agnostic embedding access | OpenRouter `/embeddings`; deterministic fake for tests |
 | **MemoryStore** | Boundary for the transcript (episodic substrate) | The companion's single transcript (`messages`), keyed by `companion_id`; a turn may carry an optional `source_id` (an upload's attachment + acknowledgement) so the chat reconstructs them on reload |
-| **Ingestion Announcer** | Proactive transcript note when a read ends (P1, §4.8) | On `done`/`failed`, posts an in-character, **metered** assistant turn (canned fallback over cap / on failure); fired by the pipeline, decoupled from it |
-| **Semantic Store** | Sources (verbatim), sections (vector + FTS), fact overlay, ingestion jobs (P1) | Hybrid retrieval with provenance; contract → `ontology.md` |
-| **Ingestion Pipeline + Runner** | Two-pass source reading off the request path (P1, §4.8) | Durable status in `ingestion_jobs`; replaceable by a real worker |
-| **Episodic Store** | Consolidated, time-anchored episodes (vector + FTS) + the consolidation cursor (P2) | Derived from the transcript (rebuildable); hybrid recall by topic (§4.3). A time-window filter exists on the store but is not yet wired into recall |
-| **Consolidation Service + Runner** | Off-request reflection: transcript window → consolidated episodes, filler dropped (P2) | Mirrors the ingestion runner — coalesced, serial, quota-gated; post-turn trigger + startup/periodic sweep |
-| **Personality Evolver** | Re-synthesizes `evolvedPersona` from episodes after consolidation (P2) | Cursor-gated, metered; blended into the persona prompt beside the seed |
-| **Identity Store** | Companion "home" record (incl. P2 `evolvedPersona` + evolution/consolidation cursors) | Source of truth surfaces load from |
-| **Token Quota Store** | Per-user daily token-budget state — the cost cap (P1, §4.8) | Postgres-backed (`user_token_usage`); routes enforce it inline |
+| **Ingestion Announcer** | Proactive transcript note when a read ends (§4.8) | On `done`/`failed`, posts an in-character, **metered** assistant turn (canned fallback over cap / on failure); fired by the pipeline, decoupled from it |
+| **Semantic Store** | Sources (verbatim), sections (vector + FTS), fact overlay, ingestion jobs | Hybrid retrieval with provenance; contract → `ontology.md` |
+| **Ingestion Pipeline + Runner** | Two-pass source reading off the request path (§4.8) | Durable status in `ingestion_jobs`; replaceable by a real worker |
+| **Episodic Store** | Consolidated, time-anchored episodes (vector + FTS) + the consolidation cursor | Derived from the transcript (rebuildable); hybrid recall by topic (§4.3) |
+| **Consolidation Service + Runner** | Off-request reflection: transcript window → consolidated episodes, filler dropped | Mirrors the ingestion runner — coalesced, serial, quota-gated; post-turn trigger + startup/periodic sweep |
+| **Personality Evolver** | Re-synthesizes `evolvedPersona` from episodes after consolidation | Cursor-gated, metered; blended into the persona prompt beside the seed |
+| **Identity Store** | Companion "home" record (incl. `evolvedPersona` + evolution/consolidation cursors) | Source of truth surfaces load from |
+| **Token Quota Store** | Per-user daily token-budget state — the cost cap (§4.8) | Postgres-backed (`user_token_usage`); routes enforce it inline |
 | **Persistence** | Relational + vector storage | Postgres + `pgvector`; schemas → `implementation.md` |
 | **Eval Harness** | Offline dataset/scorer/runner eval framework (`packages/eval`) | Not on the serving path; live OpenRouter. memory-recall + stateless + injection datasets. See `companion-memory.md` §5, `howto-run-evals.md` |
 | **Trace Sink** | Online tracing seam (`core/src/tracing`) — per-turn trace with assemble_context/llm_call/tool_call spans | No-op by default; the Langfuse Cloud adapter lives in `api/src/tracing`, sampled + redacted. See `runbook-tracing.md` |
-| **Tool Registry + Tools (P3)** | The tools a turn advertises + dispatches (`core/tools/`): `web_fetch`, `memory_search` (read-only), `ingest_source` (effectful) | Read-only tools run freely; the gate holds effectful ones (§4.4). `web_fetch` reuses the link resolver; `ingest_source` reuses the P1 pipeline |
-| **Approval Queue + Gate (P3)** | The `beforeToolCall` gate + the `proposals` store — holds effectful calls for one-tap approval, resolved exactly once | The mechanical realization of propose→approve (§4.4); confirm executes via `dispatchTool` |
-| **Tool-Call Log (P3)** | Append-only audit of every executed tool call (`tool_calls`) | The `afterToolCall` hook records all calls — the DoD's "every tool call is logged" |
-| **Lead Inventory (P3)** | The companion's reading list (`leads`) — discovered-but-unread URLs | Populated by `web_fetch` link harvest; worked on command in P3 (`/explore`), by the motivation engine on idle in P4 (§4.5) |
-| **Procedural Store (P3)** | Learned, reusable workflows seeded from approved actions (`procedural_memories`) | Browse-only seed in P3; surfaced as a `RetrieveContext` hint arm in P5 (§4.3) so a routine resurfaces and is reused |
-| **Growth Service (P5)** | Derives the four MIRROR axes (knowledge, bond, initiative, character) + the observed-capabilities checklist from substrate (`core/src/growth/`); owns the feeding economy (mechanism: `companion-economy.md`) | Growth is DERIVED, a readout that may move either way — never scored, never floored; `companion_growth` stores only the idempotent high-water mark (band indices + observed capabilities) + earned **treats**. Recompute runs post-turn via a **Growth Runner** (mirrors consolidation); `GET /growth` is a read-only snapshot of the live derived standing (never recomputes, never writes). A genuine band/capability advance posts one canned **growth reflection** (announcer pattern) |
-
-**Phase 4 ✅ components** (now wired, `companion-motivation.md`): **Motivation Engine** (fills the
-`Initiator` seam — drives × presence → bounded autonomous explore burst), **Presence model**
-(volatile heartbeat-fed signal), **Energy Store** (`companion_energy` — the self-initiated half of
-the §4.8 two-pool budget), **Motivation Runner + Sweep** (off-request ticks, mirrors consolidation),
-and the **Reinforcement** outcome store + additive change-as-reward weight update.
-
-**Phase 5 ✅ components** (now wired, `development-plan.md` §3): **Growth Service + Store + Runner**
-(above), the **feeding economy** (`POST /feed` — treats → typed foods top up the two pools via the
-existing atomic top-ups), and the **procedural retrieval-as-hint** arm (§4.3). The four mirror axes
-(knowledge, bond, initiative, character) read off substrate that already exists (semantic/episodic
-counts, the tool/procedure/affect logs, the proactive-outcome log, learned `drive_weights`); the web
-Growth view renders the axis readings + capabilities checklist + character card + the kitchen.
-
-**_Deferred — later phases:_** onboarding personality seed (kept neutral so the character
-card stays *earned*), unprompted conversation beyond the autonomous report note (a later phase),
-Mobile/Desktop clients, OS-tool bridges & Sync Courier (P6–7).
+| **Tool Registry + Tools** | The tools a turn advertises + dispatches (`core/tools/`): `web_fetch`, `memory_search` (read-only), `ingest_source` (effectful) | Read-only tools run freely; the gate holds effectful ones (§4.4). `web_fetch` reuses the link resolver; `ingest_source` reuses the ingestion pipeline |
+| **Approval Queue + Gate** | The `beforeToolCall` gate + the `proposals` store — holds effectful calls for one-tap approval, resolved exactly once | The mechanical realization of propose→approve (§4.4); confirm executes via `dispatchTool` |
+| **Tool-Call Log** | Append-only audit of every executed tool call (`tool_calls`) | The `afterToolCall` hook records all calls — every tool call is logged |
+| **Lead Inventory** | The companion's reading list (`leads`) — discovered-but-unread URLs | Populated by `web_fetch` link harvest; worked on command (`/explore`) and by the motivation engine on idle (§4.5) |
+| **Procedural Store** | Learned, reusable workflows seeded from approved actions (`procedural_memories`) | Browseable, and surfaced as a `RetrieveContext` hint arm (§4.3) so a routine resurfaces and is reused |
+| **Motivation Engine** | Fills the `Initiator` seam — drives × presence → bounded autonomous explore burst (`core/src/motivation/`, mechanism: `companion-motivation.md`) | Reads the lead inventory into memory on its own (no approval), bounded by energy; posts an in-character report note. Includes the **Presence model** (volatile heartbeat-fed signal), the **Reinforcement** outcome store + additive change-as-reward weight update, and a **Runner + Sweep** of off-request ticks (mirrors consolidation) |
+| **Energy Store** | The self-initiated half of the §4.8 two-pool budget (`companion_energy`) | Per-companion daily pool; separate counter from stamina so autonomy can't starve interaction |
+| **Growth Service** | Derives the four MIRROR axes (knowledge, bond, initiative, character) + the observed-capabilities checklist from substrate (`core/src/growth/`); owns the feeding economy (mechanism: `companion-economy.md`) | Growth is DERIVED, a readout that may move either way — never scored, never floored; `companion_growth` stores only the idempotent high-water mark (band indices + observed capabilities) + earned **treats**. Recompute runs post-turn via a **Growth Runner** (mirrors consolidation); `GET /growth` is a read-only snapshot of the live derived standing (never recomputes, never writes). A genuine band/capability advance posts one canned **growth reflection** (announcer pattern). The **feeding economy** (`POST /feed`) spends treats on typed foods that top up the two pools via the existing atomic top-ups |
 
 ## 4. The Agent Loop & Harness
 
@@ -163,11 +147,10 @@ adapted here for a **cloud, multi-tenant, proactive** companion (the two adaptat
 realized as a `beforeToolCall` gate, §4.4; and **proactive initiation** as a non-human loop entry,
 §4.5).
 
-The **loop shape is an architectural invariant** (§2 #3): it does not change between phases — each
-phase only fills in more of it. **Phase 0 exercises only the trivial path** (empty tool set → the
-inner loop turns exactly once → exit; proactive entry arrives in Phase 4). The §4.6 sequence diagram
-shows that concrete Phase 0 realization. *(Hook signatures + concrete context assembly:
-`implementation.md` §2.)*
+The **loop shape is an architectural invariant** (§2 #3): the same shape carries an empty-tool-set
+turn (the inner loop turns once and exits), a multi-tool inner loop, and a proactive (non-human)
+entry alike. The §4.6 sequence diagram shows a concrete single-pass realization. *(Hook signatures +
+concrete context assembly: `implementation.md` §2.)*
 
 ### 4.1 The loop (outer + inner)
 
@@ -178,15 +161,15 @@ is the **EXIT**, where control returns to the user (or surface).
 
 ```mermaid
 flowchart TD
-    ENTRY(["ENTRY — user prompt · user reply · proactive trigger (P4)"])
+    ENTRY(["ENTRY — user prompt · user reply · proactive trigger"])
     ENTRY --> OUTER{{"OUTER loop — one run per queued entry"}}
     OUTER --> TURN["TURN — one LLM call + the tools it triggers (§4.2)"]
     TURN --> Q{"tool calls?"}
-    Q -->|yes| EXEC["execute tool(s) · beforeToolCall gate (P3)"]
+    Q -->|yes| EXEC["execute tool(s) · beforeToolCall gate"]
     EXEC --> RES["grounded result → appended to transcript"]
     RES --> TURN
     Q -->|"no (nothing queued)"| EXIT(["EXIT — a no-tool-call message"])
-    EXIT -->|"answer · question · proposed action awaiting approval (P3)"| USER(["USER / surface"])
+    EXIT -->|"answer · question · proposed action awaiting approval"| USER(["USER / surface"])
     USER -->|"reply = next ENTRY"| ENTRY
     STEER["steering (optional) — injected after the<br/>current tool finishes, before the next turn"] -.-> TURN
 
@@ -194,11 +177,10 @@ flowchart TD
     class ENTRY,USER human;
 ```
 
-> **Phase 0:** the tool set is empty, so `tool calls? → no` always holds — the inner loop turns once
-> and exits. **Phase 3 ✅:** the inner loop is real — the model may call tools, each runs (read-only)
-> or is held by the gate (effectful), the result re-enters as the next turn, bounded by a
-> max-iteration + token ceiling (§4.7). The loop shape is unchanged; proactive entries (P4) arrive
-> the same way.
+> When the tool set is empty, `tool calls? → no` always holds — the inner loop turns once and exits.
+> Otherwise the inner loop is real: the model may call tools, each runs (read-only) or is held by the
+> gate (effectful), the result re-enters as the next turn, bounded by a max-iteration + token ceiling
+> (§4.7). Proactive entries arrive the same way.
 
 ### 4.2 The turn (the primitive)
 
@@ -219,10 +201,10 @@ flowchart TD
     TR -->|next turn| CTX
 ```
 
-> **Phase 0:** no tools, so every turn is `context → LLM → message → EXIT`. **Phase 3 ✅:** the
-> right-hand branch is live — `validate args → beforeToolCall (gate) → execute → afterToolCall (log)`;
-> tool calls/results are replayed to the provider in the OpenAI tool-call wire shape, and the gateway
-> accumulates streamed `tool_calls` fragments (`implementation.md` §2).
+> With no tools, every turn is `context → LLM → message → EXIT`. The right-hand branch —
+> `validate args → beforeToolCall (gate) → execute → afterToolCall (log)` — runs when the model calls
+> tools; tool calls/results are replayed to the provider in the OpenAI tool-call wire shape, and the
+> gateway accumulates streamed `tool_calls` fragments (`implementation.md` §2).
 
 ### 4.3 Context assembly (what enters each turn)
 
@@ -233,46 +215,46 @@ Each turn rebuilds context from the companion's "home" + its memory. The dashed 
 flowchart LR
     ID["companion identity<br/>name · form · temperament"] --> P[["assembled prompt → LLM"]]
     SYS["system prompt / persona"] --> P
-    SEM["semantic recall (P1 ✅)<br/>top-K verbatim sections + provenance"] --> P
-    EPI["episodic recall<br/>(P0: recent transcript · P2: episodic)"] --> P
-    TOOLS["available tools<br/>(P3)"] -.-> P
+    SEM["semantic recall<br/>top-K verbatim sections + provenance"] --> P
+    EPI["episodic recall<br/>(recent transcript · consolidated episodes)"] --> P
+    TOOLS["available tools"] -.-> P
 ```
 
-> **Phase 1:** the memory-retrieval hook embeds the user's question, hybrid-searches the
+> **Semantic arm.** The memory-retrieval hook embeds the user's question, hybrid-searches the
 > semantic store (vector + lexical + metadata, fused), and prepends each hit as a
 > provenance-carrying grounding block; the hit's citations are streamed to the client before
 > the answer. Retrieval failure degrades to recency-only — recall never breaks the
 > conversation. (Hook signature → `implementation.md` §2.1.)
 
-> **Phase 2:** the same hook gains an **episodic arm** composed ahead of the P1 semantic arm
+> **Episodic arm.** The same hook carries an **episodic arm** composed ahead of the semantic arm
 > (`composeRetrieveContext`, so the recency window is still appended once, last): it embeds the
 > turn, hybrid-searches the **episode store** (consolidated, time-anchored memories), and prepends
 > each as a fenced "memory from your shared history" block. Episodic recall is **topic-only**: the
 > same vector + FTS hybrid (RRF) as the semantic arm. Episodes carry a wall-clock span (rendered as
-> the block's date) and a self-reported salience, but **neither steers recall** — the store offers a
-> time-window filter that no recall path passes yet, and RRF ignores salience (filler is dropped at
-> consolidation, not down-weighted at recall). The episodes themselves are formed
-> **off the request path** by a background **consolidation** pass (reflection over the transcript →
-> consolidated summaries with filler dropped, embedded; cursor-driven, idempotent, quota-gated — the
-> P1 runner/sweeper shape), triggered post-turn and on a startup/periodic sweep. Consolidation also
-> drives **personality evolution**: an `evolvedPersona` re-synthesized from episodes and blended
-> into the persona prompt (input #1) beside the immutable seed temperament. Episodic recall
-> degrades to no episodic blocks on failure — recall never breaks the conversation.
+> the block's date) and a self-reported salience, but neither steers recall — the span is a date
+> annotation and RRF ranks by fused vector/FTS rank alone (filler is dropped at consolidation, not
+> down-weighted at recall; see §9). The episodes themselves are formed **off the request path** by a
+> background **consolidation** pass (reflection over the transcript → consolidated summaries with
+> filler dropped, embedded; cursor-driven, idempotent, quota-gated — the ingestion runner/sweeper
+> shape), triggered post-turn and on a startup/periodic sweep. Consolidation also drives
+> **personality evolution**: an `evolvedPersona` re-synthesized from episodes and blended into the
+> persona prompt (input #1) beside the immutable seed temperament. Episodic recall degrades to no
+> episodic blocks on failure — recall never breaks the conversation.
 
-> **Phase 4.2 (attunement):** prompt assembly (`assembleContext`) also injects a short
+> **Affect-attunement line.** Prompt assembly (`assembleContext`) also injects a short
 > **affect-attunement** system line built from the companion's rolling read of the user's mood
 > (`companion_affect`, sensed in the loop the prior turn) — "the user has recently seemed {note};
 > attune your tone and detail." The mood *note* is surfaced; the valence number never is. Omitted
 > when there's no meaningful read, and loaded best-effort so a store hiccup costs attunement, never
 > the reply. This is the **fast loop** of the affect mechanism (§4.5, `companion-motivation.md` §7).
 
-> **Phase 5 (procedural-as-hint):** the same hook gains a **procedural arm** composed ahead of the
-> semantic arm (grounding-only, so the recency window still appends last). It surfaces a relevant
-> **learned routine** (`procedural_memories`, P3) as a "you've done this before, like so" system
-> hint, matched cheaply by title/keyword overlap (no embeddings — procedures are short and few).
-> This is what makes the Phase 5 **abilities** growth axis *functional* rather than only observed:
-> a learned workflow resurfaces and can be reused. Degrades to no hint on failure (recall never
-> breaks the conversation). No loop change — another arm in the one memory hook (invariant #3).
+> **Procedural arm.** The same hook carries a **procedural arm** composed ahead of the semantic arm
+> (grounding-only, so the recency window still appends last). It surfaces a relevant **learned
+> routine** (`procedural_memories`) as a "you've done this before, like so" system hint, matched
+> cheaply by title/keyword overlap (no embeddings — procedures are short and few). This is what makes
+> the **abilities** growth axis *functional* rather than only observed: a learned workflow resurfaces
+> and can be reused. Degrades to no hint on failure (recall never breaks the conversation). No loop
+> change — another arm in the one memory hook (invariant #3).
 
 ### 4.4 Human-in-the-loop & propose→approve
 
@@ -295,7 +277,7 @@ When the proposal is **explore-origin** (it carries the originating `lead_id`), 
 closes that lead's lifecycle — confirm→`ingested`, reject→`discarded` — so a worked lead leaves the
 reading list instead of being stranded at `read` (best-effort; never fails the user's action).
 
-> **Approval gates *consequence*, not *cost* (Phase 4.1).** The gate exists to stop the companion
+> **Approval gates *consequence*, not *cost*.** The gate exists to stop the companion
 > taking a **consequential, outward** action (book · send · pay) without sign-off. It is **not** what
 > bounds *cost* — that is the energy/stamina budget (§4.8). So **autonomous work is not gated**: the
 > motivation engine (§4.5) **reads** leads into the companion's own memory on its own, bounded by
@@ -308,8 +290,8 @@ reading list instead of being stranded at `read` (best-effort; never fails the u
 > summarize it") — terminality isn't knowable at propose time, so the model must get the post-approval
 > turn. On an **explore**-origin approval (the user-initiated reading-list command) there is no
 > conversational task to continue, so confirm executes + advances the lead and returns without
-> re-entering. The `proposals.origin` marker (`chat` | `explore` | `autonomous`) carries this; the
-> legacy `autonomous` value is retained for old rows but the engine no longer creates proposals.
+> re-entering. The `proposals.origin` marker (`chat` | `explore` | `autonomous`) carries this;
+> autonomous reads run free and create no proposal, so a held proposal is `chat`- or `explore`-origin.
 
 ```mermaid
 flowchart TD
@@ -322,13 +304,13 @@ flowchart TD
     DEC -->|reject| DROP["drop proposal"]
 ```
 
-> **Generalized invariant (P3 ✅):** the companion never executes a consequential, outward action
+> **Generalized invariant:** the companion never executes a consequential, outward action
 > without explicit user approval. Realized as the `beforeToolCall` gate: an effectful tool call is
 > written to the `proposals` queue and the loop EXITs; the confirm route resolves it **exactly once**
 > (a conditional `pending→approved` claim) and runs the held call. Reject drops it. Data model +
 > exactly-once mechanics → `implementation.md` §`proposals`.
 
-### 4.5 Proactive initiation (Phase 4)
+### 4.5 Proactive initiation
 
 The companion-specific extension of the pattern: an outer-loop **ENTRY can be generated by the
 motivation engine**, not only by a human. This is what makes the companion proactive rather than
@@ -347,23 +329,19 @@ flowchart LR
     class USER human;
 ```
 
-> **Phase 4 ✅ — implemented (autonomous reads, no approval; mood-change reward, sensed in the loop).** The motivation engine
-> (`packages/core/src/motivation/`) fills the `Initiator` hook (architecture.md invariant #3). It is
-> the **"will"** of a deliberate **body-then-will split**: Phase 3 builds the *body*
-> — the tools, the propose→approve gate (§4.4), the tool-call audit log, and the **lead inventory**
-> (a persistent frontier of discovered-but-unread leads, e.g. URLs spotted while reading) — and
-> Phase 4 builds the *will* that drives that body on its own. The ordering is a safety
-> precondition, not a convenience: an autonomous, exploring, token-*spending* companion is only
+> The motivation engine (`packages/core/src/motivation/`) fills the `Initiator` hook
+> (architecture.md invariant #3). It is the **"will"** of a deliberate **body-then-will split**: the
+> *body* is the tools, the propose→approve gate (§4.4), the tool-call audit log, and the **lead
+> inventory** (a persistent frontier of discovered-but-unread leads, e.g. URLs spotted while reading);
+> the *will* drives that body on its own. An autonomous, exploring, token-*spending* companion is
 > acceptable because its self-initiated work is **inherently bounded** — it only **reads into its own
 > memory** (nothing outward), **every tool call is logged**, and **energy caps how much it can do**
 > (§4.8). Outward/irreversible acts still route through the approval gate (§4.4); none exist yet. The
-> body is verifiable with deterministic tests; the will only by measurement over time (its named risk
-> is annoyance, `development-plan.md` §3), so it lands on a foundation already trusted. The read loop
-> is *identical* whether a human or the engine triggers it — Phase 3 works the inventory **on the
-> user's command** ("go through your reading list", which still proposes for review); Phase 4 reads it
-> **on an idle tick**, freely.
+> read loop is *identical* whether a human or the engine triggers it — worked **on the user's
+> command** ("go through your reading list", which proposes for review) it is the same path the engine
+> runs **on an idle tick**, freely.
 
-> **The reward is conversational (paired with §4.4), and sensed in the loop (Phase 4.2).** After the
+> **The reward is conversational (paired with §4.4), and sensed in the loop.** After the
 > engine reads, it posts **one in-character report note** ("here's what I read"). The harness senses
 > the user's mood on **every** turn (`perceiveAndLearn`); when a note is awaiting a reaction, the
 > **change** in mood across that reaction is the reward that nudges the served drive's weight
@@ -383,9 +361,7 @@ The engine's parts (each additive, no loop change):
   request path) and on a **periodic sweep** across companions worth ticking (the background-runner +
   sweep pattern already used for consolidation, §4.3). Each tick asks "is there anything worth
   doing?" → emit a non-human ENTRY, or stay idle. It is **not** an always-on per-companion drain.
-  *(Genuine work **while the user is away** — continuous between-visit activity — is **deferred to
-  Phase 6**, where push gives it an audience; on web, away-work is unseen until return, so it folds
-  into the return tick.)*
+  (On web, away-work is unseen until return, so it folds into the return tick; see §9.)
 - **Environment & presence (the dominant context)** — behaviour is shaped first by a **presence
   spectrum**: *active* (typing / just sent) · *attentive* (here but idle — the best moment for a
   tip/question) · *away-short* · *absent-long*. Derived from a client **heartbeat** (tab
@@ -403,44 +379,36 @@ The engine's parts (each additive, no loop change):
   *whether* to act — so **"idle" is a valid, free outcome**. Only when it commits does the burst run
   the chosen move (the only token spend), **bounded by what energy can afford** (§4.8).
 - **Attention model (the "creature")** — each initiation is a **bounded burst**, never a full drain
-  of the inventory. Personality parameters are designed to shape it: **focus length** (burst size
-  before re-deciding), **boredom** (interest on a thread decays without payoff), **distractibility**
-  (a higher-salience lead can preempt). **Default constants in the PoC** (per-companion
-  personalization deferred to onboarding, `companion-motivation.md` §7). **v1:** only **focus length**
-  is live (the explore-burst limit); boredom and distractibility are persisted but inert until the
-  multi-step / multi-behaviour loop ships (`companion-motivation.md` §6, §10) — they are the dynamics
-  behind a tenacious deep-reader vs. a magpie that flits, once that loop lands.
+  of the inventory. **Focus length** (the burst size before re-deciding) shapes it, running at shared
+  default constants (`companion-motivation.md` §6). The companion scopes the burst to what energy can
+  afford rather than draining the whole inventory.
 - **Budget (stamina & energy)** — self-initiated work spends **real tokens** drawn from the
   **energy** pool (§4.8); each autonomous read is billed to energy via a per-run meter override on
   the shared ingestion pipeline. When energy is exhausted the engine stops initiating (the gate
   idles) while chat still runs on **stamina**, so autonomy can never starve interaction. The burst is
   **energy-aware**: it plans no more reads than energy can afford (`min(focus length, ⌊energy /
   est-read-cost⌋)`).
-- **Reinforcement (learning what lands, Phase 4.2)** — the companion learns from **conversation**,
+- **Reinforcement (learning what lands)** — the companion learns from **conversation**,
   like a person: the harness senses the user's mood on **every** turn (`motivation/affect.ts`, in the
   agent loop) and feeds the prior read forward to **attune** the next reply (the fast loop). After it
   reads and posts a report note, the **change** in mood across the user's reaction (`delta =
   valence_now − valence_before`) is the reward → an **additive nudge** to the served **drive weight**
   (`motivation/reinforce.ts`; a zero change is a no-op, so neutrality needs no threshold). No critic
-  call, no approve/reject button. v1 learns only on such a drive-serving act; ordinary chat senses but
-  doesn't yet move weights. Weights are interpretable and seed the Phase 5 relationship-growth axis.
-  *(Deferred: ordinary-chat learning; a deeper contextual-bandit policy.)*
-- **Output (Phase 4.1)** — the engine **reads** the next leads into the companion's own memory
+  call, no approve/reject button. Learning fires on such a drive-serving act; ordinary chat senses but
+  does not move weights. Weights are interpretable and seed the relationship-growth axis.
+- **Output** — the engine **reads** the next leads into the companion's own memory
   **with no approval** (autonomy is autonomy, §4.4), then posts **one in-character report note** to
-  the transcript. *(Unprompted tips/questions beyond the report note are deferred,
-  `companion-motivation.md` §10.)* Outward/irreversible acts (none exist yet) would still pass the
-  §4.4 gate.
+  the transcript. Outward/irreversible acts (none exist yet) would still pass the §4.4 gate.
 - **Tunability** — a per-companion **frequency/intensity dial** (off / gentle / active) scaling
-  initiation rate and energy spend (Phase 4 DoD).
+  initiation rate and energy spend.
 
-**Phase 3 built the substrate** the engine plugs into: the **lead inventory** and the `Initiator`
-contract. **Documented here, built later:** unprompted conversation beyond the report note + a sense
-of purpose/agenda → a later phase; continuous work-while-away → Phase 6; the stamina/energy **game
-economy** (food/feeding, store, rich meters) → Phase 5; deeper RL.
+The engine plugs into the **lead inventory** and the `Initiator` contract. What lies beyond this
+release — unprompted conversation beyond the report note, continuous work-while-away, deeper RL — is
+collected in §9.
 
-### 4.6 Phase 0 realization (end-to-end)
+### 4.6 A single-pass turn (end-to-end)
 
-The same loop, instantiated across the real Phase 0 components — single-pass, with streaming:
+The loop instantiated across the real components for a no-tool turn — single-pass, with streaming:
 
 ```mermaid
 sequenceDiagram
@@ -472,14 +440,14 @@ sequenceDiagram
 ### 4.7 Loop invariants
 
 - **Termination.** *Normal:* the model stops calling tools, or the gate forces an exit (a held
-  proposal, P3). *Abnormal — a no-progress dead loop:* guarded (P3 ✅) by a **max tool-iteration
+  proposal). *Abnormal — a no-progress dead loop:* guarded by a **max tool-iteration
   count + a per-run token budget**; hitting either ends in **exit-to-user-with-partial** (logged).
 - **Failures are data.** A provider error or a tool throw becomes an ordinary turn outcome (an error
   message / an error result) that re-enters the loop — uniform recovery, and gaps are surfaced, never
   fabricated.
-- **Transcript is the source of truth.** Append-only; reconstructable into context; compaction
-  summarizes the compactible remainder when the window fills (P-later). **The rendered conversation —
-  live *and* after reload — is a projection of the transcript, never a richer separate reality (P3 ✅).**
+- **Transcript is the source of truth.** Append-only; reconstructable into context. **The rendered
+  conversation — live *and* after reload — is a projection of the transcript, never a richer separate
+  reality.**
   So everything the user sees is a persisted row: a grounded answer carries its `citations` (metadata),
   a read-only look-up is a `tool_step` row, a held action is a `proposal` row. Rows carry a **`kind`**
   (`message` | `tool_step` | `proposal`) and `metadata`; the **LLM-context projection includes only
@@ -489,7 +457,7 @@ sequenceDiagram
 - **State is authoritative only at the home.** Surfaces never hold loop state (§6); a run reads from
   and writes back to the cloud home.
 
-### 4.8 Ingestion flow (Phase 1)
+### 4.8 Ingestion flow
 
 How a source becomes semantic memory — **two output-bounded reading passes** off the request
 path. The economics are deliberate: input tokens are cheap and output tokens are the cost
@@ -562,24 +530,23 @@ Design rules (the "improved staged hybrid"; memory guide → `companion-memory.m
     multi-turn tool run the already-completed turns are still billed, only the broken one is free.
     The metering wrapper (`meteredLlmGateway`, `usage.ts`) makes the distinction: a thrown error
     leaves the in-flight turn out of the accumulator, a consumer `.return()` deposits the estimate.
-  - **Phase 4 — stamina & energy (two pools).** The single per-user cap splits by *who initiated*
-    the work. **Stamina** is the user-initiated pool (chat, assigned tasks — the existing
-    `user_token_usage`, per user). **Energy** is the self-initiated pool (the motivation engine's
-    proactive turns and exploration — per **companion**, a new `companion_energy`). They never share
-    a counter, so autonomous work can **never starve interaction**: when energy is exhausted the
-    engine stops initiating (`Initiator` idles, §4.5) while chat keeps running on stamina. The user
-    **provisions** both — a visible meter + manual top-up replace the hard-coded daily cap as the
-    spend control. **Phase 5** grows that top-up into the food/feeding **game economy**: typed foods
-    (`ration`→stamina, `spark`→energy, `treat`→both) spend earned **treats** via these same atomic
-    top-ups (`POST /feed`, `development-plan.md` §3).
-    Each pool still rolls on a fixed window. **Autonomous reads spend real tokens** billed to energy
-    via a per-run **meter override** on the shared ingestion pipeline (`pipeline.ts`: the run carries
+  - **Stamina & energy (two pools).** The per-user cap splits by *who initiated* the work.
+    **Stamina** is the user-initiated pool (chat, assigned tasks — `user_token_usage`, per user).
+    **Energy** is the self-initiated pool (the motivation engine's proactive turns and exploration —
+    per **companion**, `companion_energy`). They never share a counter, so autonomous work can
+    **never starve interaction**: when energy is exhausted the engine stops initiating
+    (`Initiator` idles, §4.5) while chat keeps running on stamina. The user **provisions** both — a
+    visible meter + manual top-up. The food/feeding **game economy** rides on the same top-ups: typed
+    foods (`ration`→stamina, `spark`→energy, `treat`→both) spend earned **treats**
+    (`POST /feed`, mechanism → `companion-economy.md`). Each pool rolls on a fixed window.
+    **Autonomous reads spend real tokens** billed to energy via a per-run **meter override** on the
+    shared ingestion pipeline (`pipeline.ts`: the run carries
     `meter = { quota: energyAdapter, accountId: companionId }`, and skips deferral — the engine gates
     on energy itself, per-lead). The burst is **energy-aware** — it plans `min(focus length, ⌊energy /
     est-read-cost⌋)` reads (§4.5) — so the companion scopes its work to its means, not just stopping
-    at zero. The per-turn **affect read** that senses the user's mood (Phase 4.2) rides on the chat
-    turn, so it draws **stamina**. User-initiated work (chat, `/explore` approvals) draws stamina; the
-    engine's self-initiated reads draw energy.
+    at zero. The per-turn **affect read** that senses the user's mood rides on the chat turn, so it
+    draws **stamina**. User-initiated work (chat, `/explore` approvals) draws stamina; the engine's
+    self-initiated reads draw energy.
 
 #### Supported source formats (acceptance contract)
 
@@ -600,14 +567,14 @@ same way no matter how it arrived. The channels differ only in how they *identif
 list of what the system accepts; **Content type** is the registry key, reachable by any channel
 whose check resolves to it.
 
-| Content type | Extension(s) | MIME / magic | Reachable via | Parser | Status |
-|---|---|---|---|---|---|
-| `pdf` | `.pdf` | `application/pdf`; magic `%PDF-` | upload, link | `unpdf` (pdf.js), page-aware provenance | ✅ shipped |
-| `html` | — | `text/html`, `application/xhtml+xml` | link | fetch → Mozilla Readability | ✅ shipped |
-| `text` | `.txt` | `text/plain`; rejected if it looks binary (NUL byte without a Unicode BOM) | upload, link, note | BOM-aware UTF-8/UTF-16 decode → paragraph split (the note parser) | ✅ shipped |
-| `markdown` | `.md`, `.markdown` | `text/markdown` | upload, link | markdown stripped to prose → paragraph split | ✅ shipped |
-| `docx` | `.docx` | wordprocessingml MIME; zip magic `PK` | upload, link | `mammoth` raw-text body extract | ✅ shipped |
-| `pptx` | `.pptx` | presentationml MIME; zip magic `PK` | upload, link | per-slide `<a:t>` extract, slide → page provenance | ✅ shipped |
+| Content type | Extension(s) | MIME / magic | Reachable via | Parser |
+|---|---|---|---|---|
+| `pdf` | `.pdf` | `application/pdf`; magic `%PDF-` | upload, link | `unpdf` (pdf.js), page-aware provenance |
+| `html` | — | `text/html`, `application/xhtml+xml` | link | fetch → Mozilla Readability |
+| `text` | `.txt` | `text/plain`; rejected if it looks binary (NUL byte without a Unicode BOM) | upload, link, note | BOM-aware UTF-8/UTF-16 decode → paragraph split (the note parser) |
+| `markdown` | `.md`, `.markdown` | `text/markdown` | upload, link | markdown stripped to prose → paragraph split |
+| `docx` | `.docx` | wordprocessingml MIME; zip magic `PK` | upload, link | `mammoth` raw-text body extract |
+| `pptx` | `.pptx` | presentationml MIME; zip magic `PK` | upload, link | per-slide `<a:t>` extract, slide → page provenance |
 
 **Explicitly out of scope** (unsupported uploads get a 400; unidentifiable link bodies are
 rejected): legacy OLE binaries (`.doc`, `.ppt`), spreadsheets/tabular data (`.xlsx`, `.csv` —
@@ -654,41 +621,41 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
 
 - **Surface ↔ core contract.** The core is reached only through the API; the request/response
   and streaming contract lives in shared types. No surface-specific logic crosses into the core
-  (invariant #1). Mobile (P6) and desktop (P7) will consume the *same* contract; their OS access
-  is exposed *to the core as tools* (P3 framework), not as new core APIs.
+  (invariant #1). Future mobile and desktop surfaces consume the *same* contract; their OS access
+  is exposed *to the core as tools*, not as new core APIs.
 - **Streaming.** Chat responses stream to the client (SSE or WebSocket) so the UI shows tokens as
   they arrive despite multi-second model latency.
-- **External services.** The **LLM Provider** (OpenRouter) is the only external dependency in
-  Phase 0 — outbound HTTPS via the LLM Gateway. User content crossing to the provider is an
+- **External services.** The **LLM Provider** (OpenRouter) is the only external dependency —
+  outbound HTTPS via the LLM Gateway. User content crossing to the provider is an
   explicit trust boundary (§8).
 - **State management.** Authoritative state lives in the cloud "home" (Postgres), scoped per
   `user`/`companion`. Surfaces are stateless views that load from and write back to the core;
   with one embodiment active at a time there is no cross-surface state to reconcile (invariants
   #4, #5).
 
-## 7. Folder Structure (Phases 0–4)
+## 7. Folder Structure
 
 ```
 /                      repo root
   docs/                canonical documentation
   packages/            TS monorepo (workspaces)
     core/              the companion (surface-agnostic) — invariant #1
-      harness/         agent loop + extension hooks (§4); semantic + episodic recall (P1, P2 §4.3)
+      harness/         agent loop + extension hooks (§4); semantic + episodic recall (§4.3)
       llm/             provider-agnostic LLM gateway
       prompts/         code-as-truth versioned prompt registry (catalog + render/version) — guide-prompts.md
       tracing/         online-tracing seam (TraceSink + noop, redaction, sampling) — runbook-tracing.md
-      embedding/       provider-agnostic embedding gateway (P1; request-path memoizing wrapper P2)
-      ingestion/       parse → segment → enrich → embed pipeline + runner + deferred-job sweeper (P1, §4.8)
-      memory/          MemoryStore (transcript) + SemanticMemoryStore (P1) + EpisodicMemoryStore + consolidation service/runner (P2)
-      tools/           tool framework + registry, the three tools, the approval gate, proposal/tool-call/lead/procedural stores (P3, §4.2/§4.4)
-      personality/     evolvedPersona synthesis from episodes (P2)
+      embedding/       provider-agnostic embedding gateway (request-path memoizing wrapper)
+      ingestion/       parse → segment → enrich → embed pipeline + runner + deferred-job sweeper (§4.8)
+      memory/          MemoryStore (transcript) + SemanticMemoryStore + EpisodicMemoryStore + consolidation service/runner
+      tools/           tool framework + registry, the three tools, the approval gate, proposal/tool-call/lead/procedural stores (§4.2/§4.4)
+      personality/     evolvedPersona synthesis from episodes
       identity/        companion "home" model + store
-      motivation/      the "will" (P4, §4.4–§4.5): drives × presence arbitration, autonomous explore burst, engine runner/sweep, affect perception + change-as-reward reinforcement
-      growth/          four mirror axes derived from substrate + the feeding economy (P5, §4.3 hint arm): axis readings (band+fill), capabilities registry, growth store/service/runner, treats/foods
-      quota/           two-pool token budget: per-user daily stamina (P1) + per-companion energy (P4); §4.8
-    api/               BFF / surface boundary (Fastify); memory + source + usage + proposal/inventory routes (P3); presence + proactivity (dial/energy) routes (P4); growth + feed routes (P5)
+      motivation/      the "will" (§4.4–§4.5): drives × presence arbitration, autonomous explore burst, engine runner/sweep, affect perception + change-as-reward reinforcement
+      growth/          four mirror axes derived from substrate + the feeding economy (§4.3 hint arm): axis readings (band+fill), capabilities registry, growth store/service/runner, treats/foods
+      quota/           two-pool token budget: per-user daily stamina + per-companion energy (§4.8)
+    api/               BFF / surface boundary (Fastify); memory + source + usage + proposal/inventory routes; presence + proactivity (dial/energy) routes; growth + feed routes
       tracing/         Langfuse Cloud TraceSink adapter (fetch-based; sampling + redaction before export) — runbook-tracing.md
-    web/               React web client; chat w/ citations + ingestion-status panel + approval cards (P3), sources page, memory browser, usage badge; vitality meter + proactivity dial (P4); growth view + kitchen (P5)
+    web/               React web client; chat w/ citations + ingestion-status panel + approval cards, sources page, memory browser, usage badge; vitality meter + proactivity dial; growth view + kitchen
     shared/            shared TS types / contracts
     eval/              dataset/scorer/runner offline eval framework: memory-recall + stateless (affect-sense) + injection red-team (→ companion-memory.md §5)
   db/                  migrations & schema (→ implementation.md)
@@ -709,8 +676,8 @@ to workers. Infrastructure is managed as code with **Pulumi** under `infra/` (`i
 Run + Artifact Registry + Secret Manager); auth is Google Sign-In (no auth service to provision);
 managed Postgres is Supabase (pgvector). (Specific tuning params, image build → `implementation.md` and `infra/*/README.md`.)
 
-**Trust model (Phase 0 baseline).** Design-level boundaries; the security *implementation* and
-the full threat model live in `implementation.md` and Phase 8 respectively (`development-plan.md` §4).
+**Trust model.** Design-level boundaries; the security *implementation* lives in
+`implementation.md`, and hardening that is out of scope here is collected in §9.
 
 - **Tenancy isolation** — all state scoped by `user`/`companion`; authorization enforced at the
   API boundary before the core is reached.
@@ -731,5 +698,25 @@ the full threat model live in `implementation.md` and Phase 8 respectively (`dev
   only structure + metadata + opaque UUIDs). Operating procedure, residual-risk notes, and the
   self-hosted alternative live in `runbook-tracing.md`.
 
-**_Deferred — Phase 8:_** encryption-at-rest specifics, data inspection/management/delete
-controls, on-device data-locality for native surfaces, propose→approve audit-trail hardening.
+## 9. Beyond the PoC
+
+This release is the PoC. The boundaries below are out of scope here; the roadmap and sequencing are
+owned by `development-plan.md`.
+
+**Built, not yet wired (gaps).**
+- **Episodic recall steering.** `EpisodicStore.searchEpisodes` accepts a wall-clock time-window
+  filter, but no recall path passes one — production episodic recall is topic-only and the
+  `occurred_*` span is only a date annotation. RRF also ignores the stored salience (§4.3,
+  `implementation.md` §1).
+- **Boredom & distractibility knobs.** The two personality knobs are persisted but inert; only
+  **focus length** drives the burst today (`companion-motivation.md` §6).
+
+**Out of scope / future.**
+- **Proactivity reach** — unprompted conversation beyond the report note (tips, questions,
+  check-ins) and a stronger sense of purpose/agenda; continuous work-while-away (needs push for an
+  audience); a deeper contextual-bandit reinforcement policy (`companion-motivation.md`).
+- **Onboarding personality seed** — drive weights stay neutral so the character card is *earned*.
+- **Native surfaces** — Mobile/Desktop clients, OS-tool bridges, and the Sync Courier.
+- **Transcript compaction** — summarizing the compactible remainder when the context window fills.
+- **Security hardening** — encryption-at-rest specifics, data inspection/management/delete controls,
+  on-device data-locality for native surfaces, and propose→approve audit-trail hardening (§8).

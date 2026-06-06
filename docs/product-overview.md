@@ -51,9 +51,8 @@ deepening (see §5.5).
 conversation* — not a list of separate chat sessions or threads like a chatbot. Whenever and
 wherever you summon it, you pick up the same ongoing conversation; everything said before is
 still there. This is the episodic substrate the bond is built on, and it is enforced
-structurally (`architecture.md` §2, invariant #6). *(MVP scope: a user has **one** companion;
-owning multiple companions is a future capability — each would still hold its own single
-continuous conversation.)*
+structurally (`architecture.md` §2, invariant #6). A user has **one** companion, which holds its
+own single continuous conversation.
 
 ### 2.2 The Living Rooms (where it appears)
 Mobile, web, and desktop apps are **not** three separate products — they are **surfaces**, like
@@ -175,18 +174,13 @@ through its reading list, prepares findings — so there's something waiting whe
 often the right move is **to do nothing**: knowing when to stay quiet is part of not being
 annoying.
 
-Its initiative also has a **temperament**: how often it reaches out, how long it stays absorbed in
-something, and how easily it gets pulled to something new all reflect *this* Cobble's personality —
-one is a tenacious deep-diver, another a curious magpie. So proactivity feels like a creature with
-its own attention, not a scheduler. *(The first release expresses this through how long it stays
-absorbed; the full deep-diver↔magpie spectrum fills in as the attention loop deepens — see
-`companion-motivation.md` §6.)*
+Its initiative also has a **temperament**: how long it stays absorbed in something reflects *this*
+Cobble's personality, so proactivity feels like a creature with its own attention, not a scheduler
+(see `companion-motivation.md` §6).
 
 **Outreach model:** rich, conversational proactivity when you're **present** (you've summoned it
-into a room); solo work while you're away that surfaces on your return; and — once mobile lands —
-**sparing, high-value push notifications** as the away-channel (e.g. you've arrived somewhere new,
-or an opportunity is expiring). Frequency and intensity are **tunable** so it feels alive, not
-annoying.
+into a room), and solo work while you're away that surfaces on your return. Frequency and intensity
+are **tunable** so it feels alive, not annoying.
 
 ### 5.5 The Bond & Growth
 You don't just use Cobble — you raise it. The growth surface is a **mirror**: a readout that reflects
@@ -223,8 +217,8 @@ never leave Cobble too drained to talk to *you* — its own initiative draws onl
 energy runs low, Cobble simply stops initiating and rests; it still answers when you reach out.
 You can always see how much of each remains, which makes its behaviour easy to understand ("it's
 gone quiet because it's low on energy") — and **you decide how much to give it and when to top it
-up**. Over time this grows into a light game layer: you nourish your companion's vitality, and
-different "food" favours stamina or energy (the feeding mechanics — see `development-plan.md`).
+up**. A light game layer sits on top: you nourish your companion's vitality by feeding it, and
+different "food" favours stamina or energy (the feeding mechanics — see `companion-economy.md`).
 
 ## 6. Who It's For
 Anyone who wants a single, trusted companion that *knows them and their world* and *acts for
@@ -244,7 +238,7 @@ permission-gated per surface, the propose→approve model governs every conseque
 users can inspect, manage, and delete what their companion holds. (Detailed data model and
 threat model: `architecture.md` / `implementation.md`.)
 
-## 8. Non-Goals (for now)
+## 8. Non-Goals
 - **Not a role-play or character-fiction app** — Cobble is a real personal companion, not a
   scripted persona.
 - **Not a fleet of assigned job-bots** — one companion that adapts, not configured role templates.
@@ -254,8 +248,10 @@ threat model: `architecture.md` / `implementation.md`.)
 - **Not fully autonomous** — outward/irreversible actions (book · send · pay) always route through
   your approval; the companion's self-initiated work is bounded by its energy budget instead (§5.6).
 
-> **Open questions & roadmap** are owned by [`development-plan.md`](./development-plan.md) §5 —
-> not duplicated here (single-source rule).
+> **Beyond this release.** Native mobile/desktop surfaces and OS-tool integration, away-channel push
+> notifications, owning multiple companions, and the full deep-diver↔magpie attention spectrum are
+> out of scope here. The roadmap and open questions are owned by
+> [`development-plan.md`](./development-plan.md) §5 — not duplicated here (single-source rule).
 
 ## 9. Glossary
 
@@ -282,6 +278,8 @@ threat model: `architecture.md` / `implementation.md`.)
 | [`implementation.md`](./implementation.md) | Data models, harness internals, configuration, security |
 | [`documentation-rules.md`](./documentation-rules.md) | Doc taxonomy, naming, and cross-referencing rules |
 | [`ontology.md`](./ontology.md) | Knowledge ontology contract & governance (fixed core types + rules for the dynamic part) |
-| [`companion-motivation.md`](./companion-motivation.md) | The motivation/proactivity mechanism — drives, arbitration, seeding, learning (Phase 4) |
+| [`companion-memory.md`](./companion-memory.md) | The memory mechanism — browsing it, evaluating memory vs performance |
+| [`companion-motivation.md`](./companion-motivation.md) | The motivation/proactivity mechanism — drives, arbitration, seeding, learning |
+| [`companion-economy.md`](./companion-economy.md) | The feeding economy — earning treats, spending them on foods to top up vitality |
 | [`../README.md`](../README.md) | Orientation & setup |
 | [`../AGENTS.md`](../AGENTS.md) · [`../CLAUDE.md`](../CLAUDE.md) | Working rules · AI-agent entry point |
