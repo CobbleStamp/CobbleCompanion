@@ -1,5 +1,5 @@
 /**
- * The eval judge prompt (companionmemory.md §5) — a strict LLM-as-judge scoring
+ * The eval judge prompt (companion-memory.md §5) — a strict LLM-as-judge scoring
  * the companion's answer against the reachable conversation/sources for grounding
  * and hallucination. Source of truth for the judge wording. Lives in core (the
  * registry's single home) with a primitive-string input so core never depends on

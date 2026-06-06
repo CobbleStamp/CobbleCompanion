@@ -76,6 +76,7 @@ function renderChat(): void {
       onSignOut={() => {}}
       onOpenMemory={() => {}}
       onOpenSources={() => {}}
+      onOpenGrowth={() => {}}
     />,
   );
 }

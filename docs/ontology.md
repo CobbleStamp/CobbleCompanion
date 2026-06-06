@@ -5,7 +5,7 @@
 > the documentation ownership rules (`AGENTS.md`), this doc owns the contract and its governance
 > only; the catalog of leaf types that emerges over time is **data in the database**, never
 > enumerated here. Data model/schema → `implementation.md` §1; memory mechanics →
-> `companionmemory.md`.
+> `companion-memory.md`.
 
 ## 1. Purpose & Position
 
@@ -67,7 +67,7 @@ Within a core type, extraction may qualify facts with finer-grained **leaf subty
 
 - **Re-extraction is the upgrade path.** Improving the extraction prompt/model re-runs Pass 2
   over existing sections; the overlay is replaced, the canonical layers are untouched.
-- **Quality is measured, not assumed.** The eval harness (`companionmemory.md` §5) is the gate
+- **Quality is measured, not assumed.** The eval harness (`companion-memory.md` §5) is the gate
   for extraction changes — grounded recall and hallucination move measurably or the change is
   rejected.
 - **Deferred (recorded decisions):**

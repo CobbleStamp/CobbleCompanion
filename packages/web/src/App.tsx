@@ -6,6 +6,7 @@ import type { AuthMode } from './auth/config.js';
 import { clearStoredToken, loadStoredToken, storeToken } from './auth/session.js';
 import { Chat } from './pages/Chat.js';
 import { CreateCompanion } from './pages/CreateCompanion.js';
+import { Growth } from './pages/Growth.js';
 import { MemoryBrowser } from './pages/MemoryBrowser.js';
 import { SignIn } from './pages/SignIn.js';
 import { Sources } from './pages/Sources.js';
@@ -77,7 +78,7 @@ interface CompanionFlowProps {
   readonly onSignOut: () => void;
 }
 
-type View = 'chat' | 'memory' | 'sources';
+type View = 'chat' | 'memory' | 'sources' | 'growth';
 
 /** The authenticated flow: load companion, then chat, feed sources, or browse memory. */
 function CompanionFlow({ onSignOut }: CompanionFlowProps): JSX.Element {
@@ -128,12 +129,22 @@ function CompanionFlow({ onSignOut }: CompanionFlowProps): JSX.Element {
         />
       );
     }
+    if (view === 'growth') {
+      return (
+        <Growth
+          companionName={companion.name}
+          companionId={companion.id}
+          onBack={() => setView('chat')}
+        />
+      );
+    }
     return (
       <Chat
         companion={companion}
         onSignOut={onSignOut}
         onOpenMemory={() => setView('memory')}
         onOpenSources={() => setView('sources')}
+        onOpenGrowth={() => setView('growth')}
       />
     );
   }

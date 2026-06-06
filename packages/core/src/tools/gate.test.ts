@@ -140,6 +140,9 @@ describe('createLoggingAfterToolCall', () => {
       async list() {
         return [];
       },
+      async stats() {
+        return { distinctNames: [], total: 0 };
+      },
     };
     const after = createLoggingAfterToolCall(log, silentLogger);
     const out = await after(
@@ -158,6 +161,9 @@ describe('createLoggingAfterToolCall', () => {
       },
       async list() {
         return [];
+      },
+      async stats() {
+        return { distinctNames: [], total: 0 };
       },
     };
     const after = createLoggingAfterToolCall(log, silentLogger);

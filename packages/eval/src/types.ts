@@ -1,5 +1,5 @@
 /**
- * Types for the memory-vs-performance evaluation harness (companionmemory.md).
+ * Types for the memory-vs-performance evaluation harness (companion-memory.md).
  *
  * The harness seeds a conversation transcript (and, for Phase 1 cases, ingests
  * sources), asks a question, and scores the companion's answer under several

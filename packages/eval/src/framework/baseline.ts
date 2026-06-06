@@ -1,5 +1,5 @@
 /**
- * Baseline regression comparison (companionmemory.md §5). LLM outputs are
+ * Baseline regression comparison (companion-memory.md §5). LLM outputs are
  * nondeterministic, so a regression is a drop beyond a tolerance BAND, not an
  * inequality. A baseline is the machine-readable DatasetReport from a prior run;
  * compareToBaseline flags pass-rate or mean-metric regressions between two

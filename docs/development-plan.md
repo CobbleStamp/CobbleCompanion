@@ -39,7 +39,7 @@ being is proven, because they add platform cost without changing whether the cor
 | **2** | Memory & continuity | Web | Episodic memory, companion identity, cloud "home" | ✅ **Done** |
 | **3** | Tools, action & trust | Web | Tool/MCP use + propose→approve approval queue | ✅ **Done** |
 | **4** | Proactivity engine | Web | Motivated, tunable initiative ⭐ | ✅ **Done** |
-| **5** | Bond & growth | Web | Four-axis growth + visual character — the PoC complete | Planned |
+| **5** | Bond & growth | Web | Four-axis growth mirror + character card — the PoC complete | ✅ **Done** |
 | **6** | Mobile surface | + Mobile | Summon model, GPS recall, push, OS-as-tools | Planned |
 | **7** | Desktop surface | + Desktop | File/workspace OS tools, heavier local storage | Planned |
 | **8** | Hardening & launch readiness | All | Security, scale, privacy controls, monetization | Planned |
@@ -127,7 +127,7 @@ loop change). **Personality evolution** re-synthesizes an `evolvedPersona` ("who
 you") from accumulated episodes and blends it into the persona prompt alongside the immutable
 seed temperament. Web adds the episode timeline + evolved persona to the memory browser; the eval
 harness gained a Phase-2 episodic config (tiny recency window + episodic recall) that
-`architecture.md` §4.3 / `companionmemory.md` §5 describe. **Gate passed** (2026-06-04,
+`architecture.md` §4.3 / `companion-memory.md` §5 describe. **Gate passed** (2026-06-04,
 `docs/eval/phase2-eval-20260604.txt`): the live eval shows the `episodic` config (recency
 window of **2**) recalling **100%** of buried facts at **0% hallucination** vs **33%** for
 `window-2` with the same window — episodic memory reaching beyond the recency window, the Phase 2
@@ -274,17 +274,48 @@ shift. Full suite green at ≥80% coverage. Canonical mechanism: `docs/companion
 **Goal:** make Cobble feel raised, not used — closing the PoC loop.
 
 **Scope**
-- Visible growth on four axes tied to memory (`product-overview.md` §5.5):
-  knowledge (semantic/episodic), relationship/personality, unlockable abilities (procedural),
-  and **visual/character evolution** (appearance/home/accessories).
-- Leveling/progression surfaced in the UI.
+- Visible growth on four axes tied to real activity (`product-overview.md` §5.5), framed as a
+  **mirror/instrument** — a readout of the companion's current standing, not a game ladder:
+  **knowledge** (semantic/episodic), **bond** (shared-history depth), **initiative** (autonomous
+  behaviour, from the proactive-outcome log), and **character** (the emerged drive disposition).
+- Each axis shown as a descriptive **band** + gauge (no levels/XP); readings may move either way and
+  young axes read honestly empty. A separate **capabilities** checklist of what the companion has been
+  observed doing.
 - **Stamina/energy game economy:** the Phase 4 vitality meters grow into a feeding loop — "food"
-  the user gives that favours stamina or energy, top-up/economy, and richer visuals
-  (`product-overview.md` §5.6).
+  the user gives that favours stamina or energy (the one deliberate game loop; `companion-economy.md`).
 
 **Done when:** a returning user can see and feel how their Cobble has grown; the web PoC
 demonstrates all three differentiators (knowledge organism, embodiment groundwork, proactivity)
 end-to-end. **Decision gate:** validate the concept before funding native surfaces.
+
+**Implemented** (this branch): growth is a **mirror** — **derived from substrate that already exists**,
+never an XP grind, and allowed to move in either direction. A `GrowthService`
+(`packages/core/src/growth/`) reads the semantic/episodic counts, the tool/procedure/affect logs, the
+proactive-outcome log, and the learned `drive_weights`, and computes **four axis readings** (Knowledge,
+Bond, Initiative, Character) — each a descriptive **band** + an intra-band gauge fill — plus a
+**capabilities checklist** (6 capabilities flipped from real logs: web research, memory recall, reading
+sources, a learned routine, multi-step tasks, mood attunement) and the **character card** ("Who *X* has
+become" — per-drive weights + `evolved_persona`). Young axes read honestly empty ("Hasn't ventured out
+yet", "Still forming"). A `companion_growth` row (migration `0017`) stores only the
+**idempotent high-water mark** (highest band per axis + observed capabilities) **+ treats** — the
+readings recompute freely and the mark **never floors** the surface; it exists only so a reflection
+fires **exactly once** per band/capability reached (a compare-and-set on the monotonic band indices +
+observed set, mirroring the P2 cursor). Recompute runs **post-turn only**, inline off the message
+stream (off the request path), posting one in-character **growth reflection** to the transcript on a genuine advance
+(reusing the announcer pattern; canned, numberless text since the pass is token-free);
+`GET /companions/:id/growth` is a **read-only** snapshot of the live derived standing, so a read (or a
+client poll) never advances the mark or writes to the transcript. The **feeding economy** (the one deliberate game loop — `companion-economy.md`)
+turns the P4 vitality meters into a kitchen: typed **foods** (`ration`→stamina, `spark`→energy,
+`treat`→both) spend earned **treats** (a starting balance + milestone rewards) via the existing atomic
+top-ups (`POST /companions/:id/feed`). **Procedural retrieval-as-hint** makes the capabilities
+*functional*: a new `RetrieveContext` arm surfaces a relevant learned routine into context (no loop
+change — invariant #3). Web adds a **Growth view** (four axis readings, capabilities checklist, character
+card, kitchen); the redundant header stage badge was dropped. **Gate passed** (offline, deterministic —
+growth is mechanical, not a recall-quality score): the DoD test
+(`packages/api/src/routes/phase5-dod.test.ts`) proves substrate change → a band rises + capabilities
+observed + treats earned + reflection posted; feeding spends treats and tops up the right pool (out of
+treats → 409); recompute is idempotent (no double-award/double-reflection); and a learned procedure
+resurfaces as a context hint. Full suite green at ≥80% coverage.
 
 ## 4. Phases (Full Product)
 

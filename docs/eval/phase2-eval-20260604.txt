@@ -9,7 +9,7 @@
 Memory-vs-performance eval · model=deepseek/deepseek-v4-flash · 6 cases
 Config axes: transcript recency window (P0), semantic retrieval over ingested
 sources with the contextual-header A/B (P1), and episodic recall over
-consolidated memories (P2, companionmemory.md §5).
+consolidated memories (P2, companion-memory.md §5).
 Note: window-* configs cannot reach source-grounded cases (sources are only
 ingested for semantic-* configs); the episodic config pairs a tiny recency
 window with episodic recall, so passing where window-2 fails shows episodic

@@ -5,45 +5,14 @@
  * is Phase 5), and set the proactivity dial. All owner-scoped.
  */
 
-import {
-  setProactivityDialSchema,
-  topUpSchema,
-  type StaminaEnergyDto,
-  type UsageDto,
-} from '@cobble/shared';
-import type { CompanionEnergyStore, TokenQuotaStore } from '@cobble/core';
+import { setProactivityDialSchema, topUpSchema, type StaminaEnergyDto } from '@cobble/shared';
 import type { FastifyInstance } from 'fastify';
 import type { AppDeps } from '../app.js';
 import type { RequireAuth } from '../auth-guard.js';
+import { buildBudget } from './vitality.js';
 
 interface CompanionParams {
   readonly companionId: string;
-}
-
-/** Whole-percent of a pool consumed, clamped to 0–100. */
-function percentUsed(used: number, cap: number): number {
-  if (cap <= 0) return 100;
-  return Math.min(100, Math.max(0, Math.round((used / cap) * 100)));
-}
-
-async function staminaDto(quota: TokenQuotaStore, userId: string): Promise<UsageDto> {
-  const s = await quota.getUsage(userId);
-  return {
-    usedTokens: s.usedTokens,
-    capTokens: s.capTokens,
-    percentUsed: percentUsed(s.usedTokens, s.capTokens),
-    resetsAt: s.resetsAt,
-  };
-}
-
-async function energyDto(energy: CompanionEnergyStore, companionId: string): Promise<UsageDto> {
-  const e = await energy.getEnergy(companionId);
-  return {
-    usedTokens: e.usedTokens,
-    capTokens: e.capTokens,
-    percentUsed: percentUsed(e.usedTokens, e.capTokens),
-    resetsAt: e.resetsAt,
-  };
 }
 
 export function registerProactivityRoutes(
@@ -54,10 +23,7 @@ export function registerProactivityRoutes(
   const { identity, quota, energy } = deps;
 
   async function budget(userId: string, companionId: string): Promise<StaminaEnergyDto> {
-    return {
-      stamina: await staminaDto(quota, userId),
-      energy: await energyDto(energy, companionId),
-    };
+    return buildBudget(quota, energy, userId, companionId);
   }
 
   // The vitality meter: stamina (user-initiated) + energy (self-initiated).

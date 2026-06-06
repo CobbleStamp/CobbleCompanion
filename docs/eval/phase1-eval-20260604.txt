@@ -8,7 +8,7 @@
 
 Memory-vs-performance eval · model=deepseek/deepseek-v4-flash · 6 cases
 Config axes: transcript recency window (P0) and semantic retrieval over ingested
-sources with the contextual-header A/B (P1, companionmemory.md §5).
+sources with the contextual-header A/B (P1, companion-memory.md §5).
 Note: window-* configs cannot reach source-grounded cases (sources are only
 ingested for semantic-* configs) — that unreachability IS the comparison.
 

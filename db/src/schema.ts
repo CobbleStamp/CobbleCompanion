@@ -1,4 +1,5 @@
 import type {
+  CapabilityKey,
   Drive,
   DriveWeights,
   IngestionStatus,
@@ -539,6 +540,43 @@ export const proactiveOutcomes = pgTable(
   ],
 );
 
+/**
+ * Growth snapshot (Phase 5, development-plan.md §3) — the companion's bond/growth
+ * standing, made visible and felt. Growth itself is DERIVED from substrate that
+ * already exists (sources/sections/episodes counts, learned drive weights, tool &
+ * procedure logs); this row is NOT a parallel score. It is the *acknowledged
+ * high-water mark* — the highest band per axis + observed capabilities the
+ * derivation pass already acknowledged — so an advance (a new band, a newly
+ * observed capability) fires EXACTLY ONCE and the treats it awards are not
+ * double-granted on a re-run. This mirrors the P2
+ * `consolidated_through_seq` cursor: derived truth recomputes freely, the cursor
+ * makes the side effects idempotent.
+ *
+ * `treats` is the earned currency (the only stored, non-derived value): granted on
+ * growth milestones, spent on food in the feeding economy (an atomic SQL
+ * increment/decrement, mirroring the energy top-up). One row per companion,
+ * created lazily on first recompute.
+ */
+export const companionGrowth = pgTable('companion_growth', {
+  companionId: uuid('companion_id')
+    .primaryKey()
+    .references(() => companions.id, { onDelete: 'cascade' }),
+  // Mirror axes — the highest BAND index already reflected on (the high-water mark
+  // for once-only growth-reflection notes). Growth itself is derived & may dip; this
+  // mark only prevents a reflection firing twice for the same band.
+  knowledgeBand: integer('knowledge_band').notNull().default(0),
+  bondBand: integer('bond_band').notNull().default(0),
+  initiativeBand: integer('initiative_band').notNull().default(0),
+  // Capabilities already announced (the set whose "observed" note has fired).
+  observedCapabilities: jsonb('observed_capabilities')
+    .$type<readonly CapabilityKey[]>()
+    .notNull()
+    .default(sql`'[]'::jsonb`),
+  // The earned feeding currency — the one stored, non-derived value (companion-economy.md).
+  treats: integer('treats').notNull().default(0),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const schema = {
   users,
   companions,
@@ -556,4 +594,5 @@ export const schema = {
   companionEnergy,
   companionAffect,
   proactiveOutcomes,
+  companionGrowth,
 };

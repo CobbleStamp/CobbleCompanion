@@ -1,5 +1,5 @@
 /**
- * Read-only memory browser routes (companionmemory.md). Exposes what a
+ * Read-only memory browser routes (companion-memory.md). Exposes what a
  * companion "holds", grouped by memory kind: the episodic transcript, the
  * Phase 1 semantic store (sources/sections/facts + ingestion progress, with a
  * search endpoint), and procedural as a planned-but-empty section (P3).

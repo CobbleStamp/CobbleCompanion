@@ -1,5 +1,5 @@
 /**
- * The scorer abstraction (companionmemory.md §5). A Scorer turns a (case, output)
+ * The scorer abstraction (companion-memory.md §5). A Scorer turns a (case, output)
  * pair into named signals: a pass/fail, numeric metrics (aggregated across cases
  * by the runner), and a human note. Deterministic scorers (facts, refusal) need
  * no model and run in CI; an LLM-judge scorer spends real tokens (live tier).

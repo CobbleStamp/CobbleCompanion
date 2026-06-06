@@ -4,6 +4,8 @@ import type {
   ConsolidationRunner,
   EmbeddingGateway,
   EpisodicMemoryStore,
+  GrowthService,
+  GrowthStore,
   Harness,
   IdentityStore,
   IngestionRunner,
@@ -33,6 +35,7 @@ import type { AppConfig } from './config.js';
 import { registerAuthRoutes } from './routes/auth.routes.js';
 import { registerCompanionRoutes } from './routes/companion.routes.js';
 import { registerEpisodeRoutes } from './routes/episode.routes.js';
+import { registerGrowthRoutes } from './routes/growth.routes.js';
 import { registerMemoryRoutes } from './routes/memory.routes.js';
 import { registerMessageRoutes } from './routes/message.routes.js';
 import { registerInventoryRoutes } from './routes/inventory.routes.js';
@@ -81,6 +84,14 @@ export interface AppDeps {
   readonly rewards: ProactiveOutcomeStore;
   /** The rolling read of the user's mood, sensed in the agent loop (P4.2). */
   readonly affect: CompanionAffectStore;
+  /**
+   * Four-axis growth derived from substrate; builds the growth standing + notes
+   * (P5). The message route recomputes it inline as the tail of each turn's stream,
+   * so a crossed-band reflection is felt in place.
+   */
+  readonly growth: GrowthService;
+  /** The growth high-water mark + treats balance — used by the feeding economy (P5). */
+  readonly growthStore: GrowthStore;
   readonly tokenVerifier: TokenVerifier;
   readonly config: AppConfig;
   readonly logger: Logger;
@@ -173,6 +184,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerInventoryRoutes(app, deps, requireAuth);
   registerPresenceRoutes(app, deps, requireAuth);
   registerProactivityRoutes(app, deps, requireAuth);
+  registerGrowthRoutes(app, deps, requireAuth);
   registerUsageRoutes(app, deps, requireAuth);
 
   registerSpa(app);

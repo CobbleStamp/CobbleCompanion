@@ -8,7 +8,7 @@
 
 import { proactiveOutcomes, type Database } from '@cobble/db';
 import type { Drive, DriveWeights } from '@cobble/shared';
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, count, desc, eq, isNull, sql } from 'drizzle-orm';
 
 export interface RecordOutcomeInput {
   /** The drive the move served (whose weight a reward nudges). */
@@ -35,9 +35,22 @@ export interface ProactiveOutcomeRecord {
   readonly resolvedAt: Date | null;
 }
 
+/**
+ * Aggregate initiative signal for the growth Initiative axis (mirror reading):
+ * `total` initiations the companion has made on its own, and how many of those
+ * drew a `positive` reaction (a welcomed reaction, mood delta > 0). Derived,
+ * never stored.
+ */
+export interface ProactiveOutcomeStats {
+  readonly total: number;
+  readonly positive: number;
+}
+
 export interface ProactiveOutcomeStore {
   /** Record a fresh initiation (reward pending). */
   record(companionId: string, input: RecordOutcomeInput): Promise<ProactiveOutcomeRecord>;
+  /** Aggregate initiative counts for the growth Initiative axis. */
+  stats(companionId: string): Promise<ProactiveOutcomeStats>;
   /**
    * The most recent outcome still awaiting a reward (reward is null), if any —
    * the target the next user reaction is attributed to (Phase 4.1). Newest first.
@@ -73,6 +86,20 @@ export class DrizzleProactiveOutcomeStore implements ProactiveOutcomeStore {
       throw new Error('failed to record proactive outcome');
     }
     return toRecord(row);
+  }
+
+  async stats(companionId: string): Promise<ProactiveOutcomeStats> {
+    const [row] = await this.db
+      .select({
+        total: count(),
+        positive: sql<number>`cast(count(*) filter (where ${proactiveOutcomes.reward} > 0) as int)`,
+      })
+      .from(proactiveOutcomes)
+      .where(eq(proactiveOutcomes.companionId, companionId));
+    return {
+      total: Number(row?.total ?? 0),
+      positive: Number(row?.positive ?? 0),
+    };
   }
 
   async findLatestUnresolved(companionId: string): Promise<ProactiveOutcomeRecord | null> {

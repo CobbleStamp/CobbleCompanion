@@ -1,7 +1,7 @@
 # How to run evals
 
 > **Canonical source** for running the offline eval harness. What memory eval
-> measures and why lives in `companionmemory.md` §5; the scorer/dataset/runner
+> measures and why lives in `companion-memory.md` §5; the scorer/dataset/runner
 > data model and the prompt A/B mechanism are summarized here.
 
 The eval harness (`packages/eval`) is **offline** — never on the serving path —

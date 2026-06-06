@@ -266,6 +266,179 @@ export interface StaminaEnergyDto {
   readonly energy: UsageDto;
 }
 
+// --- Phase 5 — bond & growth (development-plan.md §3) ---
+
+/**
+ * The closed catalogue of capabilities the companion has DEMONSTRATED, read off the
+ * existing tool/procedure/affect logs (development-plan.md §3). A MIRROR, not an
+ * achievement board: `observed` reflects what the logs currently show — it is not a
+ * reward that locks in. Surfaced as a checklist ("what {name} has shown it can do"),
+ * since capabilities are genuinely chunky (product-overview.md §5.5). Autonomous work
+ * is reflected by the Initiative axis, not here.
+ */
+export type CapabilityKey =
+  | 'web_research'
+  | 'memory_recall'
+  | 'reading_sources'
+  | 'first_routine'
+  | 'multi_step_task'
+  | 'mood_attunement';
+
+/** One capability in the checklist — its stable key, its human label, and whether it's been observed. */
+export interface CapabilityDto {
+  readonly key: CapabilityKey;
+  readonly label: string;
+  readonly observed: boolean;
+}
+
+/**
+ * One growth axis as a MIRROR reading — a readout of the companion's current
+ * accumulated standing, NOT a game level. `band` is the qualitative standing
+ * ("Sparse" … "Vast", "New" … "Inseparable"); `fill` is the 0–1 position WITHIN that
+ * band for a gauge bar — a reading that may move in either direction, not progress
+ * toward a goal; `detail` is a short human gloss of the substrate behind it
+ * ("12 sources · 34 memories").
+ */
+export interface AxisReadingDto {
+  readonly band: string;
+  readonly fill: number;
+  readonly detail: string;
+}
+
+/** One learned drive on the character card — its key, human label, and 0–1 weight. */
+export interface CharacterDriveDto {
+  readonly key: Drive;
+  readonly label: string;
+  readonly weight: number;
+}
+
+/**
+ * The companion's emerged character — the "Who {name} has become" card, and the
+ * backing detail of the Character axis. `band` is the qualitative standing
+ * ("Still forming" … "Strongly formed"); `fill` is the 0–1 gauge fill (the drive
+ * spread from neutral) computed server-side, so the surface renders it like any other
+ * axis without re-deriving the measure; `drives` is the learned per-drive disposition
+ * (each weight 0–1, raised from neutral by the P4 reinforcement loop); `evolvedPersona`
+ * is the synthesized self-description (P2). Every Cobble starts neutral, so a formed
+ * character is genuinely earned — and, being a mirror, may also soften.
+ */
+export interface CharacterDto {
+  readonly band: string;
+  readonly fill: number;
+  readonly drives: readonly CharacterDriveDto[];
+  readonly evolvedPersona: string | null;
+}
+
+/**
+ * The companion's full growth standing (development-plan.md §3) as a MIRROR: four
+ * axis readings (knowledge, bond, initiative, character), the capabilities checklist,
+ * and the earned `treats` currency. All but `treats` are DERIVED from substrate and
+ * may move either way; `treats` is the feeding-economy balance (`companion-economy.md`).
+ */
+export interface GrowthDto {
+  readonly knowledge: AxisReadingDto;
+  readonly bond: AxisReadingDto;
+  readonly initiative: AxisReadingDto;
+  readonly character: CharacterDto;
+  readonly capabilities: readonly CapabilityDto[];
+  readonly treats: number;
+}
+
+/**
+ * The result of feeding (Phase 5 feeding economy) — the updated vitality meter plus
+ * the full growth standing, so a single reply refreshes both the client's pools and
+ * its treats balance. Single-sourced here so the server route reply and the web
+ * client's typed result never drift.
+ */
+export interface FeedResultDto {
+  readonly budget: StaminaEnergyDto;
+  readonly growth: GrowthDto;
+}
+
+/**
+ * The feeding economy's "food" (development-plan.md §3) — typed top-ups the user
+ * gives, each favouring a vitality pool. The catalogue is a shared product
+ * contract (like {@link UPLOAD_FORMATS}) so the client's kitchen and the server's
+ * grant logic never drift. Each food costs `treatCost` treats and adds
+ * `staminaTokens`/`energyTokens` to the respective pools.
+ */
+export type FoodType = 'ration' | 'spark' | 'treat';
+
+export interface FoodDef {
+  readonly type: FoodType;
+  readonly label: string;
+  readonly emoji: string;
+  /** Tokens this food adds to the stamina pool (0 if it doesn't feed stamina). */
+  readonly staminaTokens: number;
+  /** Tokens this food adds to the energy pool (0 if it doesn't feed energy). */
+  readonly energyTokens: number;
+  /** Treats the food costs to give. */
+  readonly treatCost: number;
+}
+
+/**
+ * The foods the kitchen offers. A `ration` favours stamina (so you can keep
+ * talking), a `spark` favours energy (so it can go explore), a `treat` feeds both
+ * a little. Token grants are product constants single-sourced here; the per-day
+ * caps remain server config.
+ */
+export const FOODS: readonly FoodDef[] = [
+  {
+    type: 'ration',
+    label: 'Ration',
+    emoji: '🍞',
+    staminaTokens: 200_000,
+    energyTokens: 0,
+    treatCost: 1,
+  },
+  {
+    type: 'spark',
+    label: 'Spark',
+    emoji: '⚡',
+    staminaTokens: 0,
+    energyTokens: 200_000,
+    treatCost: 1,
+  },
+  {
+    type: 'treat',
+    label: 'Treat',
+    emoji: '🍪',
+    staminaTokens: 80_000,
+    energyTokens: 80_000,
+    treatCost: 1,
+  },
+];
+
+/** Look up a food definition by type; null if the type is unknown. */
+export function foodDef(type: FoodType): FoodDef | null {
+  return FOODS.find((food) => food.type === type) ?? null;
+}
+
+/** The growth axes that post an in-character reflection when they first reach a higher band. */
+export type ReflectionAxis = 'knowledge' | 'bond' | 'initiative';
+
+/**
+ * Canned in-character REFLECTIONS the companion posts when a growth axis first
+ * reaches a higher band, or a capability is first observed (development-plan.md §3 —
+ * "growth, felt"). Reflections, not score announcements: no levels, bands, or numbers
+ * leak into the wording. Single sourced so the note reads the same wherever it's
+ * produced; the progression pass is token-free, so these are templated, not LLM-voiced.
+ */
+export function growthReflectionNote(axis: ReflectionAxis): string {
+  switch (axis) {
+    case 'knowledge':
+      return "I've been taking a lot in lately — I feel like I understand more of your world now. ✨";
+    case 'bond':
+      return "I feel like we've grown closer. ✨";
+    case 'initiative':
+      return "I've been finding things worth doing on my own lately. ✨";
+  }
+}
+
+export function capabilityObservedNote(label: string): string {
+  return `I noticed I just did something new for you — ${label}.`;
+}
+
 /** A retrieval section: verbatim original text plus its location in the source. */
 export interface SectionDto {
   readonly id: string;
@@ -309,7 +482,7 @@ export interface EpisodeSearchResultDto {
   readonly score: number;
 }
 
-// --- Memory snapshot (the read-only memory browser, companionmemory.md) ---
+// --- Memory snapshot (the read-only memory browser, companion-memory.md) ---
 
 /**
  * The episodic memory section — the companion's single continuous transcript
@@ -419,14 +592,20 @@ export const setProactivityDialSchema = z.object({
 });
 export type SetProactivityDialBody = z.infer<typeof setProactivityDialSchema>;
 
-/** Manually add to a vitality pool — the simple feed control (Phase 4; the food economy is Phase 5). */
+/** Manually add to a vitality pool — the simple feed control (Phase 4; superseded by the food economy below). */
 export const topUpSchema = z.object({
   pool: z.enum(['stamina', 'energy']),
   amount: z.number().int().min(1).max(10_000_000),
 });
 export type TopUpBody = z.infer<typeof topUpSchema>;
 
-// --- Provenance (Phase 1 grounded recall, docs/companionmemory.md) ---
+/** Give the companion a food (Phase 5 feeding economy) — spends treats, tops up a pool. */
+export const feedSchema = z.object({
+  food: z.enum(['ration', 'spark', 'treat']),
+});
+export type FeedBody = z.infer<typeof feedSchema>;
+
+// --- Provenance (Phase 1 grounded recall, docs/companion-memory.md) ---
 
 /**
  * Where a retrieved passage came from — renderable ("from your Peru book,
@@ -478,6 +657,18 @@ export interface StreamDoneEvent {
   readonly message: MessageDto;
 }
 
+/**
+ * An in-character reflection the companion posts right AFTER its reply, the moment
+ * a turn crosses a growth band (Phase 5 — "growth, felt"). Emitted into the same
+ * stream, after `done`, so the note lands in place instead of waiting for the next
+ * transcript fetch; carries the persisted message so the live line and the
+ * reloaded one are identical (mirrors `tool_step`).
+ */
+export interface StreamReflectionEvent {
+  readonly type: 'reflection';
+  readonly message: MessageDto;
+}
+
 /** Terminal failure event — failures are data (architecture.md §4.7). */
 export interface StreamErrorEvent {
   readonly type: 'error';
@@ -513,6 +704,7 @@ export type ChatStreamEvent =
   | StreamToolStepEvent
   | StreamProposalEvent
   | StreamDoneEvent
+  | StreamReflectionEvent
   | StreamErrorEvent;
 
 // --- Generic API envelope (patterns.md "API Response Format") ---
