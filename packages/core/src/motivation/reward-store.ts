@@ -37,13 +37,12 @@ export interface ProactiveOutcomeRecord {
 
 /**
  * Aggregate initiative signal for the growth Initiative axis (mirror reading):
- * `total` initiations the companion has made on its own, how many the user has
- * `resolved` (reacted to), and how many of those were `positive` (a welcomed
- * reaction, mood delta > 0). Derived, never stored.
+ * `total` initiations the companion has made on its own, and how many of those
+ * drew a `positive` reaction (a welcomed reaction, mood delta > 0). Derived,
+ * never stored.
  */
 export interface ProactiveOutcomeStats {
   readonly total: number;
-  readonly resolved: number;
   readonly positive: number;
 }
 
@@ -93,15 +92,12 @@ export class DrizzleProactiveOutcomeStore implements ProactiveOutcomeStore {
     const [row] = await this.db
       .select({
         total: count(),
-        // count(column) tallies only non-null rewards — i.e. reactions the user gave.
-        resolved: count(proactiveOutcomes.reward),
         positive: sql<number>`cast(count(*) filter (where ${proactiveOutcomes.reward} > 0) as int)`,
       })
       .from(proactiveOutcomes)
       .where(eq(proactiveOutcomes.companionId, companionId));
     return {
       total: Number(row?.total ?? 0),
-      resolved: Number(row?.resolved ?? 0),
       positive: Number(row?.positive ?? 0),
     };
   }

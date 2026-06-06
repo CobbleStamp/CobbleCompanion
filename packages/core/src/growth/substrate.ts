@@ -17,7 +17,6 @@ export interface GrowthSubstrate {
   readonly averageSalience: number;
   // Initiative axis (autonomous behaviour, from the proactive-outcome log).
   readonly initiationCount: number;
-  readonly resolvedReactionCount: number;
   readonly positiveReactionCount: number;
   // Capabilities (observed, from the tool/procedure/affect logs).
   readonly procedureCount: number;

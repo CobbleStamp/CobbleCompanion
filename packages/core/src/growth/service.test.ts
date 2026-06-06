@@ -35,6 +35,7 @@ describe('GrowthService', () => {
   let rewards: DrizzleProactiveOutcomeStore;
   let affect: DrizzleCompanionAffectStore;
   let memory: TranscriptMemoryStore;
+  let growthStore: DrizzleGrowthStore;
 
   beforeEach(async () => {
     const created = await createTestDatabase();
@@ -55,6 +56,9 @@ describe('GrowthService', () => {
       temperament: 'curious',
     });
     companionId = companion.id;
+    growthStore = new DrizzleGrowthStore(db, {
+      initialTreats: DEFAULT_GROWTH_CONFIG.initialTreats,
+    });
     service = new GrowthService({
       identity,
       semantic,
@@ -63,7 +67,7 @@ describe('GrowthService', () => {
       toolCallLog,
       rewards,
       affect,
-      growth: new DrizzleGrowthStore(db, { initialTreats: DEFAULT_GROWTH_CONFIG.initialTreats }),
+      growth: growthStore,
       memory,
       logger: silentLogger,
     });
@@ -132,6 +136,67 @@ describe('GrowthService', () => {
     expect(second.treatsEarned).toBe(0);
     expect((await service.snapshot(companionId)).treats).toBe(treatsAfterFirst);
     expect((await assistantNotes()).length).toBe(notesAfterFirst);
+  });
+
+  it('shows a dip on the surface, holds the mark, and never re-fires on recover', async () => {
+    // Climb knowledge to Broad: 7 sources × 3 points = 21 ≥ 20 → band 2.
+    const sourceIds: string[] = [];
+    for (let i = 0; i < 7; i += 1) {
+      const source = await semantic.createSource(companionId, {
+        kind: 'note',
+        title: `note ${i}`,
+        rawText: 'hello world',
+      });
+      sourceIds.push(source.id);
+    }
+    const climb = await service.recompute(companionId);
+    expect(climb.knowledgeAdvanced).toBe(true);
+    expect((await service.snapshot(companionId)).knowledge.band).toBe('Broad');
+
+    const markAfterClimb = await growthStore.getSnapshot(companionId);
+    expect(markAfterClimb.knowledgeBand).toBe(2);
+    const treatsAfterClimb = markAfterClimb.treats;
+    const knowledgeNotesAfterClimb = (await assistantNotes()).filter(
+      (n) => n === growthReflectionNote('knowledge'),
+    ).length;
+    expect(knowledgeNotesAfterClimb).toBe(1);
+
+    // Dip: delete 3 sources → 4 × 3 = 12 points → band 1 (Growing), below the mark.
+    for (const id of sourceIds.slice(0, 3)) {
+      expect(await semantic.deleteSource(companionId, id)).toBe(true);
+    }
+
+    // (a) The surface shows the LOWER live reading — the mark never floors what's shown.
+    const dipped = await service.snapshot(companionId);
+    expect(dipped.knowledge.band).toBe('Growing');
+
+    // (b) The stored mark is unchanged by the dip (it only ever climbs), and no treats
+    //     were clawed back.
+    const markAfterDip = await growthStore.getSnapshot(companionId);
+    expect(markAfterDip.knowledgeBand).toBe(2);
+    expect(markAfterDip.treats).toBe(treatsAfterClimb);
+
+    // Recover back up to Broad (band 2), an already-reflected band.
+    for (let i = 0; i < 3; i += 1) {
+      await semantic.createSource(companionId, {
+        kind: 'note',
+        title: `note recover ${i}`,
+        rawText: 'hello world',
+      });
+    }
+    const recover = await service.recompute(companionId);
+
+    // (c) Re-climbing to an already-reflected band re-posts no reflection and re-awards
+    //     no treats — the mark gates the once-only side effects.
+    expect(recover.knowledgeAdvanced).toBe(false);
+    expect(recover.treatsEarned).toBe(0);
+    const recovered = await service.snapshot(companionId);
+    expect(recovered.knowledge.band).toBe('Broad');
+    expect(recovered.treats).toBe(treatsAfterClimb);
+    const knowledgeNotesAfterRecover = (await assistantNotes()).filter(
+      (n) => n === growthReflectionNote('knowledge'),
+    ).length;
+    expect(knowledgeNotesAfterRecover).toBe(1);
   });
 
   it('reflects an Initiative reading from the proactive-outcome log', async () => {

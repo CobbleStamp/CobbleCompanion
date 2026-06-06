@@ -185,7 +185,6 @@ export class GrowthService {
       episodeCount,
       averageSalience,
       initiationCount: initiative.total,
-      resolvedReactionCount: initiative.resolved,
       positiveReactionCount: initiative.positive,
       procedureCount,
       distinctToolNames: toolStats.distinctNames,

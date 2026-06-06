@@ -20,7 +20,6 @@ const EMPTY: GrowthSubstrate = {
   episodeCount: 0,
   averageSalience: 0,
   initiationCount: 0,
-  resolvedReactionCount: 0,
   positiveReactionCount: 0,
   procedureCount: 0,
   distinctToolNames: [],

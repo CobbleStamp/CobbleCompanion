@@ -76,11 +76,16 @@ describe('migration journal ordering', () => {
   });
 
   // Spins up a fresh PGlite per migration prefix and replays the whole folder
-  // through each — work that grows with every migration, so under full-suite
-  // parallel load the default 5s timeout is too tight. Give it room.
+  // through each — this is single-threaded WASM CPU work that is inherently
+  // O(migrations²) and grows with every new migration. In isolation it runs in
+  // ~6s, but the full monorepo suite (~120 files in one vitest run) oversubscribes
+  // CI's few cores ~2.5x, stretching it well past a 30s ceiling. Parallelizing the
+  // prefixes doesn't help (one worker thread, CPU-bound), so the fix is headroom:
+  // a broken migration throws immediately rather than hanging, so a high timeout
+  // never delays a real failure — it only absorbs scheduling jitter under load.
   it(
     'reaches the final schema from every incremental upgrade point',
-    { timeout: 30_000 },
+    { timeout: 120_000 },
     async () => {
       const journal = await readJournal();
       // For each prefix length: migrate to that point, then migrate with the
