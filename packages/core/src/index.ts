@@ -306,6 +306,7 @@ export {
   createProceduralRetrieveContext,
   type ProceduralRetrieveOptions,
 } from './harness/procedural-retrieve.js';
+export { createToolRetrieveContext, type ToolRetrieveOptions } from './harness/tool-retrieve.js';
 
 // Growth & feeding economy (Phase 5 — bond & growth, development-plan.md §3)
 export { DEFAULT_GROWTH_CONFIG, type GrowthConfig } from './growth/config.js';
