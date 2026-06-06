@@ -17,7 +17,7 @@ import {
   type ContentType,
   type RawContent,
 } from './content-parser.js';
-import { readBytesWithLimit, safeLinkFetch } from './safe-fetch.js';
+import { readBytesWithLimit, ssrfSafeFetch } from './safe-fetch.js';
 import { assertPublicHttpUrl } from './url-guard.js';
 
 /** Default byte ceiling for fetched link bodies (mirrors the upload cap's default). */
@@ -86,7 +86,7 @@ function contentTypeFromUrlExtension(url: string): ContentType | null {
  * oversized, or unparseable response.
  */
 export function createHttpLinkResolver(options: HttpLinkResolverOptions = {}): LinkResolver {
-  const fetchFn = options.fetchFn ?? safeLinkFetch;
+  const fetchFn = options.fetchFn ?? ssrfSafeFetch;
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_LINK_BYTES;
   return {
     async resolve(rawUrl: string): Promise<RawContent> {

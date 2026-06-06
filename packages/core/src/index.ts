@@ -377,6 +377,7 @@ export { enrichSection, type Enrichment, type ExtractedFact } from './ingestion/
 export { buildEmbeddingInput } from './ingestion/embedder.js';
 export { CORE_FACT_TYPES, isCoreFactType, type CoreFactType } from './ingestion/ontology.js';
 export { assertPublicHttpUrl } from './ingestion/url-guard.js';
+export { ssrfSafeFetch } from './ingestion/safe-fetch.js';
 export {
   parseContent,
   contentTypeForUploadKind,

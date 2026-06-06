@@ -68,8 +68,9 @@ export function createConnectMcpTool(options: ConnectMcpOptions): Tool {
         };
       }
       try {
-        // Defense-in-depth: re-check the endpoint before connecting (the DNS-layer
-        // re-validation rides in the gateway's transport, like link ingestion §8).
+        // Defense-in-depth string check before connecting; the connection-layer
+        // DNS re-validation rides in the gateway's transport (the SSRF-guarded
+        // fetch), like link ingestion §8.
         assertPublicHttpUrl(entry.endpoint);
         const headers = options.authHeaders?.(entry);
         const spec: McpServerSpec = {

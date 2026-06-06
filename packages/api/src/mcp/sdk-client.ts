@@ -4,12 +4,22 @@
  * Langfuse adapter pattern — the concrete transport lives in the api package; core
  * owns only the interface + the test fake. HTTP/SSE only (no stdio on a
  * multi-tenant host). One Client per server ref, connected lazily and cached; a
- * failed connect is not cached so the next call retries. SSRF is enforced upstream
- * (the whitelist endpoint is validated and connect_mcp re-checks it).
+ * failed connect is not cached so the next call retries.
+ *
+ * SSRF defense is layered, matching link ingestion (companion-tools.md §7):
+ * the whitelist endpoint is string-validated (`assertPublicHttpUrl`) and
+ * connect_mcp re-checks it, and — the part that actually stops DNS
+ * rebinding — every transport connection resolves through {@link ssrfSafeFetch},
+ * whose connection-layer DNS lookup rejects any address in a private/metadata
+ * range. String checks alone can't catch a public hostname pointing at an
+ * internal IP; the guarded fetch can.
  */
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import {
+  StreamableHTTPClientTransport,
+  type StreamableHTTPClientTransportOptions,
+} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import {
   consoleLogger,
   type Logger,
@@ -18,9 +28,23 @@ import {
   McpGatewayError,
   type McpServerSpec,
   type McpToolDef,
+  ssrfSafeFetch,
 } from '@cobble/core';
 
 const CLIENT_INFO = { name: 'cobble-companion', version: '0.0.0' } as const;
+
+/**
+ * Build the transport options for a server spec: route every connection
+ * through the SSRF-guarded fetch (DNS-rebinding defense) and forward the
+ * optional auth headers. Exported so the wiring is unit-testable without a
+ * live server.
+ */
+export function mcpTransportOptions(spec: McpServerSpec): StreamableHTTPClientTransportOptions {
+  return {
+    fetch: ssrfSafeFetch,
+    ...(spec.headers ? { requestInit: { headers: spec.headers } } : {}),
+  };
+}
 
 /** A text/non-text content block as the SDK returns it from `tools/call`. */
 type McpContentBlock = { readonly type: string; readonly text?: string };
@@ -92,9 +116,10 @@ export class StreamableHttpMcpGateway implements McpGateway {
   }
 
   private async connect(spec: McpServerSpec): Promise<Client> {
-    const transport = new StreamableHTTPClientTransport(new URL(spec.endpoint), {
-      ...(spec.headers ? { requestInit: { headers: spec.headers } } : {}),
-    });
+    const transport = new StreamableHTTPClientTransport(
+      new URL(spec.endpoint),
+      mcpTransportOptions(spec),
+    );
     const client = new Client(CLIENT_INFO);
     // The SDK's StreamableHTTPClientTransport exposes `sessionId: string | undefined`,
     // which trips our exactOptionalPropertyTypes against its own `Transport` type — a
