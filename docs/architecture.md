@@ -728,10 +728,10 @@ owned by `development-plan.md`.
   binary allow/deny defining the catalog — sitting *beside* propose→approve (§4.4), not replacing it.
   Server-host only; tool outputs treated as untrusted (`implementation.md` §2.1). **Both tracks are
   built** (`development-plan.md` Phases 9–10), each off by default: the **MCP-connector** executor
-  (HTTP/SSE + SSRF-guarded, §8) and the **CLI `run_command` sandbox** (no-shell subprocess, scrubbed
+  (HTTP/SSE + SSRF-guarded, §8) and the **CLI sandbox** executor (no-shell subprocess, scrubbed
   env, per-tenant ephemeral cwd, time/output ceilings — portable tier; OS-level/network isolation
-  deferred to §8 hardening). CLI tools are developer-described folders under `CLI_TOOLS_PATH`, so they
-  flow through the same spine as MCP tools. Design → `companion-tools.md`; scope/sequencing →
+  deferred to §8 hardening). CLI tools are developer-described folders under `CLI_TOOLS_PATH`, each
+  surfacing as its own callable `cli__<ref>`, so they flow through the same spine as MCP tools. Design → `companion-tools.md`; scope/sequencing →
   `development-plan.md`.
 - **Native surfaces** — Mobile/Desktop clients, OS-tool bridges, and the Sync Courier.
 - **Transcript compaction** — summarizing the compactible remainder when the context window fills.

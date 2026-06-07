@@ -441,9 +441,9 @@ CLI-specific learning machinery). Full design → `companion-tools.md`.
 
 **Scope**
 - **`CLI_TOOLS_PATH` tool folders** — each whitelisted tool is a folder (`TOOL.json` = binary +
-  model-facing argument schema + argv template + optional limits; `TOOL.md` = the usage prompt). The
+  model-facing argument schema + argv template + mandatory limits; `TOOL.md` = the usage prompt). The
   **folder set is the CLI trust boundary** (read-only, deployment-controlled), config not DB.
-- **`run_command` sandbox** — the executor CLI tools delegate to: **no shell** (argv verbatim),
+- **CLI sandbox** — the executor each `cli__<ref>` tool delegates to: **no shell** (argv verbatim),
   scrubbed env, per-tenant ephemeral working dir, time/output ceilings (mirrors the `web_fetch`
   byte-cap posture). Portable subprocess tier; OS-level/network isolation deferred (`companion-tools.md`
   §7/§9).

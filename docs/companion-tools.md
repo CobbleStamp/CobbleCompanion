@@ -17,8 +17,10 @@
 > **Status — both tracks built (MCP: Phase 9, PR #10; CLI: Phase 10).** The shared
 > **discover → load → call → remember** spine (the catalog, `search_tools`/`load_tool`, the
 > per-companion equipped set, the per-step dynamic registry, and proactive loading) and **both
-> executors** — the MCP connector (HTTP/SSE) and the CLI `run_command` sandbox — are implemented and
-> wired, each **off by default** until a source is configured (`MCP_SERVERS` and/or `CLI_TOOLS_PATH`).
+> executors** — the MCP connector (HTTP/SSE) and the CLI sandbox (no-shell subprocess) — are
+> implemented and wired, each **off by default** until a source is configured (`MCP_SERVERS` and/or
+> `CLI_TOOLS_PATH`). Each whitelisted CLI tool surfaces as its own callable `cli__<ref>` (the analogue
+> of an individual MCP tool), not as a single free-form `run_command` primitive.
 > CLI tools are **developer-described folders** under `CLI_TOOLS_PATH` (a `TOOL.json` exec contract +
 > `TOOL.md` usage prompt, §6) that flow through the same spine as MCP tools; the model fills each
 > tool's argument schema and an argv template renders it, so there is no free-form command or
@@ -81,7 +83,7 @@ this feature adds. They split into *executors* (drive an external tool) and *dis
 
 | Primitive | Kind | What it does | Track |
 |---|---|---|---|
-| **`run_command`** | executor | drive any **whitelisted** host CLI, with validated arguments | CLI (Phase 10) |
+| **CLI sandbox** | executor | run any **whitelisted** host CLI in a no-shell subprocess; each tool folder becomes a callable `cli__<ref>` | CLI (Phase 10) |
 | **MCP connector** | executor | speak to any **whitelisted** HTTP/SSE **MCP server**; its tools become callable | MCP (Phase 9) |
 | **`search_tools`** | discovery | given the job at hand, return a ranked shortlist of catalog tools that could do it — **ids + one-liners, no schemas** | shared spine |
 | **`load_tool`** | discovery | pick a tool from the shortlist: connect its server if needed, fetch its **fresh** schema, and add it to the **equipped** set so it's callable next loop iteration | shared spine |
@@ -222,15 +224,18 @@ Two consequences are load-bearing:
 The whitelist is the admissibility floor; these boundaries harden what runs within it
 (implementation → `implementation.md` §5, trust model → `architecture.md` §8):
 
-- **CLI execution is sandboxed.** `run_command` spawns the binary with **no shell** (argv elements
+- **CLI execution is sandboxed.** The CLI sandbox spawns the binary with **no shell** (argv elements
   pass verbatim, so a crafted argument is never a command), a **scrubbed environment** (no secrets),
   and a **per-tenant ephemeral working directory** under a scratch root (never `CLI_TOOLS_PATH`),
   under wall-clock + output-byte ceilings (mirroring the `web_fetch` byte-cap posture). This is the
   **portable subprocess tier**: it runs identically on every host but does **not** enforce network
-  isolation — OS-level isolation (namespaces/containers, network egress control) is deferred to
-  hardening (§9), behind the same sandbox seam. The narrow per-tool whitelist + fixed binary are the
-  mitigation meanwhile. `CLI_TOOLS_PATH` must be **read-only + deployment-controlled** and must not
-  overlap any path the app writes to (it is the CLI trust boundary, §6).
+  **or filesystem** isolation — the child runs with the API process's own file access, so the
+  scrubbed env keeps secrets out of the *environment* but not secrets a whitelisted binary could read
+  from *disk* (config files, key material the process user can open). OS-level isolation
+  (namespaces/containers, filesystem confinement, network egress control) is deferred to hardening
+  (§9), behind the same sandbox seam. The narrow per-tool whitelist + fixed binary are the mitigation
+  meanwhile. `CLI_TOOLS_PATH` must be **read-only + deployment-controlled** and must not overlap any
+  path the app writes to (it is the CLI trust boundary, §6).
 - **MCP is HTTP/SSE-only** on the server host, behind the same **SSRF** guard as link ingestion
   (`architecture.md` §8): scheme + blocked-host checks with connection-layer DNS re-validation. No
   **stdio** transport — the host never spawns a user-specified process (that rides with the future
@@ -258,7 +263,7 @@ where a tool comes from. Scope and acceptance are owned by `development-plan.md`
 - **MCP track (first).** Lower risk and largely a *catalog + load* problem: self-describing schemas
   mean little trial-and-error. It exercises the full discover → load → call → remember spine
   end-to-end.
-- **CLI track (second).** Higher power, more new machinery: the `run_command` host sandbox and the
+- **CLI track (second).** Higher power, more new machinery: the CLI host sandbox and the
   per-tool definition format (`TOOL.json` exec contract + `TOOL.md` usage prompt) under
   `CLI_TOOLS_PATH`. CLI tools are *developer-described* (the folder is the analogue of an MCP
   server's `tools/list`), so the model fills a fixed argument schema rather than composing free-form
@@ -275,10 +280,11 @@ Deferred from this workstream, recorded here so the boundary is explicit:
   not on the PoC critical path (§5).
 - **Search-and-auto-load** — when `search_tools` is confident, fold the load into the search so a
   single step equips the obvious tool, trading the two-step's predictability for one less round-trip.
-- **OS-level CLI isolation** — the shipped `run_command` sandbox is the portable subprocess tier
+- **OS-level CLI isolation** — the shipped CLI sandbox is the portable subprocess tier
   (no-shell, scrubbed env, ephemeral per-tenant cwd, time/output ceilings) but does **not** enforce
-  network isolation. Kernel-level isolation (namespaces/containers, egress control) lands behind the
-  same sandbox seam when the production host is fixed (§7).
+  network or filesystem isolation. Kernel-level isolation (namespaces/containers, filesystem
+  confinement, egress control) lands behind the same sandbox seam when the production host is fixed
+  (§7).
 - **CLI tool-doc ingestion** — ingesting a tool's `TOOL.md` / `--help` into **semantic memory** so
   "how this tool works" is recalled like any other knowledge. The PoC keeps the usage prompt on the
   equipped tool only; ingestion is symmetric machinery MCP doesn't use, so it is deferred.

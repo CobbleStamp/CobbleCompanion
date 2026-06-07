@@ -517,7 +517,7 @@ Out of scope for this release; the roadmap is owned by `development-plan.md`.
   JSON whitelist with per-server auth-secret env refs → `AppConfig.mcpServers`; `MAX_EQUIPPED_TOOLS`).
   **CLI** (Phase 10, PR #11): tools are **developer-described folders** under `CLI_TOOLS_PATH` (the
   CLI trust boundary), each a `TOOL.json` (binary + model-facing `parameters` JSON Schema + argv
-  template + optional limits) + `TOOL.md` (usage prompt); `parseCliToolDef` validates them and
+  template + mandatory limits) + `TOOL.md` (usage prompt); `parseCliToolDef` validates them and
   `cliToolToTool` validates the model's args against the schema, renders each `{param}` into a
   **discrete argv element** (no shell), and fences output as untrusted. The **`CliToolStore`** seam
   (production `FileSystemCliToolStore` scans the dir, skips+logs invalid folders, rejects
