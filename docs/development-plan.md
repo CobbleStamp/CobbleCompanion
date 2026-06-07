@@ -397,7 +397,7 @@ on MCP results.
 
 **Implemented** (PR #10): the full **discover → load → call → remember** spine plus the **MCP
 executor**, off by default (empty whitelist). The static boot registry became a **composition of
-capability sources** resolved **per model step** (`core/mcp/equipped-resolver.ts`) behind the
+capability sources** resolved **per model step** (`core/acquisition/equipped-resolver.ts`) behind the
 unchanged `list()`/`get()` interface, so a tool loaded mid-turn is callable on the next loop
 iteration (loop shape unchanged — invariant #3); it degrades to the static registry if resolution
 throws, so acquisition never breaks a turn. A deployment-wide **catalog** (`tool_catalog` table,
