@@ -26,7 +26,12 @@ const DEFAULT_MAX_CHARS = 8000;
 /** Provider tool-name limit (OpenAI-compatible): `^[a-zA-Z0-9_-]{1,64}$`. */
 const MAX_TOOL_NAME_LENGTH = 64;
 const NAME_HASH_LENGTH = 8;
-/** Fallback ceilings when a tool declares no `limits` and the caller passes none. */
+/**
+ * Last-resort ceilings when a tool declares no `limits` *and* the caller passes no
+ * deployment default. In production the deployment default (CLI_TIMEOUT_MS /
+ * CLI_MAX_OUTPUT_BYTES, threaded through from config) is always supplied, so these
+ * only bite in direct adapter use (e.g. tests).
+ */
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
 
@@ -54,6 +59,16 @@ export interface CliToolAdapterOptions {
   readonly sandbox: CommandSandbox;
   /** Truncate returned text to this many characters (default 8000). */
   readonly maxChars?: number;
+  /**
+   * Deployment-wide wall-clock ceiling (ms) applied when a tool declares no
+   * `limits.timeoutMs` (CLI_TIMEOUT_MS, threaded through from config).
+   */
+  readonly defaultTimeoutMs?: number;
+  /**
+   * Deployment-wide captured-output byte cap applied when a tool declares no
+   * `limits.maxOutputBytes` (CLI_MAX_OUTPUT_BYTES, threaded through from config).
+   */
+  readonly defaultMaxOutputBytes?: number;
   readonly logger?: Logger;
 }
 
@@ -72,7 +87,23 @@ export function cliToolToTool(options: CliToolAdapterOptions): Tool {
     stepSummary(): string {
       return `Ran ${def.ref}`;
     },
-    run: (args, ctx) => runCliTool({ def, sandbox, maxChars, logger }, args, ctx),
+    run: (args, ctx) =>
+      runCliTool(
+        {
+          def,
+          sandbox,
+          maxChars,
+          ...(options.defaultTimeoutMs !== undefined
+            ? { defaultTimeoutMs: options.defaultTimeoutMs }
+            : {}),
+          ...(options.defaultMaxOutputBytes !== undefined
+            ? { defaultMaxOutputBytes: options.defaultMaxOutputBytes }
+            : {}),
+          logger,
+        },
+        args,
+        ctx,
+      ),
   };
 }
 
@@ -83,7 +114,10 @@ export function cliToolToTool(options: CliToolAdapterOptions): Tool {
  */
 export async function runCliTool(
   options: Required<Pick<CliToolAdapterOptions, 'def' | 'sandbox'>> &
-    Pick<CliToolAdapterOptions, 'maxChars' | 'logger'>,
+    Pick<
+      CliToolAdapterOptions,
+      'maxChars' | 'defaultTimeoutMs' | 'defaultMaxOutputBytes' | 'logger'
+    >,
   args: Record<string, unknown>,
   ctx: TurnCtx,
 ): Promise<ToolResult> {
@@ -101,8 +135,9 @@ export async function runCliTool(
       companionId: ctx.companionId,
       binary: def.binary,
       argv: renderArgv(def.argv, args),
-      timeoutMs: def.limits?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-      maxOutputBytes: def.limits?.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
+      timeoutMs: def.limits?.timeoutMs ?? options.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS,
+      maxOutputBytes:
+        def.limits?.maxOutputBytes ?? options.defaultMaxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
     });
     const failed = result.timedOut || (result.exitCode !== null && result.exitCode !== 0);
     return {

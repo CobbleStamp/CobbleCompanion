@@ -138,6 +138,48 @@ describe('cliToolToTool', () => {
     expect(result.content).toContain('spawn failed');
   });
 
+  it('applies the deployment default ceilings when the tool declares no limits', async () => {
+    const sandbox = new FakeCommandSandbox(() => ok('done'));
+    // Non-default values, so a regression to the in-code fallback would be visible.
+    const tool = cliToolToTool({
+      def,
+      sandbox,
+      defaultTimeoutMs: 30_000,
+      defaultMaxOutputBytes: 256 * 1024,
+      logger: silentLogger,
+    });
+    await tool.run({ input: 'i', width: 1, output: 'o' }, ctx);
+    expect(sandbox.calls[0]).toMatchObject({
+      timeoutMs: 30_000,
+      maxOutputBytes: 256 * 1024,
+    });
+  });
+
+  it("lets a tool's own limits override the deployment default", async () => {
+    const limitedDef = parseCliToolDef(
+      'slow',
+      JSON.stringify({
+        binary: 'sleep',
+        description: 'Sleep.',
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+        argv: ['1'],
+        limits: { timeoutMs: 500, maxOutputBytes: 1024 },
+      }),
+      'Sleep briefly.',
+    );
+    const sandbox = new FakeCommandSandbox(() => ok('done'));
+    const tool = cliToolToTool({
+      def: limitedDef,
+      sandbox,
+      defaultTimeoutMs: 30_000,
+      defaultMaxOutputBytes: 256 * 1024,
+      logger: silentLogger,
+    });
+    await tool.run({}, ctx);
+    // The per-tool limits take precedence over the deployment default.
+    expect(sandbox.calls[0]).toMatchObject({ timeoutMs: 500, maxOutputBytes: 1024 });
+  });
+
   it('drops an argv element whose optional param was omitted', async () => {
     const optionalDef = parseCliToolDef(
       'greet',

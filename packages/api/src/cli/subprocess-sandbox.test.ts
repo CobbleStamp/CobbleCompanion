@@ -7,6 +7,8 @@
  * where a usable node executable path isn't available.
  */
 
+import { access } from 'node:fs/promises';
+
 import { describe, expect, it } from 'vitest';
 import { createSubprocessSandbox } from './subprocess-sandbox.js';
 
@@ -59,5 +61,38 @@ describe.skipIf(!NODE)('createSubprocessSandbox', () => {
     });
     expect(result.exitCode).toBeNull();
     expect(result.output).toContain('failed to start');
+  });
+
+  it('scrubs the environment — an ambient secret never reaches the child', async () => {
+    // Set a secret in the parent; an unscrubbed spawn would inherit it.
+    process.env['CLI_SANDBOX_SECRET_TEST'] = 's3cr3t-should-not-leak';
+    try {
+      const result = await run.run({
+        ...base,
+        binary: NODE,
+        argv: ['-e', 'process.stdout.write(JSON.stringify(process.env))'],
+      });
+      const childEnv = JSON.parse(result.output) as Record<string, string>;
+      expect(childEnv['CLI_SANDBOX_SECRET_TEST']).toBeUndefined();
+      // Only the deliberate allowlist (PATH to resolve the binary, a fixed LANG).
+      expect(childEnv['PATH']).toBeTruthy();
+      expect(childEnv['LANG']).toBe('C.UTF-8');
+    } finally {
+      delete process.env['CLI_SANDBOX_SECRET_TEST'];
+    }
+  });
+
+  it('runs in an ephemeral per-tenant working dir that is removed after the run', async () => {
+    const result = await run.run({
+      ...base,
+      binary: NODE,
+      argv: ['-e', 'process.stdout.write(process.cwd())'],
+    });
+    const childCwd = result.output;
+    // A fresh dir namespaced by the tenant id — never the caller's own cwd.
+    expect(childCwd).toContain('cli-c1-');
+    expect(childCwd).not.toBe(process.cwd());
+    // The `finally` cleanup removed it by the time the run resolved.
+    await expect(access(childCwd)).rejects.toThrow();
   });
 });

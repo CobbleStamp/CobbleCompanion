@@ -32,6 +32,12 @@ export interface CliCapabilitySourceOptions {
   readonly sandbox: CommandSandbox;
   /** Truncate returned text to this many characters (passed through to the adapter). */
   readonly maxChars?: number;
+  /**
+   * Deployment-wide run ceilings applied to any tool that declares no `limits` of
+   * its own (CLI_TIMEOUT_MS / CLI_MAX_OUTPUT_BYTES, threaded through from config).
+   */
+  readonly defaultTimeoutMs?: number;
+  readonly defaultMaxOutputBytes?: number;
   readonly logger?: Logger;
 }
 
@@ -97,6 +103,12 @@ export function createCliCapabilitySource(options: CliCapabilitySourceOptions): 
               def,
               sandbox: options.sandbox,
               ...(options.maxChars ? { maxChars: options.maxChars } : {}),
+              ...(options.defaultTimeoutMs !== undefined
+                ? { defaultTimeoutMs: options.defaultTimeoutMs }
+                : {}),
+              ...(options.defaultMaxOutputBytes !== undefined
+                ? { defaultMaxOutputBytes: options.defaultMaxOutputBytes }
+                : {}),
               logger,
             },
             args,

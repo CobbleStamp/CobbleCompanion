@@ -296,3 +296,15 @@ Deferred from this workstream, recorded here so the boundary is explicit:
 - **External-API cost metering** — the energy/stamina budget meters LLM/embedding tokens
   (`architecture.md` §4.8); the monetary cost of an external tool/MCP call is a new cost axis not
   yet metered.
+- **Boot-resilient CLI admissibility** — the CLI source's admissibility check is backed by an
+  in-memory ref snapshot rebuilt by the single startup catalog refresh, with no periodic rebuild or
+  retry; the MCP source consults its whitelist live and statelessly, so it has no equivalent boot
+  dependency. If that one startup enumeration transiently fails (e.g. a `readdir` hiccup), the
+  snapshot stays empty and every persisted equipped CLI tool is silently dropped from the registry
+  and the equipped summary until the next restart — even though the tool folders still exist on disk
+  and the call-time re-read that actually guards execution would succeed. (The pre-gate on the
+  snapshot is belt-and-suspenders only; the authoritative revocation is the fresh per-call store
+  read.) New-folder discovery being startup-bound is the accepted Phase-9 staleness trait; the
+  fragility of *already-equipped* tools is the part to harden — by dropping the redundant pre-gate
+  and trusting the call-time read, backing the admissibility check with the store, or adding a
+  retried/periodic refresh.
