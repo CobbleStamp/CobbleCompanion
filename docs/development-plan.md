@@ -44,7 +44,7 @@ being is proven, because they add platform cost without changing whether the cor
 | **7** | Desktop surface | + Desktop | File/workspace OS tools, heavier local storage | Planned |
 | **8** | Hardening & launch readiness | All | Security, scale, privacy controls, monetization | Planned |
 | **9** | Tool acquisition — MCP | Web / server-host | Whitelisted HTTP MCP servers discovered, loaded & used at runtime, no redeploy | ✅ **Done** (PR #10) |
-| **10** | Tool acquisition — CLI | Web / server-host | Whitelisted host CLIs learned & driven at runtime, no redeploy | Planned |
+| **10** | Tool acquisition — CLI | Web / server-host | Whitelisted host CLIs discovered, loaded & driven at runtime, no redeploy | ✅ **Done** (PR #11) |
 
 ⭐ = the differentiators the web PoC exists to prove. **Phases 0–5 are the PoC.**
 
@@ -432,26 +432,62 @@ suite green at ≥80% coverage. Canonical mechanism: `docs/companion-tools.md`.
 **Goal:** a developer can whitelist a host CLI; given the tool's docs, the companion learns to drive
 it and preserves the working invocation — no code change, no redeploy.
 
+**Design note (resolved):** CLI tools work **like MCP tools** — a second capability source over the
+same discover → load → call → remember spine; the only difference is the transport at the leaf (a
+local subprocess instead of HTTP). CLI tools are **developer-described folders** (the analogue of an
+MCP server's self-description), so the model fills a fixed argument schema rather than composing
+free-form commands, and "remember" reuses the existing procedural + proactive-loading spine (no
+CLI-specific learning machinery). Full design → `companion-tools.md`.
+
 **Scope**
-- **`run_command`** primitive driving any whitelisted CLI.
-- **Whitelist / argument-validation policy engine** — specific binary + validated argument patterns,
-  binary allow/deny; entries are narrow (the policy is the trust boundary, no runtime approval).
-- **Host sandbox** — per-tenant working directory, no cross-tenant data/secrets, CPU/time/output
-  ceilings (mirrors the `web_fetch` byte-cap posture).
-- **Experimentation / learning loop** — ingest the tool's docs into **semantic memory**; record a
-  working invocation into **procedural memory**; both feed catalog discovery and proactive loading.
-  Experimentation is bounded by the whitelist (it can try only *validated* invocations).
-- **Trust/security:** same developer-whitelist binary model; output sandboxed and treated as
-  untrusted.
+- **`CLI_TOOLS_PATH` tool folders** — each whitelisted tool is a folder (`TOOL.json` = binary +
+  model-facing argument schema + argv template + optional limits; `TOOL.md` = the usage prompt). The
+  **folder set is the CLI trust boundary** (read-only, deployment-controlled), config not DB.
+- **`run_command` sandbox** — the executor CLI tools delegate to: **no shell** (argv verbatim),
+  scrubbed env, per-tenant ephemeral working dir, time/output ceilings (mirrors the `web_fetch`
+  byte-cap posture). Portable subprocess tier; OS-level/network isolation deferred (`companion-tools.md`
+  §7/§9).
+- **Argument validation** — the model fills the tool's JSON-Schema `parameters`; an argv template
+  renders validated values into **discrete argv elements**. Binary allow/deny, no per-call approval,
+  no free-form command or per-arg regex policy.
+- **Same spine, symmetric with MCP** — a `CapabilitySource` refactor lets CLI plug into the existing
+  catalog / `search_tools` / `load_tool` / per-step registry / proactive loading unchanged.
+- **Trust/security:** developer-whitelist (the folder set); output sandboxed + treated as untrusted;
+  a removed folder revokes the tool immediately (call-time re-read).
 
-**Done when:** a developer whitelists a CLI (binary + argument patterns); given the tool's docs, the
-companion gets a **valid invocation working**, the know-how **persists** (semantic + procedural), and
-it **reuses** the CLI on a later relevant turn without re-deliberating; **off-whitelist / invalid
-arguments are denied**; output is sandboxed and untrusted; every run is logged.
+**Done when:** a developer drops a tool folder under `CLI_TOOLS_PATH`; on a relevant turn the
+companion **`search_tools` → `load_tool` → calls** it (callable on the next loop iteration); the
+equipped tool **survives a restart**; an **unknown/invalid** id is denied before any subprocess;
+output is **sandboxed + untrusted**; every run is logged.
 
-**Key risks:** host-execution safety (mitigated by whitelist + sandbox on the multi-tenant host),
-experimentation token cost (drawn from the energy/stamina budget), and prompt-injection-to-execution
-(bounded by the whitelist — no invocation can escape it).
+**Key risks:** host-execution safety (mitigated by the read-only trusted folder set + the no-shell
+sandbox on the multi-tenant host; network isolation deferred to Phase 8), and
+prompt-injection-to-execution (bounded by the fixed binary + schema-validated argv — no value can
+become a command).
+
+**Implemented** (PR #11): the CLI track as a **second capability source over the Phase 9 spine**,
+off by default (empty `CLI_TOOLS_PATH`). A `CapabilitySource` refactor (`core/acquisition/`) made the
+three MCP-only seams (catalog builder, `load_tool` schema resolution, equipped-registry resolver)
+**source-polymorphic** — MCP became `createMcpCapabilitySource`, with MCP behaviour provably
+unchanged (the Phase 9 DoD passes verbatim). The CLI source (`core/cli/`): `parseCliToolDef`
+validates a folder's `TOOL.json` (binary + `parameters` JSON Schema + argv template + limits) +
+`TOOL.md`; `cliToolToTool` validates the model's args against the schema, renders each `{param}` into
+a **discrete argv element** (no shell, injection-inert), runs it through a `CommandSandbox`, and
+fences output as untrusted; `createCliCapabilitySource` enumerates the catalog from a `CliToolStore`,
+resolves the fresh def at load, and **re-reads the def at call time** so a removed folder is revoked
+immediately. Production transports (`api/cli/`): `SubprocessSandbox` (`child_process.spawn`,
+no-shell, scrubbed env, per-tenant ephemeral cwd, wall-clock + output-byte kill) and
+`FileSystemCliToolStore` (scans `CLI_TOOLS_PATH`, skips+logs invalid folders, rejects path-traversal
+refs). Config: `CLI_TOOLS_PATH` (+ `CLI_SCRATCH_DIR`, `CLI_TIMEOUT_MS`, `CLI_MAX_OUTPUT_BYTES`);
+`buildMcpWiring` → `buildToolAcquisitionWiring` composes MCP + CLI sources, null only when neither is
+configured. **Gate passed** (offline, deterministic): the DoD test
+(`packages/api/src/routes/phase10-dod.test.ts`) drives `search_tools → load_tool → call` over a real
+`FileSystemCliToolStore` (temp fixture) + a fake sandbox with every call logged; an off-catalog id is
+denied before any subprocess; only the core set is advertised regardless of catalog size; and an
+equipped CLI tool **survives a process restart**. A separate test exercises the real `SubprocessSandbox`
+(argv verbatim, byte cap, timeout kill, missing binary). Full suite green at ≥80% coverage. Canonical
+mechanism: `docs/companion-tools.md`. **Deferred** (Beyond the PoC): tool-doc ingestion into semantic
+memory, an experimentation/probe harness, and OS-level sandbox + network isolation.
 
 ## 5. Open Questions to Resolve (owned here)
 Owned here (single-source). Each is assigned a decision point:
@@ -466,7 +502,7 @@ Owned here (single-source). Each is assigned a decision point:
 | Surface rollout confirmed (web → mobile → desktop) | Phase 5 decision gate |
 | Monetization model (subscription, ability packs) | Phase 8 |
 | Push-notification cadence & away-proactivity rules | Phase 6 |
-| Tool whitelist governance — where the CLI/MCP whitelist lives (config vs DB) and the operator flow to admit a tool | **MCP decided (Phase 9):** server whitelist in config (`MCP_SERVERS` env → `AppConfig.mcpServers`), per-server admission, no redeploy to edit (`companion-tools.md` §6). **CLI** argument-pattern policy engine → Phase 10 |
+| ~~Tool whitelist governance — where the CLI/MCP whitelist lives (config vs DB) and the operator flow to admit a tool~~ | **Decided (Phases 9–10):** MCP = server whitelist in config (`MCP_SERVERS` → `AppConfig.mcpServers`), per-server admission; CLI = per-tool folders under `CLI_TOOLS_PATH` (`TOOL.json`+`TOOL.md`), the read-only deployment-controlled folder set is the trust boundary. Both config not DB, admit-by-deploy, no per-call approval (`companion-tools.md` §6) |
 | User-addable tools (vs developer-whitelisted only) | Deferred — after the tool-acquisition workstream (`companion-tools.md` §9) |
 | External-tool cost metering (the monetary cost of CLI/MCP calls, beyond LLM tokens) | Deferred — revisit with the workstream / Phase 8 |
 

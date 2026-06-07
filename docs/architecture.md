@@ -726,11 +726,13 @@ owned by `development-plan.md`.
   tool-invocation extension point (invariant #3). `search_tools` is a cheap off-loop LLM lookup over
   the lightweight catalog (no embeddings on the critical path). Trust is a **developer-whitelist** —
   binary allow/deny defining the catalog — sitting *beside* propose→approve (§4.4), not replacing it.
-  Server-host only; tool outputs treated as untrusted (`implementation.md` §2.1). **The MCP track is
-  built** (`development-plan.md` Phase 9, PR #10) — the spine above plus the **MCP-connector**
-  executor, **HTTP/SSE + SSRF-guarded** (§8), off by default until a server is whitelisted; the
-  **CLI track** (a sandboxed **`run_command`** executor + an argument-validation policy engine)
-  remains future (Phase 10). Design → `companion-tools.md`; scope/sequencing → `development-plan.md`.
+  Server-host only; tool outputs treated as untrusted (`implementation.md` §2.1). **Both tracks are
+  built** (`development-plan.md` Phases 9–10), each off by default: the **MCP-connector** executor
+  (HTTP/SSE + SSRF-guarded, §8) and the **CLI `run_command` sandbox** (no-shell subprocess, scrubbed
+  env, per-tenant ephemeral cwd, time/output ceilings — portable tier; OS-level/network isolation
+  deferred to §8 hardening). CLI tools are developer-described folders under `CLI_TOOLS_PATH`, so they
+  flow through the same spine as MCP tools. Design → `companion-tools.md`; scope/sequencing →
+  `development-plan.md`.
 - **Native surfaces** — Mobile/Desktop clients, OS-tool bridges, and the Sync Courier.
 - **Transcript compaction** — summarizing the compactible remainder when the context window fills.
 - **Security hardening** — encryption-at-rest specifics, data inspection/management/delete controls,

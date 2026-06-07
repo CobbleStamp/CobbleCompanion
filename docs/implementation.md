@@ -497,8 +497,10 @@ Out of scope for this release; the roadmap is owned by `development-plan.md`.
 **Out of scope / future.**
 - **Onboarding personality seed** — drive weights stay neutral so the character card is *earned*.
 - **Deeper reinforcement** — a contextual-bandit policy beyond the additive change-as-reward nudge.
-- **Runtime tool acquisition** — the implementation behind `companion-tools.md`. **The MCP track is
-  built** (`development-plan.md` Phase 9, PR #10): a per-deployment **tool catalog** (`tool_catalog`
+- **Runtime tool acquisition** — the implementation behind `companion-tools.md`, **both tracks built**
+  (`development-plan.md` Phases 9–10) over one **source-polymorphic `CapabilitySource`** seam
+  (`core/acquisition/`) the catalog builder, `load_tool`, and the equipped-registry resolver dispatch
+  on. **MCP** (Phase 9, PR #10): a per-deployment **tool catalog** (`tool_catalog`
   table — lightweight index of id, name, one-line description, source over every whitelisted tool;
   no argument schemas); a per-companion **equipped set** (`equipped_tools` table) rebuilt at startup,
   a single tier bounded by **`maxEquippedTools`** (env `MAX_EQUIPPED_TOOLS`, LRU eviction; the fixed
@@ -513,11 +515,19 @@ Out of scope for this release; the roadmap is owned by `development-plan.md`.
   the companion `load_tool`s them before the job starts (a tool-load advisor bridges procedural
   recall → the equipped set; anticipation, not a frequency-pinned tier); and config (`MCP_SERVERS`
   JSON whitelist with per-server auth-secret env refs → `AppConfig.mcpServers`; `MAX_EQUIPPED_TOOLS`).
-  **The CLI track remains future** (Phase 10): a **CLI policy engine** (binary + argument-pattern
-  whitelist → binary allow/deny), a **`run_command` sandbox** (per-tenant working dir, no
-  cross-tenant data/secrets, CPU/time/output ceilings), a **`learned_tools`** store for learned CLI
-  usages, and the experimentation loop that captures a working invocation into semantic/procedural
-  memory; its DDL and config keys land when built. Mechanism → `companion-tools.md`; scope →
+  **CLI** (Phase 10, PR #11): tools are **developer-described folders** under `CLI_TOOLS_PATH` (the
+  CLI trust boundary), each a `TOOL.json` (binary + model-facing `parameters` JSON Schema + argv
+  template + optional limits) + `TOOL.md` (usage prompt); `parseCliToolDef` validates them and
+  `cliToolToTool` validates the model's args against the schema, renders each `{param}` into a
+  **discrete argv element** (no shell), and fences output as untrusted. The **`CliToolStore`** seam
+  (production `FileSystemCliToolStore` scans the dir, skips+logs invalid folders, rejects
+  path-traversal refs) is re-read at load **and at call time**, so a removed folder is revoked
+  immediately; the **`CommandSandbox`** seam (production `SubprocessSandbox`: `child_process.spawn`,
+  no-shell, scrubbed env, per-tenant ephemeral cwd, wall-clock + output-byte kill) is the executor —
+  the portable tier, with OS-level/network isolation deferred. No new tables (CLI reuses
+  `tool_catalog`/`equipped_tools` via the shared spine). Config: `CLI_TOOLS_PATH` + `CLI_SCRATCH_DIR`
+  + `CLI_TIMEOUT_MS` + `CLI_MAX_OUTPUT_BYTES`; `buildToolAcquisitionWiring` composes MCP + CLI sources
+  (null only when neither is configured). Mechanism → `companion-tools.md`; scope →
   `development-plan.md`.
 - **Auth** — an app-issued session JWT and silent refresh / 401-driven re-auth beyond the ~1h
   Google ID token.

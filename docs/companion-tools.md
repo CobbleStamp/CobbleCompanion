@@ -14,16 +14,20 @@
 > mechanism and the **whitelist trust model**; it does not redefine the schema, the loop, or the
 > product vision.
 >
-> **Status — MCP track built (Phase 9, PR #10); CLI track (Phase 10) in design.** The shared
+> **Status — both tracks built (MCP: Phase 9, PR #10; CLI: Phase 10).** The shared
 > **discover → load → call → remember** spine (the catalog, `search_tools`/`load_tool`, the
-> per-companion equipped set, the per-step dynamic registry, and proactive loading) and the **MCP
-> executor** are implemented and wired — off by default until a server is whitelisted
-> (`development-plan.md` §"Tool-Acquisition Workstream", Phase 9). Present tense describing MCP
-> behaviour and the spine is **live**; the **CLI track** (`run_command`, the argument-validation
-> policy engine, the host sandbox, the experimentation loop — the CLI rows in §3, §7, and Phase 10)
-> and everything in §9 remain **design**. Beyond the three hand-written PoC tools (`web_fetch`,
-> `memory_search`, `ingest_source`), the companion's toolset now grows at runtime via
-> whitelisted HTTP/SSE MCP servers, no code change or redeploy.
+> per-companion equipped set, the per-step dynamic registry, and proactive loading) and **both
+> executors** — the MCP connector (HTTP/SSE) and the CLI `run_command` sandbox — are implemented and
+> wired, each **off by default** until a source is configured (`MCP_SERVERS` and/or `CLI_TOOLS_PATH`).
+> CLI tools are **developer-described folders** under `CLI_TOOLS_PATH` (a `TOOL.json` exec contract +
+> `TOOL.md` usage prompt, §6) that flow through the same spine as MCP tools; the model fills each
+> tool's argument schema and an argv template renders it, so there is no free-form command or
+> per-argument regex policy. Present tense throughout describes **live** behaviour. **Deferred**
+> (Beyond the PoC, §9): ingesting tool docs into semantic memory, a dedicated experimentation/probe
+> harness, and OS-level sandbox + network isolation (the portable subprocess tier ships now, §7).
+> Beyond the three hand-written PoC tools (`web_fetch`, `memory_search`, `ingest_source`), the
+> companion's toolset now grows at runtime via whitelisted MCP servers **and** host CLIs — no code
+> change or redeploy.
 
 ## 1. What it is
 
@@ -175,8 +179,10 @@ flowchart TD
 
 The entire trust decision is the **developer's whitelist**, made once, ahead of time: it defines
 **the catalog** — the universe of tools the companion may ever discover or load. The developer
-curates which CLIs (and which argument patterns) and which MCP servers are admissible. The two
-tracks differ in granularity: CLI admission is **per-argument-pattern**, but MCP admission is
+curates which CLIs and which MCP servers are admissible. The two tracks differ in granularity:
+CLI admission is **per-tool** — each whitelisted tool is a folder under `CLI_TOOLS_PATH` whose
+`TOOL.json` fixes its binary, its model-facing argument schema, and the argv template that renders
+those validated arguments (so the model never composes a free-form command); MCP admission is
 **per-server** — whitelisting a server admits **every tool it advertises**, with no per-operation
 filtering. At runtime the outcome is **binary**:
 
@@ -215,10 +221,15 @@ Two consequences are load-bearing:
 The whitelist is the admissibility floor; these boundaries harden what runs within it
 (implementation → `implementation.md` §5, trust model → `architecture.md` §8):
 
-- **CLI execution is sandboxed.** `run_command` runs in a per-tenant working directory with no
-  access to other tenants' data or to secrets, under CPU/time/output ceilings (mirroring the
-  `web_fetch` byte-cap posture). A whitelist reduces, but does not remove, the need for process
-  isolation on a multi-tenant host.
+- **CLI execution is sandboxed.** `run_command` spawns the binary with **no shell** (argv elements
+  pass verbatim, so a crafted argument is never a command), a **scrubbed environment** (no secrets),
+  and a **per-tenant ephemeral working directory** under a scratch root (never `CLI_TOOLS_PATH`),
+  under wall-clock + output-byte ceilings (mirroring the `web_fetch` byte-cap posture). This is the
+  **portable subprocess tier**: it runs identically on every host but does **not** enforce network
+  isolation — OS-level isolation (namespaces/containers, network egress control) is deferred to
+  hardening (§9), behind the same sandbox seam. The narrow per-tool whitelist + fixed binary are the
+  mitigation meanwhile. `CLI_TOOLS_PATH` must be **read-only + deployment-controlled** and must not
+  overlap any path the app writes to (it is the CLI trust boundary, §6).
 - **MCP is HTTP/SSE-only** on the server host, behind the same **SSRF** guard as link ingestion
   (`architecture.md` §8): scheme + blocked-host checks with connection-layer DNS re-validation. No
   **stdio** transport — the host never spawns a user-specified process (that rides with the future
@@ -246,9 +257,12 @@ where a tool comes from. Scope and acceptance are owned by `development-plan.md`
 - **MCP track (first).** Lower risk and largely a *catalog + load* problem: self-describing schemas
   mean little trial-and-error. It exercises the full discover → load → call → remember spine
   end-to-end.
-- **CLI track (second).** Higher power, more new machinery: the whitelist/argument-validation policy
-  engine, the host sandbox, and the experimentation loop that captures a working invocation into
-  semantic/procedural memory (feeding proactive loading).
+- **CLI track (second).** Higher power, more new machinery: the `run_command` host sandbox and the
+  per-tool definition format (`TOOL.json` exec contract + `TOOL.md` usage prompt) under
+  `CLI_TOOLS_PATH`. CLI tools are *developer-described* (the folder is the analogue of an MCP
+  server's `tools/list`), so the model fills a fixed argument schema rather than composing free-form
+  commands — and the "remember" half reuses the shared procedural-memory + proactive-loading spine,
+  no CLI-specific learning machinery.
 
 ## 9. Beyond the PoC
 
@@ -260,6 +274,16 @@ Deferred from this workstream, recorded here so the boundary is explicit:
   not on the PoC critical path (§5).
 - **Search-and-auto-load** — when `search_tools` is confident, fold the load into the search so a
   single step equips the obvious tool, trading the two-step's predictability for one less round-trip.
+- **OS-level CLI isolation** — the shipped `run_command` sandbox is the portable subprocess tier
+  (no-shell, scrubbed env, ephemeral per-tenant cwd, time/output ceilings) but does **not** enforce
+  network isolation. Kernel-level isolation (namespaces/containers, egress control) lands behind the
+  same sandbox seam when the production host is fixed (§7).
+- **CLI tool-doc ingestion** — ingesting a tool's `TOOL.md` / `--help` into **semantic memory** so
+  "how this tool works" is recalled like any other knowledge. The PoC keeps the usage prompt on the
+  equipped tool only; ingestion is symmetric machinery MCP doesn't use, so it is deferred.
+- **CLI experimentation/probe harness** — actively probing a CLI (`--help`, dry-runs, self-tested
+  invocations) to *learn* it. The PoC relies on the developer-authored `TOOL.json`/`TOOL.md` instead,
+  so no probe loop is built; "remember" reuses the shared procedural + proactive-loading spine.
 - **Mobile/desktop OS-as-tools** — exposing a device's OS access as tools is a separate product
   surface (`product-overview.md` §5.2, `development-plan.md` Phases 6–7), not part of the
   server-host mechanism.
