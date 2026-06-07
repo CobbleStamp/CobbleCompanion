@@ -50,8 +50,12 @@ build-docker: ## Build the Docker images without starting them
 stop-docker: ## Stop and remove the containers (keeps the DB volume)
 	docker compose down
 
-clean-docker: ## Stop containers and delete the DB volume
+clean-docker: ## Stop containers and delete the DB (bind-mounted ./data/postgres)
 	docker compose down -v
+	@# The DB is a bind mount, not a named volume, so `down -v` does not remove
+	@# it. Wipe the host dir explicitly so the next `run-docker` migrates a fresh
+	@# DB. Done in a root container to avoid host uid/permission issues on Linux.
+	docker run --rm -v "$(PWD)/data:/data" alpine sh -c 'rm -rf /data/postgres'
 
 logs-docker: ## Tail logs from all running containers
 	docker compose logs -f

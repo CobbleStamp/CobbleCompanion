@@ -54,6 +54,17 @@ CREATE TABLE "episodes" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE "equipped_tools" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"companion_id" uuid NOT NULL,
+	"tool_id" text NOT NULL,
+	"source" text NOT NULL,
+	"server_ref" text NOT NULL,
+	"snapshot" jsonb NOT NULL,
+	"equipped_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"last_used_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE "facts" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"companion_id" uuid NOT NULL,
@@ -176,6 +187,15 @@ CREATE TABLE "tool_calls" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE "tool_catalog" (
+	"tool_id" text PRIMARY KEY NOT NULL,
+	"source" text NOT NULL,
+	"server_ref" text NOT NULL,
+	"tool_name" text NOT NULL,
+	"description" text DEFAULT '' NOT NULL,
+	"indexed_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE "user_token_usage" (
 	"user_id" uuid PRIMARY KEY NOT NULL,
 	"window_reset_at" timestamp with time zone NOT NULL,
@@ -197,6 +217,7 @@ ALTER TABLE "companion_energy" ADD CONSTRAINT "companion_energy_companion_id_com
 ALTER TABLE "companion_growth" ADD CONSTRAINT "companion_growth_companion_id_companions_id_fk" FOREIGN KEY ("companion_id") REFERENCES "public"."companions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "companions" ADD CONSTRAINT "companions_owner_id_users_id_fk" FOREIGN KEY ("owner_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "episodes" ADD CONSTRAINT "episodes_companion_id_companions_id_fk" FOREIGN KEY ("companion_id") REFERENCES "public"."companions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "equipped_tools" ADD CONSTRAINT "equipped_tools_companion_id_companions_id_fk" FOREIGN KEY ("companion_id") REFERENCES "public"."companions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "facts" ADD CONSTRAINT "facts_companion_id_companions_id_fk" FOREIGN KEY ("companion_id") REFERENCES "public"."companions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "facts" ADD CONSTRAINT "facts_section_id_sections_id_fk" FOREIGN KEY ("section_id") REFERENCES "public"."sections"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "ingestion_jobs" ADD CONSTRAINT "ingestion_jobs_companion_id_companions_id_fk" FOREIGN KEY ("companion_id") REFERENCES "public"."companions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -220,6 +241,8 @@ CREATE INDEX "episodes_companion_time_idx" ON "episodes" USING btree ("companion
 CREATE INDEX "episodes_companion_seq_idx" ON "episodes" USING btree ("companion_id","seq_end");--> statement-breakpoint
 CREATE INDEX "episodes_embedding_hnsw_idx" ON "episodes" USING hnsw ("embedding" vector_cosine_ops);--> statement-breakpoint
 CREATE INDEX "episodes_fts_idx" ON "episodes" USING gin ("fts");--> statement-breakpoint
+CREATE UNIQUE INDEX "equipped_tools_companion_tool_uniq" ON "equipped_tools" USING btree ("companion_id","tool_id");--> statement-breakpoint
+CREATE INDEX "equipped_tools_companion_lru_idx" ON "equipped_tools" USING btree ("companion_id","last_used_at");--> statement-breakpoint
 CREATE INDEX "facts_companion_idx" ON "facts" USING btree ("companion_id","fact_type");--> statement-breakpoint
 CREATE INDEX "facts_section_idx" ON "facts" USING btree ("section_id");--> statement-breakpoint
 CREATE INDEX "ingestion_jobs_companion_idx" ON "ingestion_jobs" USING btree ("companion_id","status");--> statement-breakpoint
