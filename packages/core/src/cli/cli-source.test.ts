@@ -40,6 +40,7 @@ const greetDef = parseCliToolDef(
       additionalProperties: false,
     },
     argv: ['hello', '{name}'],
+    limits: { timeoutMs: 10_000, maxOutputBytes: 65_536 },
   }),
   '# greet\nPrint a friendly greeting.',
 );

@@ -95,13 +95,24 @@ describe('parseCliToolDef', () => {
     expect(() => parseCliToolDef('t', json, 'usage')).toThrow(/limits.timeoutMs/);
   });
 
-  it('omits limits when none are declared', () => {
+  it('rejects a definition with no limits block', () => {
     const json = JSON.stringify({
       binary: 'b',
       description: 'd',
       parameters: { type: 'object', properties: {} },
       argv: ['--version'],
     });
-    expect(parseCliToolDef('t', json, 'usage').limits).toBeUndefined();
+    expect(() => parseCliToolDef('t', json, 'usage')).toThrow(/"limits"/);
+  });
+
+  it('rejects limits missing maxOutputBytes', () => {
+    const json = JSON.stringify({
+      binary: 'b',
+      description: 'd',
+      parameters: { type: 'object', properties: {} },
+      argv: ['--version'],
+      limits: { timeoutMs: 5000 },
+    });
+    expect(() => parseCliToolDef('t', json, 'usage')).toThrow(/limits.maxOutputBytes/);
   });
 });

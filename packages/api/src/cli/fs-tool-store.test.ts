@@ -21,6 +21,7 @@ const toolJson = (binary: string): string =>
     description: `Run ${binary}.`,
     parameters: { type: 'object', properties: {}, additionalProperties: false },
     argv: ['--version'],
+    limits: { timeoutMs: 10_000, maxOutputBytes: 65_536 },
   });
 
 async function writeTool(root: string, ref: string, json: string, md = 'usage'): Promise<void> {

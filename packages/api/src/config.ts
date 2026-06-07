@@ -54,10 +54,6 @@ export interface AppConfig {
    * (separate from `cliToolsPath`). Empty → the OS temp dir.
    */
   readonly cliScratchDir: string;
-  /** Default wall-clock ceiling (ms) for a CLI run, unless the tool sets its own. */
-  readonly cliTimeoutMs: number;
-  /** Default captured-output byte cap for a CLI run, unless the tool sets its own. */
-  readonly cliMaxOutputBytes: number;
   readonly appUrl: string;
   readonly authMode: AuthMode;
   readonly googleClientId: string;
@@ -106,13 +102,6 @@ const envSchema = z
     CLI_TOOLS_PATH: z.string().default(''),
     // Root for per-tenant ephemeral CLI working dirs; empty → the OS temp dir.
     CLI_SCRATCH_DIR: z.string().default(''),
-    // Default ceilings for a CLI run (a tool may set tighter ones in TOOL.json).
-    CLI_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
-    CLI_MAX_OUTPUT_BYTES: z.coerce
-      .number()
-      .int()
-      .positive()
-      .default(64 * 1024),
     APP_URL: z.string().url().default('http://localhost:3001'),
     AUTH_MODE: z.enum(['google', 'dev_bypass']).default('google'),
     // Public OAuth Web client ID — shipped to the browser, not a secret.
@@ -223,8 +212,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     maxEquippedTools: parsed.MAX_EQUIPPED_TOOLS,
     cliToolsPath: parsed.CLI_TOOLS_PATH,
     cliScratchDir: parsed.CLI_SCRATCH_DIR,
-    cliTimeoutMs: parsed.CLI_TIMEOUT_MS,
-    cliMaxOutputBytes: parsed.CLI_MAX_OUTPUT_BYTES,
     appUrl: parsed.APP_URL,
     authMode: parsed.AUTH_MODE,
     googleClientId: parsed.GOOGLE_CLIENT_ID,

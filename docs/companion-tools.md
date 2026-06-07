@@ -181,8 +181,9 @@ The entire trust decision is the **developer's whitelist**, made once, ahead of 
 **the catalog** — the universe of tools the companion may ever discover or load. The developer
 curates which CLIs and which MCP servers are admissible. The two tracks differ in granularity:
 CLI admission is **per-tool** — each whitelisted tool is a folder under `CLI_TOOLS_PATH` whose
-`TOOL.json` fixes its binary, its model-facing argument schema, and the argv template that renders
-those validated arguments (so the model never composes a free-form command); MCP admission is
+`TOOL.json` fixes its binary, its model-facing argument schema, the argv template that renders
+those validated arguments (so the model never composes a free-form command), and a mandatory
+`limits` block (per-run wall-clock + output-byte ceilings the sandbox enforces); MCP admission is
 **per-server** — whitelisting a server admits **every tool it advertises**, with no per-operation
 filtering. At runtime the outcome is **binary**:
 

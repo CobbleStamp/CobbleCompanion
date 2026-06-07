@@ -45,6 +45,7 @@ async function makeToolsDir(): Promise<{ dir: string; cleanup: () => Promise<voi
         additionalProperties: false,
       },
       argv: ['get', '{symbol}'],
+      limits: { timeoutMs: 10_000, maxOutputBytes: 65_536 },
     }),
     'utf8',
   );

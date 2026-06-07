@@ -39,6 +39,7 @@ const def: CliToolDef = parseCliToolDef(
       additionalProperties: false,
     },
     argv: ['{input}', '-resize', '{width}x', '{output}'],
+    limits: { timeoutMs: 10_000, maxOutputBytes: 65_536 },
   }),
   'Resize an image to a target width.',
 );
@@ -175,24 +176,7 @@ describe('cliToolToTool', () => {
     expect(result.content).toContain('spawn failed');
   });
 
-  it('applies the deployment default ceilings when the tool declares no limits', async () => {
-    const sandbox = new FakeCommandSandbox(() => ok('done'));
-    // Non-default values, so a regression to the in-code fallback would be visible.
-    const tool = cliToolToTool({
-      def,
-      sandbox,
-      defaultTimeoutMs: 30_000,
-      defaultMaxOutputBytes: 256 * 1024,
-      logger: silentLogger,
-    });
-    await tool.run({ input: 'i', width: 1, output: 'o' }, ctx);
-    expect(sandbox.calls[0]).toMatchObject({
-      timeoutMs: 30_000,
-      maxOutputBytes: 256 * 1024,
-    });
-  });
-
-  it("lets a tool's own limits override the deployment default", async () => {
+  it("passes the tool's declared limits through to the sandbox", async () => {
     const limitedDef = parseCliToolDef(
       'slow',
       JSON.stringify({
@@ -205,15 +189,9 @@ describe('cliToolToTool', () => {
       'Sleep briefly.',
     );
     const sandbox = new FakeCommandSandbox(() => ok('done'));
-    const tool = cliToolToTool({
-      def: limitedDef,
-      sandbox,
-      defaultTimeoutMs: 30_000,
-      defaultMaxOutputBytes: 256 * 1024,
-      logger: silentLogger,
-    });
+    const tool = cliToolToTool({ def: limitedDef, sandbox, logger: silentLogger });
     await tool.run({}, ctx);
-    // The per-tool limits take precedence over the deployment default.
+    // The mandatory per-tool limits are enforced verbatim — no deployment default.
     expect(sandbox.calls[0]).toMatchObject({ timeoutMs: 500, maxOutputBytes: 1024 });
   });
 
@@ -230,6 +208,7 @@ describe('cliToolToTool', () => {
           additionalProperties: false,
         },
         argv: ['hello', '{name}', '{loud}'],
+        limits: { timeoutMs: 10_000, maxOutputBytes: 65_536 },
       }),
       'Greet someone.',
     );

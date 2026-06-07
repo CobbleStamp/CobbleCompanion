@@ -526,7 +526,8 @@ Out of scope for this release; the roadmap is owned by `development-plan.md`.
   no-shell, scrubbed env, per-tenant ephemeral cwd, wall-clock + output-byte kill) is the executor —
   the portable tier, with OS-level/network isolation deferred. No new tables (CLI reuses
   `tool_catalog`/`equipped_tools` via the shared spine). Config: `CLI_TOOLS_PATH` + `CLI_SCRATCH_DIR`
-  + `CLI_TIMEOUT_MS` + `CLI_MAX_OUTPUT_BYTES`; `buildToolAcquisitionWiring` composes MCP + CLI sources
+  (per-run wall-clock + output-byte ceilings are declared per tool in each TOOL.json's mandatory
+  `limits` block — no deployment default); `buildToolAcquisitionWiring` composes MCP + CLI sources
   (null only when neither is configured). Mechanism → `companion-tools.md`; scope →
   `development-plan.md`.
 - **Auth** — an app-issued session JWT and silent refresh / 401-driven re-auth beyond the ~1h

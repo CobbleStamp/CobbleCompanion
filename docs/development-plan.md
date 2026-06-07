@@ -478,7 +478,8 @@ resolves the fresh def at load, and **re-reads the def at call time** so a remov
 immediately. Production transports (`api/cli/`): `SubprocessSandbox` (`child_process.spawn`,
 no-shell, scrubbed env, per-tenant ephemeral cwd, wall-clock + output-byte kill) and
 `FileSystemCliToolStore` (scans `CLI_TOOLS_PATH`, skips+logs invalid folders, rejects path-traversal
-refs). Config: `CLI_TOOLS_PATH` (+ `CLI_SCRATCH_DIR`, `CLI_TIMEOUT_MS`, `CLI_MAX_OUTPUT_BYTES`);
+refs). Config: `CLI_TOOLS_PATH` (+ `CLI_SCRATCH_DIR`); per-run wall-clock + output-byte ceilings are
+declared per tool in each TOOL.json's mandatory `limits` block (no deployment default).
 `buildMcpWiring` → `buildToolAcquisitionWiring` composes MCP + CLI sources, null only when neither is
 configured. **Gate passed** (offline, deterministic): the DoD test
 (`packages/api/src/routes/phase10-dod.test.ts`) drives `search_tools → load_tool → call` over a real

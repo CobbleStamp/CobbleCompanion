@@ -5,7 +5,7 @@
  *
  *  - `TOOL.json` — the machine contract parsed here: the `binary` to run, a short
  *    catalog `description`, the model-facing `parameters` JSON Schema, the `argv`
- *    template mapping validated params → discrete argv elements, and optional
+ *    template mapping validated params → discrete argv elements, and the mandatory
  *    resource `limits`.
  *  - `TOOL.md` — the rich usage prompt surfaced as the equipped tool's description.
  *
@@ -17,10 +17,10 @@
  * un-runnable or placeholder-mismatched tool.
  */
 
-/** Optional per-tool resource ceilings; the sandbox falls back to deployment defaults. */
+/** Mandatory per-tool resource ceilings the sandbox enforces for every run. */
 export interface CliToolLimits {
-  readonly timeoutMs?: number;
-  readonly maxOutputBytes?: number;
+  readonly timeoutMs: number;
+  readonly maxOutputBytes: number;
 }
 
 export interface CliToolDef {
@@ -36,7 +36,7 @@ export interface CliToolDef {
   readonly parameters: Record<string, unknown>;
   /** argv template: literals + `{param}` placeholders → discrete argv elements. */
   readonly argv: readonly string[];
-  readonly limits?: CliToolLimits;
+  readonly limits: CliToolLimits;
 }
 
 /** Matches `{paramName}` placeholders inside an argv template element. */
@@ -103,34 +103,23 @@ export function parseCliToolDef(ref: string, toolJson: string, usage: string): C
     usage,
     parameters: parameters as Record<string, unknown>,
     argv,
-    ...(limits ? { limits } : {}),
+    limits,
   };
 }
 
-function parseLimits(raw: unknown): CliToolLimits | undefined {
-  if (raw === undefined || raw === null) {
-    return undefined;
-  }
-  if (typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new Error('TOOL.json "limits" must be an object');
+function parseLimits(raw: unknown): CliToolLimits {
+  if (raw === undefined || raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('TOOL.json "limits" must be an object with timeoutMs and maxOutputBytes');
   }
   const obj = raw as Record<string, unknown>;
-  const positiveInt = (value: unknown, key: string): number | undefined => {
-    if (value === undefined) {
-      return undefined;
-    }
+  const positiveInt = (value: unknown, key: string): number => {
     if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
       throw new Error(`TOOL.json "limits.${key}" must be a positive integer`);
     }
     return value;
   };
-  const timeoutMs = positiveInt(obj['timeoutMs'], 'timeoutMs');
-  const maxOutputBytes = positiveInt(obj['maxOutputBytes'], 'maxOutputBytes');
-  if (timeoutMs === undefined && maxOutputBytes === undefined) {
-    return undefined;
-  }
   return {
-    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-    ...(maxOutputBytes !== undefined ? { maxOutputBytes } : {}),
+    timeoutMs: positiveInt(obj['timeoutMs'], 'timeoutMs'),
+    maxOutputBytes: positiveInt(obj['maxOutputBytes'], 'maxOutputBytes'),
   };
 }

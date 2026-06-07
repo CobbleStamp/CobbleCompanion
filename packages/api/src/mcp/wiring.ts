@@ -103,8 +103,6 @@ function buildSources(
       createCliCapabilitySource({
         toolStore: options.cliToolStore,
         sandbox: options.cliSandbox,
-        defaultTimeoutMs: config.cliTimeoutMs,
-        defaultMaxOutputBytes: config.cliMaxOutputBytes,
         logger,
       }),
     );

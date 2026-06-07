@@ -99,8 +99,6 @@ export const testConfig: AppConfig = {
   maxEquippedTools: 8,
   cliToolsPath: '',
   cliScratchDir: '',
-  cliTimeoutMs: 10_000,
-  cliMaxOutputBytes: 64 * 1024,
   appUrl: 'http://localhost:3001',
   authMode: 'google',
   googleClientId: 'test-google-client-id',
