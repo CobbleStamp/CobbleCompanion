@@ -103,9 +103,9 @@ erDiagram
 | `companion_id` | uuid (FK → `companions.id`) | indexed with `seq` (`messages_companion_idx`) for recency recall |
 | `role` | text | `user` \| `assistant` \| `system` |
 | `content` | text | |
-| `kind` | text | `message` \| `tool_step` \| `proposal` — `$type<MessageKind>()`, default `message`. What the row *is*, so the rich conversation (grounded answers, read-only look-ups, held actions) reconstructs identically on reload. **Only `message` rows enter the LLM-context projection** (`getMessagesSince` and the recency window filter to `kind='message'`); `tool_step`/`proposal` are UI chrome — never re-fed to the model nor consolidated into episodes |
-| `metadata` | jsonb | nullable `MessageMetadata`: `citations` on a grounded `message`; `toolName` on a `tool_step`; `toolName`+`proposalId` on a `proposal` (the id wires the row to the live approval queue). Lets the surface re-render the row faithfully |
-| `source_id` | uuid (FK → `sources.id`, **`ON DELETE SET NULL`**) | nullable; set on a file upload's attachment chip (a `user` turn) and its acknowledgement (an `assistant` turn) so the chat reconstructs the 📎 chip + "View status →" link on reload. `SET NULL` (not cascade): deleting a source must never delete an append-only transcript turn — it just drops the link |
+| `kind` | text | `message` \| `tool_step` \| `proposal` — `$type<MessageKind>()`, default `message`.<br>What the row *is*, so the rich conversation (grounded answers, read-only look-ups, held actions) reconstructs identically on reload.<br>**Only `message` rows enter the LLM-context projection** (`getMessagesSince` and the recency window filter to `kind='message'`); `tool_step`/`proposal` are UI chrome — never re-fed to the model nor consolidated into episodes |
+| `metadata` | jsonb | nullable `MessageMetadata`: `citations` on a grounded `message`; `toolName` on a `tool_step`; `toolName`+`proposalId` on a `proposal` (the id wires the row to the live approval queue).<br>Lets the surface re-render the row faithfully |
+| `source_id` | uuid (FK → `sources.id`, **`ON DELETE SET NULL`**) | nullable; set on a file upload's attachment chip (a `user` turn) and its acknowledgement (an `assistant` turn) so the chat reconstructs the 📎 chip + "View status →" link on reload.<br>`SET NULL` (not cascade): deleting a source must never delete an append-only transcript turn — it just drops the link |
 | `created_at` | timestamptz | episodic memory builds on these timestamped turns |
 
 > **Proactive ingestion notes.** A successful or failed read appends a single `assistant` turn
@@ -205,7 +205,7 @@ stateDiagram-v2
 | `window_reset_at` | timestamptz | when the current fixed-daily (UTC) window rolls; overage carries as debt clamped to one cap |
 | `used_tokens` | bigint | tokens spent in the current window (LLM + embedding) |
 | `cap_override` | integer, nullable | per-account cap; null → the `TOKEN_CAP_PER_DAY` default |
-| `top_up_tokens` | bigint, default 0 | manual feed grant; effective cap = `(cap_override ?? default) + top_up_tokens`. Added by an atomic SQL increment (concurrent feeds can't lose an update), persists across window rolls, and — being separate from `cap_override` — keeps tracking later changes to the default. Mirrors `companion_energy` exactly. |
+| `top_up_tokens` | bigint, default 0 | manual feed grant; effective cap = `(cap_override ?? default) + top_up_tokens`.<br>Added by an atomic SQL increment (concurrent feeds can't lose an update), persists across window rolls, and — being separate from `cap_override` — keeps tracking later changes to the default.<br>Mirrors `companion_energy` exactly. |
 | `updated_at` | timestamptz | |
 
 > Postgres-backed so the cap is correct across replicas. Routes enforce it inline: chat/search
@@ -585,9 +585,9 @@ Loaded from environment / a secret manager; required values validated at startup
 | `INGESTION_MODEL` | Cheap model for the two ingestion reading passes (default `google/gemini-2.5-flash`) — input-heavy, output-bounded (`architecture.md` §4.8) |
 | `INGESTION_MAX_BYTES` | Source upload size cap, also the link-fetch body ceiling (default 25 MiB) |
 | `USE_CONTEXT_HEADER` | `true` (default) \| `false` — prefix the Pass-2 context header onto embedding inputs (the eval A/B knob, `companion-memory.md` §5) |
-| `TOKEN_CAP_PER_DAY` | Per-user daily token cap (LLM + embedding) — the cost guardrail across all routes; fixed daily UTC window, overage carries as clamped debt (default 1 000 000). Per-account override → `user_token_usage.cap_override` |
+| `TOKEN_CAP_PER_DAY` | Per-user daily token cap (LLM + embedding) — the cost guardrail across all routes; fixed daily UTC window, overage carries as clamped debt (default 1 000 000).<br>Per-account override → `user_token_usage.cap_override` |
 | `INGESTION_QUEUE_MAX` | Backstop cap on queued+in-flight ingestion runs across all owners; submissions past it get 429 (default 100) |
-| `MCP_SERVERS` | Developer whitelist of MCP servers as a JSON array of `{ ref, endpoint, label?, authTokenEnv? }` — the trust boundary for tool acquisition; empty (default `[]`) disables MCP. HTTP/SSE endpoints only (`companion-tools.md` §7) |
+| `MCP_SERVERS` | Developer whitelist of MCP servers as a JSON array of `{ ref, endpoint, label?, authTokenEnv? }` — the trust boundary for tool acquisition.<br>Empty (default `[]`) disables MCP. HTTP/SSE endpoints only (`companion-tools.md` §7) |
 | `MAX_EQUIPPED_TOOLS` | Per-companion cap on the equipped-tool set (default 8); the single tier evicts LRU past it (`development-plan.md` Phase 9) |
 | `TRACING_PROVIDER` | Online tracing backend: `none` (default) \| `langfuse` (`runbook-tracing.md`) |
 | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | Langfuse credentials (secret; required when `TRACING_PROVIDER=langfuse`) |

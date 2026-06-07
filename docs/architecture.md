@@ -58,9 +58,9 @@ does not move — these are the one-way-door decisions.
 5. **Multi-tenant from day one.** All state is scoped by `user` and `companion`.
 6. **One continuous conversation per companion.** A companion holds exactly one lifelong
    conversation with its user — there is no conversation/session/thread entity. Transcript
-   messages attach directly to the companion (`messages.companion_id`); the conversation *is*
-   `messages WHERE companion_id = ? ORDER BY seq`. This is a product decision
-   (`product-overview.md` §2) enforced structurally so duplicate/empty sessions cannot exist.
+   messages attach directly to the companion, never to a session (the `messages` schema and the
+   query shape that reconstructs the conversation → `implementation.md` §1). This is a product
+   decision (`product-overview.md` §2) enforced structurally so duplicate/empty sessions cannot exist.
    (A user owns a single companion; this per-companion invariant holds regardless.)
 
 ## 3. Component Map
@@ -133,9 +133,9 @@ flowchart TB
 | **Tool-Call Log** | Append-only audit of every executed tool call (`tool_calls`) | The `afterToolCall` hook records all calls — every tool call is logged |
 | **Lead Inventory** | The companion's reading list (`leads`) — discovered-but-unread URLs | Populated by `web_fetch` link harvest; worked on command (`/explore`) and by the motivation engine on idle (§4.5) |
 | **Procedural Store** | Learned, reusable workflows seeded from approved actions (`procedural_memories`) | Browseable, and surfaced as a `RetrieveContext` hint arm (§4.3) so a routine resurfaces and is reused |
-| **Motivation Engine** | Fills the `Initiator` seam — drives × presence → bounded autonomous explore burst (`core/src/motivation/`, mechanism: `companion-motivation.md`) | Reads the lead inventory into memory on its own (no approval), bounded by energy; posts an in-character report note. Includes the **Presence model** (volatile heartbeat-fed signal), the **Reinforcement** outcome store + additive change-as-reward weight update, and a **Runner + Sweep** of off-request ticks (mirrors consolidation) |
+| **Motivation Engine** | Fills the `Initiator` seam — drives × presence → bounded autonomous explore burst | Reads the lead inventory into memory on its own (no approval), bounded by energy; posts an in-character report note. Includes presence, change-as-reward reinforcement, and an off-request runner/sweep. Mechanism → §4.5, `companion-motivation.md` |
 | **Energy Store** | The self-initiated half of the §4.8 two-pool budget (`companion_energy`) | Per-companion daily pool; separate counter from stamina so autonomy can't starve interaction |
-| **Growth Service** | Derives the four MIRROR axes (knowledge, bond, initiative, character) + the observed-capabilities checklist from substrate (`core/src/growth/`); owns the feeding economy (mechanism: `companion-economy.md`) | Growth is DERIVED, a readout that may move either way — never scored, never floored; `companion_growth` stores only the idempotent high-water mark (band indices + observed capabilities) + earned **treats**. Recompute runs post-turn **inline at the tail of the message SSE stream** (after the reply's `done`, token-free so it never delays the answer); `GET /growth` is a read-only snapshot of the live derived standing (never recomputes, never writes). A genuine band/capability advance posts one canned **growth reflection** (announcer pattern) that is **streamed in place** as a `reflection` event, so it's felt in the same turn rather than on the next transcript fetch. The **feeding economy** (`POST /feed`) spends treats on typed foods that top up the two pools via the existing atomic top-ups |
+| **Growth Service** | Derives the four MIRROR axes (knowledge, bond, initiative, character) + the observed-capabilities checklist from substrate; owns the feeding economy | Growth is DERIVED — a readout that may move either way, never scored or floored. Recompute is post-turn and token-free; the read is a snapshot. Mechanism → §4.3, `companion-economy.md`; data model → `implementation.md` §1 |
 
 ## 4. The Agent Loop & Harness
 
@@ -386,14 +386,15 @@ The engine's parts (each additive, no loop change):
   **energy** pool (§4.8); each autonomous read is billed to energy via a per-run meter override on
   the shared ingestion pipeline. When energy is exhausted the engine stops initiating (the gate
   idles) while chat still runs on **stamina**, so autonomy can never starve interaction. The burst is
-  **energy-aware**: it plans no more reads than energy can afford (`min(focus length, ⌊energy /
-  est-read-cost⌋)`).
+  **energy-aware**: it plans no more reads than energy can afford (the exact sizing bound lives in
+  `companion-motivation.md` §6).
 - **Reinforcement (learning what lands)** — the companion learns from **conversation**,
   like a person: the harness senses the user's mood on **every** turn (`motivation/affect.ts`, in the
   agent loop) and feeds the prior read forward to **attune** the next reply (the fast loop). After it
-  reads and posts a report note, the **change** in mood across the user's reaction (`delta =
-  valence_now − valence_before`) is the reward → an **additive nudge** to the served **drive weight**
-  (`motivation/reinforce.ts`; a zero change is a no-op, so neutrality needs no threshold). No critic
+  reads and posts a report note, the **change** in mood across the user's reaction is the reward → an
+  **additive nudge** to the served **drive weight** (the delta is sensed in the loop; the exact
+  signal and how it moves weights → `companion-motivation.md` §7; a zero change is a no-op, so
+  neutrality needs no threshold). No critic
   call, no approve/reject button. Learning fires on such a drive-serving act; ordinary chat senses but
   does not move weights. Weights are interpretable and seed the relationship-growth axis.
 - **Output** — the engine **reads** the next leads into the companion's own memory
@@ -540,11 +541,11 @@ Design rules (the "improved staged hybrid"; memory guide → `companion-memory.m
     foods (`ration`→stamina, `spark`→energy, `treat`→both) spend earned **treats**
     (`POST /feed`, mechanism → `companion-economy.md`). Each pool rolls on a fixed window.
     **Autonomous reads spend real tokens** billed to energy via a per-run **meter override** on the
-    shared ingestion pipeline (`pipeline.ts`: the run carries
-    `meter = { quota: energyAdapter, accountId: companionId }`, and skips deferral — the engine gates
-    on energy itself, per-lead). The burst is **energy-aware** — it plans `min(focus length, ⌊energy /
-    est-read-cost⌋)` reads (§4.5) — so the companion scopes its work to its means, not just stopping
-    at zero. The per-turn **affect read** that senses the user's mood rides on the chat turn, so it
+    shared ingestion pipeline — the run bills the companion's energy pool instead of the owner's
+    stamina and skips deferral (the engine gates on energy itself, per-lead; the override wiring is an
+    implementation detail, `implementation.md` §3). The burst is **energy-aware** — it scopes the
+    number of reads to what energy affords (§4.5) — so the companion scopes its work to its means, not
+    just stopping at zero. The per-turn **affect read** that senses the user's mood rides on the chat turn, so it
     draws **stamina**. User-initiated work (chat, `/explore` approvals) draws stamina; the engine's
     self-initiated reads draw energy.
 
@@ -596,11 +597,10 @@ applies a NUL-only guard on write as a last line of defense.
 > the cap) as allowances reset, so the queue drains incrementally. Users can delete a parked job
 > (`DELETE …/sources/:id`). This is why over-cap uploads still return **202**, not 429.
 
-> **`kind` modeling:** `sources.kind` carries the format directly —
-> `pdf | note | link | txt | md | docx | pptx` (`implementation.md` §`sources`). The column is
-> free text typed in code (`$type<SourceKind>()`), so widening the set needed **no migration**;
-> `origin` holds the filename for uploads and the URL for links. pptx records the slide number
-> as `page`; docx/txt/md carry paragraph-ordinal provenance only.
+> **Format handling (design note):** a source carries its format inline on the `sources` record
+> rather than in a separate type table, so widening the accepted set needs **no migration**. The
+> column's value-set, its typed-but-free-text mechanism, and the per-field provenance semantics
+> (`origin`, `page`) are field-level detail owned by `implementation.md` §`sources`.
 
 ## 5. Stack & Technology Decisions
 
@@ -615,7 +615,7 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
 | Data access | Type-safe query layer (Drizzle) | Explicit types end-to-end; no raw SQL by default |
 | LLM access | **Provider-agnostic gateway, default OpenRouter** | Swap models/providers without touching the harness |
 | Embeddings | **Provider-agnostic gateway, OpenRouter `/embeddings`** — default `perplexity/pplx-embed-v1-0.6b` | Single vendor with the LLM gateway; dimensions pinned to the vector column (`implementation.md` §3) |
-| Auth | **Google Sign-In (OIDC)** | The SPA gets a Google ID token (Google Identity Services); the API verifies it against Google's JWKS (`aud=GOOGLE_CLIENT_ID`, `email_verified`) and JIT-provisions users by email. The token is persisted client-side in `sessionStorage` so it survives a page refresh (mechanism + expiry handling in `implementation.md` §5). No third-party auth service, no tenant, no extra Pulumi stack. `dev_bypass` mode for local/tests |
+| Auth | **Google Sign-In (OIDC)** | No auth service to run, no tenant, no extra Pulumi stack — the SPA gets a Google ID token and the API verifies it then JIT-provisions users by email. Token verification, client persistence, and expiry handling → `implementation.md` §5. `dev_bypass` mode for local/tests |
 
 ## 6. Interactions, Boundary & State
 
