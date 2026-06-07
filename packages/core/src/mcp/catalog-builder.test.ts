@@ -2,12 +2,14 @@
  * Catalog-builder tests: indexes every whitelisted server's tools as lightweight
  * entries (no argument schema); prunes a server that left the whitelist; and on a
  * server that fails to list, keeps that server's prior (stale) entries rather than
- * dropping them — an outage never empties the catalog.
+ * dropping them — an outage never empties the catalog. Exercised through the MCP
+ * capability source, since the builder is source-agnostic.
  */
 
 import { type Database } from '@cobble/db';
 import { createTestDatabase } from '@cobble/db/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { CapabilitySource } from '../acquisition/capability-source.js';
 import { refreshToolCatalog } from './catalog-builder.js';
 import { FakeMcpGateway } from './fake.js';
 import {
@@ -16,10 +18,16 @@ import {
   type McpServerSpec,
   type McpToolDef,
 } from './gateway.js';
+import { createMcpCapabilitySource } from './mcp-source.js';
 import { DrizzleToolCatalogStore } from './tool-catalog-store.js';
 import { McpWhitelist } from './whitelist.js';
 
 const silentLogger = { error: () => undefined, warn: () => undefined, info: () => undefined };
+
+/** The catalog builder takes capability sources — wrap a whitelist + gateway as one. */
+const mcpSources = (whitelist: McpWhitelist, gateway: McpGateway): readonly CapabilitySource[] => [
+  createMcpCapabilitySource({ whitelist, gateway, logger: silentLogger }),
+];
 
 const quote: McpToolDef = {
   name: 'get_quote',
@@ -56,7 +64,11 @@ describe('refreshToolCatalog', () => {
       stocks: { tools: [quote] },
       news: { tools: [top] },
     });
-    const count = await refreshToolCatalog({ whitelist, gateway, catalog, logger: silentLogger });
+    const count = await refreshToolCatalog({
+      sources: mcpSources(whitelist, gateway),
+      catalog,
+      logger: silentLogger,
+    });
     expect(count).toBe(2);
     const ids = (await catalog.list()).map((e) => e.toolId).sort();
     expect(ids).toEqual(['mcp__news__top', 'mcp__stocks__get_quote']);
@@ -69,18 +81,22 @@ describe('refreshToolCatalog', () => {
   it('prunes entries for a server that left the whitelist', async () => {
     const gateway = new FakeMcpGateway({ stocks: { tools: [quote] }, news: { tools: [top] } });
     await refreshToolCatalog({
-      whitelist: new McpWhitelist([
-        { ref: 'stocks', endpoint: 'https://s.example.com' },
-        { ref: 'news', endpoint: 'https://n.example.com' },
-      ]),
-      gateway,
+      sources: mcpSources(
+        new McpWhitelist([
+          { ref: 'stocks', endpoint: 'https://s.example.com' },
+          { ref: 'news', endpoint: 'https://n.example.com' },
+        ]),
+        gateway,
+      ),
       catalog,
       logger: silentLogger,
     });
     // news is dropped from the whitelist on the next refresh.
     await refreshToolCatalog({
-      whitelist: new McpWhitelist([{ ref: 'stocks', endpoint: 'https://s.example.com' }]),
-      gateway,
+      sources: mcpSources(
+        new McpWhitelist([{ ref: 'stocks', endpoint: 'https://s.example.com' }]),
+        gateway,
+      ),
       catalog,
       logger: silentLogger,
     });
@@ -90,8 +106,10 @@ describe('refreshToolCatalog', () => {
 
   it('keeps a still-whitelisted server’s stale entries when it fails to list', async () => {
     await refreshToolCatalog({
-      whitelist: new McpWhitelist([{ ref: 'stocks', endpoint: 'https://s.example.com' }]),
-      gateway: new FakeMcpGateway({ stocks: { tools: [quote] } }),
+      sources: mcpSources(
+        new McpWhitelist([{ ref: 'stocks', endpoint: 'https://s.example.com' }]),
+        new FakeMcpGateway({ stocks: { tools: [quote] } }),
+      ),
       catalog,
       logger: silentLogger,
     });
@@ -105,8 +123,10 @@ describe('refreshToolCatalog', () => {
       },
     };
     await refreshToolCatalog({
-      whitelist: new McpWhitelist([{ ref: 'stocks', endpoint: 'https://s.example.com' }]),
-      gateway: downGateway,
+      sources: mcpSources(
+        new McpWhitelist([{ ref: 'stocks', endpoint: 'https://s.example.com' }]),
+        downGateway,
+      ),
       catalog,
       logger: silentLogger,
     });

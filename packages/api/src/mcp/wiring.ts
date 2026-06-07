@@ -10,10 +10,12 @@
  */
 
 import {
+  type CapabilitySource,
   consoleLogger,
   createEquippedRegistryResolver,
   createEquippedSummaryContext,
   createLoadToolTool,
+  createMcpCapabilitySource,
   createSearchToolsTool,
   createToolLoadAdvisor,
   DrizzleEquippedToolStore,
@@ -82,6 +84,15 @@ export function buildMcpWiring(options: BuildMcpWiringOptions): McpWiring | null
   const catalog = new DrizzleToolCatalogStore(db);
   const equipped = new DrizzleEquippedToolStore(db);
 
+  // The MCP server source; future sources (CLI, Phase 10) compose into this array.
+  const mcpSource = createMcpCapabilitySource({
+    whitelist,
+    gateway,
+    authHeaders: envAuthHeaders,
+    logger,
+  });
+  const sources: readonly CapabilitySource[] = [mcpSource];
+
   const searchTool = createSearchToolsTool({
     catalog,
     gateway: llmGateway,
@@ -92,9 +103,7 @@ export function buildMcpWiring(options: BuildMcpWiringOptions): McpWiring | null
   const loadTool = createLoadToolTool({
     catalog,
     equipped,
-    gateway,
-    whitelist,
-    authHeaders: envAuthHeaders,
+    sources,
     maxEquippedTools: config.maxEquippedTools,
     logger,
   });
@@ -103,12 +112,10 @@ export function buildMcpWiring(options: BuildMcpWiringOptions): McpWiring | null
   const resolveRegistry = createEquippedRegistryResolver({
     nativeTools,
     equipped,
-    whitelist,
-    gateway,
-    authHeaders: envAuthHeaders,
+    sources,
     logger,
   });
-  const equippedArm = createEquippedSummaryContext({ equipped, whitelist, logger });
+  const equippedArm = createEquippedSummaryContext({ equipped, sources, logger });
   const loadAdvisor = createToolLoadAdvisor({ catalog, equipped, logger });
 
   return {
@@ -116,7 +123,6 @@ export function buildMcpWiring(options: BuildMcpWiringOptions): McpWiring | null
     resolveRegistry,
     equippedArm,
     loadAdvisor,
-    refreshCatalog: () =>
-      refreshToolCatalog({ whitelist, gateway, catalog, authHeaders: envAuthHeaders, logger }),
+    refreshCatalog: () => refreshToolCatalog({ sources, catalog, logger }),
   };
 }

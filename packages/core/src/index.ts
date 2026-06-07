@@ -48,6 +48,15 @@ export {
 export { mcpToolName, mcpToolToTool, type McpToolAdapterOptions } from './mcp/adapter.js';
 export { FakeMcpGateway, type FakeMcpCall, type FakeMcpServer } from './mcp/fake.js';
 export { McpWhitelist, type McpWhitelistEntry } from './mcp/whitelist.js';
+export { createMcpCapabilitySource, type McpCapabilitySourceOptions } from './mcp/mcp-source.js';
+// The source-agnostic acquisition spine (companion-tools.md §8): a CapabilitySource
+// abstracts where a tool comes from (MCP servers, host CLIs) behind the catalog +
+// equipped set + per-step registry, so sources compose without knowing each other.
+export {
+  type CapabilitySource,
+  type CatalogContribution,
+  indexCapabilitySources,
+} from './acquisition/capability-source.js';
 export {
   DrizzleToolCatalogStore,
   type ToolCatalogEntry,

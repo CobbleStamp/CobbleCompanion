@@ -1,84 +1,71 @@
 /**
- * Build the tool catalog from the whitelist (companion-tools.md §5). For each
- * whitelisted MCP server, fetch its `tools/list` and upsert one **lightweight**
- * catalog entry per tool (id + name + description — no argument schema), then
- * prune entries for tools/servers no longer whitelisted. Runs at startup and on
- * a whitelist change. A server that's unreachable keeps its existing entries
- * (stale beats gone) and is logged — building the catalog never hard-fails.
+ * Build the tool catalog from the configured capability sources (companion-tools.md
+ * §5) — source-agnostic. Each {@link CapabilitySource} enumerates its tools into
+ * lightweight catalog entries (id + name + description — no argument schema); the
+ * builder upserts them and prunes entries no longer advertised. Runs at startup
+ * and on a whitelist/definition change. A source that can't enumerate (a whole
+ * source threw, or it flagged a `serverRef` it couldn't reach) keeps its existing
+ * entries — "stale beats gone", so a transient outage never empties the catalog.
  */
 
+import type { ToolSource } from '@cobble/shared';
+
+import { type CapabilitySource, indexCapabilitySources } from '../acquisition/capability-source.js';
 import { consoleLogger, type Logger } from '../logging.js';
-import { mcpToolName } from './adapter.js';
-import type { McpGateway, McpServerSpec } from './gateway.js';
 import type { ToolCatalogStore, ToolCatalogEntry } from './tool-catalog-store.js';
-import type { McpWhitelist, McpWhitelistEntry } from './whitelist.js';
 
 export interface RefreshCatalogOptions {
-  readonly whitelist: McpWhitelist;
-  readonly gateway: McpGateway;
+  /** The capability sources to index (MCP, CLI, …). */
+  readonly sources: readonly CapabilitySource[];
   readonly catalog: ToolCatalogStore;
-  /** Resolve a server's request headers (e.g. its auth-token env) for the list call. */
-  readonly authHeaders?: (entry: McpWhitelistEntry) => Readonly<Record<string, string>> | undefined;
   readonly logger?: Logger;
 }
 
 /**
- * Refresh the catalog to mirror the current whitelist. Returns the number of tools
- * indexed. Best-effort per server: a failed `tools/list` keeps that server's prior
- * entries rather than dropping them, so a transient outage can't empty the catalog.
+ * Refresh the catalog to mirror the current sources. Returns the number of tools
+ * indexed. Best-effort per source: a source that fails to enumerate keeps its
+ * prior entries rather than dropping them.
  */
 export async function refreshToolCatalog(options: RefreshCatalogOptions): Promise<number> {
   const logger = options.logger ?? consoleLogger;
   const indexed: ToolCatalogEntry[] = [];
-  const reachedServerRefs = new Set<string>();
+  const retainStaleRefs = new Set<string>();
+  const failedSources = new Set<ToolSource>();
 
-  for (const entry of options.whitelist.list()) {
-    const headers = options.authHeaders?.(entry);
-    const spec: McpServerSpec = {
-      ref: entry.ref,
-      endpoint: entry.endpoint,
-      ...(headers ? { headers } : {}),
-    };
+  for (const source of options.sources) {
     try {
-      const tools = await options.gateway.listTools(spec);
-      reachedServerRefs.add(entry.ref);
-      for (const tool of tools) {
-        indexed.push({
-          toolId: mcpToolName(entry.ref, tool.name),
-          source: 'mcp',
-          serverRef: entry.ref,
-          toolName: tool.name,
-          description: tool.description,
-        });
+      const contribution = await source.listCatalog();
+      indexed.push(...contribution.entries);
+      for (const ref of contribution.retainStaleRefs) {
+        retainStaleRefs.add(ref);
       }
     } catch (error) {
-      // Stale beats gone: skip this server so its existing rows survive the prune.
-      logger.error(
-        'catalog refresh: could not list a whitelisted MCP server; keeping stale entries',
-        {
-          operation: 'mcp.refreshCatalog',
-          server: entry.ref,
-          error,
-        },
-      );
+      // Total source failure: keep every existing row for this source.
+      failedSources.add(source.source);
+      logger.error('catalog refresh: a source failed to enumerate; keeping its stale entries', {
+        operation: 'acquisition.refreshCatalog',
+        source: source.source,
+        error,
+      });
     }
   }
 
   await options.catalog.upsert(indexed);
-  await pruneStale(options.catalog, options.whitelist, reachedServerRefs, indexed, logger);
+  await pruneStale(options.catalog, retainStaleRefs, failedSources, indexed, logger);
   return indexed.length;
 }
 
 /**
- * Drop catalog rows that are no longer valid: tools whose server fell off the
- * whitelist, and tools that a *reached* server stopped advertising. Entries for a
- * server we could not reach this pass are preserved (we can't tell removed from
- * unreachable), so an outage never prunes a still-whitelisted server.
+ * Drop catalog rows that are no longer valid. Keep a row if it was just
+ * (re)indexed, if its `serverRef` was flagged retain-stale by its source (admissible
+ * but unreachable this pass), or if its whole source failed to enumerate. Anything
+ * else — a tool a reachable source stopped advertising, or a row whose source left
+ * the configuration — is pruned.
  */
 async function pruneStale(
   catalog: ToolCatalogStore,
-  whitelist: McpWhitelist,
-  reachedServerRefs: ReadonlySet<string>,
+  retainStaleRefs: ReadonlySet<string>,
+  failedSources: ReadonlySet<ToolSource>,
   indexed: readonly ToolCatalogEntry[],
   logger: Logger,
 ): Promise<void> {
@@ -86,11 +73,11 @@ async function pruneStale(
   const freshIds = new Set(indexed.map((entry) => entry.toolId));
   const keep: string[] = [];
   for (const entry of existing) {
-    const stillWhitelisted = whitelist.isAllowed(entry.serverRef);
-    const serverReached = reachedServerRefs.has(entry.serverRef);
-    // Keep if it was just (re)indexed, or it belongs to a still-whitelisted
-    // server we couldn't reach this pass (preserve its stale entries).
-    if (freshIds.has(entry.toolId) || (stillWhitelisted && !serverReached)) {
+    if (
+      freshIds.has(entry.toolId) ||
+      retainStaleRefs.has(entry.serverRef) ||
+      failedSources.has(entry.source)
+    ) {
       keep.push(entry.toolId);
     }
   }
@@ -98,8 +85,11 @@ async function pruneStale(
   const pruned = existing.length - keep.length;
   if (pruned > 0) {
     logger.info('catalog refresh: pruned stale tool entries', {
-      operation: 'mcp.refreshCatalog',
+      operation: 'acquisition.refreshCatalog',
       pruned,
     });
   }
 }
+
+// Re-export so callers building the source map share one helper.
+export { indexCapabilitySources };

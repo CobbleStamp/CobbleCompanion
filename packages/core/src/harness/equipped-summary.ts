@@ -8,37 +8,39 @@
  * registry (equipped-resolver.ts); this arm is just the summary line.
  */
 
-import { mcpToolName } from '../mcp/adapter.js';
+import { type CapabilitySource, indexCapabilitySources } from '../acquisition/capability-source.js';
 import type { EquippedToolStore } from '../mcp/equipped-store.js';
-import type { McpWhitelist } from '../mcp/whitelist.js';
 import type { Logger } from '../logging.js';
 import { ZERO_USAGE } from '../usage.js';
 import type { RetrieveContext } from './hooks.js';
 
 export interface EquippedSummaryOptions {
   readonly equipped: EquippedToolStore;
-  /** Same whitelist the resolver consults, so we never advertise a revoked tool. */
-  readonly whitelist: McpWhitelist;
+  /** Same sources the resolver consults, so we never advertise a revoked tool. */
+  readonly sources: readonly CapabilitySource[];
   readonly logger: Logger;
 }
 
 /** Build the equipped-tools summary `RetrieveContext` arm (grounding-only). */
 export function createEquippedSummaryContext(options: EquippedSummaryOptions): RetrieveContext {
+  const sources = indexCapabilitySources(options.sources);
   return async ({ companionId }) => {
     try {
       const equipped = await options.equipped.list(companionId);
-      // Drop any record whose server has fallen off the whitelist — the resolver
+      // Drop any record whose source has revoked it — the resolver
       // (equipped-resolver.ts) already skips these, so advertising them here would
       // claim a tool the model cannot actually invoke.
-      const callable = equipped.filter((record) => options.whitelist.get(record.serverRef));
+      const callable = equipped.filter((record) =>
+        sources.get(record.source)?.isAdmissible(record.serverRef),
+      );
       if (callable.length === 0) {
         return { blocks: [], usage: ZERO_USAGE };
       }
+      // `record.toolId` is the tool's advertised name (the adapter and the catalog
+      // builder derive both from the same rule), so the summary names match the
+      // names the registry dispatches on — no recomputation needed.
       const lines = callable
-        .map((record) => {
-          const name = mcpToolName(record.serverRef, record.snapshot.name);
-          return `- \`${name}\`: ${record.snapshot.description}`;
-        })
+        .map((record) => `- \`${record.toolId}\`: ${record.snapshot.description}`)
         .join('\n');
       return {
         blocks: [

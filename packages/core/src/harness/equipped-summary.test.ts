@@ -8,8 +8,11 @@
 import { type Database } from '@cobble/db';
 import { createTestDatabase } from '@cobble/db/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { CapabilitySource } from '../acquisition/capability-source.js';
 import { DrizzleIdentityStore } from '../identity/store.js';
 import { DrizzleEquippedToolStore } from '../mcp/equipped-store.js';
+import { FakeMcpGateway } from '../mcp/fake.js';
+import { createMcpCapabilitySource } from '../mcp/mcp-source.js';
 import { McpWhitelist } from '../mcp/whitelist.js';
 import { createEquippedSummaryContext } from './equipped-summary.js';
 
@@ -24,6 +27,9 @@ describe('createEquippedSummaryContext', () => {
   let companionId: string;
 
   const whitelist = new McpWhitelist([{ ref: 'stocks', endpoint: 'https://s.example.com' }]);
+  const sources: readonly CapabilitySource[] = [
+    createMcpCapabilitySource({ whitelist, gateway: new FakeMcpGateway({}), logger: silentLogger }),
+  ];
 
   beforeEach(async () => {
     const created = await createTestDatabase();
@@ -50,7 +56,7 @@ describe('createEquippedSummaryContext', () => {
       serverRef: 'stocks',
       snapshot: { name: 'get_quote', description: 'quote', inputSchema: { type: 'object' } },
     });
-    const arm = createEquippedSummaryContext({ equipped, whitelist, logger: silentLogger });
+    const arm = createEquippedSummaryContext({ equipped, sources, logger: silentLogger });
     const result = await arm(params(companionId));
     expect(result.blocks).toHaveLength(1);
     expect(result.blocks[0]?.content).toContain('`mcp__stocks__get_quote`');
@@ -63,14 +69,14 @@ describe('createEquippedSummaryContext', () => {
       serverRef: 'ghost',
       snapshot: { name: 'do', description: 'do', inputSchema: { type: 'object' } },
     });
-    const arm = createEquippedSummaryContext({ equipped, whitelist, logger: silentLogger });
+    const arm = createEquippedSummaryContext({ equipped, sources, logger: silentLogger });
     const result = await arm(params(companionId));
     // Only the de-whitelisted tool was equipped → nothing callable → no block.
     expect(result.blocks).toHaveLength(0);
   });
 
   it('emits no block when nothing is equipped', async () => {
-    const arm = createEquippedSummaryContext({ equipped, whitelist, logger: silentLogger });
+    const arm = createEquippedSummaryContext({ equipped, sources, logger: silentLogger });
     const result = await arm(params(companionId));
     expect(result.blocks).toHaveLength(0);
   });
