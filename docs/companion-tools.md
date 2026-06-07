@@ -217,7 +217,7 @@ The whitelist is the admissibility floor; these boundaries harden what runs with
   result cannot cause a tool outside the whitelist to be loaded or run.
 - **Credentials are references, never values.** MCP server auth uses the secret-management posture
   (`architecture.md` §8, `implementation.md` §5); a secret is never stored in the catalog or the
-  connection registry, in source, or sent to the model — it is resolved at call time.
+  equipped set, in source, or sent to the model — it is resolved at call time.
 
 ## 8. The two tracks & sequencing
 

@@ -373,17 +373,18 @@ without carrying every tool in context.
 - **HTTP/SSE MCP client + adapter:** `initialize` + `tools/list`; adapt each MCP tool to the existing
   `Tool` interface; proxy `tools/call`; results re-enter context as **untrusted** (injection-hardened
   like §2.1 grounding).
-- **Per-companion equipped set + connection registry**, persisted and rebuilt at startup (endpoint,
-  auth-secret *reference*, last fetched schema, status): a single tier bounded by `maxEquippedTools`
-  (LRU eviction). The fixed *core* tools live in code, never in this set. **Promotion = proactive
-  loading**: a recalled procedural routine names the tools it needs that aren't equipped, and the
+- **Per-companion equipped set**, persisted (per tool: server ref + the last-fetched schema snapshot —
+  no endpoint, auth-secret reference, or status; those resolve from the whitelist at call time): a
+  single tier bounded by `maxEquippedTools` (LRU eviction), driving the per-step registry rebuild
+  without a network round-trip. The fixed *core* tools live in code, never in this set. **Promotion =
+  proactive loading**: a recalled procedural routine names the tools it needs that aren't equipped, and the
   companion `load_tool`s them up front — anticipation, not a frequency-pinned tier.
 - **Trust/security:** developer whitelist defines the catalog → binary allow/deny; **HTTP/SSE only**,
   SSRF-guarded; no stdio; credentials via the secret manager (never stored/sent to the model).
 
 **Done when:** a developer whitelists an HTTP MCP server; on a relevant user turn the companion
 **`search_tools` → `load_tool` → calls** a tool from that server, the loaded tool becoming callable
-on the next loop iteration; the equipped tool/connection **survives a restart**; an **off-whitelist**
+on the next loop iteration; the equipped tool **survives a restart**; an **off-whitelist**
 server never appears in the catalog and cannot be loaded; the catalog scales to many servers without
 inflating per-turn context; `tools/call` results are sanitized as untrusted; every call is logged
 (`tool_calls`).

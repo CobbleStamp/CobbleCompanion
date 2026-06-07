@@ -8,7 +8,7 @@
  *
  * SSRF defense is layered, matching link ingestion (companion-tools.md §7):
  * the whitelist endpoint is string-validated (`assertPublicHttpUrl`) and
- * connect_mcp re-checks it, and — the part that actually stops DNS
+ * load_tool re-checks it, and — the part that actually stops DNS
  * rebinding — every transport connection resolves through {@link ssrfSafeFetch},
  * whose connection-layer DNS lookup rejects any address in a private/metadata
  * range. String checks alone can't catch a public hostname pointing at an
