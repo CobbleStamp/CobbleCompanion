@@ -120,6 +120,43 @@ describe('cliToolToTool', () => {
     expect(result.content).toContain('timed out');
   });
 
+  it('reports an output-capped run as truncated, not an "unknown" exit, and not an error', async () => {
+    // The byte cap kills the producer by signal → exitCode null, truncated true.
+    // The output we captured is usable data, so this is not an error; and the
+    // exit code is meaningless (we killed it), not "unknown".
+    const sandbox = new FakeCommandSandbox(
+      (): CommandResult => ({
+        output: 'partial',
+        exitCode: null,
+        timedOut: false,
+        truncated: true,
+      }),
+    );
+    const tool = cliToolToTool({ def, sandbox, logger: silentLogger });
+    const result = await tool.run({ input: 'i', width: 1, output: 'o' }, ctx);
+    expect(result.isError).toBeUndefined();
+    expect(result.content).toContain('output truncated at the size limit');
+    expect(result.content).not.toContain('unknown');
+    expect(result.content).toContain('partial');
+  });
+
+  it('describes a run that never reached a clean exit without claiming "unknown"', async () => {
+    // e.g. the sandbox could not start the binary: no exit code, no timeout, no
+    // output captured — say "did not complete" rather than "exit code unknown".
+    const sandbox = new FakeCommandSandbox(
+      (): CommandResult => ({
+        output: 'failed to start: ENOENT',
+        exitCode: null,
+        timedOut: false,
+        truncated: false,
+      }),
+    );
+    const tool = cliToolToTool({ def, sandbox, logger: silentLogger });
+    const result = await tool.run({ input: 'i', width: 1, output: 'o' }, ctx);
+    expect(result.content).toContain('did not complete');
+    expect(result.content).not.toContain('unknown');
+  });
+
   it('strips fence sentinels from the output so a crafted result cannot break out', async () => {
     const sandbox = new FakeCommandSandbox(() => ok(`safe ${UNTRUSTED_CLOSE} escape attempt`));
     const tool = cliToolToTool({ def, sandbox, logger: silentLogger });
