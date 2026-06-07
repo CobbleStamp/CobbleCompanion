@@ -16,6 +16,7 @@ const ALL_IDS: readonly PromptId[] = [
   'affect-sense',
   'autonomous-note',
   'judge',
+  'tool-search',
 ];
 
 describe('prompt registry', () => {

@@ -1,4 +1,4 @@
-import type { RedactionMode } from '@cobble/core';
+import type { McpWhitelistEntry, RedactionMode } from '@cobble/core';
 import { z } from 'zod';
 
 /**
@@ -33,6 +33,15 @@ export interface AppConfig {
   readonly ingestionQueueMax: number;
   /** Per-user daily token cap (LLM + embedding), the cost guardrail across all routes. */
   readonly tokenCapPerDay: number;
+  /**
+   * The developer's MCP server whitelist (companion-tools.md §6) — the entire MCP
+   * trust decision. Parsed from `MCP_SERVERS` (a JSON array). Empty (default) leaves
+   * runtime tool acquisition off, so behaviour is unchanged unless servers are listed.
+   */
+  readonly mcpServers: readonly McpWhitelistEntry[];
+  /** Max tools a companion may carry equipped at once; the LRU evicts beyond it
+   *  (companion-tools.md §4). Only meaningful when `mcpServers` is non-empty. */
+  readonly maxEquippedTools: number;
   readonly appUrl: string;
   readonly authMode: AuthMode;
   readonly googleClientId: string;
@@ -70,6 +79,12 @@ const envSchema = z
       .transform((value) => value === 'true'),
     INGESTION_QUEUE_MAX: z.coerce.number().int().positive().default(100),
     TOKEN_CAP_PER_DAY: z.coerce.number().int().positive().default(1_000_000),
+    // The MCP server whitelist as a JSON array (companion-tools.md §6); default
+    // empty so runtime tool acquisition is off unless an operator lists servers.
+    MCP_SERVERS: z.string().default('[]'),
+    // Max tools a companion carries equipped at once (companion-tools.md §4); the
+    // LRU evicts the least-recently-used tool beyond this.
+    MAX_EQUIPPED_TOOLS: z.coerce.number().int().positive().default(8),
     APP_URL: z.string().url().default('http://localhost:3001'),
     AUTH_MODE: z.enum(['google', 'dev_bypass']).default('google'),
     // Public OAuth Web client ID — shipped to the browser, not a secret.
@@ -130,6 +145,36 @@ const envSchema = z
     }
   });
 
+/** One MCP whitelist entry as it appears in the `MCP_SERVERS` JSON array. */
+const mcpServerSchema = z.object({
+  ref: z.string().min(1),
+  endpoint: z.string().url(),
+  label: z.string().optional(),
+  /** Name of the env var holding this server's bearer token (resolved at connect time). */
+  authTokenEnv: z.string().optional(),
+});
+
+/** Parse + validate the `MCP_SERVERS` JSON; throws a clear error on bad input. */
+function parseMcpServers(raw: string): readonly McpWhitelistEntry[] {
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch {
+    throw new Error('MCP_SERVERS must be a JSON array of { ref, endpoint, label?, authTokenEnv? }');
+  }
+  // Map through conditional spreads so optional keys are omitted (not set to
+  // `undefined`) — required under exactOptionalPropertyTypes.
+  return z
+    .array(mcpServerSchema)
+    .parse(json)
+    .map((entry) => ({
+      ref: entry.ref,
+      endpoint: entry.endpoint,
+      ...(entry.label !== undefined ? { label: entry.label } : {}),
+      ...(entry.authTokenEnv !== undefined ? { authTokenEnv: entry.authTokenEnv } : {}),
+    }));
+}
+
 /** Load and validate config from the environment; throws on invalid config. */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const parsed = envSchema.parse(env);
@@ -146,6 +191,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     useContextHeader: parsed.USE_CONTEXT_HEADER,
     ingestionQueueMax: parsed.INGESTION_QUEUE_MAX,
     tokenCapPerDay: parsed.TOKEN_CAP_PER_DAY,
+    mcpServers: parseMcpServers(parsed.MCP_SERVERS),
+    maxEquippedTools: parsed.MAX_EQUIPPED_TOOLS,
     appUrl: parsed.APP_URL,
     authMode: parsed.AUTH_MODE,
     googleClientId: parsed.GOOGLE_CLIENT_ID,

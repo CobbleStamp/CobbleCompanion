@@ -79,6 +79,14 @@ export interface HarnessOptions {
   readonly retrieveContext?: RetrieveContext;
   /** The tools available to a turn (P3). Empty/omitted reproduces the P0 path. */
   readonly registry?: ToolRegistry;
+  /**
+   * Resolve the effective registry for a turn from the companion id (Phase 9):
+   * native tools + that companion's connected-MCP tools, composed behind the same
+   * registry interface (companion-tools.md §4 — no loop change, invariant #3).
+   * Omitted = the static {@link registry} is used for every turn. A resolver that
+   * throws degrades to the static registry (acquisition never breaks the turn).
+   */
+  readonly resolveRegistry?: (companionId: string) => Promise<ToolRegistry>;
   /** Gate around every tool call — blocks effectful actions for approval (P3). */
   readonly beforeToolCall?: BeforeToolCall;
   /** Runs after each tool call — used to log every call (P3). */
@@ -137,6 +145,7 @@ export class Harness {
   private readonly recentLimit: number;
   private readonly retrieveContext: RetrieveContext;
   private readonly registry: ToolRegistry;
+  private readonly resolveRegistry: ((companionId: string) => Promise<ToolRegistry>) | undefined;
   private readonly beforeToolCall: BeforeToolCall;
   private readonly afterToolCall: AfterToolCall;
   private readonly maxToolIterations: number;
@@ -162,6 +171,7 @@ export class Harness {
     this.logger = options.logger ?? consoleLogger;
     this.retrieveContext = options.retrieveContext ?? this.defaultRetrieveContext;
     this.registry = options.registry ?? new ToolRegistry();
+    this.resolveRegistry = options.resolveRegistry;
     this.beforeToolCall = options.beforeToolCall ?? passthroughBeforeToolCall;
     this.afterToolCall = options.afterToolCall ?? passthroughAfterToolCall;
     this.maxToolIterations = options.maxToolIterations ?? DEFAULT_MAX_TOOL_ITERATIONS;
@@ -443,7 +453,6 @@ export class Harness {
     const acc = createUsageAccumulator();
     const llm = meteredLlmGateway(this.gateway, acc.sink, trace);
     const ctx: TurnCtx = { companionId: companion.id, ownerId: ownerId ?? '' };
-    const toolDefs = this.registry.list();
 
     // A finish path debits once and sets this; any other exit (a client
     // disconnect that `.return()`s the generator, or a provider/infra fault that
@@ -474,6 +483,15 @@ export class Harness {
           );
           return;
         }
+
+        // The effective registry is resolved PER STEP (companion-tools.md §4), so a
+        // tool the model loads with load_tool mid-turn is advertised + dispatchable
+        // on the next iteration. The loop shape is unchanged (invariant #3); only
+        // *when* the tool set is computed moves from per-turn to per-step. The
+        // resolver reads cached snapshots — no network — and degrades to the static
+        // registry on error, so acquisition never breaks the turn.
+        const registry = await this.resolveTurnRegistry(companion.id);
+        const toolDefs = registry.list();
 
         let turnText = '';
         const stream = llm.stream({
@@ -532,7 +550,7 @@ export class Harness {
             content: { args: gated.args },
           });
           const result = await dispatchTool(
-            this.registry,
+            registry,
             gated.name,
             gated.args,
             ctx,
@@ -557,7 +575,7 @@ export class Harness {
           // misreport failure as success. The model still sees the error via the
           // tool message pushed above.
           if (result.isError !== true) {
-            yield* this.recordToolStep(companion.id, gated.name, gated.args);
+            yield* this.recordToolStep(registry, companion.id, gated.name, gated.args);
           }
         }
 
@@ -597,6 +615,28 @@ export class Harness {
     }
   }
 
+  /**
+   * The effective tool registry for a turn (Phase 9). With no resolver, the static
+   * registry serves every turn (the pre-Phase-9 path). A resolver lets the API
+   * compose native + per-companion acquired tools; if it throws, we degrade to the
+   * static registry so tool acquisition can never break a turn (companion-tools.md §4).
+   */
+  private async resolveTurnRegistry(companionId: string): Promise<ToolRegistry> {
+    if (!this.resolveRegistry) {
+      return this.registry;
+    }
+    try {
+      return await this.resolveRegistry(companionId);
+    } catch (error) {
+      this.logger.error('failed to resolve per-companion tool registry; using base registry', {
+        operation: 'harness.resolveTurnRegistry',
+        companionId,
+        error,
+      });
+      return this.registry;
+    }
+  }
+
   /** Has the run hit either dead-loop ceiling (iteration count or token budget)? */
   private exhausted(iteration: number, used: TokenUsage): boolean {
     if (iteration >= this.maxToolIterations) return true;
@@ -610,11 +650,12 @@ export class Harness {
    * reload identical rather than showing a step that wouldn't survive.
    */
   private async *recordToolStep(
+    registry: ToolRegistry,
     companionId: string,
     name: string,
     args: Record<string, unknown>,
   ): AsyncGenerator<ChatStreamEvent> {
-    const tool = this.registry.get(name);
+    const tool = registry.get(name);
     const summary = tool ? toolStepSummary(tool, args) : `Used ${name}.`;
     try {
       const step = await this.memory.appendMessage(companionId, 'assistant', summary, {

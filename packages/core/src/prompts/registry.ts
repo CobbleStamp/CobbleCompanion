@@ -15,6 +15,7 @@ import { judgeTemplate } from './catalog/judge.js';
 import { personaEvolveTemplate } from './catalog/persona-evolve.js';
 import { personaTemplate } from './catalog/persona.js';
 import { segmenterTemplate } from './catalog/segmenter.js';
+import { toolSearchTemplate } from './catalog/tool-search.js';
 import { versionOf } from './render.js';
 import type { PromptId, PromptTemplate, PromptVersion } from './types.js';
 
@@ -47,6 +48,7 @@ const ENTRIES: readonly PromptEntry[] = [
   toEntry(affectSenseTemplate),
   toEntry(autonomousNoteTemplate),
   toEntry(judgeTemplate),
+  toEntry(toolSearchTemplate),
 ];
 
 const REGISTRY: ReadonlyMap<PromptId, PromptEntry> = new Map(

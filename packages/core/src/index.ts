@@ -35,6 +35,44 @@ export {
   type SourceRegistrationPort,
 } from './tools/ingest-source.js';
 
+// MCP tool acquisition (companion-tools.md — Phase 9): a whitelisted catalog the
+// companion discovers (search_tools) and loads from (load_tool) on demand, with a
+// per-step registry over the equipped set.
+export {
+  McpGatewayError,
+  type McpCallResult,
+  type McpGateway,
+  type McpServerSpec,
+  type McpToolDef,
+} from './mcp/gateway.js';
+export { mcpToolName, mcpToolToTool, type McpToolAdapterOptions } from './mcp/adapter.js';
+export { FakeMcpGateway, type FakeMcpCall, type FakeMcpServer } from './mcp/fake.js';
+export { McpWhitelist, type McpWhitelistEntry } from './mcp/whitelist.js';
+export {
+  DrizzleToolCatalogStore,
+  type ToolCatalogEntry,
+  type ToolCatalogStore,
+} from './mcp/tool-catalog-store.js';
+export {
+  DrizzleEquippedToolStore,
+  type EquipInput,
+  type EquippedStoreOptions,
+  type EquippedToolRecord,
+  type EquippedToolStore,
+} from './mcp/equipped-store.js';
+export { refreshToolCatalog, type RefreshCatalogOptions } from './mcp/catalog-builder.js';
+export { createSearchToolsTool, type SearchToolsOptions } from './mcp/search-tools.js';
+export { createLoadToolTool, type LoadToolOptions } from './mcp/load-tool.js';
+export {
+  createToolLoadAdvisor,
+  type ToolLoadAdvisor,
+  type ToolLoadAdvisorOptions,
+} from './mcp/load-advisor.js';
+export {
+  createEquippedRegistryResolver,
+  type EquippedRegistryResolverOptions,
+} from './mcp/equipped-resolver.js';
+
 // Identity (the companion "home")
 export {
   DrizzleIdentityStore,
@@ -285,6 +323,10 @@ export {
   createProceduralRetrieveContext,
   type ProceduralRetrieveOptions,
 } from './harness/procedural-retrieve.js';
+export {
+  createEquippedSummaryContext,
+  type EquippedSummaryOptions,
+} from './harness/equipped-summary.js';
 
 // Growth & feeding economy (Phase 5 — bond & growth, development-plan.md §3)
 export { DEFAULT_GROWTH_CONFIG, type GrowthConfig } from './growth/config.js';
@@ -351,6 +393,7 @@ export { enrichSection, type Enrichment, type ExtractedFact } from './ingestion/
 export { buildEmbeddingInput } from './ingestion/embedder.js';
 export { CORE_FACT_TYPES, isCoreFactType, type CoreFactType } from './ingestion/ontology.js';
 export { assertPublicHttpUrl } from './ingestion/url-guard.js';
+export { ssrfSafeFetch } from './ingestion/safe-fetch.js';
 export {
   parseContent,
   contentTypeForUploadKind,

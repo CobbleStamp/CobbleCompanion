@@ -4,6 +4,7 @@ import type {
   DriveWeights,
   IngestionStatus,
   LeadStatus,
+  McpToolSnapshot,
   MessageKind,
   MessageMetadata,
   MessageRole,
@@ -12,6 +13,7 @@ import type {
   ProposalOrigin,
   ProposalStatus,
   SourceKind,
+  ToolSource,
 } from '@cobble/shared';
 import { sql } from 'drizzle-orm';
 import {
@@ -585,6 +587,54 @@ export const companionGrowth = pgTable('companion_growth', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * `tool_catalog` is the deployment-wide discovery index (companion-tools.md §5):
+ * one lightweight row per whitelisted tool — what `search_tools` reasons over,
+ * off the model's context. It holds no argument schema; the authoritative schema
+ * is fetched fresh at `load_tool` time. Rebuilt from the whitelist on change.
+ */
+export const toolCatalog = pgTable('tool_catalog', {
+  toolId: text('tool_id').primaryKey(),
+  source: text('source').$type<ToolSource>().notNull(),
+  serverRef: text('server_ref').notNull(),
+  toolName: text('tool_name').notNull(),
+  description: text('description').notNull().default(''),
+  indexedAt: timestamp('indexed_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * The per-companion **equipped set** (companion-tools.md §4): tools the companion
+ * has loaded on demand, each with the fresh schema snapshot so the per-step
+ * registry rebuilds without a network round-trip. A single bounded tier capped at
+ * `maxEquippedTools`: when loading a tool would exceed the cap, the
+ * **least-recently-used** equipped tool is evicted (`lastUsedAt` drives LRU).
+ * Tools the companion anticipates needing are loaded proactively from procedural
+ * memory (companion-tools.md §5), but once loaded they are ordinary equipped tools
+ * — there is no separate always-on tier here (the fixed *core* tools live in code,
+ * never in this table). One row per (companion, tool); re-loading refreshes the
+ * snapshot. No secrets are stored — auth is resolved from the whitelist's env
+ * reference at call time (§7).
+ */
+export const equippedTools = pgTable(
+  'equipped_tools',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companionId: uuid('companion_id')
+      .notNull()
+      .references(() => companions.id, { onDelete: 'cascade' }),
+    toolId: text('tool_id').notNull(),
+    source: text('source').$type<ToolSource>().notNull(),
+    serverRef: text('server_ref').notNull(),
+    snapshot: jsonb('snapshot').$type<McpToolSnapshot>().notNull(),
+    equippedAt: timestamp('equipped_at', { withTimezone: true }).notNull().defaultNow(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('equipped_tools_companion_tool_uniq').on(table.companionId, table.toolId),
+    index('equipped_tools_companion_lru_idx').on(table.companionId, table.lastUsedAt),
+  ],
+);
+
 export const schema = {
   users,
   companions,
@@ -603,4 +653,6 @@ export const schema = {
   companionAffect,
   proactiveOutcomes,
   companionGrowth,
+  toolCatalog,
+  equippedTools,
 };

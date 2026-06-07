@@ -1,7 +1,8 @@
 /** The tool registry: list (advertised defs), get-by-name, size. */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { TurnCtx } from '../harness/hooks.js';
+import type { Logger } from '../logging.js';
 import { ToolRegistry } from './registry.js';
 import type { Tool } from './tool.js';
 
@@ -49,5 +50,25 @@ describe('ToolRegistry', () => {
     const registry = new ToolRegistry();
     expect(registry.list()).toEqual([]);
     expect(registry.size).toBe(0);
+  });
+
+  it('warns on a duplicate tool name and the later tool wins dispatch', async () => {
+    const warn = vi.fn();
+    const logger: Logger = { error: vi.fn(), warn, info: vi.fn() };
+    const first = stubTool('dup');
+    const second: Tool = {
+      ...stubTool('dup'),
+      async run(): Promise<{ name: string; content: string }> {
+        return { name: 'dup', content: 'second' };
+      },
+    };
+    const registry = new ToolRegistry([first, second], logger);
+    expect(warn).toHaveBeenCalledWith(
+      'tool name collision in registry; later tool shadows earlier',
+      { operation: 'tools.registry', name: 'dup' },
+    );
+    // Last-wins for dispatch; both still advertised in list().
+    expect(await registry.get('dup')!.run({}, ctx)).toEqual({ name: 'dup', content: 'second' });
+    expect(registry.list()).toHaveLength(2);
   });
 });

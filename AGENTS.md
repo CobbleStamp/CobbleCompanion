@@ -85,6 +85,7 @@ Before claiming any work is done, verify:
 | `docs/implementation.md`       | Data models, algorithms, internal code structure, configuration, security  | Product requirements, high-level architecture            |
 | `docs/companion-memory.md`      | Guide to the memory mechanism; how to browse & evaluate memory             | Canonical data model/schema (lives in `implementation.md`) |
 | `docs/companion-economy.md`    | Guide to the feeding economy; how treats are earned & spent on foods to top up vitality | Canonical schema (`implementation.md` §1), tunable constants (`config.ts`, `contracts.ts`) |
+| `docs/companion-tools.md`      | Guide to tool acquisition; acquiring whitelisted CLIs/MCP servers at runtime & the whitelist trust model | Canonical schema/DDL (`implementation.md` §1), scope/acceptance (`development-plan.md`), product vision (`product-overview.md`) |
 | `docs/ontology.md`             | Ontology contract & governance (fixed types + rules for the dynamic part)  | Leaf-type catalog (that's data, lives in the database)   |
 | `docs/documentation-rules.md`  | Doc taxonomy rules (types, scopes, naming)                                 | Actual doc content                                       |
 | `README.md`                    | Orientation, quick start, setup steps                                      | Architecture, cross-component concepts                   |
@@ -144,6 +145,7 @@ Before claiming any work is done, verify:
 | Internal implementation         | `docs/implementation.md`        |
 | Memory: browsing & evaluation   | `docs/companion-memory.md`       |
 | Feeding economy (treats & foods) | `docs/companion-economy.md`    |
+| Tool acquisition & use (MCP/CLI) | `docs/companion-tools.md`      |
 | Ontology contract & governance  | `docs/ontology.md`              |
 | Documentation rules             | `docs/documentation-rules.md`   |
 | Local dev setup                 | `README.md`                     |

@@ -1,10 +1,13 @@
 /**
- * SSRF-safe fetch for link ingestion. Wraps undici's fetch with an Agent
- * whose connection-layer DNS lookup validates every resolved address
- * (url-guard.ts `createGuardedLookup`) — so a public hostname whose DNS
- * record points at a private/metadata IP is rejected at connect time, with
- * no gap between validation and connection. Also provides a streamed body
- * reader with a hard byte ceiling so a hostile URL cannot OOM the process.
+ * SSRF-safe outbound fetch. Wraps undici's fetch with an Agent whose
+ * connection-layer DNS lookup validates every resolved address (url-guard.ts
+ * `createGuardedLookup`) — so a public hostname whose DNS record points at a
+ * private/metadata IP is rejected at connect time, with no gap between
+ * validation and connection. Shared by link ingestion (`link-resolver.ts`)
+ * and the MCP transport (`api/mcp/sdk-client.ts`) — both reach untrusted or
+ * operator-supplied URLs server-side and need the same rebinding defense.
+ * Also provides a streamed body reader with a hard byte ceiling so a hostile
+ * URL cannot OOM the process.
  */
 
 import { Agent, fetch as undiciFetch } from 'undici';
@@ -19,7 +22,7 @@ const guardedDispatcher = new Agent({
  * lookup. Typed as the global `fetch` (undici *is* Node's fetch; its own
  * types differ only nominally) so callers and tests can substitute either.
  */
-export const safeLinkFetch: typeof fetch = ((
+export const ssrfSafeFetch: typeof fetch = ((
   input: Parameters<typeof undiciFetch>[0],
   init?: Parameters<typeof undiciFetch>[1],
 ) =>

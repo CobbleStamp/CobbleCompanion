@@ -8,6 +8,27 @@
       "when": 1780748293052,
       "tag": "0000_fixed_mister_sinister",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1780758708923,
+      "tag": "0001_parallel_felicia_hardy",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1780768635134,
+      "tag": "0002_woozy_maggott",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1780775709399,
+      "tag": "0003_opposite_franklin_richards",
+      "breakpoints": true
     }
   ]
 }

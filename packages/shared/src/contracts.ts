@@ -538,6 +538,38 @@ export interface LeadDto {
 }
 
 /**
+ * One tool advertised by an MCP server — the fresh schema fetched at `load_tool`
+ * time and held in the equipped set so the registry rebuilds without a network
+ * round-trip (companion-tools.md §4/§5). Structurally the core `McpToolDef`.
+ */
+export interface McpToolSnapshot {
+  readonly name: string;
+  readonly description: string;
+  /** JSON Schema for the call arguments (MCP `inputSchema`). */
+  readonly inputSchema: Record<string, unknown>;
+}
+
+/** Where an acquirable tool comes from (companion-tools.md §8). MCP first; CLI later. */
+export type ToolSource = 'mcp' | 'cli';
+
+/**
+ * One lightweight tool-catalog entry — enough to *find* a tool, never to *call*
+ * it (companion-tools.md §5). Deliberately carries no argument schema, so the
+ * catalog stays off the model's context and hundreds of tools cost no per-turn
+ * tokens; the authoritative schema is fetched fresh at `load_tool` time.
+ */
+export interface ToolCatalogEntry {
+  /** Namespaced, deployment-unique id the model searches and loads by (`mcp__<ref>__<tool>`). */
+  readonly toolId: string;
+  readonly source: ToolSource;
+  /** The whitelisted server (or binary) this tool belongs to. */
+  readonly serverRef: string;
+  /** The tool's own name, used to invoke it on its server. */
+  readonly toolName: string;
+  readonly description: string;
+}
+
+/**
  * A read-only snapshot of everything a companion "holds", grouped by memory kind
  * so new kinds slot in without reshaping the client (architecture.md invariant #2).
  */

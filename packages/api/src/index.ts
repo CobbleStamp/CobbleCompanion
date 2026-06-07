@@ -63,6 +63,8 @@ import {
   type TokenVerifier,
 } from './auth/jwt-verifier.js';
 import { loadConfig, type AppConfig } from './config.js';
+import { StreamableHttpMcpGateway } from './mcp/sdk-client.js';
+import { buildMcpWiring } from './mcp/wiring.js';
 import { createTraceSink } from './tracing/langfuse-sink.js';
 
 function createGateway(config: AppConfig): LlmGateway {
@@ -148,7 +150,7 @@ async function main(): Promise<void> {
   // Volatile presence (P4) — fed by the heartbeat route and message sends; the
   // motivation engine reads it to decide whether/how to initiate.
   const presence = new InMemoryPresenceStore();
-  const tools = new ToolRegistry([
+  const baseTools = [
     // web_fetch harvests outbound links into the reading list (the P4 substrate).
     createWebFetchTool({
       resolver: createHttpLinkResolver({ maxBytes: config.ingestionMaxBytes }),
@@ -163,7 +165,58 @@ async function main(): Promise<void> {
       logger: consoleLogger,
     }),
     createIngestSourceTool({ semantic, ingestion, logger: consoleLogger }),
-  ]);
+  ];
+  // Phase 9: runtime MCP tool acquisition. Off unless MCP_SERVERS is configured —
+  // then search_tools/load_tool join the native core tools, the catalog indexes the
+  // whitelisted tools off-context, a per-step resolver advertises the companion's
+  // equipped tools, and an arm lists what's currently equipped.
+  const mcpGateway = new StreamableHttpMcpGateway(consoleLogger);
+  const mcpWiring = buildMcpWiring({
+    config,
+    db,
+    gateway: mcpGateway,
+    llmGateway,
+    baseTools,
+    quota,
+    logger: consoleLogger,
+  });
+  if (mcpWiring) {
+    // Build the discovery catalog from the whitelist at startup (best-effort: a
+    // server that's down keeps its stale entries; the catalog never blocks boot).
+    const indexed = await mcpWiring.refreshCatalog();
+    consoleLogger.info('MCP tool catalog built', { operation: 'mcp.startup', tools: indexed });
+  }
+  const tools = new ToolRegistry(mcpWiring ? mcpWiring.nativeTools : baseTools);
+  const retrieveArms = [
+    createEpisodicRetrieveContext({
+      episodic,
+      // Both arms embed the same query; a shared one-entry memo collapses the
+      // duplicate into one provider round-trip (the arms run sequentially).
+      embeddings: retrievalEmbeddings,
+      embeddingModel: config.embeddingModel,
+      embeddingDimensions: config.embeddingDimensions,
+      logger: consoleLogger,
+    }),
+    // Procedural retrieval-as-hint (P5): surface a relevant learned routine so
+    // the capabilities checklist is functional. Grounding-only (no recency).
+    // With tool acquisition on, the routine also drives proactive loading (§5).
+    createProceduralRetrieveContext({
+      procedural,
+      logger: consoleLogger,
+      ...(mcpWiring ? { loadAdvisor: mcpWiring.loadAdvisor } : {}),
+    }),
+    // Phase 9: list the companion's currently-equipped tools (grounding-only),
+    // before the semantic arm, which appends the recency window last.
+    ...(mcpWiring ? [mcpWiring.equippedArm] : []),
+    createSemanticRetrieveContext({
+      memory,
+      semantic,
+      embeddings: retrievalEmbeddings,
+      embeddingModel: config.embeddingModel,
+      embeddingDimensions: config.embeddingDimensions,
+      logger: consoleLogger,
+    }),
+  ];
 
   const harness = new Harness({
     gateway: llmGateway,
@@ -187,35 +240,17 @@ async function main(): Promise<void> {
     // P3: the tools the model may call, the propose→approve gate (effectful calls
     // are held for approval), and the audit log (every call is logged).
     registry: tools,
+    // Phase 9: when MCP is configured, the turn's effective registry is resolved
+    // PER STEP (core tools + the companion's equipped tools), so a load_tool mid-turn is
+    // callable next step. The gate keeps the native registry — MCP tools are
+    // non-effectful and pass through it.
+    ...(mcpWiring ? { resolveRegistry: mcpWiring.resolveRegistry } : {}),
     beforeToolCall: createApprovalGate(proposals, tools, consoleLogger),
     afterToolCall: createLoggingAfterToolCall(toolCallLog, consoleLogger),
-    // The memory-retrieval hook (invariant #3): episodic recall (P2) first, then
-    // semantic recall (P1) which appends the recency transcript window last — so
-    // a turn carries persona + memories + grounding + recent transcript, in order.
-    retrieveContext: composeRetrieveContext(
-      consoleLogger,
-      createEpisodicRetrieveContext({
-        episodic,
-        // Both arms embed the same query; a shared one-entry memo collapses the
-        // duplicate into one provider round-trip (the arms run sequentially).
-        embeddings: retrievalEmbeddings,
-        embeddingModel: config.embeddingModel,
-        embeddingDimensions: config.embeddingDimensions,
-        logger: consoleLogger,
-      }),
-      // Procedural retrieval-as-hint (P5): surface a relevant learned routine so
-      // the capabilities checklist is functional. Grounding-only (no recency), so it
-      // sits before the semantic arm, which appends the recency window last.
-      createProceduralRetrieveContext({ procedural, logger: consoleLogger }),
-      createSemanticRetrieveContext({
-        memory,
-        semantic,
-        embeddings: retrievalEmbeddings,
-        embeddingModel: config.embeddingModel,
-        embeddingDimensions: config.embeddingDimensions,
-        logger: consoleLogger,
-      }),
-    ),
+    // The memory-retrieval hook (invariant #3): episodic + procedural + (MCP tool
+    // hint) grounding arms, then the semantic arm which appends the recency window
+    // last — so a turn carries persona + memories + grounding + recent transcript.
+    retrieveContext: composeRetrieveContext(consoleLogger, ...retrieveArms),
   });
 
   // Episodic consolidation (P2): a metered reflection pass turns the transcript
@@ -365,6 +400,7 @@ async function main(): Promise<void> {
     await harness.whenIdle();
     await consolidation.close();
     await motivation.close();
+    await mcpGateway.close();
   });
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     process.once(signal, () => {

@@ -43,8 +43,14 @@ being is proven, because they add platform cost without changing whether the cor
 | **6** | Mobile surface | + Mobile | Summon model, GPS recall, push, OS-as-tools | Planned |
 | **7** | Desktop surface | + Desktop | File/workspace OS tools, heavier local storage | Planned |
 | **8** | Hardening & launch readiness | All | Security, scale, privacy controls, monetization | Planned |
+| **9** | Tool acquisition — MCP | Web / server-host | Whitelisted HTTP MCP servers discovered, loaded & used at runtime, no redeploy | ✅ **Done** (PR #10) |
+| **10** | Tool acquisition — CLI | Web / server-host | Whitelisted host CLIs learned & driven at runtime, no redeploy | Planned |
 
 ⭐ = the differentiators the web PoC exists to prove. **Phases 0–5 are the PoC.**
+
+> **Phases 9–10 are a server-host capability workstream, independent of the native-surface phases
+> (6–8).** They extend the existing web/cloud surface — they don't depend on mobile/desktop — so the
+> numbering is a label, not a strict ordering after Phase 8. Full design → `companion-tools.md`.
 
 ## 3. Phases (Web PoC)
 
@@ -335,6 +341,118 @@ surface-portable architecture holds across three clients.
 Security & threat-model review, encryption in transit/at rest, data inspection/management/delete
 controls, scale/cost work, and monetization. Resolve remaining open questions (§5).
 
+## 4b. Tool-Acquisition Workstream (post-PoC, server-host)
+
+Lets the companion's toolset **grow at runtime without code or redeploy** — it *acquires* new
+primitive abilities, complementing procedural memory, which *combines* the ones it has. A
+server-host capability track, **independent of** the native-surface phases (6–8). Full design,
+trust model, and security: `companion-tools.md`; architecture placement: `architecture.md` §9;
+implementation design: `implementation.md` §6. Both phases share one spine — generic executors plus
+**`search_tools`**/**`load_tool`** discovery meta-tools; a **catalog** of whitelisted tools indexed
+off-context; a per-companion **equipped set** loaded on demand; and a **dynamic registry resolved
+per model step** so a mid-turn `load_tool` is callable on the next loop iteration (loop shape
+unchanged — invariant #3). The companion **discovers and loads only the tools a job needs** rather
+than carrying every tool in context, so the catalog scales to many servers. The trust model is the
+**developer's whitelist** (it defines the catalog): whitelisted + valid → runs free; otherwise
+denied — a separate system from propose→approve, which still governs outward actions
+(`architecture.md` §4.4).
+
+### Phase 9 — Runtime Tool Acquisition: MCP
+**Goal:** a developer can whitelist an HTTP MCP server and the companion uses its tools at runtime —
+no code change, no redeploy — **discovering and loading** the right tool when a turn calls for it,
+without carrying every tool in context.
+
+**Scope**
+- Refactor the static boot registry into a **composition of capability sources** (core + equipped),
+  behind the unchanged `list()`/`get()` interface, **resolved per model step** so a `load_tool` is
+  callable on the next loop iteration (loop shape unchanged — invariant #3).
+- **Tool catalog:** index every whitelisted server's tools as **lightweight entries** (id, name,
+  one-line description — no argument schemas), off-context; refreshed on whitelist change.
+- **`search_tools`** (cheap off-loop LLM lookup over the catalog → ranked candidate ids) +
+  **`load_tool`** (connect server if needed; fetch the **fresh** schema; equip it).
+- **HTTP/SSE MCP client + adapter:** `initialize` + `tools/list`; adapt each MCP tool to the existing
+  `Tool` interface; proxy `tools/call`; results re-enter context as **untrusted** (injection-hardened
+  like §2.1 grounding).
+- **Per-companion equipped set**, persisted (per tool: server ref + the last-fetched schema snapshot —
+  no endpoint, auth-secret reference, or status; those resolve from the whitelist at call time): a
+  single tier bounded by `maxEquippedTools` (LRU eviction), driving the per-step registry rebuild
+  without a network round-trip. The fixed *core* tools live in code, never in this set. **Promotion =
+  proactive loading**: a recalled procedural routine names the tools it needs that aren't equipped, and the
+  companion `load_tool`s them up front — anticipation, not a frequency-pinned tier.
+- **Trust/security:** developer whitelist defines the catalog → binary allow/deny; **HTTP/SSE only**,
+  SSRF-guarded; no stdio; credentials via the secret manager (never stored/sent to the model).
+
+**Done when:** a developer whitelists an HTTP MCP server; on a relevant user turn the companion
+**`search_tools` → `load_tool` → calls** a tool from that server, the loaded tool becoming callable
+on the next loop iteration; the equipped tool **survives a restart**; an **off-whitelist**
+server never appears in the catalog and cannot be loaded; the catalog scales to many servers without
+inflating per-turn context; `tools/call` results are sanitized as untrusted; every call is logged
+(`tool_calls`).
+
+**Key risks:** discovery latency (search→load adds round-trips — mitigated by proactive loading of a
+recalled routine's tools before the job starts), catalog staleness (mitigated by fetching the
+authoritative schema at load), server
+availability/latency, and untrusted tool output — validate the SSRF boundary and injection-hardening
+on MCP results.
+
+**Implemented** (PR #10): the full **discover → load → call → remember** spine plus the **MCP
+executor**, off by default (empty whitelist). The static boot registry became a **composition of
+capability sources** resolved **per model step** (`core/mcp/equipped-resolver.ts`) behind the
+unchanged `list()`/`get()` interface, so a tool loaded mid-turn is callable on the next loop
+iteration (loop shape unchanged — invariant #3); it degrades to the static registry if resolution
+throws, so acquisition never breaks a turn. A deployment-wide **catalog** (`tool_catalog` table,
+`catalog-builder.ts`, `tool-catalog-store.ts`) indexes every whitelisted server's tools as
+lightweight entries (id, name, one-liner — no schemas), and **`search_tools`** (`search-tools.ts`) is
+a cheap off-loop LLM lookup over it in its own context → ranked ids; **`load_tool`** (`load-tool.ts`)
+connects the server if needed, fetches the **fresh** schema, and equips it. The per-companion
+**equipped set** (`equipped_tools` table, `equipped-store.ts`) is a single tier bounded by
+`maxEquippedTools` (`MAX_EQUIPPED_TOOLS`, LRU eviction); the fixed core tools (native + the two
+discovery meta-tools) live in code, never counted. **Promotion = proactive loading**: a recalled
+procedural routine names tools it needs that aren't equipped and the companion `load_tool`s them up
+front (`load-advisor.ts`). The MCP executor is a provider-agnostic `McpGateway` (`mcp/gateway.ts`) +
+adapter (`mcp/adapter.ts`: namespaced `mcp__<ref>__<tool>`, sha256-anchored truncation to avoid
+name collisions, results fenced as untrusted external data) + `FakeMcpGateway`, with the production
+`StreamableHttpMcpGateway` (`api/mcp/sdk-client.ts`) over the official MCP SDK — **HTTP/SSE only**,
+routed through the **SSRF-guarded** `ssrfSafeFetch` (connection-layer DNS re-validation, not just a
+string check). The **whitelist** (`mcp/whitelist.ts`) is the entire MCP trust decision — binary
+allow/deny, construction-time SSRF + ref validation; admission is **per-server** (a whitelisted
+server admits every tool it advertises). Config: `MCP_SERVERS` (JSON whitelist → `AppConfig.mcpServers`)
++ `MAX_EQUIPPED_TOOLS`; `buildMcpWiring` returns null when no servers are whitelisted, so behaviour
+is unchanged unless configured. **Gate passed** (offline, deterministic — like P3/P5, the
+differentiator is *mechanical*: acquisition without redeploy, not a recall-quality score): the DoD
+test (`packages/api/src/routes/phase9-dod.test.ts`) proves a relevant turn drives
+`search_tools → load_tool → call` with the loaded tool callable on the **next** iteration (every
+call logged); an **off-catalog** id is denied before any gateway call (and still audited); only the
+small core set is advertised regardless of catalog size (no `mcp__` tool until loaded — the catalog
+scales without inflating per-turn context); and an equipped tool **survives a process restart** (a
+cold app instance rebuilds the registry from the persisted equipped row, no re-discovery). Full
+suite green at ≥80% coverage. Canonical mechanism: `docs/companion-tools.md`.
+
+### Phase 10 — Runtime Tool Acquisition: CLI
+**Goal:** a developer can whitelist a host CLI; given the tool's docs, the companion learns to drive
+it and preserves the working invocation — no code change, no redeploy.
+
+**Scope**
+- **`run_command`** primitive driving any whitelisted CLI.
+- **Whitelist / argument-validation policy engine** — specific binary + validated argument patterns,
+  binary allow/deny; entries are narrow (the policy is the trust boundary, no runtime approval).
+- **Host sandbox** — per-tenant working directory, no cross-tenant data/secrets, CPU/time/output
+  ceilings (mirrors the `web_fetch` byte-cap posture).
+- **Experimentation / learning loop** — ingest the tool's docs into **semantic memory**; record a
+  working invocation into **procedural memory**; both feed catalog discovery and proactive loading.
+  Experimentation is bounded by the whitelist (it can try only *validated* invocations).
+- **Trust/security:** same developer-whitelist binary model; output sandboxed and treated as
+  untrusted.
+
+**Done when:** a developer whitelists a CLI (binary + argument patterns); given the tool's docs, the
+companion gets a **valid invocation working**, the know-how **persists** (semantic + procedural), and
+it **reuses** the CLI on a later relevant turn without re-deliberating; **off-whitelist / invalid
+arguments are denied**; output is sandboxed and untrusted; every run is logged.
+
+**Key risks:** host-execution safety (mitigated by whitelist + sandbox on the multi-tenant host),
+experimentation token cost (drawn from the energy/stamina budget), and prompt-injection-to-execution
+(bounded by the whitelist — no invocation can escape it).
+
 ## 5. Open Questions to Resolve (owned here)
 Owned here (single-source). Each is assigned a decision point:
 
@@ -348,6 +466,9 @@ Owned here (single-source). Each is assigned a decision point:
 | Surface rollout confirmed (web → mobile → desktop) | Phase 5 decision gate |
 | Monetization model (subscription, ability packs) | Phase 8 |
 | Push-notification cadence & away-proactivity rules | Phase 6 |
+| Tool whitelist governance — where the CLI/MCP whitelist lives (config vs DB) and the operator flow to admit a tool | **MCP decided (Phase 9):** server whitelist in config (`MCP_SERVERS` env → `AppConfig.mcpServers`), per-server admission, no redeploy to edit (`companion-tools.md` §6). **CLI** argument-pattern policy engine → Phase 10 |
+| User-addable tools (vs developer-whitelisted only) | Deferred — after the tool-acquisition workstream (`companion-tools.md` §9) |
+| External-tool cost metering (the monetary cost of CLI/MCP calls, beyond LLM tokens) | Deferred — revisit with the workstream / Phase 8 |
 
 ## 6. Out of Scope (this plan)
 - Internal implementation detail and data schemas → `architecture.md`,

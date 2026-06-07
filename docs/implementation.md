@@ -415,6 +415,8 @@ Loaded from environment / a secret manager; required values validated at startup
 | `USE_CONTEXT_HEADER` | `true` (default) \| `false` — prefix the Pass-2 context header onto embedding inputs (the eval A/B knob, `companion-memory.md` §5) |
 | `TOKEN_CAP_PER_DAY` | Per-user daily token cap (LLM + embedding) — the cost guardrail across all routes; fixed daily UTC window, overage carries as clamped debt (default 1 000 000). Per-account override → `user_token_usage.cap_override` |
 | `INGESTION_QUEUE_MAX` | Backstop cap on queued+in-flight ingestion runs across all owners; submissions past it get 429 (default 100) |
+| `MCP_SERVERS` | Developer whitelist of MCP servers as a JSON array of `{ ref, endpoint, label?, authTokenEnv? }` — the trust boundary for tool acquisition; empty (default `[]`) disables MCP. HTTP/SSE endpoints only (`companion-tools.md` §7) |
+| `MAX_EQUIPPED_TOOLS` | Per-companion cap on the equipped-tool set (default 8); the single tier evicts LRU past it (`development-plan.md` Phase 9) |
 | `TRACING_PROVIDER` | Online tracing backend: `none` (default) \| `langfuse` (`runbook-tracing.md`) |
 | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | Langfuse credentials (secret; required when `TRACING_PROVIDER=langfuse`) |
 | `LANGFUSE_HOST` | Langfuse base URL (default `https://cloud.langfuse.com`) — **HTTPS only** (it carries the keys + payload); `http://` permitted solely for `localhost` |
@@ -495,6 +497,28 @@ Out of scope for this release; the roadmap is owned by `development-plan.md`.
 **Out of scope / future.**
 - **Onboarding personality seed** — drive weights stay neutral so the character card is *earned*.
 - **Deeper reinforcement** — a contextual-bandit policy beyond the additive change-as-reward nudge.
+- **Runtime tool acquisition** — the implementation behind `companion-tools.md`. **The MCP track is
+  built** (`development-plan.md` Phase 9, PR #10): a per-deployment **tool catalog** (`tool_catalog`
+  table — lightweight index of id, name, one-line description, source over every whitelisted tool;
+  no argument schemas); a per-companion **equipped set** (`equipped_tools` table) rebuilt at startup,
+  a single tier bounded by **`maxEquippedTools`** (env `MAX_EQUIPPED_TOOLS`, LRU eviction; the fixed
+  *core* tools live in code, never in this set); **`search_tools`** (a cheap off-loop LLM lookup over
+  the catalog in its own context → ranked ids) and **`load_tool`** (connect if needed → fetch
+  **fresh** schema → equip); an **HTTP-MCP adapter** (MCP tool def → the existing `Tool` interface
+  §2.1, namespaced `mcp__<ref>__<tool>` with sha256-anchored collision-safe truncation, `tools/call`
+  proxied, results sanitized as untrusted like §2.1 grounding) over the official MCP SDK
+  (Streamable-HTTP, routed through the SSRF-guarded `ssrfSafeFetch`); a **registry resolved per model
+  step** from the equipped set (loop shape unchanged, invariant #3); **promotion = proactive
+  loading** — a recalled procedural routine (§2.2) names the tools it needs that aren't equipped, and
+  the companion `load_tool`s them before the job starts (a tool-load advisor bridges procedural
+  recall → the equipped set; anticipation, not a frequency-pinned tier); and config (`MCP_SERVERS`
+  JSON whitelist with per-server auth-secret env refs → `AppConfig.mcpServers`; `MAX_EQUIPPED_TOOLS`).
+  **The CLI track remains future** (Phase 10): a **CLI policy engine** (binary + argument-pattern
+  whitelist → binary allow/deny), a **`run_command` sandbox** (per-tenant working dir, no
+  cross-tenant data/secrets, CPU/time/output ceilings), a **`learned_tools`** store for learned CLI
+  usages, and the experimentation loop that captures a working invocation into semantic/procedural
+  memory; its DDL and config keys land when built. Mechanism → `companion-tools.md`; scope →
+  `development-plan.md`.
 - **Auth** — an app-issued session JWT and silent refresh / 401-driven re-auth beyond the ~1h
   Google ID token.
 - **Background workers & push** — worker tuning and push-notification credentials.

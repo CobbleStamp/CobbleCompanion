@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install dev test typecheck lint coverage \
+.PHONY: help install dev test typecheck lint coverage ci \
         run-docker build-docker stop-docker clean-docker logs-docker \
         pulumi-preview pulumi push-image-dev deploy-dev
 
@@ -26,6 +26,11 @@ typecheck: ## Typecheck every package
 
 lint: ## Prettier format check (code)
 	pnpm lint
+
+ci: ## Run the full CI verify job locally (lint + typecheck + coverage gate)
+	pnpm lint
+	pnpm typecheck
+	pnpm test:coverage
 
 # --- Docker workflow ---
 
