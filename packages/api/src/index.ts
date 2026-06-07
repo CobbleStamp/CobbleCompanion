@@ -63,8 +63,10 @@ import {
   type TokenVerifier,
 } from './auth/jwt-verifier.js';
 import { loadConfig, type AppConfig } from './config.js';
+import { FileSystemCliToolStore } from './cli/fs-tool-store.js';
+import { createSubprocessSandbox } from './cli/subprocess-sandbox.js';
 import { StreamableHttpMcpGateway } from './mcp/sdk-client.js';
-import { buildMcpWiring } from './mcp/wiring.js';
+import { buildToolAcquisitionWiring } from './mcp/wiring.js';
 import { createTraceSink } from './tracing/langfuse-sink.js';
 
 function createGateway(config: AppConfig): LlmGateway {
@@ -166,27 +168,38 @@ async function main(): Promise<void> {
     }),
     createIngestSourceTool({ semantic, ingestion, logger: consoleLogger }),
   ];
-  // Phase 9: runtime MCP tool acquisition. Off unless MCP_SERVERS is configured —
-  // then search_tools/load_tool join the native core tools, the catalog indexes the
-  // whitelisted tools off-context, a per-step resolver advertises the companion's
-  // equipped tools, and an arm lists what's currently equipped.
+  // Phases 9–10: runtime tool acquisition. Off unless MCP_SERVERS and/or
+  // CLI_TOOLS_PATH is configured — then search_tools/load_tool join the native core
+  // tools, the catalog indexes the whitelisted tools off-context, a per-step
+  // resolver advertises the companion's equipped tools, and an arm lists what's
+  // currently equipped. MCP proxies over HTTP; CLI runs a sandboxed subprocess.
   const mcpGateway = new StreamableHttpMcpGateway(consoleLogger);
-  const mcpWiring = buildMcpWiring({
+  const cliEnabled = config.cliToolsPath.length > 0;
+  const acquisitionWiring = buildToolAcquisitionWiring({
     config,
     db,
-    gateway: mcpGateway,
+    mcpGateway,
+    ...(cliEnabled
+      ? {
+          cliToolStore: new FileSystemCliToolStore(config.cliToolsPath, consoleLogger),
+          cliSandbox: createSubprocessSandbox({
+            scratchDir: config.cliScratchDir,
+            logger: consoleLogger,
+          }),
+        }
+      : {}),
     llmGateway,
     baseTools,
     quota,
     logger: consoleLogger,
   });
-  if (mcpWiring) {
-    // Build the discovery catalog from the whitelist at startup (best-effort: a
-    // server that's down keeps its stale entries; the catalog never blocks boot).
-    const indexed = await mcpWiring.refreshCatalog();
-    consoleLogger.info('MCP tool catalog built', { operation: 'mcp.startup', tools: indexed });
+  if (acquisitionWiring) {
+    // Build the discovery catalog from the configured sources at startup
+    // (best-effort: a source that's down keeps its stale entries; never blocks boot).
+    const indexed = await acquisitionWiring.refreshCatalog();
+    consoleLogger.info('tool catalog built', { operation: 'acquisition.startup', tools: indexed });
   }
-  const tools = new ToolRegistry(mcpWiring ? mcpWiring.nativeTools : baseTools);
+  const tools = new ToolRegistry(acquisitionWiring ? acquisitionWiring.nativeTools : baseTools);
   const retrieveArms = [
     createEpisodicRetrieveContext({
       episodic,
@@ -203,11 +216,11 @@ async function main(): Promise<void> {
     createProceduralRetrieveContext({
       procedural,
       logger: consoleLogger,
-      ...(mcpWiring ? { loadAdvisor: mcpWiring.loadAdvisor } : {}),
+      ...(acquisitionWiring ? { loadAdvisor: acquisitionWiring.loadAdvisor } : {}),
     }),
     // Phase 9: list the companion's currently-equipped tools (grounding-only),
     // before the semantic arm, which appends the recency window last.
-    ...(mcpWiring ? [mcpWiring.equippedArm] : []),
+    ...(acquisitionWiring ? [acquisitionWiring.equippedArm] : []),
     createSemanticRetrieveContext({
       memory,
       semantic,
@@ -244,7 +257,7 @@ async function main(): Promise<void> {
     // PER STEP (core tools + the companion's equipped tools), so a load_tool mid-turn is
     // callable next step. The gate keeps the native registry — MCP tools are
     // non-effectful and pass through it.
-    ...(mcpWiring ? { resolveRegistry: mcpWiring.resolveRegistry } : {}),
+    ...(acquisitionWiring ? { resolveRegistry: acquisitionWiring.resolveRegistry } : {}),
     beforeToolCall: createApprovalGate(proposals, tools, consoleLogger),
     afterToolCall: createLoggingAfterToolCall(toolCallLog, consoleLogger),
     // The memory-retrieval hook (invariant #3): episodic + procedural + (MCP tool

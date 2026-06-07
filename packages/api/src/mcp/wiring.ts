@@ -1,17 +1,21 @@
 /**
- * Assemble the MCP tool-acquisition wiring (companion-tools.md §3–§5) shared by
- * the production graph (index.ts) and the test app (test/helpers.ts): the
- * whitelist, the deployment tool catalog, the per-companion equipped set, the
- * `search_tools` + `load_tool` core tools, the per-step registry resolver, and the
- * equipped-tools legibility arm. Returns null when no servers are whitelisted, so
- * acquisition stays entirely off (behaviour unchanged) unless an operator
- * configures `MCP_SERVERS`. `refreshCatalog()` (re)builds the catalog from the
- * whitelist; the caller runs it at startup and on whitelist changes.
+ * Assemble the tool-acquisition wiring (companion-tools.md §3–§5) shared by the
+ * production graph (index.ts) and the test app (test/helpers.ts): the capability
+ * sources (MCP servers and/or host CLIs), the deployment tool catalog, the
+ * per-companion equipped set, the `search_tools` + `load_tool` core tools, the
+ * per-step registry resolver, and the equipped-tools legibility arm. Returns null
+ * when **no** source is configured, so acquisition stays entirely off (behaviour
+ * unchanged) unless an operator sets `MCP_SERVERS` and/or `CLI_TOOLS_PATH`.
+ * `refreshCatalog()` (re)builds the catalog from all configured sources; the caller
+ * runs it at startup and on a whitelist/definition change.
  */
 
 import {
   type CapabilitySource,
+  type CliToolStore,
+  type CommandSandbox,
   consoleLogger,
+  createCliCapabilitySource,
   createEquippedRegistryResolver,
   createEquippedSummaryContext,
   createLoadToolTool,
@@ -35,24 +39,28 @@ import {
 import type { Database } from '@cobble/db';
 import type { AppConfig } from '../config.js';
 
-export interface McpWiring {
+export interface ToolAcquisitionWiring {
   /** The core tools advertised every step: native tools + search_tools + load_tool. */
   readonly nativeTools: readonly Tool[];
-  /** Per-step registry resolver: core tools + the companion's equipped MCP tools. */
+  /** Per-step registry resolver: core tools + the companion's equipped tools. */
   readonly resolveRegistry: (companionId: string) => Promise<ToolRegistry>;
   /** The RetrieveContext arm that lists the companion's currently-equipped tools. */
   readonly equippedArm: RetrieveContext;
   /** Bridges procedural recall → proactive loading: which routine tools to pick up. */
   readonly loadAdvisor: ToolLoadAdvisor;
-  /** (Re)build the catalog from the whitelist; returns the number of tools indexed. */
+  /** (Re)build the catalog from every configured source; returns the tools indexed. */
   readonly refreshCatalog: () => Promise<number>;
 }
 
-export interface BuildMcpWiringOptions {
+export interface BuildToolAcquisitionWiringOptions {
   readonly config: AppConfig;
   readonly db: Database;
-  /** Speaks the MCP wire protocol (list/call) to whitelisted servers. */
-  readonly gateway: McpGateway;
+  /** Speaks the MCP wire protocol (list/call); used when `MCP_SERVERS` is set. */
+  readonly mcpGateway: McpGateway;
+  /** Reads CLI tool definitions; used when `CLI_TOOLS_PATH` is set. */
+  readonly cliToolStore?: CliToolStore;
+  /** Runs whitelisted CLIs; used when `CLI_TOOLS_PATH` is set. */
+  readonly cliSandbox?: CommandSandbox;
   /** The LLM gateway for the off-loop `search_tools` lookup. */
   readonly llmGateway: LlmGateway;
   /** The existing native tools (web_fetch, memory_search, ingest_source). */
@@ -73,30 +81,52 @@ export function envAuthHeaders(
   return token ? { Authorization: `Bearer ${token}` } : undefined;
 }
 
-/** Build the MCP wiring, or null when no servers are whitelisted (feature off). */
-export function buildMcpWiring(options: BuildMcpWiringOptions): McpWiring | null {
-  const { config, db, gateway, llmGateway } = options;
-  if (config.mcpServers.length === 0) {
+/** Compose the configured capability sources (MCP, CLI) from config + transports. */
+function buildSources(
+  options: BuildToolAcquisitionWiringOptions,
+  logger: Logger,
+): CapabilitySource[] {
+  const { config } = options;
+  const sources: CapabilitySource[] = [];
+  if (config.mcpServers.length > 0) {
+    sources.push(
+      createMcpCapabilitySource({
+        whitelist: new McpWhitelist(config.mcpServers),
+        gateway: options.mcpGateway,
+        authHeaders: envAuthHeaders,
+        logger,
+      }),
+    );
+  }
+  if (config.cliToolsPath.length > 0 && options.cliToolStore && options.cliSandbox) {
+    sources.push(
+      createCliCapabilitySource({
+        toolStore: options.cliToolStore,
+        sandbox: options.cliSandbox,
+        logger,
+      }),
+    );
+  }
+  return sources;
+}
+
+/** Build the tool-acquisition wiring, or null when no source is configured (feature off). */
+export function buildToolAcquisitionWiring(
+  options: BuildToolAcquisitionWiringOptions,
+): ToolAcquisitionWiring | null {
+  const { db, llmGateway } = options;
+  const logger = options.logger ?? consoleLogger;
+  const sources = buildSources(options, logger);
+  if (sources.length === 0) {
     return null;
   }
-  const logger = options.logger ?? consoleLogger;
-  const whitelist = new McpWhitelist(config.mcpServers);
   const catalog = new DrizzleToolCatalogStore(db);
   const equipped = new DrizzleEquippedToolStore(db);
-
-  // The MCP server source; future sources (CLI, Phase 10) compose into this array.
-  const mcpSource = createMcpCapabilitySource({
-    whitelist,
-    gateway,
-    authHeaders: envAuthHeaders,
-    logger,
-  });
-  const sources: readonly CapabilitySource[] = [mcpSource];
 
   const searchTool = createSearchToolsTool({
     catalog,
     gateway: llmGateway,
-    model: config.ingestionModel,
+    model: options.config.ingestionModel,
     ...(options.quota ? { quota: options.quota } : {}),
     logger,
   });
@@ -104,7 +134,7 @@ export function buildMcpWiring(options: BuildMcpWiringOptions): McpWiring | null
     catalog,
     equipped,
     sources,
-    maxEquippedTools: config.maxEquippedTools,
+    maxEquippedTools: options.config.maxEquippedTools,
     logger,
   });
   const nativeTools: readonly Tool[] = [...options.baseTools, searchTool, loadTool];
