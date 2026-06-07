@@ -96,6 +96,8 @@ export {
   cliToolToTool,
   runCliTool,
 } from './cli/adapter.js';
+export { type CliToolStore, InMemoryCliToolStore } from './cli/tool-store.js';
+export { type CliCapabilitySourceOptions, createCliCapabilitySource } from './cli/cli-source.js';
 
 // Identity (the companion "home")
 export {

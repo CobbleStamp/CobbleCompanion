@@ -21,6 +21,21 @@ export interface EquippedSummaryOptions {
   readonly logger: Logger;
 }
 
+/** Longest summary description line before it is clipped. */
+const MAX_SUMMARY_DESCRIPTION = 140;
+
+/** The first non-blank line of a description, clipped — keeps the summary one line per tool. */
+function firstLine(description: string): string {
+  const line =
+    description
+      .split('\n')
+      .find((part) => part.trim().length > 0)
+      ?.trim() ?? '';
+  return line.length > MAX_SUMMARY_DESCRIPTION
+    ? `${line.slice(0, MAX_SUMMARY_DESCRIPTION)}…`
+    : line;
+}
+
 /** Build the equipped-tools summary `RetrieveContext` arm (grounding-only). */
 export function createEquippedSummaryContext(options: EquippedSummaryOptions): RetrieveContext {
   const sources = indexCapabilitySources(options.sources);
@@ -38,9 +53,11 @@ export function createEquippedSummaryContext(options: EquippedSummaryOptions): R
       }
       // `record.toolId` is the tool's advertised name (the adapter and the catalog
       // builder derive both from the same rule), so the summary names match the
-      // names the registry dispatches on — no recomputation needed.
+      // names the registry dispatches on — no recomputation needed. The description
+      // is clamped to its first line so a rich (multi-line) CLI usage prompt stays a
+      // one-line summary; the model reads the full prompt on the equipped tool itself.
       const lines = callable
-        .map((record) => `- \`${record.toolId}\`: ${record.snapshot.description}`)
+        .map((record) => `- \`${record.toolId}\`: ${firstLine(record.snapshot.description)}`)
         .join('\n');
       return {
         blocks: [
