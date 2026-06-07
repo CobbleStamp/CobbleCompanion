@@ -9,18 +9,18 @@
 import { type Database } from '@cobble/db';
 import { createTestDatabase } from '@cobble/db/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { CapabilitySource } from '../acquisition/capability-source.js';
+import type { CapabilitySource } from './capability-source.js';
 import { refreshToolCatalog } from './catalog-builder.js';
-import { FakeMcpGateway } from './fake.js';
+import { FakeMcpGateway } from '../mcp/fake.js';
 import {
   type McpGateway,
   McpGatewayError,
   type McpServerSpec,
   type McpToolDef,
-} from './gateway.js';
-import { createMcpCapabilitySource } from './mcp-source.js';
+} from '../mcp/gateway.js';
+import { createMcpCapabilitySource } from '../mcp/mcp-source.js';
 import { DrizzleToolCatalogStore } from './tool-catalog-store.js';
-import { McpWhitelist } from './whitelist.js';
+import { McpWhitelist } from '../mcp/whitelist.js';
 
 const silentLogger = { error: () => undefined, warn: () => undefined, info: () => undefined };
 

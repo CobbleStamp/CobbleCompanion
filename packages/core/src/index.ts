@@ -61,26 +61,26 @@ export {
   DrizzleToolCatalogStore,
   type ToolCatalogEntry,
   type ToolCatalogStore,
-} from './mcp/tool-catalog-store.js';
+} from './acquisition/tool-catalog-store.js';
 export {
   DrizzleEquippedToolStore,
   type EquipInput,
   type EquippedStoreOptions,
   type EquippedToolRecord,
   type EquippedToolStore,
-} from './mcp/equipped-store.js';
-export { refreshToolCatalog, type RefreshCatalogOptions } from './mcp/catalog-builder.js';
-export { createSearchToolsTool, type SearchToolsOptions } from './mcp/search-tools.js';
-export { createLoadToolTool, type LoadToolOptions } from './mcp/load-tool.js';
+} from './acquisition/equipped-store.js';
+export { refreshToolCatalog, type RefreshCatalogOptions } from './acquisition/catalog-builder.js';
+export { createSearchToolsTool, type SearchToolsOptions } from './acquisition/search-tools.js';
+export { createLoadToolTool, type LoadToolOptions } from './acquisition/load-tool.js';
 export {
   createToolLoadAdvisor,
   type ToolLoadAdvisor,
   type ToolLoadAdvisorOptions,
-} from './mcp/load-advisor.js';
+} from './acquisition/load-advisor.js';
 export {
   createEquippedRegistryResolver,
   type EquippedRegistryResolverOptions,
-} from './mcp/equipped-resolver.js';
+} from './acquisition/equipped-resolver.js';
 // CLI tool acquisition (companion-tools.md — Phase 10): host CLIs as a second
 // capability source over the same spine; run_command is the sandboxed executor.
 export {
@@ -352,7 +352,7 @@ export {
 export {
   createEquippedSummaryContext,
   type EquippedSummaryOptions,
-} from './harness/equipped-summary.js';
+} from './acquisition/equipped-summary.js';
 
 // Growth & feeding economy (Phase 5 — bond & growth, development-plan.md §3)
 export { DEFAULT_GROWTH_CONFIG, type GrowthConfig } from './growth/config.js';

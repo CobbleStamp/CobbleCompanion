@@ -8,9 +8,9 @@
 import { type Database } from '@cobble/db';
 import { createTestDatabase } from '@cobble/db/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { CapabilitySource } from '../acquisition/capability-source.js';
+import type { CapabilitySource } from './capability-source.js';
 import { DrizzleIdentityStore } from '../identity/store.js';
-import { DrizzleEquippedToolStore } from '../mcp/equipped-store.js';
+import { DrizzleEquippedToolStore } from './equipped-store.js';
 import { FakeMcpGateway } from '../mcp/fake.js';
 import { createMcpCapabilitySource } from '../mcp/mcp-source.js';
 import { McpWhitelist } from '../mcp/whitelist.js';

@@ -55,7 +55,7 @@ import {
 } from '@cobble/core';
 import type { FastifyInstance } from 'fastify';
 import { buildApp, type AppDeps } from '../app.js';
-import { buildToolAcquisitionWiring } from '../mcp/wiring.js';
+import { buildToolAcquisitionWiring } from '../acquisition/wiring.js';
 import type { TokenVerifier, VerifiedClaims } from '../auth/jwt-verifier.js';
 import type { AppConfig } from '../config.js';
 

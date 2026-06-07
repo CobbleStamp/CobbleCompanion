@@ -11,7 +11,7 @@
  * (equipped-store.ts).
  */
 
-import { type CapabilitySource, indexCapabilitySources } from '../acquisition/capability-source.js';
+import { type CapabilitySource, indexCapabilitySources } from './capability-source.js';
 import { consoleLogger, type Logger } from '../logging.js';
 import { type Tool } from '../tools/tool.js';
 import { ToolRegistry } from '../tools/registry.js';

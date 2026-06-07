@@ -9,14 +9,14 @@ import { type Database } from '@cobble/db';
 import { createTestDatabase } from '@cobble/db/testing';
 import type { ToolResult, TurnCtx } from '../harness/hooks.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { CapabilitySource } from '../acquisition/capability-source.js';
+import type { CapabilitySource } from './capability-source.js';
 import { DrizzleIdentityStore } from '../identity/store.js';
 import type { Tool } from '../tools/tool.js';
 import { createEquippedRegistryResolver } from './equipped-resolver.js';
 import { DrizzleEquippedToolStore } from './equipped-store.js';
-import { FakeMcpGateway } from './fake.js';
-import { createMcpCapabilitySource } from './mcp-source.js';
-import { McpWhitelist } from './whitelist.js';
+import { FakeMcpGateway } from '../mcp/fake.js';
+import { createMcpCapabilitySource } from '../mcp/mcp-source.js';
+import { McpWhitelist } from '../mcp/whitelist.js';
 
 const silentLogger = { error: () => undefined, warn: () => undefined, info: () => undefined };
 

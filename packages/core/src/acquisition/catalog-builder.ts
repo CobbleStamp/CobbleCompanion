@@ -10,7 +10,7 @@
 
 import type { ToolSource } from '@cobble/shared';
 
-import { type CapabilitySource, indexCapabilitySources } from '../acquisition/capability-source.js';
+import { type CapabilitySource, indexCapabilitySources } from './capability-source.js';
 import { consoleLogger, type Logger } from '../logging.js';
 import type { ToolCatalogStore, ToolCatalogEntry } from './tool-catalog-store.js';
 

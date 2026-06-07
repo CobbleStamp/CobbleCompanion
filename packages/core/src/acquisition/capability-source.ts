@@ -22,7 +22,7 @@
 
 import type { McpToolSnapshot, ToolCatalogEntry, ToolSource } from '@cobble/shared';
 
-import type { EquippedToolRecord } from '../mcp/equipped-store.js';
+import type { EquippedToolRecord } from './equipped-store.js';
 import type { Tool } from '../tools/tool.js';
 
 /**

@@ -22,7 +22,7 @@ import type { McpToolSnapshot, ToolCatalogEntry } from '@cobble/shared';
 import type { CapabilitySource, CatalogContribution } from '../acquisition/capability-source.js';
 import { consoleLogger, type Logger } from '../logging.js';
 import type { Tool } from '../tools/tool.js';
-import type { EquippedToolRecord } from '../mcp/equipped-store.js';
+import type { EquippedToolRecord } from '../acquisition/equipped-store.js';
 import { cliToolName, runCliTool } from './adapter.js';
 import type { CommandSandbox } from './sandbox.js';
 import type { CliToolStore } from './tool-store.js';

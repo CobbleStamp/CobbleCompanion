@@ -66,7 +66,7 @@ import { loadConfig, type AppConfig } from './config.js';
 import { FileSystemCliToolStore } from './cli/fs-tool-store.js';
 import { createSubprocessSandbox } from './cli/subprocess-sandbox.js';
 import { StreamableHttpMcpGateway } from './mcp/sdk-client.js';
-import { buildToolAcquisitionWiring } from './mcp/wiring.js';
+import { buildToolAcquisitionWiring } from './acquisition/wiring.js';
 import { createTraceSink } from './tracing/langfuse-sink.js';
 
 function createGateway(config: AppConfig): LlmGateway {

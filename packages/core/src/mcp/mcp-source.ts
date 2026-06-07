@@ -22,7 +22,7 @@ import { assertPublicHttpUrl } from '../ingestion/url-guard.js';
 import { consoleLogger, type Logger } from '../logging.js';
 import type { Tool } from '../tools/tool.js';
 import { mcpToolName, mcpToolToTool } from './adapter.js';
-import type { EquippedToolRecord } from './equipped-store.js';
+import type { EquippedToolRecord } from '../acquisition/equipped-store.js';
 import type { McpGateway, McpServerSpec } from './gateway.js';
 import type { McpWhitelist, McpWhitelistEntry } from './whitelist.js';
 

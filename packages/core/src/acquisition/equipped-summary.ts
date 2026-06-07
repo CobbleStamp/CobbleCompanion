@@ -8,11 +8,11 @@
  * registry (equipped-resolver.ts); this arm is just the summary line.
  */
 
-import { type CapabilitySource, indexCapabilitySources } from '../acquisition/capability-source.js';
-import type { EquippedToolStore } from '../mcp/equipped-store.js';
+import { type CapabilitySource, indexCapabilitySources } from './capability-source.js';
+import type { EquippedToolStore } from './equipped-store.js';
 import type { Logger } from '../logging.js';
 import { ZERO_USAGE } from '../usage.js';
-import type { RetrieveContext } from './hooks.js';
+import type { RetrieveContext } from '../harness/hooks.js';
 
 export interface EquippedSummaryOptions {
   readonly equipped: EquippedToolStore;

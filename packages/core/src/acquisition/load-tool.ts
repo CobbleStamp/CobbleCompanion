@@ -11,8 +11,8 @@
  * become results.
  */
 
-import type { CapabilitySource } from '../acquisition/capability-source.js';
-import { indexCapabilitySources } from '../acquisition/capability-source.js';
+import type { CapabilitySource } from './capability-source.js';
+import { indexCapabilitySources } from './capability-source.js';
 import type { ToolResult } from '../harness/hooks.js';
 import { consoleLogger, type Logger } from '../logging.js';
 import { readStringArg, type Tool, toolErrorMessage } from '../tools/tool.js';
