@@ -111,7 +111,15 @@ export async function runCliTool(
       timeoutMs: def.limits.timeoutMs,
       maxOutputBytes: def.limits.maxOutputBytes,
     });
-    const failed = result.timedOut || (result.exitCode !== null && result.exitCode !== 0);
+    // A run failed if it timed out, exited non-zero, or never reached a clean exit
+    // for any reason other than our own deliberate truncation kill (which sets
+    // `exitCode: null` via signal but is not itself a failure). The last clause is
+    // what catches a spawn failure (e.g. missing binary → ENOENT) or a crash —
+    // both surface as `exitCode: null` with `truncated: false`.
+    const failed =
+      result.timedOut ||
+      (result.exitCode !== null && result.exitCode !== 0) ||
+      (result.exitCode === null && !result.truncated);
     return {
       name,
       content: fenceUntrusted(def.ref, result, maxChars),

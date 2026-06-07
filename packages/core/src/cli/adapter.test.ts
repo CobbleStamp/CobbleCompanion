@@ -141,9 +141,11 @@ describe('cliToolToTool', () => {
     expect(result.content).toContain('partial');
   });
 
-  it('describes a run that never reached a clean exit without claiming "unknown"', async () => {
+  it('marks a run that never reached a clean exit as an error, without claiming "unknown"', async () => {
     // e.g. the sandbox could not start the binary: no exit code, no timeout, no
-    // output captured — say "did not complete" rather than "exit code unknown".
+    // deliberate truncation kill. A failed-to-start (or crashed) run is a hard
+    // failure — flag isError — and the status says "did not complete" rather than
+    // "exit code unknown". Distinguished from a truncation kill by `truncated`.
     const sandbox = new FakeCommandSandbox(
       (): CommandResult => ({
         output: 'failed to start: ENOENT',
@@ -154,6 +156,7 @@ describe('cliToolToTool', () => {
     );
     const tool = cliToolToTool({ def, sandbox, logger: silentLogger });
     const result = await tool.run({ input: 'i', width: 1, output: 'o' }, ctx);
+    expect(result.isError).toBe(true);
     expect(result.content).toContain('did not complete');
     expect(result.content).not.toContain('unknown');
   });
