@@ -718,18 +718,19 @@ owned by `development-plan.md`.
 - **Onboarding personality seed** — drive weights stay neutral so the character card is *earned*.
 - **Runtime tool acquisition** — letting the toolset **grow at runtime without code or redeploy**,
   so the companion *acquires* new primitives (not only *combines* the three it ships with). The
-  designed spine: generic **`run_command`** + **MCP-connector** executors plus
-  **`search_tools`**/**`load_tool`** discovery meta-tools; a **catalog** of whitelisted tools indexed
-  off-context (so hundreds of tools cost no per-turn tokens); a per-companion **equipped set** the
-  model loads into on demand; and a **dynamic registry** composed behind the existing registry
-  interface (§3) but **resolved per model step** so a tool loaded mid-turn is callable on the next
-  loop iteration — the loop *shape* is unchanged (§4.7), this stays within the tool-invocation
-  extension point (invariant #3). `search_tools` is a cheap off-loop LLM lookup over the lightweight
-  catalog (no embeddings on the critical path). Trust is a **developer-whitelist** — binary
-  allow/deny defining the catalog — sitting *beside* propose→approve (§4.4), not replacing it.
-  Server-host only; CLI **sandboxed**, MCP **HTTP/SSE + SSRF-guarded** (§8), tool outputs treated as
-  untrusted (`implementation.md` §2.1). Design → `companion-tools.md`; scope/sequencing →
-  `development-plan.md`.
+  shared spine: **`search_tools`**/**`load_tool`** discovery meta-tools; a **catalog** of whitelisted
+  tools indexed off-context (so hundreds of tools cost no per-turn tokens); a per-companion
+  **equipped set** the model loads into on demand; and a **dynamic registry** composed behind the
+  existing registry interface (§3) but **resolved per model step** so a tool loaded mid-turn is
+  callable on the next loop iteration — the loop *shape* is unchanged (§4.7), this stays within the
+  tool-invocation extension point (invariant #3). `search_tools` is a cheap off-loop LLM lookup over
+  the lightweight catalog (no embeddings on the critical path). Trust is a **developer-whitelist** —
+  binary allow/deny defining the catalog — sitting *beside* propose→approve (§4.4), not replacing it.
+  Server-host only; tool outputs treated as untrusted (`implementation.md` §2.1). **The MCP track is
+  built** (`development-plan.md` Phase 9, PR #10) — the spine above plus the **MCP-connector**
+  executor, **HTTP/SSE + SSRF-guarded** (§8), off by default until a server is whitelisted; the
+  **CLI track** (a sandboxed **`run_command`** executor + an argument-validation policy engine)
+  remains future (Phase 10). Design → `companion-tools.md`; scope/sequencing → `development-plan.md`.
 - **Native surfaces** — Mobile/Desktop clients, OS-tool bridges, and the Sync Courier.
 - **Transcript compaction** — summarizing the compactible remainder when the context window fills.
 - **Security hardening** — encryption-at-rest specifics, data inspection/management/delete controls,

@@ -14,10 +14,16 @@
 > mechanism and the **whitelist trust model**; it does not redefine the schema, the loop, or the
 > product vision.
 >
-> **Status — design, not yet built.** This is the design spec for a **post-PoC workstream**
-> (`development-plan.md` §"Tool-Acquisition Workstream", Phases 9–10). The PoC (Phases 0–5) ships
-> three hand-written tools (`web_fetch`, `memory_search`, `ingest_source`); this doc describes the
-> mechanism that lets the toolset grow at runtime. Present tense describes the *designed* mechanism.
+> **Status — MCP track built (Phase 9, PR #10); CLI track (Phase 10) in design.** The shared
+> **discover → load → call → remember** spine (the catalog, `search_tools`/`load_tool`, the
+> per-companion equipped set, the per-step dynamic registry, and proactive loading) and the **MCP
+> executor** are implemented and wired — off by default until a server is whitelisted
+> (`development-plan.md` §"Tool-Acquisition Workstream", Phase 9). Present tense describing MCP
+> behaviour and the spine is **live**; the **CLI track** (`run_command`, the argument-validation
+> policy engine, the host sandbox, the experimentation loop — the CLI rows in §3, §7, and Phase 10)
+> and everything in §9 remain **design**. Beyond the three hand-written PoC tools (`web_fetch`,
+> `memory_search`, `ingest_source`), the companion's toolset now grows at runtime via
+> whitelisted HTTP/SSE MCP servers, no code change or redeploy.
 
 ## 1. What it is
 

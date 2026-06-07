@@ -497,25 +497,27 @@ Out of scope for this release; the roadmap is owned by `development-plan.md`.
 **Out of scope / future.**
 - **Onboarding personality seed** — drive weights stay neutral so the character card is *earned*.
 - **Deeper reinforcement** — a contextual-bandit policy beyond the additive change-as-reward nudge.
-- **Runtime tool acquisition** — the implementation behind `companion-tools.md`: a per-deployment
-  **tool catalog** (lightweight index — id, name, one-line description, source — over every
-  whitelisted tool, refreshed on whitelist change and re-fetched periodically; no argument schemas);
-  a per-companion **equipped set + connection/`learned_tools`** store (MCP endpoint, auth-secret
-  *reference* — never the value, last fetched schema, status; learned CLI usages) rebuilt at startup,
-  a single tier bounded by **`maxEquippedTools`** (LRU eviction; the fixed *core* tools live in code,
-  never in this set); **`search_tools`** (a cheap off-loop LLM lookup
-  over the catalog in its own context → ranked ids) and **`load_tool`** (connect if needed → fetch
+- **Runtime tool acquisition** — the implementation behind `companion-tools.md`. **The MCP track is
+  built** (`development-plan.md` Phase 9, PR #10): a per-deployment **tool catalog** (`tool_catalog`
+  table — lightweight index of id, name, one-line description, source over every whitelisted tool;
+  no argument schemas); a per-companion **equipped set** (`equipped_tools` table) rebuilt at startup,
+  a single tier bounded by **`maxEquippedTools`** (env `MAX_EQUIPPED_TOOLS`, LRU eviction; the fixed
+  *core* tools live in code, never in this set); **`search_tools`** (a cheap off-loop LLM lookup over
+  the catalog in its own context → ranked ids) and **`load_tool`** (connect if needed → fetch
   **fresh** schema → equip); an **HTTP-MCP adapter** (MCP tool def → the existing `Tool` interface
-  §2.1, with `tools/call` proxied, results sanitized as untrusted like §2.1 grounding); a **CLI
-  policy engine** (binary + argument-pattern whitelist → binary allow/deny) and a **`run_command`
-  sandbox** (per-tenant working dir, no cross-tenant data/secrets, CPU/time/output ceilings); a
-  **registry resolved per model step** from the equipped set (loop shape unchanged, invariant #3);
-  **promotion = proactive loading** — a recalled procedural routine (§2.2) names the tools it needs
-  that aren't equipped, and the companion `load_tool`s them before the job starts (a tool-load
-  advisor bridges procedural recall → the equipped set; anticipation, not a frequency-pinned tier);
-  and new config (whitelist source, MCP server specs, per-server auth-secret refs, the equipped-tool
-  cap). Authoritative DDL (§1) and
-  config keys (§3) land here when built. Mechanism → `companion-tools.md`; scope →
+  §2.1, namespaced `mcp__<ref>__<tool>` with sha256-anchored collision-safe truncation, `tools/call`
+  proxied, results sanitized as untrusted like §2.1 grounding) over the official MCP SDK
+  (Streamable-HTTP, routed through the SSRF-guarded `ssrfSafeFetch`); a **registry resolved per model
+  step** from the equipped set (loop shape unchanged, invariant #3); **promotion = proactive
+  loading** — a recalled procedural routine (§2.2) names the tools it needs that aren't equipped, and
+  the companion `load_tool`s them before the job starts (a tool-load advisor bridges procedural
+  recall → the equipped set; anticipation, not a frequency-pinned tier); and config (`MCP_SERVERS`
+  JSON whitelist with per-server auth-secret env refs → `AppConfig.mcpServers`; `MAX_EQUIPPED_TOOLS`).
+  **The CLI track remains future** (Phase 10): a **CLI policy engine** (binary + argument-pattern
+  whitelist → binary allow/deny), a **`run_command` sandbox** (per-tenant working dir, no
+  cross-tenant data/secrets, CPU/time/output ceilings), a **`learned_tools`** store for learned CLI
+  usages, and the experimentation loop that captures a working invocation into semantic/procedural
+  memory; its DDL and config keys land when built. Mechanism → `companion-tools.md`; scope →
   `development-plan.md`.
 - **Auth** — an app-issued session JWT and silent refresh / 401-driven re-auth beyond the ~1h
   Google ID token.
