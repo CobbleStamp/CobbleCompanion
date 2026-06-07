@@ -18,19 +18,21 @@ import type { IngestionRunParams } from '../ingestion/pipeline.js';
 import { FakeLlmGateway } from '../llm/fake.js';
 import { TranscriptMemoryStore } from '../memory/store.js';
 import { DrizzleSemanticMemoryStore } from '../memory/semantic-store.js';
-import {
-  DrizzleCompanionEnergyStore,
-  type CompanionEnergyStore,
-  type EnergySnapshot,
-} from '../quota/energy-store.js';
+import { DrizzleVitalityStore, type VitalityStore } from '../quota/vitality-store.js';
 import { DrizzleLeadStore } from '../tools/lead-store.js';
 import { MotivationEngine } from './engine.js';
 import { InMemoryPresenceStore } from './presence-store.js';
 import { DrizzleProactiveOutcomeStore } from './reward-store.js';
 
 const silent: Logger = { error: () => {}, warn: () => {}, info: () => {} };
-const ENERGY_CAP = 10_000;
+/** The wallet seed a new companion gets (matches the identity-store default). */
+const ENERGY_START = 1_000_000;
 const TOKENS_PER_READ = 100;
+
+/** Build an energy wallet store over the test db. */
+function energyStore(db: Database): DrizzleVitalityStore {
+  return new DrizzleVitalityStore(db, 'energy');
+}
 
 /** Logger that captures `error` calls so a swallowed failure can be asserted. */
 interface CapturingLogger extends Logger {
@@ -53,7 +55,7 @@ class FakeReadPipeline implements IngestionTarget {
   constructor(private readonly semantic: DrizzleSemanticMemoryStore) {}
   async run(params: IngestionRunParams): Promise<void> {
     if (params.meter) {
-      await params.meter.quota.recordUsage(params.meter.accountId, TOKENS_PER_READ);
+      await params.meter.quota.spend(params.meter.accountId, TOKENS_PER_READ);
     }
     await this.semantic.updateJob(params.jobId, { status: 'done' });
   }
@@ -64,32 +66,6 @@ class AlwaysThrowingPipeline implements IngestionTarget {
   async run(_params: IngestionRunParams): Promise<void> {
     throw new Error('read blew up');
   }
-}
-
-/**
- * Energy store that scripts successive `getEnergy` snapshots so a test can model a
- * UTC-midnight window roll landing mid-burst: the sensing read (call 0) sees the
- * pre-roll usage and the post-burst read (call 1) sees the rolled-down usage
- * (overage clamped to debt). Spend/exhaustion are inert so the burst's reads all
- * run regardless of the scripted numbers. (getEnergy is called exactly twice by a
- * tick — sensing + post-burst; the burst itself only uses recordSpend/isExhausted.)
- */
-class ScriptedEnergyStore implements CompanionEnergyStore {
-  private call = 0;
-  constructor(
-    private readonly usedByCall: readonly number[],
-    private readonly cap: number,
-  ) {}
-  async getEnergy(): Promise<EnergySnapshot> {
-    const used = this.usedByCall[Math.min(this.call, this.usedByCall.length - 1)]!;
-    this.call += 1;
-    return { usedTokens: used, capTokens: this.cap, resetsAt: new Date(0).toISOString() };
-  }
-  async recordSpend(): Promise<void> {}
-  async isExhausted(): Promise<boolean> {
-    return false;
-  }
-  async topUp(): Promise<void> {}
 }
 
 /** Logger capturing `info` entries so the structured tick log can be asserted. */
@@ -118,7 +94,7 @@ describe('MotivationEngine.tick', () => {
   let leads: DrizzleLeadStore;
   let semantic: DrizzleSemanticMemoryStore;
   let memory: TranscriptMemoryStore;
-  let energy: DrizzleCompanionEnergyStore;
+  let energy: VitalityStore;
   let presence: InMemoryPresenceStore;
   let rewards: DrizzleProactiveOutcomeStore;
   let engine: MotivationEngine;
@@ -138,7 +114,7 @@ describe('MotivationEngine.tick', () => {
     leads = new DrizzleLeadStore(db);
     semantic = new DrizzleSemanticMemoryStore(db);
     memory = new TranscriptMemoryStore(db);
-    energy = new DrizzleCompanionEnergyStore(db, { defaultCapTokens: ENERGY_CAP });
+    energy = energyStore(db);
     presence = new InMemoryPresenceStore();
     rewards = new DrizzleProactiveOutcomeStore(db);
     engine = new MotivationEngine({
@@ -170,11 +146,16 @@ describe('MotivationEngine.tick', () => {
     return messages.filter((m) => m.role === 'assistant').map((m) => m.content);
   }
 
+  /** Energy spent so far = the drop from the seeded starting balance. */
+  async function usedEnergy(): Promise<number> {
+    return ENERGY_START - (await energy.getBalance(companionId));
+  }
+
   it('stays idle (free) when there are no leads', async () => {
     const result = await engine.tick(companionId);
     expect(result.initiated).toBe(false);
     expect(result.move).toBeNull();
-    expect((await energy.getEnergy(companionId)).usedTokens).toBe(0);
+    expect(await usedEnergy()).toBe(0);
     expect(await assistantNotes()).toHaveLength(0);
   });
 
@@ -191,7 +172,7 @@ describe('MotivationEngine.tick', () => {
 
     // Real energy spent: three reads + the report note (> reads alone).
     expect(result.energySpent).toBeGreaterThan(3 * TOKENS_PER_READ);
-    expect((await energy.getEnergy(companionId)).usedTokens).toBe(result.energySpent);
+    expect(await usedEnergy()).toBe(result.energySpent);
 
     // Exactly one in-character report note was posted (not one per source).
     const notes = await assistantNotes();
@@ -241,19 +222,19 @@ describe('MotivationEngine.tick', () => {
 
     const result = await engine.tick(companionId);
     expect(result.initiated).toBe(false);
-    expect((await energy.getEnergy(companionId)).usedTokens).toBe(0);
+    expect(await usedEnergy()).toBe(0);
     expect(await assistantNotes()).toHaveLength(0);
   });
 
   it('stops initiating when energy is exhausted (chat would still run on stamina)', async () => {
     await seedLeads(4);
-    await energy.recordSpend(companionId, ENERGY_CAP); // exhaust the pool
-    expect(await energy.isExhausted(companionId)).toBe(true);
+    await energy.spend(companionId, ENERGY_START); // drain the wallet
+    expect(await energy.isEmpty(companionId)).toBe(true);
 
     const result = await engine.tick(companionId);
     expect(result.initiated).toBe(false);
-    // No further spend beyond the exhausting debit; nothing read or posted.
-    expect((await energy.getEnergy(companionId)).usedTokens).toBe(ENERGY_CAP);
+    // The wallet is empty; nothing further read or posted.
+    expect(await energy.isEmpty(companionId)).toBe(true);
     expect(await leads.listByStatus(companionId, ['new'])).toHaveLength(4);
     expect(await assistantNotes()).toHaveLength(0);
   });
@@ -303,7 +284,7 @@ describe('MotivationEngine.tick', () => {
     // And it was logged at error severity (no silent failure).
     expect(logger.errors.map((e) => e.message)).toContain('motivation tick failed');
     // Nothing was spent or posted.
-    expect((await energy.getEnergy(companionId)).usedTokens).toBe(0);
+    expect(await usedEnergy()).toBe(0);
     expect(await assistantNotes()).toHaveLength(0);
   });
 
@@ -339,19 +320,15 @@ describe('MotivationEngine.tick', () => {
     expect(await rewards.list(companionId, 10)).toHaveLength(0);
   });
 
-  it('reports post-roll usage (not a clamped-to-zero delta) when the energy window rolls mid-burst', async () => {
+  it('logs the real wallet drop as the spend metric (reads + note)', async () => {
     await seedLeads(3);
-    // Sensing sees 900 used (pre-roll). After the burst, the UTC window has rolled
-    // and usage reset to 250 of carried debt — so `after` (250) is BELOW `before`
-    // (900). The store was still debited correctly during the burst; this is a
-    // logged metric, so the engine must fall back to the post-roll usage and flag
-    // it, NOT report the naive `after - before` (negative) nor silently 0.
-    const rolling = new ScriptedEnergyStore([900, 250], 1_000_000);
+    // Energy spent = the drop in the wallet balance across the burst (before −
+    // after). The structured tick log surfaces that same figure.
     const { logger, infos } = infoCapturingLogger();
-    const rolled = new MotivationEngine({
+    const logging = new MotivationEngine({
       identity,
       presence,
-      energy: rolling,
+      energy,
       leads,
       semantic,
       pipeline: new FakeReadPipeline(semantic),
@@ -362,16 +339,14 @@ describe('MotivationEngine.tick', () => {
       logger,
     });
 
-    const result = await rolled.tick(companionId);
+    const result = await logging.tick(companionId);
 
-    // It did initiate and read — the roll only affects the spend metric.
     expect(result.initiated).toBe(true);
     expect(result.sourcesRead).toBe(3);
-    // Post-roll usage (250), NOT the old `Math.max(0, 250 - 900)` = 0.
-    expect(result.energySpent).toBe(250);
-    // The inaccuracy is surfaced, not hidden: the structured log flags it.
+    // The wallet drop equals the reported spend; both exceed the bare reads (note).
+    expect(result.energySpent).toBeGreaterThan(3 * TOKENS_PER_READ);
+    expect(await usedEnergy()).toBe(result.energySpent);
     const initiated = infos.find((e) => e.message === 'motivation tick initiated');
-    expect(initiated?.context.energySpent).toBe(250);
-    expect(initiated?.context.energySpentApprox).toBe(true);
+    expect(initiated?.context.energySpent).toBe(result.energySpent);
   });
 });

@@ -104,6 +104,7 @@ export {
   DrizzleIdentityStore,
   type CompanionRecord,
   type CreateCompanionInput,
+  type DrizzleIdentityStoreOptions,
   type IdentityStore,
   type UserRecord,
 } from './identity/store.js';
@@ -208,22 +209,22 @@ export {
   type EmbeddingResult,
 } from './embedding/gateway.js';
 
-// Stamina quota (per-user daily cap state)
+// Vitality wallets — the per-companion stamina + energy balances, two columns on the
+// companions row (architecture.md §4.8). One store implementation meters both, picked
+// by `kind`; also the generic metering contract the ingestion pipeline bills through.
 export {
-  DrizzleTokenQuotaStore,
-  type DrizzleTokenQuotaStoreOptions,
-  type TokenQuotaStore,
-  type UsageSnapshot,
-} from './quota/stamina-store.js';
+  DrizzleVitalityStore,
+  type VitalityKind,
+  type VitalityStore,
+} from './quota/vitality-store.js';
 
-// Companion energy (per-companion self-initiated pool — the motivation engine's fuel, Phase 4)
+// Food pantry — the per-user supply the feeding economy spends (companion-economy.md).
 export {
-  type CompanionEnergyStore,
-  DrizzleCompanionEnergyStore,
-  type DrizzleCompanionEnergyStoreOptions,
-  type EnergySnapshot,
-} from './quota/energy-store.js';
-export { EnergyQuotaAdapter } from './quota/energy-quota-adapter.js';
+  type FoodInventory,
+  type FoodStore,
+  DrizzleFoodStore,
+  type DrizzleFoodStoreOptions,
+} from './growth/food-store.js';
 
 // Motivation engine — presence (Phase 4)
 export {
@@ -308,7 +309,7 @@ export {
   DrizzleCompanionAffectStore,
 } from './motivation/affect-store.js';
 
-// Token usage / metering (per-user daily cap)
+// Token usage / metering (vitality wallets, architecture.md §4.8)
 export {
   addUsage,
   createUsageAccumulator,

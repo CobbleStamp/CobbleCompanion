@@ -149,13 +149,13 @@ describe('proposal routes', () => {
     expect(transcript.map((m) => m.content)).not.toContain('Hi there');
   });
 
-  it('confirm of a CHAT proposal debits the owner stamina (the re-entry turn spends)', async () => {
+  it('confirm of a CHAT proposal debits the companion stamina (the re-entry turn spends)', async () => {
     // Confirm is a real spend route: a chat-origin approval re-enters the loop and
-    // runs an LLM turn, billed to the owner's stamina (the message route has the
+    // runs an LLM turn, billed to the companion's stamina (the message route has the
     // equivalent assertion; the confirm debit branch was untested).
     const id = await seedProposal(); // create() defaults origin to 'chat'
-    const owner = await ctx.deps.identity.ensureUserByEmail('owner@example.com');
-    expect((await ctx.deps.quota.getUsage(owner.id)).usedTokens).toBe(0);
+    const start = ctx.deps.config.startingVitalityTokens;
+    expect(await ctx.deps.quota.getBalance(companionId)).toBe(start);
 
     await ctx.app.inject({
       method: 'POST',
@@ -163,7 +163,7 @@ describe('proposal routes', () => {
       headers: auth,
     });
 
-    expect((await ctx.deps.quota.getUsage(owner.id)).usedTokens).toBeGreaterThan(0);
+    expect(await ctx.deps.quota.getBalance(companionId)).toBeLessThan(start);
   });
 
   it('streams an empty SSE (no done event) when the outcome row fails to persist', async () => {
@@ -495,9 +495,9 @@ describe('proposal routes', () => {
     expect(res.statusCode).toBe(404);
   });
 
-  it('429s on confirm when the owner is over their daily token cap', async () => {
+  it('429s on confirm when the companion is out of stamina', async () => {
     const id = await seedProposal();
-    await ctx.deps.quota.recordUsage(await ownerId(ctx), ctx.deps.config.tokenCapPerDay + 1);
+    await ctx.deps.quota.spend(companionId, ctx.deps.config.startingVitalityTokens);
     const res = await ctx.app.inject({
       method: 'POST',
       url: `/companions/${companionId}/proposals/${id}/confirm`,
@@ -506,9 +506,3 @@ describe('proposal routes', () => {
     expect(res.statusCode).toBe(429);
   });
 });
-
-/** Resolve the owner's user id (the email is JIT-provisioned on first auth). */
-async function ownerId(ctx: TestApp): Promise<string> {
-  const user = await ctx.deps.identity.ensureUserByEmail('owner@example.com');
-  return user.id;
-}

@@ -6,22 +6,12 @@ CREATE TABLE "companion_affect" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "companion_energy" (
-	"companion_id" uuid PRIMARY KEY NOT NULL,
-	"window_reset_at" timestamp with time zone NOT NULL,
-	"used_tokens" bigint DEFAULT 0 NOT NULL,
-	"cap_override" integer,
-	"top_up_tokens" bigint DEFAULT 0 NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
-);
---> statement-breakpoint
 CREATE TABLE "companion_growth" (
 	"companion_id" uuid PRIMARY KEY NOT NULL,
 	"knowledge_band" integer DEFAULT 0 NOT NULL,
 	"bond_band" integer DEFAULT 0 NOT NULL,
 	"initiative_band" integer DEFAULT 0 NOT NULL,
 	"observed_capabilities" jsonb DEFAULT '[]'::jsonb NOT NULL,
-	"treats" integer DEFAULT 0 NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
@@ -37,6 +27,8 @@ CREATE TABLE "companions" (
 	"proactivity_dial" text DEFAULT 'gentle' NOT NULL,
 	"personality_knobs" jsonb,
 	"drive_weights" jsonb,
+	"stamina_balance_tokens" bigint DEFAULT 1000000 NOT NULL,
+	"energy_balance_tokens" bigint DEFAULT 1000000 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
@@ -196,12 +188,11 @@ CREATE TABLE "tool_catalog" (
 	"indexed_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "user_token_usage" (
+CREATE TABLE "user_food" (
 	"user_id" uuid PRIMARY KEY NOT NULL,
-	"window_reset_at" timestamp with time zone NOT NULL,
-	"used_tokens" bigint DEFAULT 0 NOT NULL,
-	"cap_override" integer,
-	"top_up_tokens" bigint DEFAULT 0 NOT NULL,
+	"ration" integer NOT NULL,
+	"spark" integer NOT NULL,
+	"treat" integer NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
@@ -213,7 +204,6 @@ CREATE TABLE "users" (
 );
 --> statement-breakpoint
 ALTER TABLE "companion_affect" ADD CONSTRAINT "companion_affect_companion_id_companions_id_fk" FOREIGN KEY ("companion_id") REFERENCES "public"."companions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "companion_energy" ADD CONSTRAINT "companion_energy_companion_id_companions_id_fk" FOREIGN KEY ("companion_id") REFERENCES "public"."companions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "companion_growth" ADD CONSTRAINT "companion_growth_companion_id_companions_id_fk" FOREIGN KEY ("companion_id") REFERENCES "public"."companions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "companions" ADD CONSTRAINT "companions_owner_id_users_id_fk" FOREIGN KEY ("owner_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "episodes" ADD CONSTRAINT "episodes_companion_id_companions_id_fk" FOREIGN KEY ("companion_id") REFERENCES "public"."companions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -235,7 +225,7 @@ ALTER TABLE "sections" ADD CONSTRAINT "sections_companion_id_companions_id_fk" F
 ALTER TABLE "sections" ADD CONSTRAINT "sections_source_id_sources_id_fk" FOREIGN KEY ("source_id") REFERENCES "public"."sources"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "sources" ADD CONSTRAINT "sources_companion_id_companions_id_fk" FOREIGN KEY ("companion_id") REFERENCES "public"."companions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "tool_calls" ADD CONSTRAINT "tool_calls_companion_id_companions_id_fk" FOREIGN KEY ("companion_id") REFERENCES "public"."companions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "user_token_usage" ADD CONSTRAINT "user_token_usage_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "user_food" ADD CONSTRAINT "user_food_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "companions_owner_idx" ON "companions" USING btree ("owner_id");--> statement-breakpoint
 CREATE INDEX "episodes_companion_time_idx" ON "episodes" USING btree ("companion_id","occurred_end");--> statement-breakpoint
 CREATE INDEX "episodes_companion_seq_idx" ON "episodes" USING btree ("companion_id","seq_end");--> statement-breakpoint

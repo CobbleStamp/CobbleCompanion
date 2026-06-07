@@ -74,8 +74,28 @@ export interface IdentityStore {
   updateDriveWeights(companionId: string, driveWeights: DriveWeights): Promise<void>;
 }
 
+export interface DrizzleIdentityStoreOptions {
+  /**
+   * Tokens each new companion's stamina + energy wallets are seeded with at
+   * creation (architecture.md §4.8). Defaults to the schema default; production
+   * passes `STARTING_VITALITY_TOKENS` through here so the env override takes effect.
+   */
+  readonly startingVitalityTokens?: number;
+}
+
+/** Schema-default wallet seed; mirrors `companions.{stamina,energy}_balance_tokens`. */
+const DEFAULT_STARTING_VITALITY_TOKENS = 1_000_000;
+
 export class DrizzleIdentityStore implements IdentityStore {
-  constructor(private readonly db: Database) {}
+  private readonly startingVitalityTokens: number;
+
+  constructor(
+    private readonly db: Database,
+    options: DrizzleIdentityStoreOptions = {},
+  ) {
+    this.startingVitalityTokens =
+      options.startingVitalityTokens ?? DEFAULT_STARTING_VITALITY_TOKENS;
+  }
 
   async ensureUserByEmail(email: string): Promise<UserRecord> {
     await this.db.insert(users).values({ email }).onConflictDoNothing();
@@ -94,7 +114,14 @@ export class DrizzleIdentityStore implements IdentityStore {
   async createCompanion(ownerId: string, input: CreateCompanionInput): Promise<CompanionDto> {
     const [row] = await this.db
       .insert(companions)
-      .values({ ownerId, ...input })
+      .values({
+        ownerId,
+        ...input,
+        // Seed both vitality wallets at creation (architecture.md §4.8); the store
+        // meters these columns thereafter.
+        staminaBalanceTokens: this.startingVitalityTokens,
+        energyBalanceTokens: this.startingVitalityTokens,
+      })
       .returning();
     if (!row) {
       throw new Error('failed to create companion');

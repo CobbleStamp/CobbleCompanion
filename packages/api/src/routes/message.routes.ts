@@ -88,9 +88,9 @@ export function registerMessageRoutes(
       }
       // The user is here and acting — mark presence active (P4 environment signal).
       presence.recordActivity(companion.id);
-      // Daily token cap: refuse before spending, so the wall is a clean 429 (no
+      // Daily stamina cap: refuse before spending, so the wall is a clean 429 (no
       // partial SSE). Turn-based chat means there's nothing in flight to outrun.
-      const overCap = await overCapGuard(quota, request.userId!);
+      const overCap = await overCapGuard(quota, companion.id);
       if (overCap) {
         return reply.code(429).send({ error: overCap });
       }

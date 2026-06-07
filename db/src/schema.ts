@@ -110,6 +110,21 @@ export const companions = pgTable(
     // (null → neutral defaults). A Cobble is raised into its personality
     // (companion-motivation.md §7).
     driveWeights: jsonb('drive_weights').$type<DriveWeights>(),
+    // Vitality (architecture.md §4.8) — the companion's two token wallets, held
+    // inline on the row (1:1 with the companion; no separate table). STAMINA fuels
+    // user-initiated work (chat, assigned tasks); ENERGY fuels self-initiated work
+    // (the motivation engine) — two wallets so autonomy can never starve interaction.
+    // Each spends DOWN as the companion works (atomic `GREATEST(0, balance - n)`, so a
+    // single overshooting turn empties but never goes negative — no debt) and refills
+    // UP **only by feeding** (no cap, no daily window, no auto-refill). Seeded at
+    // creation from `STARTING_VITALITY_TOKENS`; the default here is the safety net for
+    // a bare insert (DrizzleVitalityStore meters these columns — `vitality-store.ts`).
+    staminaBalanceTokens: bigint('stamina_balance_tokens', { mode: 'number' })
+      .notNull()
+      .default(1_000_000),
+    energyBalanceTokens: bigint('energy_balance_tokens', { mode: 'number' })
+      .notNull()
+      .default(1_000_000),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index('companions_owner_idx').on(table.ownerId)],
@@ -446,43 +461,20 @@ export const proceduralMemories = pgTable(
 );
 
 /**
- * Per-user STAMINA budget (the daily cap for user-initiated work). The effective
- * cap is `(cap_override ?? default) + top_up_tokens`: `cap_override` is a fixed
- * per-account ceiling, `top_up_tokens` is the user's manual feed grant (the simple
- * top-up control — the food/feeding economy is Phase 5) and persists across window
- * rolls. Keeping the grant in its own column (rather than folding it into
- * `cap_override`) means a later change to the configured default still reaches
- * fed users, and lets the top-up be an atomic SQL increment — mirrors
- * `companion_energy` exactly (the energy pool is the per-companion twin).
+ * Per-user FOOD pantry (architecture.md §4.8, companion-economy.md) — the feeding
+ * economy's supply. Integer counts of each food type the user holds and may spend on
+ * **any** of their companions (a user-level resource, distinct from the per-companion
+ * wallets it refills). Seeded with `initialFood` (10 each) on first use; a feed
+ * consumes one (atomic `count - 1`, guarded ≥ 0). Not replenished in the PoC — no
+ * currency, no buying; a developer raises a count directly when a user runs out.
  */
-export const userTokenUsage = pgTable('user_token_usage', {
+export const userFood = pgTable('user_food', {
   userId: uuid('user_id')
     .primaryKey()
     .references(() => users.id, { onDelete: 'cascade' }),
-  windowResetAt: timestamp('window_reset_at', { withTimezone: true }).notNull(),
-  usedTokens: bigint('used_tokens', { mode: 'number' }).notNull().default(0),
-  capOverride: integer('cap_override'),
-  topUpTokens: bigint('top_up_tokens', { mode: 'number' }).notNull().default(0),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
-
-/**
- * Per-companion ENERGY budget (Phase 4, architecture.md §4.8) — the self-initiated
- * pool that fuels the motivation engine. Mirrors `user_token_usage` (the stamina
- * pool) but keyed per COMPANION, so autonomous work can never starve interaction.
- * The effective cap is `(cap_override ?? default) + top_up_tokens`; `top_up_tokens`
- * is the user's manual feed grant (the simple top-up control — the food/feeding
- * economy is Phase 5) and persists across window rolls. The daily window rolls
- * like stamina, carrying overage forward as debt clamped to one cap.
- */
-export const companionEnergy = pgTable('companion_energy', {
-  companionId: uuid('companion_id')
-    .primaryKey()
-    .references(() => companions.id, { onDelete: 'cascade' }),
-  windowResetAt: timestamp('window_reset_at', { withTimezone: true }).notNull(),
-  usedTokens: bigint('used_tokens', { mode: 'number' }).notNull().default(0),
-  capOverride: integer('cap_override'),
-  topUpTokens: bigint('top_up_tokens', { mode: 'number' }).notNull().default(0),
+  ration: integer('ration').notNull(),
+  spark: integer('spark').notNull(),
+  treat: integer('treat').notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -557,15 +549,11 @@ export const proactiveOutcomes = pgTable(
  * procedure logs); this row is NOT a parallel score. It is the *acknowledged
  * high-water mark* — the highest band per axis + observed capabilities the
  * derivation pass already acknowledged — so an advance (a new band, a newly
- * observed capability) fires EXACTLY ONCE and the treats it awards are not
- * double-granted on a re-run. This mirrors the P2
- * `consolidated_through_seq` cursor: derived truth recomputes freely, the cursor
- * makes the side effects idempotent.
- *
- * `treats` is the earned currency (the only stored, non-derived value): granted on
- * growth milestones, spent on food in the feeding economy (an atomic SQL
- * increment/decrement, mirroring the energy top-up). One row per companion,
- * created lazily on first recompute.
+ * observed capability) fires its growth-reflection note EXACTLY ONCE and never
+ * re-fires on a re-run. This mirrors the P2 `consolidated_through_seq` cursor:
+ * derived truth recomputes freely, the cursor makes the side effects idempotent.
+ * The mirror is fully DECOUPLED from feeding — growing stores nothing spendable.
+ * One row per companion, created lazily on first recompute.
  */
 export const companionGrowth = pgTable('companion_growth', {
   companionId: uuid('companion_id')
@@ -582,8 +570,6 @@ export const companionGrowth = pgTable('companion_growth', {
     .$type<readonly CapabilityKey[]>()
     .notNull()
     .default(sql`'[]'::jsonb`),
-  // The earned feeding currency — the one stored, non-derived value (companion-economy.md).
-  treats: integer('treats').notNull().default(0),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -648,8 +634,7 @@ export const schema = {
   toolCalls,
   leads,
   proceduralMemories,
-  userTokenUsage,
-  companionEnergy,
+  userFood,
   companionAffect,
   proactiveOutcomes,
   companionGrowth,

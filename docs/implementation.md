@@ -20,7 +20,7 @@ the sections that follow.
 ```mermaid
 erDiagram
     users          ||--o{ companions      : owns
-    users          ||--o| user_token_usage : "stamina cap (§ below)"
+    users          ||--o| user_food       : "food pantry (§ below)"
     companions     ||--o{ messages        : "one lifelong transcript"
     companions     ||--o{ episodes        : "consolidated from transcript"
     companions     ||--o{ sources         : ingests
@@ -110,8 +110,8 @@ erDiagram
 
 > **Proactive ingestion notes.** A successful or failed read appends a single `assistant` turn
 > here via the **Ingestion Announcer** (`packages/core/src/ingestion/announcer.ts`): an
-> in-character note generated through the metered LLM gateway (debited to the owner's daily cap),
-> with a single-sourced **canned fallback** (`@cobble/shared`) when the owner is over cap, when
+> in-character note generated through the metered LLM gateway (spent from the companion's stamina),
+> with a single-sourced **canned fallback** (`@cobble/shared`) when stamina is empty, when
 > generation throws, or when no persona is available. It is appended *before* the job's terminal
 > status flip, and an announcement failure is logged but never alters the job outcome
 > (`architecture.md` §4.8). These notes carry no `source_id` (no chip/link — just a message).
@@ -163,7 +163,7 @@ erDiagram
 | Field | Type | Notes |
 |---|---|---|
 | `id` / `companion_id` / `source_id` | uuid | cascade FKs |
-| `status` | text | `queued → parsing → segmenting → enriching → embedding → done` \| `failed`; `deferred` is off-line (parsed, awaiting the daily token cap to reset — `architecture.md` §4.8) |
+| `status` | text | `queued → parsing → segmenting → enriching → embedding → done` \| `failed`; `deferred` is off-line (parsed, awaiting stamina — resumes once the companion is fed — `architecture.md` §4.8) |
 | `sections_total` / `sections_done` | integer | drives "read N of M" |
 | `error` | text, nullable | user-safe failure reason; detail stays in logs |
 | `parsed_doc` | jsonb, nullable | parsed paragraphs held while `deferred`, so the AI passes resume without a re-upload; null otherwise |
@@ -173,16 +173,16 @@ erDiagram
 > with no schema/API change (`architecture.md` §4.8, §8), and lets deferred jobs survive a restart.
 
 The `status` column is a state machine. Parsing extracts text without the LLM; the three AI passes
-(segment → enrich → embed) are metered, so a job that would breach the daily token cap is parked in
-`deferred` with its `parsed_doc` held, then resumes when the window resets:
+(segment → enrich → embed) are metered, so a job the companion can't afford from stamina is parked in
+`deferred` with its `parsed_doc` held, then resumes once it has stamina again (after feeding):
 
 ```mermaid
 stateDiagram-v2
     [*] --> queued
     queued --> parsing : runner picks up
-    parsing --> deferred : over daily cap (parsed_doc held)
-    deferred --> segmenting : cap window resets
-    parsing --> segmenting : under cap
+    parsing --> deferred : stamina empty (parsed_doc held)
+    deferred --> segmenting : stamina restored (fed)
+    parsing --> segmenting : has stamina
     segmenting --> enriching : Pass 1 — topics
     enriching --> embedding : Pass 2 — context headers
     embedding --> done : vectors written
@@ -198,21 +198,34 @@ stateDiagram-v2
     end note
 ```
 
-### `user_token_usage` — daily token cap state
+### `companions` — vitality columns (stamina + energy wallets)
+The two halves of a companion's vitality are **inline columns on the `companions` row** (1:1 with
+the companion — no separate wallet table):
+
 | Field | Type | Notes |
 |---|---|---|
-| `user_id` | uuid (PK, FK → `users.id`, cascade) | one row per user |
-| `window_reset_at` | timestamptz | when the current fixed-daily (UTC) window rolls; overage carries as debt clamped to one cap |
-| `used_tokens` | bigint | tokens spent in the current window (LLM + embedding) |
-| `cap_override` | integer, nullable | per-account cap; null → the `TOKEN_CAP_PER_DAY` default |
-| `top_up_tokens` | bigint, default 0 | manual feed grant; effective cap = `(cap_override ?? default) + top_up_tokens`.<br>Added by an atomic SQL increment (concurrent feeds can't lose an update), persists across window rolls, and — being separate from `cap_override` — keeps tracking later changes to the default.<br>Mirrors `companion_energy` exactly. |
+| `stamina_balance_tokens` | bigint, not null, default 1_000_000 | tokens left for **user-initiated** work (chat, assigned tasks). |
+| `energy_balance_tokens` | bigint, not null, default 1_000_000 | tokens left for **self-initiated** work (the motivation engine). A separate wallet so autonomy can't starve interaction. |
+
+> Each balance is seeded at companion creation from `STARTING_VITALITY_TOKENS` (the column default is
+> the safety net for a bare insert). Spend decrements it (atomic SQL `GREATEST(0, balance - n)` — a
+> turn can't drive it negative, so there is no debt); feeding increments it. No cap, no window, no
+> auto-refill — a balance only goes down (spending) or up (feeding). Postgres-backed so it is correct
+> across replicas. Routes enforce stamina inline: chat/search 429 when empty, ingestion defers until
+> it has tokens again (`architecture.md` §4.8). `GET /companions/:id/usage` exposes the stamina
+> balance for the web client's live indicator. One store meters both columns, picked by a
+> `'stamina' | 'energy'` discriminator (`packages/core/src/quota/vitality-store.ts`).
+
+### `user_food` — the per-user food pantry
+| Field | Type | Notes |
+|---|---|---|
+| `user_id` | uuid (PK, FK → `users.id`, cascade) | one row per user; the foods the user holds, spendable on any of their companions |
+| `ration` / `spark` / `treat` | integer, not null | counts of each food type. Seeded with `initialFood` (default 10 each) on the row's first creation; a feed decrements one (atomic SQL `count - 1`, guarded ≥ 0). Not replenished in the PoC. |
 | `updated_at` | timestamptz | |
 
-> Postgres-backed so the cap is correct across replicas. Routes enforce it inline: chat/search
-> 429 over cap, ingestion defers (`architecture.md` §4.8). `GET /usage` exposes the standing for
-> the web client's live indicator. The manual top-up (`POST /companions/:id/budget/topup`, the Feed control)
-> raises `top_up_tokens`; the per-user stamina store is the structural twin of the per-companion
-> energy store (`packages/core/src/quota/stamina-store.ts` ↔ `energy-store.ts`).
+> The feeding economy's supply (`companion-economy.md`). `POST /companions/:id/feed` consumes one
+> food from this row and adds its grants to the fed companion's wallet(s). When a count hits 0 the
+> feed returns 409; a developer raises it directly in the DB (no buying in the PoC).
 
 ### `sections` — Layer 1: retrieval units
 | Field | Type | Notes |
@@ -332,14 +345,14 @@ The schema the motivation engine and growth service use (full mechanisms →
 `companion-motivation.md`, `companion-economy.md`; authoritative DDL → `db/`).
 
 The second cluster is the **will & economy** — the approval queue and its reading-list leads, the
-tool/procedure logs the loop writes, and the per-companion singletons that carry mood, the two
-budget pools, and the growth mirror. As above, only keys and relationships are shown; fields are in
-the prose below.
+tool/procedure logs the loop writes, the per-companion singletons that carry mood, and the growth
+mirror, plus the per-user food pantry the feeding economy spends. The two vitality wallets are
+inline columns on `companions` (above), not their own tables. As above, only keys and relationships
+are shown; fields are in the prose below.
 
 ```mermaid
 erDiagram
-    users       ||--o| user_token_usage   : "stamina pool (per user)"
-    companions  ||--o| companion_energy    : "energy pool"
+    users       ||--o| user_food           : "food pantry"
     companions  ||--o| companion_affect    : "rolling mood read"
     companions  ||--o| companion_growth    : "growth mirror"
     companions  ||--o{ proposals           : "approval queue"
@@ -353,11 +366,8 @@ erDiagram
     companions {
         uuid id PK
     }
-    user_token_usage {
+    user_food {
         uuid user_id PK
-    }
-    companion_energy {
-        uuid companion_id PK
     }
     companion_affect {
         uuid companion_id PK
@@ -390,15 +400,22 @@ erDiagram
 ```
 
 - **`proposals.origin`** — `text` enum `chat | explore | autonomous`, default `chat`. Lets the
-  confirm route re-enter the loop only for `chat`-origin proposals (the §4.4 resolution) and bill
-  effectful work to the right budget pool (chat→stamina, explore/autonomous→energy).
+  confirm route re-enter the loop only for `chat`-origin proposals (the §4.4 resolution) and spend
+  effectful work from the right wallet (chat→stamina, explore/autonomous→energy).
 - **`companions`** also carries: `proactivity_dial` (`off | gentle | active`, default `gentle` — the
   tunability dial); `personality_knobs` (jsonb `{focusLength, boredom, distractibility}` — the
   "creature" constants, at shared defaults, null → defaults); `drive_weights` (jsonb — per-drive
-  weights the reinforcement loop updates; **starts neutral**, null → neutral defaults).
-- **`companion_energy`** (new) — the **energy** pool (self-initiated work), mirroring
-  `user_token_usage` (which becomes the **stamina** pool) but keyed per **companion**: window reset,
-  used tokens, a manual top-up grant. Separate counters so autonomy can't starve interaction (§4.8).
+  weights the reinforcement loop updates; **starts neutral**, null → neutral defaults); and the two
+  **vitality** columns `stamina_balance_tokens` / `energy_balance_tokens` (see the columns table
+  above) — the two halves of a companion's vitality, held inline (1:1, no wallet table). Each
+  spending-decrements (floored at 0) and feeding-increments — no cap, no window, no auto-refill.
+  **Energy** meters self-initiated work, **stamina** user-initiated work; they are **separate
+  wallets** so autonomy can't starve interaction (§4.8). Seeded at creation from
+  `STARTING_VITALITY_TOKENS`.
+- **`user_food`** — the per-**user** food pantry the feeding economy spends: integer counts of
+  `ration` / `spark` / `treat`, seeded with `initialFood` (10 each) on first use, a feed consuming one
+  (atomic, guarded ≥ 0). Per user, not per companion, so one pantry feeds all of a user's companions
+  (`companion-economy.md`).
 - **`companion_affect`** — the companion's **rolling read of the
   user's mood**, one row per companion: `valence` ∈ [−1, 1] + a short natural-language `note`. The
   agent loop upserts it on every *successful* read (last-write-wins); the prior read is fed forward to
@@ -421,23 +438,21 @@ erDiagram
 Presence is **not** a table — it is a volatile, heartbeat-fed in-memory signal (§4.5).
 
 - **`companion_growth`** —
-  the bond/growth standing as a **MIRROR**. Growth itself is **DERIVED** every read from substrate
-  that already exists (sources/sections/episode counts, the tool/procedure/affect logs, the
-  proactive-outcome log, learned `drive_weights`) and **may move in either direction**; this row is
-  **not** a parallel score and **never floors** what the surface shows. It stores only the **acknowledged
-  high-water mark** — `knowledge_band`, `bond_band`, `initiative_band` (the highest band index already
-  reflected on), `observed_capabilities` (jsonb `CapabilityKey[]`) — plus the earned **`treats`** balance
-  (the one stored, non-derived value). The mark exists ONLY to make reflections **idempotent**: `advance`
-  is a compare-and-set on the monotonic band indices + observed-capability set (the same trick as the
-  consolidation cursor), so two concurrent post-turn recomputes (e.g. rapid back-to-back turns,
-  or two app instances) can never double-award treats or double-post a growth reflection. (`GET /growth`
-  itself is read-only — it never recomputes — so a read can never award or post.) The row is created
-  lazily on first recompute, seeded with `initialTreats` so feeding works on day one. `treats` moves by atomic SQL
-  increment (milestone reward) / guarded decrement (feeding, never below zero) — mirrors the energy
-  top-up. Growth curves, the capabilities catalogue, food grants, and treat rewards are centralized in
-  `core/src/growth/config.ts` (`DEFAULT_GROWTH_CONFIG`) — no scattered literals. For the
-  earn→spend **feeding economy** these constants drive (treats, foods, the feed flow), see
-  `companion-economy.md`.
+  the bond/growth standing as a **MIRROR**, fully **decoupled** from feeding (growing earns nothing
+  spendable). Growth itself is **DERIVED** every read from substrate that already exists
+  (sources/sections/episode counts, the tool/procedure/affect logs, the proactive-outcome log, learned
+  `drive_weights`) and **may move in either direction**; this row is **not** a parallel score and
+  **never floors** what the surface shows. It stores only the **acknowledged high-water mark** —
+  `knowledge_band`, `bond_band`, `initiative_band` (the highest band index already reflected on) and
+  `observed_capabilities` (jsonb `CapabilityKey[]`). The mark exists ONLY to make reflections
+  **idempotent**: `advance` is a compare-and-set on the monotonic band indices + observed-capability
+  set (the same trick as the consolidation cursor), so two concurrent post-turn recomputes (e.g. rapid
+  back-to-back turns, or two app instances) can never double-post a growth reflection. (`GET /growth`
+  itself is read-only — it never recomputes — so a read can never post.) The row is created lazily on
+  first recompute. Growth curves and the capabilities catalogue are centralized in
+  `core/src/growth/config.ts` (`DEFAULT_GROWTH_CONFIG`) — no scattered literals — alongside the
+  feeding economy's constants (food grants, the food seed), which drive the separate **feeding**
+  flow; see `companion-economy.md`.
 
 ### Migrations & versioning
 
@@ -465,8 +480,8 @@ loop.
 // embeds the question) needs it; the recency window ignores it. The object
 // param keeps future fields additive. The return is a RetrieveResult carrying
 // the blocks plus the `usage` spent recalling them (the query embedding), so
-// the harness can meter the whole turn against the daily cap
-// (`user_token_usage`, §1).
+// the harness can meter the whole turn against the companion's stamina wallet
+// (`companions.stamina_balance_tokens`, §1).
 interface RetrieveParams { companionId: string; userContent: string }
 interface RetrieveResult { blocks: readonly ContextBlock[]; usage: TokenUsage }
 type RetrieveContext = (params: RetrieveParams) => Promise<RetrieveResult>;
@@ -585,7 +600,7 @@ Loaded from environment / a secret manager; required values validated at startup
 | `INGESTION_MODEL` | Cheap model for the two ingestion reading passes (default `google/gemini-2.5-flash`) — input-heavy, output-bounded (`architecture.md` §4.8) |
 | `INGESTION_MAX_BYTES` | Source upload size cap, also the link-fetch body ceiling (default 25 MiB) |
 | `USE_CONTEXT_HEADER` | `true` (default) \| `false` — prefix the Pass-2 context header onto embedding inputs (the eval A/B knob, `companion-memory.md` §5) |
-| `TOKEN_CAP_PER_DAY` | Per-user daily token cap (LLM + embedding) — the cost guardrail across all routes; fixed daily UTC window, overage carries as clamped debt (default 1 000 000).<br>Per-account override → `user_token_usage.cap_override` |
+| `STARTING_VITALITY_TOKENS` | The token balance a new companion is seeded with in **each** vitality column (`stamina_balance_tokens` + `energy_balance_tokens`) at creation (default 1 000 000). Not a cap — wallets only refill by feeding (§4.8). |
 | `INGESTION_QUEUE_MAX` | Backstop cap on queued+in-flight ingestion runs across all owners; submissions past it get 429 (default 100) |
 | `MCP_SERVERS` | Developer whitelist of MCP servers as a JSON array of `{ ref, endpoint, label?, authTokenEnv? }` — the trust boundary for tool acquisition.<br>Empty (default `[]`) disables MCP. HTTP/SSE endpoints only (`companion-tools.md` §7) |
 | `MAX_EQUIPPED_TOOLS` | Per-companion cap on the equipped-tool set (default 8); the single tier evicts LRU past it (`development-plan.md` Phase 9) |
@@ -611,9 +626,9 @@ chars) and link-harvest cap (`MAX_HARVESTED_LINKS`, default 20), and the `/explo
 
 **Motivation tuning constants** are likewise in-code: the motivation **sweep cadence**
 (`MOTIVATION_SWEEP_INTERVAL_MS`, `api/src/index.ts`) and the autonomous-burst focus length
-(`motivation/`). The per-companion **energy** pool reuses `TOKEN_CAP_PER_DAY` as its default cap
-(`api/src/index.ts`), and the post-turn **affect read** runs on `INGESTION_MODEL` (billed to
-stamina) — see §1 and `companion-motivation.md` §7–§8.
+(`motivation/`). Both per-companion vitality wallets (**stamina** and **energy**) are seeded from
+`STARTING_VITALITY_TOKENS` (`api/src/index.ts`), and the post-turn **affect read** runs on
+`INGESTION_MODEL` (spent from the companion's stamina) — see §1 and `companion-motivation.md` §7–§8.
 
 ## 4. Error Handling
 

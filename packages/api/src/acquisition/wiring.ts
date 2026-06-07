@@ -32,7 +32,7 @@ import {
   McpWhitelist,
   refreshToolCatalog,
   type RetrieveContext,
-  type TokenQuotaStore,
+  type VitalityStore,
   type Tool,
   type ToolRegistry,
 } from '@cobble/core';
@@ -66,7 +66,7 @@ export interface BuildToolAcquisitionWiringOptions {
   /** The existing native tools (web_fetch, memory_search, ingest_source). */
   readonly baseTools: readonly Tool[];
   /** Bills the `search_tools` lookup to the owner's stamina; omit = unmetered. */
-  readonly quota?: TokenQuotaStore;
+  readonly quota?: VitalityStore;
   readonly logger?: Logger;
 }
 

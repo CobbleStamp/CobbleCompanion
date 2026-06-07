@@ -85,9 +85,10 @@ context. This is the heart of the PoC.
   (`product-overview.md` §2.1).
 - Grounded recall in chat: retrieval-augmented answers with provenance ("from your Peru book").
 - Ingestion status/feedback UI ("Cobble has read 3 of 5 books").
-- **Cost guardrail:** a per-user **daily token cap** (the one spend control — replaces per-route
-  request limits) with a live usage indicator; over cap, chat/search 429 and ingestion **defers**
-  until reset (`architecture.md` §4.8).
+- **Spend control:** a per-companion **vitality wallet** (the one spend control — replaces per-route
+  request limits) with a live remaining-balance indicator; when empty, chat/search 429 and ingestion
+  **defers** until the wallet is refilled by feeding (`architecture.md` §4.8). (An account-wide
+  real-money cap across a user's companions is deferred — `architecture.md` §9.)
 
 **Done when:** a user uploads sources and Cobble answers questions grounded in them with correct
 citations; answers degrade gracefully when knowledge is absent (no confident hallucination).
@@ -214,10 +215,11 @@ deterministic tests; the will only by measurement — so it lands on a trusted f
   **v1 ships only focus length live** (the burst limit); boredom and distractibility are persisted
   but inert until the multi-step / multi-behaviour loop lands (`companion-motivation.md` §6, §10).
   Different Cobbles run different constants (tenacious deep-reader vs. magpie), seeded at creation.
-- **Stamina & energy (the budget made legible).** Reframe the per-user daily cap into two pools —
-  **stamina** (user-initiated work) and **energy** (the engine's self-initiated work) — so autonomy
-  can never starve conversation (`architecture.md` §4.8). Phase 4 ships the mechanism plus a
-  **simple meter + manual top-up**; the full feeding/"food" game economy is **Phase 5**.
+- **Stamina & energy (the budget made legible).** Two per-companion **vitality wallets** —
+  **stamina** (user-initiated work) and **energy** (the engine's self-initiated work) — that spend
+  down with use and refill only by feeding, so autonomy can never starve conversation
+  (`architecture.md` §4.8). Phase 4 ships the wallets plus a **remaining-balance meter**; the
+  feeding/"food" game economy that refills them is **Phase 5**.
 - **Reinforcement (mood change, Phase 4.2).** The companion learns from **conversation** the way a
   person does: the agent loop senses the user's mood on **every** turn and feeds the prior read
   forward to **attune** the next reply (the fast loop). After it reads and posts a report note, the
@@ -244,7 +246,7 @@ engagement/dismissal (the reinforcement signal) from day one.
 change to move bond/understanding/persona, not only on a drive-serving act); **unprompted
 conversation** beyond the report note (tips/questions/check-ins) + a sense of **purpose/agenda** → a
 later phase; continuous work-while-away → Phase 6 (needs push); the stamina/energy **game economy**
-(food types, feeding, store, rich meters) → Phase 5; deeper RL beyond the additive weight nudge;
+(food types, feeding, the pantry, rich meters) → Phase 5; deeper RL beyond the additive weight nudge;
 **approval for outward/ irreversible tools** (when such tools exist — autonomous reads are internal +
 energy-bounded today).
 
@@ -252,14 +254,14 @@ energy-bounded today).
 **motivation engine** on a **lazy trigger** coalesced off the request path. Each tick weighs
 **drives × presence** and either stays idle (token-free) or runs a **bounded autonomous burst** that
 **reads** the next leads into the companion's own memory **with no approval** and posts **one
-in-character report note**. The old daily cap splits into two pools — chat draws **stamina**,
+in-character report note**. Work spends two per-companion vitality wallets — chat draws **stamina**,
 autonomous reads draw **energy** — so autonomy can never starve interaction; out of energy the engine
 idles while chat runs on. **Reinforcement is conversational:** the loop senses the user's mood on
 every turn and feeds the prior read forward to **attune** the next reply; the **change** in mood
 across the user's reaction to a report note is the reward — an additive nudge to the served drive
 weight (neutral start, a zero change is a no-op, no separate critic, no button), so a Cobble is
 *raised* into its disposition from conversation. The approval gate is kept for **chat** effectful
-calls + the user-initiated `/explore`. Web adds a two-pool **vitality meter**, one-tap feed, and an
+calls + the user-initiated `/explore`. Web adds a two-wallet **vitality meter**, one-tap feed, and an
 **off/gentle/active** dial. (Data model → `implementation.md` §1; full mechanism →
 `companion-motivation.md`.) **Gate passed** (offline, deterministic): the Phase 4 DoD test proves
 open-app → autonomous read + report note + energy consumed; out-of-energy/dial-off → no initiation;
@@ -276,8 +278,9 @@ reaction-to-note → mood-change reward + weight shift. Full suite green at ≥8
 - Each axis shown as a descriptive **band** + gauge (no levels/XP); readings may move either way and
   young axes read honestly empty. A separate **capabilities** checklist of what the companion has been
   observed doing.
-- **Stamina/energy game economy:** the Phase 4 vitality meters grow into a feeding loop — "food"
-  the user gives that favours stamina or energy (the one deliberate game loop; `companion-economy.md`).
+- **Stamina/energy game economy:** the Phase 4 vitality meters grow into a feeding loop — the user
+  spends "food" from a per-user pantry that favours stamina or energy (the one deliberate game loop;
+  `companion-economy.md`).
 
 **Done when:** a returning user can see and feel how their Cobble has grown; the web PoC
 demonstrates all three differentiators (knowledge organism, embodiment groundwork, proactivity)
@@ -291,21 +294,22 @@ descriptive **band** + an intra-band gauge fill — plus a **capabilities checkl
 flipped from real logs: web research, memory recall, reading sources, a learned routine, multi-step
 tasks, mood attunement) and a **character card** ("Who *X* has become" — the emerged drive disposition
 + evolved persona). Young axes read honestly empty ("Hasn't ventured out yet", "Still forming"). A
-stored **idempotent high-water mark** (highest band per axis + observed capabilities, plus the treats
-balance) lets the readings recompute freely while the mark **never floors** the surface; it exists
-only so a reflection fires **exactly once** per band/capability reached. Recompute runs **post-turn
+stored **idempotent high-water mark** (highest band per axis + observed capabilities) lets the
+readings recompute freely while the mark **never floors** the surface; it exists only so a reflection
+fires **exactly once** per band/capability reached. Recompute runs **post-turn
 only**, off the request path, posting one in-character **growth reflection** to the transcript on a
 genuine advance; the growth read is a **read-only** snapshot of the live derived standing, so a read
 (or a client poll) never advances the mark or writes to the transcript. The **feeding economy** (the
-one deliberate game loop) turns the P4 vitality meters into a kitchen: typed **foods** spend earned
-**treats** to top up the two pools. **Procedural retrieval-as-hint** makes the capabilities
+one deliberate game loop, decoupled from growth) turns the P4 vitality meters into a kitchen: the user
+spends typed **foods** from a per-user **pantry** (seeded, no currency) to refill the two wallets.
+**Procedural retrieval-as-hint** makes the capabilities
 *functional*: a new `RetrieveContext` arm surfaces a relevant learned routine into context (no loop
 change — invariant #3). Web adds a **Growth view** (four axis readings, capabilities checklist,
 character card, kitchen). (Data model → `implementation.md` §1; mechanisms → `companion-economy.md`,
 `companion-memory.md`.) **Gate passed** (offline, deterministic — growth is mechanical, not a
 recall-quality score): the Phase 5 DoD test proves substrate change → a band rises + capabilities
-observed + treats earned + reflection posted; feeding spends treats and tops up the right pool (out of
-treats → refused); recompute is idempotent (no double-award/double-reflection); and a learned
+observed + reflection posted; feeding consumes a food from the pantry and refills the right wallet
+(out of that food → refused); recompute is idempotent (no double-reflection); and a learned
 procedure resurfaces as a context hint. Full suite green at ≥80% coverage.
 
 ## 4. Phases (Full Product)

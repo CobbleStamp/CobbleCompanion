@@ -213,18 +213,21 @@ learned routine resurfaces when it fits, not just displayed).
 
 ### 5.6 Vitality: Stamina & Energy
 Cobble's thinking runs on a real resource (the AI behind it costs tokens), and the product makes
-that **legible and yours to control** as the companion's *vitality* — two pools:
+that **legible and yours to control** as the companion's *vitality* — two wallets it spends down as
+it acts:
 - **Stamina** powers what *you* ask of it — conversation and the tasks you assign.
 - **Energy** powers what *it* chooses to do — its proactive outreach and self-directed
   exploration. Energy is the fuel of its "will."
 
-Keeping them separate has a nice consequence: a long stretch of self-directed exploration can
-never leave Cobble too drained to talk to *you* — its own initiative draws only on energy. When
-energy runs low, Cobble simply stops initiating and rests; it still answers when you reach out.
-You can always see how much of each remains, which makes its behaviour easy to understand ("it's
-gone quiet because it's low on energy") — and **you decide how much to give it and when to top it
-up**. A light game layer sits on top: you nourish your companion's vitality by feeding it, and
-different "food" favours stamina or energy (the feeding mechanics — see `companion-economy.md`).
+Vitality only goes **down** as Cobble works and **back up** when you **feed** it — there is no
+silent auto-refill. Keeping the two wallets separate has a nice consequence: a long stretch of
+self-directed exploration can never leave Cobble too drained to talk to *you* — its own initiative
+spends only energy. When energy runs out, Cobble simply stops initiating and rests; it still answers
+while it has stamina. When **stamina** runs out it can't run a turn until you feed it. You can always
+see how much of each remains, which makes its behaviour easy to understand ("it's gone quiet because
+it's out of energy") — and **you decide when to top it up**. The feeding loop is the deliberate game
+layer: you keep a **pantry** of foods and spend them to refill a companion, and different "food"
+favours stamina or energy (the mechanics — see `companion-economy.md`).
 
 ## 6. Who It's For
 Anyone who wants a single, trusted companion that *knows them and their world* and *acts for
@@ -287,7 +290,7 @@ threat model: `architecture.md` / `implementation.md`.)
 | [`ontology.md`](./ontology.md) | Knowledge ontology contract & governance (fixed core types + rules for the dynamic part) |
 | [`companion-memory.md`](./companion-memory.md) | The memory mechanism — browsing it, evaluating memory vs performance |
 | [`companion-motivation.md`](./companion-motivation.md) | The motivation/proactivity mechanism — drives, arbitration, seeding, learning |
-| [`companion-economy.md`](./companion-economy.md) | The feeding economy — earning treats, spending them on foods to top up vitality |
+| [`companion-economy.md`](./companion-economy.md) | The feeding economy — a per-user pantry of foods spent to refill a companion's vitality |
 | [`companion-tools.md`](./companion-tools.md) | Tool acquisition & use — acquiring whitelisted CLIs/MCP servers at runtime and learning to use them |
 | [`../README.md`](../README.md) | Orientation & setup |
 | [`../AGENTS.md`](../AGENTS.md) · [`../CLAUDE.md`](../CLAUDE.md) | Working rules · AI-agent entry point |

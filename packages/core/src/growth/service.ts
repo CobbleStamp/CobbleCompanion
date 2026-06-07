@@ -47,7 +47,6 @@ export interface GrowthTransition {
   readonly bondAdvanced: boolean;
   readonly initiativeAdvanced: boolean;
   readonly newCapabilities: readonly CapabilityKey[];
-  readonly treatsEarned: number;
   /**
    * The in-character reflections actually posted this recompute (persisted
    * assistant messages). Empty when nothing advanced. The caller streams these
@@ -59,8 +58,8 @@ export interface GrowthTransition {
 /**
  * The derived view a recompute produces, used to build the DTO. Note: this holds
  * only DERIVED axis readings — it deliberately does NOT read the stored snapshot
- * (treats / high-water mark). Callers that need the stored snapshot read it once
- * themselves, so neither path reads it twice.
+ * (the high-water mark). Callers that need the stored mark read it once themselves,
+ * so neither path reads it twice.
  */
 interface GrowthView {
   readonly knowledge: AxisReading;
@@ -92,7 +91,6 @@ const EMPTY_TRANSITION: GrowthTransition = {
   bondAdvanced: false,
   initiativeAdvanced: false,
   newCapabilities: [],
-  treatsEarned: 0,
   reflections: [],
 };
 
@@ -105,8 +103,8 @@ export class GrowthService {
 
   /**
    * Recompute growth from substrate, advance the high-water mark idempotently
-   * (awarding treats + posting reflections exactly once per band reached), and return
-   * what changed. Best-effort note posting; never throws on a note.
+   * (posting reflections exactly once per band reached), and return what changed.
+   * Best-effort note posting; never throws on a note.
    */
   async recompute(companionId: string): Promise<GrowthTransition> {
     const view = await this.computeView(companionId);
@@ -133,10 +131,6 @@ export class GrowthService {
       return EMPTY_TRANSITION;
     }
 
-    const treatsEarned =
-      (knowledgeSteps + bondSteps + initiativeSteps) * this.config.treatsPerBand +
-      newCapabilities.length * this.config.treatsPerCapability;
-
     // Monotonic target (max/union) so a transient substrate dip never rewinds the
     // mark and re-fires reflections later.
     const target = {
@@ -146,7 +140,7 @@ export class GrowthService {
       observedCapabilities: unionCapabilities(stored.observedCapabilities, view.observed),
     };
 
-    const won = await this.deps.growth.advance(companionId, stored, target, treatsEarned);
+    const won = await this.deps.growth.advance(companionId, stored, target);
     if (!won) {
       // A concurrent recompute already advanced the mark and posted the reflections.
       return EMPTY_TRANSITION;
@@ -157,7 +151,6 @@ export class GrowthService {
       bondAdvanced: bondSteps > 0,
       initiativeAdvanced: initiativeSteps > 0,
       newCapabilities,
-      treatsEarned,
       reflections: [],
     };
     const reflections = await this.announce(companionId, transition);
@@ -166,20 +159,18 @@ export class GrowthService {
 
   /**
    * Return the companion's full growth standing for the surface. READ-ONLY: it never
-   * advances the mark, awards treats, or posts a reflection — those are the side
-   * effects of {@link recompute}, which runs only post-turn (inline at the tail of
-   * the message stream), so a `GET` (or a client poll) can never mutate the
-   * transcript. The axis readings are
-   * derived fresh on every call, so they stay live regardless of when the last
-   * recompute ran.
+   * advances the mark or posts a reflection — those are the side effects of
+   * {@link recompute}, which runs only post-turn (inline at the tail of the message
+   * stream), so a `GET` (or a client poll) can never mutate the transcript. The axis
+   * readings are derived fresh on every call, so they stay live regardless of when
+   * the last recompute ran.
    */
   async snapshot(companionId: string): Promise<GrowthDto> {
     const view = await this.computeView(companionId);
     if (!view) {
       throw new Error(`growth snapshot requested for unknown companion ${companionId}`);
     }
-    const stored = await this.deps.growth.getSnapshot(companionId);
-    return this.toDto(view, stored.treats);
+    return this.toDto(view);
   }
 
   /** Gather substrate and compute the derived view; null if the companion is gone. */
@@ -226,7 +217,7 @@ export class GrowthService {
     };
   }
 
-  private toDto(view: GrowthView, treats: number): GrowthDto {
+  private toDto(view: GrowthView): GrowthDto {
     const s = view.substrate;
     return {
       knowledge: {
@@ -246,7 +237,6 @@ export class GrowthService {
       },
       character: this.characterDto(view),
       capabilities: capabilityChecklist(view.observed),
-      treats,
     };
   }
 

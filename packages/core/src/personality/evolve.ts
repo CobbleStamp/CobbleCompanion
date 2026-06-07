@@ -17,7 +17,7 @@ import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import type { EpisodicMemoryStore } from '../memory/episodic-store.js';
 import { personaEvolveTemplate, render } from '../prompts/index.js';
-import type { TokenQuotaStore } from '../quota/stamina-store.js';
+import type { VitalityStore } from '../quota/vitality-store.js';
 import { createUsageAccumulator, meteredLlmGateway } from '../usage.js';
 
 export interface PersonalityEvolverOptions {
@@ -27,7 +27,7 @@ export interface PersonalityEvolverOptions {
   /** Cheap model for the short synthesis (input-light, bounded prose out). */
   readonly model: string;
   readonly logger: Logger;
-  readonly quota?: TokenQuotaStore;
+  readonly quota?: VitalityStore;
   /** Recent episodes the synthesis draws on. */
   readonly recentEpisodes?: number;
 }
@@ -71,14 +71,14 @@ export class LlmPersonalityEvolver implements PersonalityEvolver {
         );
         return;
       }
-      if (this.options.quota && (await this.options.quota.isOverCap(companion.ownerId))) {
-        return; // over cap — retry on the next consolidation
+      if (this.options.quota && (await this.options.quota.isEmpty(companionId))) {
+        return; // empty — retry on the next consolidation
       }
 
       const usage = createUsageAccumulator();
       const llm = meteredLlmGateway(this.options.llm, usage.sink);
       const text = await this.synthesize(llm, companion, episodes);
-      await this.debit(companion.ownerId, usage.total().totalTokens);
+      await this.debit(companionId, usage.total().totalTokens);
       if (text.length === 0) {
         return; // unusable generation — keep the prior persona, retry later
       }
@@ -122,17 +122,17 @@ export class LlmPersonalityEvolver implements PersonalityEvolver {
     return text.trim().slice(0, MAX_PERSONA_CHARS);
   }
 
-  /** Meter the synthesis tokens against the owner's cap; best-effort (logging.md). */
-  private async debit(ownerId: string, totalTokens: number): Promise<void> {
+  /** Meter the synthesis tokens against the companion's stamina; best-effort (logging.md). */
+  private async debit(companionId: string, totalTokens: number): Promise<void> {
     if (!this.options.quota || totalTokens <= 0) {
       return;
     }
     try {
-      await this.options.quota.recordUsage(ownerId, totalTokens);
+      await this.options.quota.spend(companionId, totalTokens);
     } catch (error) {
       this.options.logger.error('failed to record personality-evolution token usage', {
         operation: 'personality.evolve.debit',
-        ownerId,
+        companionId,
         error,
       });
     }

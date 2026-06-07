@@ -1,14 +1,15 @@
 /** Growth view: renders the mirror axes/capabilities/character and feeds via the kitchen. */
 
-import type { GrowthDto } from '@cobble/shared';
+import type { FoodInventoryDto, GrowthDto } from '@cobble/shared';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { feedCompanion, fetchGrowth } from '../api/client.js';
+import { feedCompanion, fetchGrowth, getFood } from '../api/client.js';
 import { Growth } from './Growth.js';
 
 vi.mock('../api/client.js', () => ({
   fetchGrowth: vi.fn(),
   feedCompanion: vi.fn(),
+  getFood: vi.fn(),
   // The usage badge polls this; reject so it stays hidden.
   getUsage: vi.fn(() => Promise.reject(new Error('no usage'))),
 }));
@@ -30,12 +31,14 @@ const baseGrowth: GrowthDto = {
     { key: 'web_research', label: 'Web research', observed: true },
     { key: 'memory_recall', label: 'Memory recall', observed: false },
   ],
-  treats: 4,
 };
+
+const basePantry: FoodInventoryDto = { ration: 5, spark: 5, treat: 5 };
 
 describe('Growth view', () => {
   beforeEach(() => {
     vi.mocked(fetchGrowth).mockResolvedValue(baseGrowth);
+    vi.mocked(getFood).mockResolvedValue(basePantry);
     vi.mocked(feedCompanion).mockReset();
   });
 
@@ -49,18 +52,32 @@ describe('Growth view', () => {
     expect(screen.getByText(/curious, warm companion/)).toBeTruthy();
   });
 
-  it('feeds the companion and updates the treats balance', async () => {
+  it('shows the pantry counts and feeds, updating the pantry from the result', async () => {
     vi.mocked(feedCompanion).mockResolvedValue({
       budget: {
-        stamina: { usedTokens: 0, capTokens: 1, percentUsed: 0, resetsAt: '' },
-        energy: { usedTokens: 0, capTokens: 1, percentUsed: 0, resetsAt: '' },
+        stamina: { balanceTokens: 1_000_000 },
+        energy: { balanceTokens: 1_200_000 },
       },
-      growth: { ...baseGrowth, treats: 3 },
+      food: { ...basePantry, spark: 4 },
     });
     render(<Growth companionName="Pebble" companionId="c1" onBack={() => {}} />);
     const sparkButton = await screen.findByRole('button', { name: /Spark/ });
+    // The pantry count is rendered on the button (×5 before feeding).
+    expect(sparkButton.textContent).toContain('×5');
+
     fireEvent.click(sparkButton);
     await waitFor(() => expect(feedCompanion).toHaveBeenCalledWith('c1', 'spark'));
-    await waitFor(() => expect(screen.getByText(/3 treats/)).toBeTruthy());
+    // The pantry refreshes from result.food (×4 after).
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Spark/ }).textContent).toContain('×4'),
+    );
+  });
+
+  it('disables a food button when the pantry holds none of it', async () => {
+    vi.mocked(getFood).mockResolvedValue({ ration: 0, spark: 5, treat: 5 });
+    render(<Growth companionName="Pebble" companionId="c1" onBack={() => {}} />);
+    const rationButton = await screen.findByRole('button', { name: /Ration/ });
+    expect(rationButton).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: /Spark/ })).toHaveProperty('disabled', false);
   });
 });

@@ -17,15 +17,21 @@ import type { IngestionRunParams } from '../ingestion/pipeline.js';
 import { FakeLlmGateway } from '../llm/fake.js';
 import { TranscriptMemoryStore } from '../memory/store.js';
 import { DrizzleSemanticMemoryStore } from '../memory/semantic-store.js';
-import { DrizzleCompanionEnergyStore } from '../quota/energy-store.js';
+import { DrizzleVitalityStore, type VitalityStore } from '../quota/vitality-store.js';
 import { DrizzleLeadStore } from '../tools/lead-store.js';
 import { runAutonomousBurst, type CompanionVoice } from './autonomous-burst.js';
 import { DEFAULT_DRIVE_WEIGHTS } from './drives.js';
 import { DrizzleProactiveOutcomeStore } from './reward-store.js';
 
 const silent: Logger = { error: () => {}, warn: () => {}, info: () => {} };
-const ENERGY_CAP = 10_000;
+/** Starting energy wallet balance for these tests (seeded on first use). */
+const ENERGY_START = 1_000_000;
 const TOKENS_PER_READ = 100;
+
+/** Build an energy wallet store over the test db. */
+function energyStore(db: Database): DrizzleVitalityStore {
+  return new DrizzleVitalityStore(db, 'energy');
+}
 
 /**
  * Fake pipeline: bill the meter + flip the job done, EXCEPT for URLs whose host
@@ -42,7 +48,7 @@ class FlakyReadPipeline implements IngestionTarget {
       throw new Error(`boom reading ${params.sourceTitle}`);
     }
     if (params.meter) {
-      await params.meter.quota.recordUsage(params.meter.accountId, TOKENS_PER_READ);
+      await params.meter.quota.spend(params.meter.accountId, TOKENS_PER_READ);
     }
     await this.semantic.updateJob(params.jobId, { status: 'done' });
   }
@@ -62,7 +68,7 @@ describe('runAutonomousBurst — best-effort per lead', () => {
   let leads: DrizzleLeadStore;
   let semantic: DrizzleSemanticMemoryStore;
   let memory: TranscriptMemoryStore;
-  let energy: DrizzleCompanionEnergyStore;
+  let energy: VitalityStore;
   let rewards: DrizzleProactiveOutcomeStore;
 
   beforeEach(async () => {
@@ -80,7 +86,7 @@ describe('runAutonomousBurst — best-effort per lead', () => {
     leads = new DrizzleLeadStore(db);
     semantic = new DrizzleSemanticMemoryStore(db);
     memory = new TranscriptMemoryStore(db);
-    energy = new DrizzleCompanionEnergyStore(db, { defaultCapTokens: ENERGY_CAP });
+    energy = energyStore(db);
     rewards = new DrizzleProactiveOutcomeStore(db);
   });
   afterEach(async () => {
@@ -107,6 +113,11 @@ describe('runAutonomousBurst — best-effort per lead', () => {
   async function assistantNotes(): Promise<readonly string[]> {
     const messages = await memory.getRecentMessages(companionId, 50);
     return messages.filter((m) => m.role === 'assistant').map((m) => m.content);
+  }
+
+  /** Energy spent so far on `store` = the drop from the seeded starting balance. */
+  async function usedEnergy(store: VitalityStore, start = ENERGY_START): Promise<number> {
+    return start - (await store.getBalance(companionId));
   }
 
   it("one lead's failure does not abort the burst: good leads read, bad lead parked, note posts", async () => {
@@ -137,7 +148,7 @@ describe('runAutonomousBurst — best-effort per lead', () => {
     expect(parked.map((l) => l.url)).toEqual(['https://boom.dev']);
 
     // Energy was spent only on the two reads + the note — never on the failure.
-    expect((await energy.getEnergy(companionId)).usedTokens).toBeGreaterThan(2 * TOKENS_PER_READ);
+    expect(await usedEnergy(energy)).toBeGreaterThan(2 * TOKENS_PER_READ);
 
     // The user is still told what happened (never silent), exactly one note.
     expect(result.noteMessageId).not.toBeNull();
@@ -159,14 +170,13 @@ describe('runAutonomousBurst — best-effort per lead', () => {
     await leads.record(companionId, 'https://second.dev');
     await leads.record(companionId, 'https://third.dev');
 
-    // A tiny pool: one read (TOKENS_PER_READ) lands at the cap, so the per-lead
-    // exhaustion check breaks before the second lead is ever attempted.
-    const tinyEnergy = new DrizzleCompanionEnergyStore(db, {
-      defaultCapTokens: TOKENS_PER_READ,
-    });
+    // A tiny wallet: drain energy down to exactly one read's worth, so reading the
+    // first lead (TOKENS_PER_READ) empties it and the per-lead empty check breaks
+    // before the second lead is ever attempted.
+    await energy.spend(companionId, ENERGY_START - TOKENS_PER_READ);
     const burstDeps = {
       ...deps(new FlakyReadPipeline(semantic, new Set())),
-      energy: tinyEnergy,
+      energy,
     };
 
     const result = await runAutonomousBurst(burstDeps, {
@@ -189,7 +199,7 @@ describe('runAutonomousBurst — best-effort per lead', () => {
     // The note still posted for what it did manage to read.
     expect(result.noteMessageId).not.toBeNull();
     expect(await assistantNotes()).toEqual(['Read what I could.']);
-    expect(await tinyEnergy.isExhausted(companionId)).toBe(true);
+    expect(await energy.isEmpty(companionId)).toBe(true);
   });
 
   it('returns nothing for a non-positive limit: no reads, no spend, no note, leads untouched', async () => {
@@ -207,7 +217,7 @@ describe('runAutonomousBurst — best-effort per lead', () => {
 
     expect(result.read).toHaveLength(0);
     expect(result.noteMessageId).toBeNull();
-    expect((await energy.getEnergy(companionId)).usedTokens).toBe(0);
+    expect(await usedEnergy(energy)).toBe(0);
     expect(await assistantNotes()).toHaveLength(0);
     // The lead is left exactly as it was — still `new`, nothing parked.
     expect(await leads.listByStatus(companionId, ['new'])).toHaveLength(1);
@@ -233,7 +243,7 @@ describe('runAutonomousBurst — best-effort per lead', () => {
     expect(result.read).toHaveLength(0);
     expect(result.noteMessageId).toBeNull();
     expect(await assistantNotes()).toHaveLength(0);
-    expect((await energy.getEnergy(companionId)).usedTokens).toBe(0);
+    expect(await usedEnergy(energy)).toBe(0);
 
     // Both parked at `read`, none left `new` — the next tick starts dry, not
     // re-reading the same failures forever.

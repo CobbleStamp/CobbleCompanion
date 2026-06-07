@@ -87,9 +87,8 @@ describe('episode routes', () => {
     expect(res.statusCode).toBe(400);
   });
 
-  it('refuses a search with 429 when over the daily token cap', async () => {
-    const owner = await ctx.deps.identity.ensureUserByEmail('owner@example.com');
-    await ctx.deps.quota.recordUsage(owner.id, ctx.deps.config.tokenCapPerDay);
+  it('refuses a search with 429 when the companion is out of stamina', async () => {
+    await ctx.deps.quota.spend(companionId, ctx.deps.config.startingVitalityTokens);
 
     const res = await ctx.app.inject({
       method: 'POST',

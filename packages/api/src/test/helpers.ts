@@ -27,8 +27,8 @@ import {
   DrizzleProposalStore,
   DrizzleSemanticMemoryStore,
   DrizzleCompanionAffectStore,
-  DrizzleCompanionEnergyStore,
-  DrizzleTokenQuotaStore,
+  DrizzleVitalityStore,
+  DrizzleFoodStore,
   DrizzleToolCallLog,
   type CliToolStore,
   type CommandSandbox,
@@ -94,7 +94,7 @@ export const testConfig: AppConfig = {
   ingestionMaxBytes: 25 * 1024 * 1024,
   useContextHeader: true,
   ingestionQueueMax: 100,
-  tokenCapPerDay: 1_000_000,
+  startingVitalityTokens: 1_000_000,
   mcpServers: [],
   maxEquippedTools: 8,
   cliToolsPath: '',
@@ -175,11 +175,13 @@ export async function makeTestApp(
   // option); otherwise we create one here and close it on teardown.
   const ownsDb = options.database === undefined;
   const { db, close: closeDb } = options.database ?? (await createTestDatabase());
-  const identity = new DrizzleIdentityStore(db);
+  const identity = new DrizzleIdentityStore(db, {
+    startingVitalityTokens: config.startingVitalityTokens,
+  });
   const memory = new TranscriptMemoryStore(db);
   const semantic = new DrizzleSemanticMemoryStore(db);
   const episodic = new DrizzleEpisodicMemoryStore(db);
-  const quota = new DrizzleTokenQuotaStore(db, { defaultCapTokens: config.tokenCapPerDay });
+  const quota = new DrizzleVitalityStore(db, 'stamina');
   const embeddings = new FakeEmbeddingGateway();
   // Retrieval arms share a memoizing gateway (mirrors index.ts); ingestion and
   // consolidation use the raw fake.
@@ -262,13 +264,12 @@ export async function makeTestApp(
   const leads = new DrizzleLeadStore(db);
   const procedural = new DrizzleProceduralStore(db);
   const presence = new InMemoryPresenceStore();
-  const energy = new DrizzleCompanionEnergyStore(db, { defaultCapTokens: config.tokenCapPerDay });
+  const energy = new DrizzleVitalityStore(db, 'energy');
+  const food = new DrizzleFoodStore(db, { initialFood: DEFAULT_GROWTH_CONFIG.initialFood });
   const rewards = new DrizzleProactiveOutcomeStore(db);
   const affectStore = new DrizzleCompanionAffectStore(db);
-  // Growth & feeding economy (P5) — derived four-axis growth + treats over the same db.
-  const growthStore = new DrizzleGrowthStore(db, {
-    initialTreats: DEFAULT_GROWTH_CONFIG.initialTreats,
-  });
+  // Growth (P5) — derived four-axis growth over the same db (decoupled from feeding).
+  const growthStore = new DrizzleGrowthStore(db);
   const growth = new GrowthService({
     identity,
     semantic,
@@ -316,6 +317,7 @@ export async function makeTestApp(
     presence,
     motivation,
     energy,
+    food,
     rewards,
     growth,
     growthStore,

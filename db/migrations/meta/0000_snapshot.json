@@ -1,5 +1,5 @@
 {
-  "id": "85eb350a-b41f-4e75-a1d3-1ed1d44d54a1",
+  "id": "c3c18892-cdbe-4a11-bef6-5319c7faca20",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -57,72 +57,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.companion_energy": {
-      "name": "companion_energy",
-      "schema": "",
-      "columns": {
-        "companion_id": {
-          "name": "companion_id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "window_reset_at": {
-          "name": "window_reset_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "used_tokens": {
-          "name": "used_tokens",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "cap_override": {
-          "name": "cap_override",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "top_up_tokens": {
-          "name": "top_up_tokens",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "companion_energy_companion_id_companions_id_fk": {
-          "name": "companion_energy_companion_id_companions_id_fk",
-          "tableFrom": "companion_energy",
-          "tableTo": "companions",
-          "columnsFrom": [
-            "companion_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.companion_growth": {
       "name": "companion_growth",
       "schema": "",
@@ -160,13 +94,6 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'[]'::jsonb"
-        },
-        "treats": {
-          "name": "treats",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
         },
         "updated_at": {
           "name": "updated_at",
@@ -271,6 +198,20 @@
           "type": "jsonb",
           "primaryKey": false,
           "notNull": false
+        },
+        "stamina_balance_tokens": {
+          "name": "stamina_balance_tokens",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1000000
+        },
+        "energy_balance_tokens": {
+          "name": "energy_balance_tokens",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1000000
         },
         "created_at": {
           "name": "created_at",
@@ -1919,8 +1860,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.user_token_usage": {
-      "name": "user_token_usage",
+    "public.user_food": {
+      "name": "user_food",
       "schema": "",
       "columns": {
         "user_id": {
@@ -1929,31 +1870,23 @@
           "primaryKey": true,
           "notNull": true
         },
-        "window_reset_at": {
-          "name": "window_reset_at",
-          "type": "timestamp with time zone",
+        "ration": {
+          "name": "ration",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true
         },
-        "used_tokens": {
-          "name": "used_tokens",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "cap_override": {
-          "name": "cap_override",
+        "spark": {
+          "name": "spark",
           "type": "integer",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
-        "top_up_tokens": {
-          "name": "top_up_tokens",
-          "type": "bigint",
+        "treat": {
+          "name": "treat",
+          "type": "integer",
           "primaryKey": false,
-          "notNull": true,
-          "default": 0
+          "notNull": true
         },
         "updated_at": {
           "name": "updated_at",
@@ -1965,9 +1898,9 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "user_token_usage_user_id_users_id_fk": {
-          "name": "user_token_usage_user_id_users_id_fk",
-          "tableFrom": "user_token_usage",
+        "user_food_user_id_users_id_fk": {
+          "name": "user_food_user_id_users_id_fk",
+          "tableFrom": "user_food",
           "tableTo": "users",
           "columnsFrom": [
             "user_id"

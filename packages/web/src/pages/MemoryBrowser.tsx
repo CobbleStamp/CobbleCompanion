@@ -66,7 +66,7 @@ export function MemoryBrowser({ companion, onBack }: MemoryBrowserProps): JSX.El
     <main className="chat">
       <header>
         <h1>{companion.name} · Memory</h1>
-        <UsageBadge />
+        <UsageBadge companionId={companion.id} />
         <button type="button" onClick={onBack}>
           Back to chat
         </button>

@@ -3,7 +3,7 @@
  * request path (mirrors the ingestion pipeline). Reads the un-consolidated
  * transcript tail, reflects it into episodes via the LLM, embeds them, and
  * persists them while advancing the cursor atomically. Token cost is metered
- * against the owner's daily cap and gated by it (over cap → skip, retry later).
+ * from the companion's stamina and gated by it (empty → skip, retry later).
  *
  * Never throws: a failed reflection is logged and leaves the cursor untouched,
  * so the next trigger or sweep retries the same span (failures are data, §4.7).
@@ -15,7 +15,7 @@ import type { IdentityStore } from '../identity/store.js';
 import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import { createUsageAccumulator, meteredLlmGateway, type UsageSink } from '../usage.js';
-import type { TokenQuotaStore } from '../quota/stamina-store.js';
+import type { VitalityStore } from '../quota/vitality-store.js';
 import type { PersonalityEvolver } from '../personality/evolve.js';
 import { consolidateWindow, type ConsolidationCandidate } from './consolidation.js';
 import type { ConsolidationTarget } from './consolidation-runner.js';
@@ -33,8 +33,8 @@ export interface ConsolidationServiceOptions {
   readonly embeddingModel: string;
   readonly embeddingDimensions: number;
   readonly logger: Logger;
-  /** Debits + gates the run against the owner's daily cap; omit = unmetered (tests). */
-  readonly quota?: TokenQuotaStore;
+  /** Spends + gates the run against the companion's stamina; omit = unmetered (tests). */
+  readonly quota?: VitalityStore;
   /**
    * Re-synthesizes the evolved persona after new episodes form (Phase 2). Fired
    * only when the run produced episodes; self-gates + meters + never throws.
@@ -76,8 +76,8 @@ export class ConsolidationService implements ConsolidationTarget {
       if (!companion) {
         return; // deleted between trigger and run
       }
-      // Over cap → skip without advancing; a later sweep retries once under cap.
-      if (this.options.quota && (await this.options.quota.isOverCap(companion.ownerId))) {
+      // Empty → skip without advancing; a later sweep retries once it has stamina.
+      if (this.options.quota && (await this.options.quota.isEmpty(companionId))) {
         return;
       }
 
@@ -101,7 +101,7 @@ export class ConsolidationService implements ConsolidationTarget {
       // Advance the cursor to the whole window's end even when zero episodes
       // resulted (a span of pure filler), so we never re-reflect it.
       await episodic.appendEpisodes(companionId, embedded, throughSeq);
-      await this.debit(companion.ownerId, usage.total().totalTokens);
+      await this.debit(companionId, usage.total().totalTokens);
       // New memories formed → let the companion's character grow from them.
       // Self-gating + metered + never throws; only worth firing when episodes exist.
       if (embedded.length > 0 && this.options.evolver) {
@@ -150,17 +150,17 @@ export class ConsolidationService implements ConsolidationTarget {
     }
   }
 
-  /** Meter the run's tokens against the owner's cap; best-effort (logging.md). */
-  private async debit(ownerId: string, totalTokens: number): Promise<void> {
+  /** Meter the run's tokens against the companion's stamina; best-effort (logging.md). */
+  private async debit(companionId: string, totalTokens: number): Promise<void> {
     if (!this.options.quota || totalTokens <= 0) {
       return;
     }
     try {
-      await this.options.quota.recordUsage(ownerId, totalTokens);
+      await this.options.quota.spend(companionId, totalTokens);
     } catch (error) {
       this.options.logger.error('failed to record consolidation token usage', {
         operation: 'memory.consolidationService.debit',
-        ownerId,
+        companionId,
         error,
       });
     }

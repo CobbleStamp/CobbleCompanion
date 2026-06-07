@@ -56,7 +56,7 @@ export function registerEpisodeRoutes(
       if (!companion) {
         return reply.code(404).send({ error: 'companion not found' });
       }
-      const overCap = await overCapGuard(quota, request.userId!);
+      const overCap = await overCapGuard(quota, companion.id);
       if (overCap) {
         return reply.code(429).send({ error: overCap });
       }
@@ -81,7 +81,7 @@ export function registerEpisodeRoutes(
         });
       }
       try {
-        await quota.recordUsage(request.userId!, searchTokens);
+        await quota.spend(companion.id, searchTokens);
       } catch (error) {
         logger.error('failed to record episode-search token usage', {
           operation: 'episodes.search',

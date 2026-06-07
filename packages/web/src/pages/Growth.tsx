@@ -2,15 +2,22 @@
  * The Growth view (Phase 5, development-plan.md §3) — the companion's growth made
  * visible as a MIRROR: four axis readings (knowledge, bond, initiative, character),
  * the "what {name} has shown it can do" capability checklist, the "Who {name} has
- * become" character card, and the feeding kitchen (treats + foods). Readings reflect
- * the companion's current standing and may move either way — no levels, no badges.
- * Growth is read-only here; the kitchen is the one mutating affordance.
+ * become" character card, and the feeding kitchen (the user's food pantry). Readings
+ * reflect the companion's current standing and may move either way — no levels, no
+ * badges. Growth is read-only here (decoupled from feeding); the kitchen is the one
+ * mutating affordance.
  */
 
-import type { AxisReadingDto, CharacterDriveDto, FoodDef, GrowthDto } from '@cobble/shared';
+import type {
+  AxisReadingDto,
+  CharacterDriveDto,
+  FoodDef,
+  FoodInventoryDto,
+  GrowthDto,
+} from '@cobble/shared';
 import { FOODS } from '@cobble/shared';
 import { useEffect, useState } from 'react';
-import { feedCompanion, fetchGrowth } from '../api/client.js';
+import { feedCompanion, fetchGrowth, getFood } from '../api/client.js';
 import { UsageBadge } from '../components/UsageBadge.js';
 
 interface GrowthPageProps {
@@ -21,25 +28,30 @@ interface GrowthPageProps {
 
 export function Growth({ companionName, companionId, onBack }: GrowthPageProps): JSX.Element {
   const [growth, setGrowth] = useState<GrowthDto | null>(null);
+  const [food, setFood] = useState<FoodInventoryDto | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [feeding, setFeeding] = useState(false);
 
   useEffect(() => {
     void (async () => {
       try {
-        setGrowth(await fetchGrowth(companionId));
+        const [g, pantry] = await Promise.all([fetchGrowth(companionId), getFood()]);
+        setGrowth(g);
+        setFood(pantry);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load growth');
       }
     })();
   }, [companionId]);
 
-  async function give(food: FoodDef): Promise<void> {
+  async function give(def: FoodDef): Promise<void> {
     setError(null);
     setFeeding(true);
     try {
-      const result = await feedCompanion(companionId, food.type);
-      setGrowth(result.growth);
+      // Feeding refills the companion's wallets and spends from the user's pantry;
+      // growth is decoupled, so only the pantry changes here.
+      const result = await feedCompanion(companionId, def.type);
+      setFood(result.food);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not feed');
     } finally {
@@ -51,7 +63,7 @@ export function Growth({ companionName, companionId, onBack }: GrowthPageProps):
     <main className="chat">
       <header>
         <h1>{companionName} · Growth</h1>
-        <UsageBadge />
+        <UsageBadge companionId={companionId} />
         <button type="button" onClick={onBack}>
           Back
         </button>
@@ -102,20 +114,23 @@ export function Growth({ companionName, companionId, onBack }: GrowthPageProps):
           <section className="card">
             <h2>Kitchen</h2>
             <p className="muted">
-              🍪 {growth.treats} treats · feed {companionName} to refill its vitality (spends
-              treats).
+              Feed {companionName} from your pantry to refill its vitality. Each food is spent when
+              given.
             </p>
             <div className="food-buttons">
-              {FOODS.map((food) => (
-                <button
-                  key={food.type}
-                  type="button"
-                  disabled={feeding || growth.treats < food.treatCost}
-                  onClick={() => void give(food)}
-                >
-                  {food.emoji} {food.label} ({food.treatCost}🍪)
-                </button>
-              ))}
+              {FOODS.map((def) => {
+                const count = food ? food[def.type] : 0;
+                return (
+                  <button
+                    key={def.type}
+                    type="button"
+                    disabled={feeding || count <= 0}
+                    onClick={() => void give(def)}
+                  >
+                    {def.emoji} {def.label} (×{count})
+                  </button>
+                );
+              })}
             </div>
           </section>
         </div>

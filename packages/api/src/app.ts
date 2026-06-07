@@ -1,9 +1,9 @@
 import type {
   CompanionAffectStore,
-  CompanionEnergyStore,
   ConsolidationRunner,
   EmbeddingGateway,
   EpisodicMemoryStore,
+  FoodStore,
   GrowthService,
   GrowthStore,
   Harness,
@@ -20,7 +20,7 @@ import type {
   SemanticMemoryStore,
   ToolCallLog,
   ToolRegistry,
-  TokenQuotaStore,
+  VitalityStore,
 } from '@cobble/core';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
@@ -77,9 +77,12 @@ export interface AppDeps {
   readonly presence: PresenceStore;
   /** Off-request proactive ticks — routes request it on activity/return (P4). */
   readonly motivation: MotivationRunner;
-  readonly quota: TokenQuotaStore;
-  /** Per-companion energy pool — the self-initiated budget, surfaced as the meter (P4). */
-  readonly energy: CompanionEnergyStore;
+  /** Per-companion STAMINA wallet — the user-initiated budget (chat/search/tasks). */
+  readonly quota: VitalityStore;
+  /** Per-companion ENERGY wallet — the self-initiated budget, surfaced as the meter (P4). */
+  readonly energy: VitalityStore;
+  /** Per-user FOOD pantry — the feeding economy's supply (P5). */
+  readonly food: FoodStore;
   /** Reinforcement log — one outcome per proactive initiation (P4). */
   readonly rewards: ProactiveOutcomeStore;
   /** The rolling read of the user's mood, sensed in the agent loop (P4.2). */
@@ -90,7 +93,7 @@ export interface AppDeps {
    * so a crossed-band reflection is felt in place.
    */
   readonly growth: GrowthService;
-  /** The growth high-water mark + treats balance — used by the feeding economy (P5). */
+  /** The growth high-water mark — used to fire reflections once (P5). */
   readonly growthStore: GrowthStore;
   readonly tokenVerifier: TokenVerifier;
   readonly config: AppConfig;
@@ -98,7 +101,7 @@ export interface AppDeps {
 }
 
 // API route prefixes that must 404 (not fall through to the SPA index.html).
-const API_PREFIXES = ['/auth', '/companions', '/health', '/usage'] as const;
+const API_PREFIXES = ['/auth', '/companions', '/food', '/health'] as const;
 
 /** Build the Fastify app — the only surface↔core boundary (invariant #1). */
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {

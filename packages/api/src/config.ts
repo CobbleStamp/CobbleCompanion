@@ -31,8 +31,11 @@ export interface AppConfig {
   readonly useContextHeader: boolean;
   /** Backstop cap on queued+in-flight ingestion runs across all owners. */
   readonly ingestionQueueMax: number;
-  /** Per-user daily token cap (LLM + embedding), the cost guardrail across all routes. */
-  readonly tokenCapPerDay: number;
+  /**
+   * The token balance a new companion is seeded with in **each** vitality wallet
+   * (stamina + energy). Not a cap — wallets only refill by feeding (architecture.md §4.8).
+   */
+  readonly startingVitalityTokens: number;
   /**
    * The developer's MCP server whitelist (companion-tools.md §6) — the entire MCP
    * trust decision. Parsed from `MCP_SERVERS` (a JSON array). Empty (default) leaves
@@ -90,7 +93,7 @@ const envSchema = z
       .default('true')
       .transform((value) => value === 'true'),
     INGESTION_QUEUE_MAX: z.coerce.number().int().positive().default(100),
-    TOKEN_CAP_PER_DAY: z.coerce.number().int().positive().default(1_000_000),
+    STARTING_VITALITY_TOKENS: z.coerce.number().int().positive().default(1_000_000),
     // The MCP server whitelist as a JSON array (companion-tools.md §6); default
     // empty so runtime tool acquisition is off unless an operator lists servers.
     MCP_SERVERS: z.string().default('[]'),
@@ -207,7 +210,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     ingestionMaxBytes: parsed.INGESTION_MAX_BYTES,
     useContextHeader: parsed.USE_CONTEXT_HEADER,
     ingestionQueueMax: parsed.INGESTION_QUEUE_MAX,
-    tokenCapPerDay: parsed.TOKEN_CAP_PER_DAY,
+    startingVitalityTokens: parsed.STARTING_VITALITY_TOKENS,
     mcpServers: parseMcpServers(parsed.MCP_SERVERS),
     maxEquippedTools: parsed.MAX_EQUIPPED_TOOLS,
     cliToolsPath: parsed.CLI_TOOLS_PATH,

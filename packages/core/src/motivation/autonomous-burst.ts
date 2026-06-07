@@ -32,8 +32,7 @@ import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import type { MemoryStore } from '../memory/store.js';
 import { autonomousNoteTemplate, render } from '../prompts/index.js';
-import type { CompanionEnergyStore } from '../quota/energy-store.js';
-import { EnergyQuotaAdapter } from '../quota/energy-quota-adapter.js';
+import type { VitalityStore } from '../quota/vitality-store.js';
 import type { LeadStore } from '../tools/lead-store.js';
 import { createUsageAccumulator, meteredLlmGateway } from '../usage.js';
 import type { ProactiveOutcomeStore } from './reward-store.js';
@@ -62,7 +61,7 @@ export interface AutonomousBurstDeps {
   readonly leads: LeadStore;
   readonly semantic: AutonomousIngestStore;
   readonly pipeline: IngestionTarget;
-  readonly energy: CompanionEnergyStore;
+  readonly energy: VitalityStore;
   readonly memory: MemoryStore;
   readonly rewards: ProactiveOutcomeStore;
   readonly llm: LlmGateway;
@@ -106,14 +105,13 @@ export async function runAutonomousBurst(
     return NOTHING;
   }
 
-  const energyQuota = new EnergyQuotaAdapter(energy);
   const candidates = (await leads.listByStatus(companionId, ['new'])).slice(0, limit);
   const attempts: { leadId: string; sourceId: string; jobId: string; url: string }[] = [];
 
   for (const lead of candidates) {
     // Out of energy → stop initiating (chat keeps running on stamina). The gate
     // is here, per-lead, so the pipeline never defers an autonomous read.
-    if (await energy.isExhausted(companionId)) {
+    if (await energy.isEmpty(companionId)) {
       break;
     }
     // One lead's failure must NOT abort the burst: energy already spent on prior
@@ -135,9 +133,9 @@ export async function runAutonomousBurst(
         jobId: job.id,
         sourceTitle: lead.url,
         payload: { kind: 'link', url: lead.url },
-        // Bill this read to ENERGY (not the owner's stamina), and don't defer —
-        // the per-lead exhaustion check above is the gate.
-        meter: { quota: energyQuota, accountId: companionId },
+        // Spend this read from ENERGY (not stamina), and don't defer — the per-lead
+        // empty-check above is the gate.
+        meter: { quota: energy, accountId: companionId },
         announce: false,
         deferOnOverCap: false,
       });
@@ -276,7 +274,7 @@ async function composeReportNote(
     const total = usage.total().totalTokens;
     if (total > 0) {
       try {
-        await deps.energy.recordSpend(companionId, total);
+        await deps.energy.spend(companionId, total);
       } catch (error) {
         deps.logger.error('failed to record autonomous note energy spend', {
           operation: 'motivation.autonomousBurst.bill',

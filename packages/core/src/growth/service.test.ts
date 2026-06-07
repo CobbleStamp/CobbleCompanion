@@ -1,7 +1,7 @@
 /**
  * Growth service — derives the four axes from real substrate, advances the mark
- * idempotently, awards treats, and posts growth notes. Exercised over the
- * in-memory DB with the real stores (fakes-over-mocks: a real PGlite, not stubs).
+ * idempotently, and posts growth notes. Exercised over the in-memory DB with the
+ * real stores (fakes-over-mocks: a real PGlite, not stubs).
  */
 
 import { type Database } from '@cobble/db';
@@ -16,7 +16,6 @@ import { DrizzleCompanionAffectStore } from '../motivation/affect-store.js';
 import { DrizzleProactiveOutcomeStore } from '../motivation/reward-store.js';
 import { DrizzleProceduralStore } from '../tools/procedural-store.js';
 import { DrizzleToolCallLog } from '../tools/tool-call-log.js';
-import { DEFAULT_GROWTH_CONFIG } from './config.js';
 import { DrizzleGrowthStore } from './growth-store.js';
 import { GrowthService } from './service.js';
 
@@ -56,9 +55,7 @@ describe('GrowthService', () => {
       temperament: 'curious',
     });
     companionId = companion.id;
-    growthStore = new DrizzleGrowthStore(db, {
-      initialTreats: DEFAULT_GROWTH_CONFIG.initialTreats,
-    });
+    growthStore = new DrizzleGrowthStore(db);
     service = new GrowthService({
       identity,
       semantic,
@@ -83,7 +80,6 @@ describe('GrowthService', () => {
 
   it('reports a fresh, unformed companion in the empty bands', async () => {
     const dto = await service.snapshot(companionId);
-    expect(dto.treats).toBe(DEFAULT_GROWTH_CONFIG.initialTreats);
     expect(dto.knowledge.band).toBe('Sparse');
     expect(dto.bond.band).toBe('New');
     expect(dto.initiative.band).toBe("Hasn't ventured out yet");
@@ -91,7 +87,7 @@ describe('GrowthService', () => {
     expect(dto.capabilities.every((c) => !c.observed)).toBe(true);
   });
 
-  it('derives axes/capabilities from substrate, awards treats, and posts reflections', async () => {
+  it('derives axes/capabilities from substrate and posts reflections', async () => {
     // Knowledge: 4 sources × 3 points = 12 ≥ 10 → band 1 (Growing), observes reading_sources.
     for (let i = 0; i < 4; i += 1) {
       await semantic.createSource(companionId, {
@@ -110,13 +106,11 @@ describe('GrowthService', () => {
     expect(transition.knowledgeAdvanced).toBe(true);
     expect(transition.newCapabilities).toContain('reading_sources');
     expect(transition.newCapabilities).toContain('web_research');
-    expect(transition.treatsEarned).toBeGreaterThan(0);
 
     const dto = await service.snapshot(companionId);
     expect(dto.knowledge.band).toBe('Growing');
     expect(dto.capabilities.find((c) => c.key === 'web_research')?.observed).toBe(true);
     expect(dto.capabilities.find((c) => c.key === 'first_routine')?.observed).toBe(true);
-    expect(dto.treats).toBe(DEFAULT_GROWTH_CONFIG.initialTreats + transition.treatsEarned);
 
     const notes = await assistantNotes();
     expect(notes).toContain(growthReflectionNote('knowledge'));
@@ -129,20 +123,17 @@ describe('GrowthService', () => {
     expect(reflectionContents.every((c) => notes.includes(c))).toBe(true);
   });
 
-  it('is idempotent — a second recompute neither re-awards treats nor re-posts reflections', async () => {
+  it('is idempotent — a second recompute re-posts no reflections', async () => {
     await semantic.createSource(companionId, { kind: 'note', title: 'n', rawText: 'hi' });
     await toolCallLog.record(companionId, 'web_fetch', {}, 'ok');
 
     const first = await service.recompute(companionId);
     expect(first.newCapabilities.length).toBeGreaterThan(0);
-    const treatsAfterFirst = (await service.snapshot(companionId)).treats;
     const notesAfterFirst = (await assistantNotes()).length;
 
     const second = await service.recompute(companionId);
     expect(second.newCapabilities).toEqual([]);
-    expect(second.treatsEarned).toBe(0);
     expect(second.reflections).toEqual([]);
-    expect((await service.snapshot(companionId)).treats).toBe(treatsAfterFirst);
     expect((await assistantNotes()).length).toBe(notesAfterFirst);
   });
 
@@ -163,7 +154,6 @@ describe('GrowthService', () => {
 
     const markAfterClimb = await growthStore.getSnapshot(companionId);
     expect(markAfterClimb.knowledgeBand).toBe(2);
-    const treatsAfterClimb = markAfterClimb.treats;
     const knowledgeNotesAfterClimb = (await assistantNotes()).filter(
       (n) => n === growthReflectionNote('knowledge'),
     ).length;
@@ -178,11 +168,9 @@ describe('GrowthService', () => {
     const dipped = await service.snapshot(companionId);
     expect(dipped.knowledge.band).toBe('Growing');
 
-    // (b) The stored mark is unchanged by the dip (it only ever climbs), and no treats
-    //     were clawed back.
+    // (b) The stored mark is unchanged by the dip (it only ever climbs).
     const markAfterDip = await growthStore.getSnapshot(companionId);
     expect(markAfterDip.knowledgeBand).toBe(2);
-    expect(markAfterDip.treats).toBe(treatsAfterClimb);
 
     // Recover back up to Broad (band 2), an already-reflected band.
     for (let i = 0; i < 3; i += 1) {
@@ -194,20 +182,18 @@ describe('GrowthService', () => {
     }
     const recover = await service.recompute(companionId);
 
-    // (c) Re-climbing to an already-reflected band re-posts no reflection and re-awards
-    //     no treats — the mark gates the once-only side effects.
+    // (c) Re-climbing to an already-reflected band re-posts no reflection — the
+    //     mark gates the once-only side effect.
     expect(recover.knowledgeAdvanced).toBe(false);
-    expect(recover.treatsEarned).toBe(0);
     const recovered = await service.snapshot(companionId);
     expect(recovered.knowledge.band).toBe('Broad');
-    expect(recovered.treats).toBe(treatsAfterClimb);
     const knowledgeNotesAfterRecover = (await assistantNotes()).filter(
       (n) => n === growthReflectionNote('knowledge'),
     ).length;
     expect(knowledgeNotesAfterRecover).toBe(1);
   });
 
-  it('reads the stored snapshot exactly once per recompute and per snapshot', async () => {
+  it('reads the stored mark once on recompute and never on snapshot', async () => {
     // Substrate that genuinely advances the mark, so recompute runs its full path
     // (read → compare → advance), not just the early no-progress return.
     await semantic.createSource(companionId, { kind: 'note', title: 'n', rawText: 'hi' });
@@ -218,14 +204,15 @@ describe('GrowthService', () => {
     const getSnapshot = vi.spyOn(growthStore, 'getSnapshot');
 
     const transition = await service.recompute(companionId);
-    expect(transition.treatsEarned).toBeGreaterThan(0); // the advance path actually ran
-    // The crux: one read for the CAS `from`. (Before the fix, computeView read it a
-    // second time only to populate a `treats` field recompute never uses → 2 reads.)
+    expect(transition.newCapabilities.length).toBeGreaterThan(0); // the advance path actually ran
+    // The crux: one read for the CAS `from`.
     expect(getSnapshot).toHaveBeenCalledTimes(1);
 
+    // The view is fully derived from substrate; the stored mark gates only the
+    // once-only reflections (a recompute concern), so a pure snapshot never reads it.
     getSnapshot.mockClear();
     await service.snapshot(companionId);
-    expect(getSnapshot).toHaveBeenCalledTimes(1);
+    expect(getSnapshot).toHaveBeenCalledTimes(0);
 
     getSnapshot.mockRestore();
   });

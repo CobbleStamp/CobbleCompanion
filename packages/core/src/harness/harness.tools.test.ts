@@ -15,7 +15,7 @@ import { FakeLlmGateway, type FakeTurn } from '../llm/fake.js';
 import type { LlmGateway, StreamResult, ToolCall } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import type { AppendOptions, MemoryStore, TranscriptEntry } from '../memory/store.js';
-import type { TokenQuotaStore } from '../quota/stamina-store.js';
+import type { VitalityStore } from '../quota/vitality-store.js';
 import { ToolRegistry } from '../tools/registry.js';
 import type { Tool } from '../tools/tool.js';
 import { Harness } from './harness.js';
@@ -109,18 +109,18 @@ const call = (name: string, args: Record<string, unknown> = {}): ToolCall => ({
 });
 
 /** Records every debit so a test can assert what a turn billed (or didn't). */
-class RecordingQuota implements TokenQuotaStore {
+class RecordingQuota implements VitalityStore {
   readonly recorded: number[] = [];
-  async getUsage(): Promise<{ usedTokens: number; capTokens: number; resetsAt: string }> {
-    return { usedTokens: 0, capTokens: 1_000_000, resetsAt: '' };
+  async getBalance(): Promise<number> {
+    return 1_000_000;
   }
-  async recordUsage(_userId: string, totalTokens: number): Promise<void> {
-    this.recorded.push(totalTokens);
+  async spend(_companionId: string, tokens: number): Promise<void> {
+    this.recorded.push(tokens);
   }
-  async isOverCap(): Promise<boolean> {
+  async add(): Promise<void> {}
+  async isEmpty(): Promise<boolean> {
     return false;
   }
-  async topUp(): Promise<void> {}
 }
 
 describe('Harness inner loop (P3 tools)', () => {

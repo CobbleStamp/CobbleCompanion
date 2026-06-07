@@ -6,7 +6,7 @@ import { FakeLlmGateway } from '../llm/fake.js';
 import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import { TranscriptMemoryStore } from '../memory/store.js';
-import type { TokenQuotaStore } from '../quota/stamina-store.js';
+import type { VitalityStore } from '../quota/vitality-store.js';
 import { LlmIngestionAnnouncer } from './announcer.js';
 
 const silentLogger: Logger = {
@@ -15,20 +15,20 @@ const silentLogger: Logger = {
   info: () => undefined,
 };
 
-/** Controllable quota fake — toggles over-cap and records what was debited. */
-class FakeQuota implements TokenQuotaStore {
+/** Controllable quota fake — toggles empty (out of vitality) and records debits. */
+class FakeQuota implements VitalityStore {
   overCap = false;
   readonly recorded: number[] = [];
-  async getUsage(): Promise<never> {
-    throw new Error('unused in announcer tests');
+  async getBalance(): Promise<number> {
+    return this.overCap ? 0 : 1_000_000;
   }
-  async recordUsage(_userId: string, totalTokens: number): Promise<void> {
-    this.recorded.push(totalTokens);
+  async spend(_companionId: string, tokens: number): Promise<void> {
+    this.recorded.push(tokens);
   }
-  async isOverCap(): Promise<boolean> {
+  async add(): Promise<void> {}
+  async isEmpty(): Promise<boolean> {
     return this.overCap;
   }
-  async topUp(): Promise<void> {}
 }
 
 /** A gateway whose stream throws, to drive the generation-failure fallback. */

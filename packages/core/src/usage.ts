@@ -1,5 +1,5 @@
 /**
- * Token usage — the unit the per-user daily cap meters (architecture.md token
+ * Token usage — the unit the vitality wallets meter (architecture.md token
  * budget). Both gateways surface it: the LLM gateway returns it as its stream's
  * return value, the embedding gateway alongside its vectors. Helpers here keep
  * the accounting honest when a provider omits usage (estimate, never silently 0)

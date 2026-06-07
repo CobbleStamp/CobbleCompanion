@@ -29,7 +29,7 @@ function fakeReadPipeline(markDone: (jobId: string) => Promise<void>): Ingestion
   return {
     async run(params: IngestionRunParams): Promise<void> {
       if (params.meter) {
-        await params.meter.quota.recordUsage(params.meter.accountId, TOKENS_PER_READ);
+        await params.meter.quota.spend(params.meter.accountId, TOKENS_PER_READ);
       }
       await markDone(params.jobId);
     },
@@ -109,19 +109,21 @@ describe('Phase 4.2 DoD — proactivity engine', () => {
     const outcomes = await ctx.deps.rewards.list(companionId, 10);
     expect(outcomes).toHaveLength(1);
     expect(outcomes[0]!.noteMessageId).not.toBeNull();
-    expect((await ctx.deps.energy.getEnergy(companionId)).usedTokens).toBeGreaterThan(0);
+    expect(await ctx.deps.energy.getBalance(companionId)).toBeLessThan(
+      ctx.deps.config.startingVitalityTokens,
+    );
   });
 
   it('stops initiating when out of energy, with no further spend (DoD 3)', async () => {
     await seedLeads(5);
-    await ctx.deps.energy.recordSpend(companionId, ctx.deps.config.tokenCapPerDay); // exhaust
-    const before = (await ctx.deps.energy.getEnergy(companionId)).usedTokens;
+    await ctx.deps.energy.spend(companionId, ctx.deps.config.startingVitalityTokens); // drain
+    const before = await ctx.deps.energy.getBalance(companionId);
 
     await tick();
 
     expect(await assistantNotes()).toHaveLength(0);
     expect(await ctx.deps.leads.listByStatus(companionId, ['new'])).toHaveLength(5);
-    expect((await ctx.deps.energy.getEnergy(companionId)).usedTokens).toBe(before);
+    expect(await ctx.deps.energy.getBalance(companionId)).toBe(before);
   });
 
   it('does not initiate when the dial is off (DoD 4)', async () => {
@@ -131,7 +133,9 @@ describe('Phase 4.2 DoD — proactivity engine', () => {
     await tick();
 
     expect(await assistantNotes()).toHaveLength(0);
-    expect((await ctx.deps.energy.getEnergy(companionId)).usedTokens).toBe(0);
+    expect(await ctx.deps.energy.getBalance(companionId)).toBe(
+      ctx.deps.config.startingVitalityTokens,
+    );
   });
 
   it('learns from the CHANGE in mood across the reaction, shifting the weight (DoD 5)', async () => {

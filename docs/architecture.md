@@ -26,15 +26,16 @@ the will drives.
 
 That **will** is a **motivation engine** filling the `Initiator` seam (§4.5): on a lazy idle/return
 tick it **reads the lead inventory into memory on its own** (no approval — autonomy is autonomy),
-spending real tokens against a **stamina/energy** two-pool budget (§4.8), then posts an in-character
+spending real tokens from its **stamina/energy** vitality wallets (§4.8), then posts an in-character
 report note. A **reinforcement** loop learns per-drive weights from the **change** in the user's mood
 across their reaction to that note — sensed in the agent loop on every turn, which also **attunes**
 each reply to the user's mood (full mechanism → `companion-motivation.md`).
 
 **Bond & growth** is a `GrowthService` that derives the four MIRROR axes (knowledge, bond,
 initiative, character) + an observed-capabilities checklist from substrate that already exists — a
-readout that may move either way, never floored — plus a feeding economy (treats → typed foods top up
-the two pools), and makes procedural memory functional via a retrieval-as-hint arm (§4.3) — all
+readout that may move either way, never floored. Alongside it (decoupled) a feeding economy lets the
+user spend typed foods from a per-user pantry to refill the two vitality wallets, and a
+retrieval-as-hint arm makes procedural memory functional (§4.3) — all
 without changing the loop.
 
 Scope boundaries and what lies beyond this release are collected in §9; the roadmap is owned by
@@ -55,13 +56,20 @@ does not move — these are the one-way-door decisions.
 4. **Companion identity is the canonical "home."** A persisted companion record is the source of
    truth a surface loads from; one active embodiment at a time; surfaces hold no authoritative
    state (see State Management, §6).
-5. **Multi-tenant from day one.** All state is scoped by `user` and `companion`.
+5. **Multi-tenant from day one, and per-companion by default.** All state is scoped by `user` or
+   `companion`, and the boundary is principled: **per-companion** is anything that is part of a
+   companion's identity, memory, mood-reading, **vitality**, behaviour, or growth (a user may own
+   several companions — the PoC ships one, but the data model must not assume it). **Per-user** is
+   reserved for genuine account / identity / auth / **billing** concerns. Both **vitality** pools
+   (stamina + energy, §4.8) are per-companion; a real-money account spend ceiling, if ever needed,
+   is a *separate* per-user concept (deferred, §9) — never folded into a companion's stamina.
 6. **One continuous conversation per companion.** A companion holds exactly one lifelong
    conversation with its user — there is no conversation/session/thread entity. Transcript
    messages attach directly to the companion, never to a session (the `messages` schema and the
    query shape that reconstructs the conversation → `implementation.md` §1). This is a product
    decision (`product-overview.md` §2) enforced structurally so duplicate/empty sessions cannot exist.
-   (A user owns a single companion; this per-companion invariant holds regardless.)
+   (The PoC ships one companion per user, but ownership is modelled M:1 — `companions.owner_id` — so
+   this per-companion invariant holds unchanged when a user owns several.)
 
 ## 3. Component Map
 
@@ -117,14 +125,14 @@ flowchart TB
 | **Prompt Registry** | Code-as-truth, versioned prompts (`core/src/prompts`) — every system/tool prompt is a typed `PromptTemplate` rendered at its call site | Single source for prompt wording; each LLM call stamps the `promptRef` (semver + content hash) that produced it. See `guide-prompts.md` |
 | **Embedding Gateway** | Provider-agnostic embedding access | OpenRouter `/embeddings`; deterministic fake for tests |
 | **MemoryStore** | Boundary for the transcript (episodic substrate) | The companion's single transcript (`messages`), keyed by `companion_id`; a turn may carry an optional `source_id` (an upload's attachment + acknowledgement) so the chat reconstructs them on reload |
-| **Ingestion Announcer** | Proactive transcript note when a read ends (§4.8) | On `done`/`failed`, posts an in-character, **metered** assistant turn (canned fallback over cap / on failure); fired by the pipeline, decoupled from it |
+| **Ingestion Announcer** | Proactive transcript note when a read ends (§4.8) | On `done`/`failed`, posts an in-character, **metered** assistant turn (canned fallback when stamina is empty / on failure); fired by the pipeline, decoupled from it |
 | **Semantic Store** | Sources (verbatim), sections (vector + FTS), fact overlay, ingestion jobs | Hybrid retrieval with provenance; contract → `ontology.md` |
 | **Ingestion Pipeline + Runner** | Two-pass source reading off the request path (§4.8) | Durable status in `ingestion_jobs`; replaceable by a real worker |
 | **Episodic Store** | Consolidated, time-anchored episodes (vector + FTS) + the consolidation cursor | Derived from the transcript (rebuildable); hybrid recall by topic (§4.3) |
 | **Consolidation Service + Runner** | Off-request reflection: transcript window → consolidated episodes, filler dropped | Mirrors the ingestion runner — coalesced, serial, quota-gated; post-turn trigger + startup/periodic sweep |
 | **Personality Evolver** | Re-synthesizes `evolvedPersona` from episodes after consolidation | Cursor-gated, metered; blended into the persona prompt beside the seed |
 | **Identity Store** | Companion "home" record (incl. `evolvedPersona` + evolution/consolidation cursors) | Source of truth surfaces load from |
-| **Token Quota Store** | Per-user daily token-budget state — the cost cap (§4.8) | Postgres-backed (`user_token_usage`); routes enforce it inline |
+| **Stamina Wallet** (`VitalityStore`) | The user-initiated half of a companion's vitality — a per-companion token balance (§4.8) | Postgres-backed (`companions.stamina_balance_tokens`); spend decrements (floor 0), feeding adds; routes 429 at the boundary when empty |
 | **Persistence** | Relational + vector storage | Postgres + `pgvector`; schemas → `implementation.md` |
 | **Eval Harness** | Offline dataset/scorer/runner eval framework (`packages/eval`) | Not on the serving path; live OpenRouter. memory-recall + stateless + injection datasets. See `companion-memory.md` §5, `howto-run-evals.md` |
 | **Trace Sink** | Online tracing seam (`core/src/tracing`) — per-turn trace with assemble_context/llm_call/tool_call spans | No-op by default; the Langfuse Cloud adapter lives in `api/src/tracing`, sampled + redacted. See `runbook-tracing.md` |
@@ -134,8 +142,9 @@ flowchart TB
 | **Lead Inventory** | The companion's reading list (`leads`) — discovered-but-unread URLs | Populated by `web_fetch` link harvest; worked on command (`/explore`) and by the motivation engine on idle (§4.5) |
 | **Procedural Store** | Learned, reusable workflows seeded from approved actions (`procedural_memories`) | Browseable, and surfaced as a `RetrieveContext` hint arm (§4.3) so a routine resurfaces and is reused |
 | **Motivation Engine** | Fills the `Initiator` seam — drives × presence → bounded autonomous explore burst | Reads the lead inventory into memory on its own (no approval), bounded by energy; posts an in-character report note. Includes presence, change-as-reward reinforcement, and an off-request runner/sweep. Mechanism → §4.5, `companion-motivation.md` |
-| **Energy Store** | The self-initiated half of the §4.8 two-pool budget (`companion_energy`) | Per-companion daily pool; separate counter from stamina so autonomy can't starve interaction |
-| **Growth Service** | Derives the four MIRROR axes (knowledge, bond, initiative, character) + the observed-capabilities checklist from substrate; owns the feeding economy | Growth is DERIVED — a readout that may move either way, never scored or floored. Recompute is post-turn and token-free; the read is a snapshot. Mechanism → §4.3, `companion-economy.md`; data model → `implementation.md` §1 |
+| **Energy Wallet** | The self-initiated half of the §4.8 two-wallet vitality (`companions.energy_balance_tokens`) | Per-companion token balance; a separate wallet from stamina (the `Stamina Wallet` above), metered by the same `VitalityStore`, so autonomy can't starve interaction |
+| **Food Pantry** | The user's seeded inventory of typed foods (`user_food`) — the feeding economy's supply | Per-user counts of `ration`/`spark`/`treat`; `POST /feed` consumes one and refills the fed companion's wallet(s) (`companion-economy.md`) |
+| **Growth Service** | Derives the four MIRROR axes (knowledge, bond, initiative, character) + the observed-capabilities checklist from substrate | Growth is DERIVED — a readout that may move either way, never scored or floored. Recompute is post-turn and token-free; the read is a snapshot. Decoupled from feeding. Mechanism → §4.3; data model → `implementation.md` §1 |
 
 ## 4. The Agent Loop & Harness
 
@@ -469,8 +478,8 @@ lever, so the model *reads everything* but *emits almost nothing* (~1% of input 
 flowchart LR
     UP["upload (file · note · link)<br/>202 + queued job · 429 only if queue full"] --> RUN["Ingestion Runner<br/>(off request path)"]
     RUN --> PARSE["parse → atomic paragraphs<br/>(never split mid-paragraph)"]
-    PARSE --> GATE{"owner over<br/>daily token cap?"}
-    GATE -->|yes| DEFER["status: deferred<br/>(hold parse; sweeper resumes after reset)"]
+    PARSE --> GATE{"companion's<br/>stamina empty?"}
+    GATE -->|yes| DEFER["status: deferred<br/>(hold parse; sweeper resumes once fed)"]
     GATE -->|no| P1["Pass 1 — segment:<br/>LLM emits ONLY boundaries + topics"]
     P1 --> SECT["sections = verbatim paragraph slices<br/>(the model never rewrites text)"]
     SECT --> P2["Pass 2 — enrich:<br/>one context line + typed facts (ontology.md)"]
@@ -498,8 +507,8 @@ Design rules (the "improved staged hybrid"; memory guide → `companion-memory.m
 - **The companion speaks up when a read ends.** On a terminal outcome (`done`/`failed`, never
   `deferred`), the pipeline asks the **Ingestion Announcer** to post a short, in-character
   assistant turn to the transcript ("By the way — I've finished reading X…"). It is generated in
-  the companion's voice through the metered gateway (so its tokens count against the daily cap)
-  and **falls back to a canned line** when the owner is over cap, generation fails, or there is no
+  the companion's voice through the metered gateway (so its tokens are spent from stamina)
+  and **falls back to a canned line** when stamina is empty, generation fails, or there is no
   persona — the user is always told, the companion never goes silent. The note is appended **before**
   the job flips to its terminal status, so a client polling the job sees the note already in the
   transcript; an announcement failure is logged and never changes the job's recorded outcome.
@@ -512,42 +521,48 @@ Design rules (the "improved staged hybrid"; memory guide → `companion-memory.m
   worker without a dedupe layer. The deferred-job sweeper reinforces this upstream: it **atomically
   claims** each parked job (`deferred → queued`, conditional) before enqueue, so two overlapping
   sweeps can't resume — and re-bill — the same job twice.
-- **Cost guardrail = a per-user daily token cap.** The real resource is LLM/embedding **tokens**,
-  so spend is metered against a **per-user cap over a fixed daily window** (resets 00:00 UTC);
-  overage carries to the next day as **debt clamped to one cap** (never a multi-day lockout). The
-  cap state lives in Postgres (`user_token_usage`), so it is correct across replicas — unlike a
-  per-instance request limiter. Each route enforces it inline: **chat & search** pre-flight-check
-  and return **429** when over cap; **ingestion defers** (see below). Actual token counts come from
-  the provider's `usage` (estimated only if a model omits it). Because **ingestion is serial** and
-  **chat is turn-based**, there is no in-app concurrency to outrun the post-hoc accounting — the
-  serialization *is* the burst backstop, so the cap is the whole defense (threat model:
-  legitimate-user cost control, not attacker resistance). The runner still caps queued+in-flight
-  runs (`INGESTION_QUEUE_MAX`) as a memory backstop. Knobs → `implementation.md` §config.
+- **Vitality wallets = the spend control.** The real resource is LLM/embedding **tokens**, so each
+  companion holds two token **wallets** it spends down as it works — there is no cap and no daily
+  window. A wallet only goes **down** (each LLM/embedding call subtracts its tokens, floored at zero —
+  a turn that overshoots just empties it, never goes negative) and **up** by **feeding** (the only way
+  it refills — §`companion-economy.md`). Wallet state lives in Postgres as two columns on the
+  companion row (`companions.stamina_balance_tokens` / `energy_balance_tokens`), so it is correct
+  across replicas — unlike a per-instance request limiter. Each
+  route enforces it inline: **chat & search** pre-flight-check and return **429** when the wallet is
+  empty; **ingestion defers** (see below) until the wallet has tokens again (i.e. after feeding) —
+  the sweeper resumes it. Actual token counts come from the provider's `usage` (estimated only if a
+  model omits it). Because **ingestion is serial** and **chat is turn-based**, there is no in-app
+  concurrency to outrun the post-hoc accounting — the serialization *is* the burst backstop (threat
+  model: legitimate-user cost control via a finite wallet, not attacker resistance). The runner still
+  caps queued+in-flight runs (`INGESTION_QUEUE_MAX`) as a memory backstop. Knobs →
+  `implementation.md` §config.
   - **Abandoned chat turns are metered by cause.** A turn the **client aborts** mid-stream (it stops
-    reading — a disconnect) is still debited for the tokens already streamed (estimated from the
-    deltas seen), so a client can't stream a full answer and drop before the provider's trailing
-    usage frame to get it free. A turn that breaks on a **provider/infra fault** (the stream throws)
-    is **not** billed for the failed part — we err in the user's favor on our own failures; in a
-    multi-turn tool run the already-completed turns are still billed, only the broken one is free.
-    The metering wrapper (`meteredLlmGateway`, `usage.ts`) makes the distinction: a thrown error
-    leaves the in-flight turn out of the accumulator, a consumer `.return()` deposits the estimate.
-  - **Stamina & energy (two pools).** The per-user cap splits by *who initiated* the work.
-    **Stamina** is the user-initiated pool (chat, assigned tasks — `user_token_usage`, per user).
-    **Energy** is the self-initiated pool (the motivation engine's proactive turns and exploration —
-    per **companion**, `companion_energy`). They never share a counter, so autonomous work can
-    **never starve interaction**: when energy is exhausted the engine stops initiating
-    (`Initiator` idles, §4.5) while chat keeps running on stamina. The user **provisions** both — a
-    visible meter + manual top-up. The food/feeding **game economy** rides on the same top-ups: typed
-    foods (`ration`→stamina, `spark`→energy, `treat`→both) spend earned **treats**
-    (`POST /feed`, mechanism → `companion-economy.md`). Each pool rolls on a fixed window.
-    **Autonomous reads spend real tokens** billed to energy via a per-run **meter override** on the
-    shared ingestion pipeline — the run bills the companion's energy pool instead of the owner's
-    stamina and skips deferral (the engine gates on energy itself, per-lead; the override wiring is an
-    implementation detail, `implementation.md` §3). The burst is **energy-aware** — it scopes the
-    number of reads to what energy affords (§4.5) — so the companion scopes its work to its means, not
-    just stopping at zero. The per-turn **affect read** that senses the user's mood rides on the chat turn, so it
-    draws **stamina**. User-initiated work (chat, `/explore` approvals) draws stamina; the engine's
-    self-initiated reads draw energy.
+    reading — a disconnect) still **spends** the tokens already streamed (estimated from the deltas
+    seen), so a client can't stream a full answer and drop before the provider's trailing usage frame
+    to get it free. A turn that breaks on a **provider/infra fault** (the stream throws) is **not**
+    spent for the failed part — we err in the user's favor on our own failures; in a multi-turn tool
+    run the already-completed turns are still spent, only the broken one is free. The metering wrapper
+    (`meteredLlmGateway`, `usage.ts`) makes the distinction: a thrown error leaves the in-flight turn
+    out of the accumulator, a consumer `.return()` deposits the estimate.
+  - **Stamina & energy (two wallets).** Both are facets of a **companion's** *vitality* — its capacity
+    to act, denominated in tokens — so both are columns on the **companion** row; they split by *who
+    initiated* the work. **Stamina** is the user-initiated wallet (chat, assigned tasks —
+    `stamina_balance_tokens`). **Energy** is the self-initiated wallet (the motivation engine's
+    proactive turns and exploration — `energy_balance_tokens`). What guarantees autonomous work can
+    **never starve interaction** is that they
+    are **separate wallets**: when energy is empty the engine stops initiating (`Initiator` idles,
+    §4.5) while chat keeps running on stamina. (A real-money **account** spend ceiling across all of a
+    user's companions would be a *separate* per-user concept — deferred, §9; it is not the companion's
+    stamina.) The user replenishes both by **feeding** from a per-user **pantry** of typed foods
+    (`ration`→stamina, `spark`→energy, `treat`→both; `POST /feed`, mechanism → `companion-economy.md`)
+    — there is no currency and no auto-refill. **Autonomous reads spend real tokens** drawn from energy
+    via a per-run **meter override** on the shared ingestion pipeline — the run spends the companion's
+    energy wallet instead of its stamina and skips deferral (the engine gates on energy itself,
+    per-lead; the override wiring is an implementation detail, `implementation.md` §3). The burst is
+    **energy-aware** — it scopes the number of reads to what energy affords (§4.5) — so the companion
+    scopes its work to its means, not just stopping at zero. The per-turn **affect read** that senses
+    the user's mood rides on the chat turn, so it spends **stamina**. User-initiated work (chat,
+    `/explore` approvals) spends stamina; the engine's self-initiated reads spend energy.
 
 #### Supported source formats (acceptance contract)
 
@@ -590,12 +605,12 @@ common source of embedded NUL) so the canonical `raw_text` and everything derive
 for the Postgres `text` store — a NUL would otherwise abort the write. The persistence layer also
 applies a NUL-only guard on write as a last line of defense.
 
-> **Daily-cap deferral.** Parsing is free (no tokens); the **AI passes** (segment/enrich/embed)
-> are the cost. When the owner is over their daily token cap, the pipeline parses the source,
+> **Empty-stamina deferral.** Parsing is free (no tokens); the **AI passes** (segment/enrich/embed)
+> are the cost. When the companion's stamina is empty, the pipeline parses the source,
 > persists the parsed paragraphs on the job (`ingestion_jobs.parsed_doc`), sets status `deferred`,
 > and stops — no re-upload needed. A periodic sweeper resumes deferred jobs (serially, re-checking
-> the cap) as allowances reset, so the queue drains incrementally. Users can delete a parked job
-> (`DELETE …/sources/:id`). This is why over-cap uploads still return **202**, not 429.
+> stamina) once the companion is fed, so the queue drains incrementally. Users can delete a parked job
+> (`DELETE …/sources/:id`). This is why an upload with no stamina still returns **202**, not 429.
 
 > **Format handling (design note):** a source carries its format inline on the `sources` record
 > rather than in a separate type table, so widening the accepted set needs **no migration**. The
@@ -675,8 +690,8 @@ flowchart TB
       personality/     evolvedPersona synthesis from episodes
       identity/        companion "home" model + store
       motivation/      the "will" (§4.4–§4.5): drives × presence arbitration, autonomous explore burst, engine runner/sweep, affect perception + change-as-reward reinforcement
-      growth/          four mirror axes derived from substrate + the feeding economy (§4.3 hint arm): axis readings (band+fill), capabilities registry, growth store/service/runner, treats/foods
-      quota/           two-pool token budget: per-user daily stamina + per-companion energy (§4.8)
+      growth/          four mirror axes derived from substrate (§4.3 hint arm) + the feeding economy: axis readings (band+fill), capabilities registry, growth store/service/runner, foods
+      quota/           per-companion vitality wallets (stamina + energy) + the per-user food pantry (§4.8)
     api/               BFF / surface boundary (Fastify); memory + source + usage + proposal/inventory routes; presence + proactivity (dial/energy) routes; growth + feed routes
       tracing/         Langfuse Cloud TraceSink adapter (fetch-based; sampling + redaction before export) — runbook-tracing.md
     web/               React web client; chat w/ citations + ingestion-status panel + approval cards, sources page, memory browser, usage badge; vitality meter + proactivity dial; growth view + kitchen
@@ -757,6 +772,15 @@ owned by `development-plan.md`.
   deferred to §8 hardening). CLI tools are developer-described folders under `CLI_TOOLS_PATH`, each
   surfacing as its own callable `cli__<ref>`, so they flow through the same spine as MCP tools. Design → `companion-tools.md`; scope/sequencing →
   `development-plan.md`.
+- **Multiple companions per user & an account spend ceiling** — ownership is already modelled M:1
+  (`companions.owner_id`), so the data model supports several companions per user; the PoC just
+  ships one. When multiple lands, a real-money **account-level** token cap (across all of a user's
+  companions) becomes worthwhile — a *separate* per-user guardrail layered over the per-companion
+  vitality wallets (§4.8), never folded into a companion's stamina.
+- **Food economy: earning, buying, monetization.** The PoC seeds a fixed per-user food pantry and
+  never replenishes it (a user who runs out asks a developer to raise the count). A real product needs
+  a way to *get more food* — earned, purchased, or granted — and the currency/monetization model that
+  implies. Out of scope here (`companion-economy.md` §7).
 - **Native surfaces** — Mobile/Desktop clients, OS-tool bridges, and the Sync Courier.
 - **Transcript compaction** — summarizing the compactible remainder when the context window fills.
 - **Security hardening** — encryption-at-rest specifics, data inspection/management/delete controls,

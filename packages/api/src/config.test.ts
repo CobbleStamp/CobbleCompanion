@@ -25,18 +25,18 @@ describe('loadConfig', () => {
     expect(config.useContextHeader).toBe(true);
     expect(config.ingestionMaxBytes).toBeGreaterThan(0);
     expect(config.ingestionQueueMax).toBe(100);
-    expect(config.tokenCapPerDay).toBe(1_000_000);
+    expect(config.startingVitalityTokens).toBe(1_000_000);
   });
 
-  it('overrides the queue + token-cap knobs from the environment', () => {
+  it('overrides the queue + starting-vitality knobs from the environment', () => {
     const config = loadConfig({
       ...base,
       ...fakeProviders,
       INGESTION_QUEUE_MAX: '2',
-      TOKEN_CAP_PER_DAY: '50000',
+      STARTING_VITALITY_TOKENS: '50000',
     });
     expect(config.ingestionQueueMax).toBe(2);
-    expect(config.tokenCapPerDay).toBe(50000);
+    expect(config.startingVitalityTokens).toBe(50000);
   });
 
   it('requires GOOGLE_CLIENT_ID when AUTH_MODE=google', () => {

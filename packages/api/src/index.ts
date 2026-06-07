@@ -29,8 +29,8 @@ import {
   DrizzleProposalStore,
   DrizzleSemanticMemoryStore,
   DrizzleCompanionAffectStore,
-  DrizzleCompanionEnergyStore,
-  DrizzleTokenQuotaStore,
+  DrizzleVitalityStore,
+  DrizzleFoodStore,
   DrizzleToolCallLog,
   DrizzleGrowthStore,
   FakeEmbeddingGateway,
@@ -100,7 +100,10 @@ async function main(): Promise<void> {
   }
   const { db } = createPgDatabase(config.databaseUrl);
 
-  const identity = new DrizzleIdentityStore(db);
+  // New companions get both vitality wallets seeded from STARTING_VITALITY_TOKENS.
+  const identity = new DrizzleIdentityStore(db, {
+    startingVitalityTokens: config.startingVitalityTokens,
+  });
   const memory = new TranscriptMemoryStore(db);
   // Reinforcement log + the rolling affect read — built early so the harness can
   // sense the user's mood each turn (Phase 4.2) and the will can learn from it.
@@ -108,7 +111,7 @@ async function main(): Promise<void> {
   const affectStore = new DrizzleCompanionAffectStore(db);
   const semantic = new DrizzleSemanticMemoryStore(db);
   const episodic = new DrizzleEpisodicMemoryStore(db);
-  const quota = new DrizzleTokenQuotaStore(db, { defaultCapTokens: config.tokenCapPerDay });
+  const quota = new DrizzleVitalityStore(db, 'stamina');
   const llmGateway = createGateway(config);
   const embeddings = createEmbeddingGateway(config);
   // Shared by the retrieve-context arms only: collapses each turn's duplicate
@@ -293,10 +296,10 @@ async function main(): Promise<void> {
   const consolidation = new ConsolidationRunner(consolidationService, consoleLogger);
 
   // Motivation engine (P4): the "will" that works the lead inventory on idle.
-  // Self-initiated work draws the per-companion ENERGY pool (separate from the
-  // user stamina pool, so autonomy can't starve chat). The runner keeps ticks off
-  // the request path; routes request() it on activity/return + a periodic sweep.
-  const energy = new DrizzleCompanionEnergyStore(db, { defaultCapTokens: config.tokenCapPerDay });
+  // Self-initiated work spends the per-companion ENERGY wallet (a separate wallet
+  // from stamina, so autonomy can't starve chat). The runner keeps ticks off the
+  // request path; routes request() it on activity/return + a periodic sweep.
+  const energy = new DrizzleVitalityStore(db, 'energy');
   const motivationEngine = new MotivationEngine({
     identity,
     presence,
@@ -312,12 +315,12 @@ async function main(): Promise<void> {
   });
   const motivation = new MotivationRunner(motivationEngine, consoleLogger);
 
-  // Growth & feeding economy (P5): four-axis growth DERIVED from substrate, with an
-  // idempotent high-water mark + earned treats. The service recomputes post-turn off
-  // the message stream (GET is read-only); feeding spends treats to top up the pools.
-  const growthStore = new DrizzleGrowthStore(db, {
-    initialTreats: DEFAULT_GROWTH_CONFIG.initialTreats,
-  });
+  // Growth (P5): four-axis growth DERIVED from substrate, with an idempotent
+  // high-water mark. The service recomputes post-turn off the message stream (GET is
+  // read-only). Decoupled from feeding — it stores nothing spendable.
+  const growthStore = new DrizzleGrowthStore(db);
+  // The feeding economy's supply: each user's seeded food pantry (companion-economy.md).
+  const food = new DrizzleFoodStore(db, { initialFood: DEFAULT_GROWTH_CONFIG.initialFood });
   const growth = new GrowthService({
     identity,
     semantic,
@@ -349,6 +352,7 @@ async function main(): Promise<void> {
     motivation,
     quota,
     energy,
+    food,
     rewards,
     affect: affectStore,
     growth,
