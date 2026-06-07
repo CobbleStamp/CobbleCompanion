@@ -7,10 +7,35 @@
  * where a usable node executable path isn't available.
  */
 
-import { access } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
+import { access, readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 import { createSubprocessSandbox } from './subprocess-sandbox.js';
+
+/** True while `pid` is still a live process; false once it's reaped (ESRCH). */
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0); // signal 0 = existence check, no actual signal sent
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Poll until `predicate` holds or the deadline passes. */
+async function waitUntil(predicate: () => boolean, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) {
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return predicate();
+}
 
 const NODE = process.execPath;
 const run = createSubprocessSandbox({
@@ -51,6 +76,45 @@ describe.skipIf(!NODE)('createSubprocessSandbox', () => {
     });
     expect(result.timedOut).toBe(true);
     expect(result.exitCode).toBeNull();
+  });
+
+  it('reaps the whole process tree on timeout — a forked child does not survive', async () => {
+    // The "binary" forks a long-lived grandchild (the failure mode the bare
+    // `child.kill()` would miss), records its pid, then hangs. The ceiling fire
+    // must kill the group, not just the immediate child.
+    const pidFile = join(tmpdir(), `cli-sandbox-grandchild-${process.pid}-${Date.now()}.pid`);
+    const grandchild =
+      'require("fs").writeFileSync(process.argv[1], String(process.pid));' +
+      'setTimeout(() => {}, 60_000)';
+    const parent =
+      'const cp = require("child_process");' +
+      // Forked WITHOUT detached → grandchild stays in the parent's group.
+      `cp.spawn(process.execPath, ["-e", ${JSON.stringify(grandchild)}, process.argv[1]], { stdio: "ignore" });` +
+      'setTimeout(() => {}, 60_000)';
+
+    const result = await run.run({
+      ...base,
+      timeoutMs: 800,
+      binary: NODE,
+      argv: ['-e', parent, pidFile],
+    });
+    expect(result.timedOut).toBe(true);
+
+    // The grandchild wrote its pid before the parent was killed.
+    const wrote = await waitUntil(() => {
+      try {
+        return readFileSync(pidFile).length > 0;
+      } catch {
+        return false;
+      }
+    }, 1_000);
+    expect(wrote).toBe(true);
+    const grandchildPid = Number((await readFile(pidFile, 'utf8')).trim());
+    expect(Number.isInteger(grandchildPid)).toBe(true);
+
+    // With the group kill, the grandchild is reaped too — not orphaned.
+    const reaped = await waitUntil(() => !isAlive(grandchildPid), 2_000);
+    expect(reaped).toBe(true);
   });
 
   it('returns a failed result when the binary does not exist (no throw)', async () => {

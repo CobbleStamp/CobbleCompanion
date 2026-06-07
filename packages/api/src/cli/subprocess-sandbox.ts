@@ -13,6 +13,9 @@
  *    before the run and removed after — never the read-only tool-definition dir.
  *  - **Ceilings.** A wall-clock timeout kills the process; output is captured up
  *    to a byte cap, then the process is killed and the result marked truncated.
+ *    The child is spawned `detached` into its own process group so the kill
+ *    signal reaches the whole tree — a forking binary can't leave grandchildren
+ *    running past the ceiling.
  *
  * Not enforced by this tier: network isolation (a Phase 8 concern). The narrow
  * whitelist + fixed binary are the mitigation. A failed run is data, not a throw.
@@ -70,6 +73,9 @@ function spawnCapped(request: CommandRequest, cwd: string, logger: Logger): Prom
       cwd,
       env: scrubbedEnv(),
       shell: false, // never interpret a shell line — argv is passed verbatim
+      // Own process group (pgid === pid) so a ceiling kill reaps the whole tree,
+      // not just the immediate child — see `killTree` below.
+      detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -79,9 +85,26 @@ function spawnCapped(request: CommandRequest, cwd: string, logger: Logger): Prom
     let timedOut = false;
     let settled = false;
 
+    // SIGKILL the child's whole process group (negative pid). Guards: spawn may
+    // have failed (`pid` undefined), and the group may already be gone (ESRCH)
+    // when the process exited on its own — neither is an error worth throwing
+    // from inside a timer/stream callback.
+    const killTree = (): void => {
+      const pid = child.pid;
+      if (pid === undefined) {
+        return;
+      }
+      try {
+        process.kill(-pid, 'SIGKILL');
+      } catch {
+        // Group already reaped (ESRCH) or unsignalable — nothing to clean up.
+        child.kill('SIGKILL'); // best-effort fallback to the bare child
+      }
+    };
+
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGKILL');
+      killTree();
     }, request.timeoutMs);
 
     const capture = (chunk: Buffer): void => {
@@ -93,7 +116,7 @@ function spawnCapped(request: CommandRequest, cwd: string, logger: Logger): Prom
         chunks.push(chunk.subarray(0, remaining));
         captured = request.maxOutputBytes;
         truncated = true;
-        child.kill('SIGKILL'); // stop a runaway producer once we have enough
+        killTree(); // stop a runaway producer (and its children) once we have enough
       } else {
         chunks.push(chunk);
         captured += chunk.length;
