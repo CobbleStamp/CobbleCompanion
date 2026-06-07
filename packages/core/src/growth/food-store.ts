@@ -70,15 +70,23 @@ export class DrizzleFoodStore implements FoodStore {
 
   /** Read the pantry, lazily creating it seeded with `initialFood` of each food. */
   private async load(userId: string): Promise<FoodInventory> {
-    const [row] = await this.db.select().from(userFood).where(eq(userFood.userId, userId)).limit(1);
-    if (row) {
-      return { ration: row.ration, spark: row.spark, treat: row.treat };
+    const existing = await this.read(userId);
+    if (existing) {
+      return existing;
     }
     const n = this.options.initialFood;
     await this.db
       .insert(userFood)
       .values({ userId, ration: n, spark: n, treat: n })
       .onConflictDoNothing();
-    return { ration: n, spark: n, treat: n };
+    // Re-read rather than trusting the seed: a concurrent feed may have won the
+    // insert (and already decremented), so `onConflictDoNothing` left us out —
+    // return the row that's actually stored, not the phantom seed.
+    return (await this.read(userId)) ?? { ration: n, spark: n, treat: n };
+  }
+
+  private async read(userId: string): Promise<FoodInventory | null> {
+    const [row] = await this.db.select().from(userFood).where(eq(userFood.userId, userId)).limit(1);
+    return row ? { ration: row.ration, spark: row.spark, treat: row.treat } : null;
   }
 }
