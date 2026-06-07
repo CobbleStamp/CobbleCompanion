@@ -34,6 +34,20 @@ approval queue for confirmation, not executed silently.
 All memory is reached through one seam — the **`MemoryStore` boundary**
 ([`architecture.md`](./architecture.md) §2, invariant #2). New memory kinds are
 added as new implementations behind this interface, never as caller changes.
+Memory enters a turn through one place — the `RetrieveContext` hook:
+
+```mermaid
+flowchart LR
+    SRC["Sources<br/>(file / note / link)"] -->|"two-pass ingestion<br/>(architecture.md §4.8)"| SEM
+    subgraph seam["Behind the MemoryStore seam"]
+        TX["Transcript store<br/>(episodic substrate)"]
+        SEM["Semantic store<br/>(sections + fact overlay)"]
+        EP["Episodic store<br/>(consolidated episodes)"]
+        PROC["Procedural memory<br/>(learned workflows)"]
+    end
+    seam -->|"RetrieveContext hook"| CTX["Assembled turn context"]
+    CTX --> H["Harness / agent loop"]
+```
 
 - Transcript store: `packages/core/src/memory/store.ts`; semantic store:
   `packages/core/src/memory/semantic-store.ts`

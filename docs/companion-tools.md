@@ -161,6 +161,16 @@ The flow end to end: hit a job with no fitting equipped tool → `search_tools(i
 shortlist → `load_tool(id)` connects + fetches the fresh schema + equips it → next loop iteration
 the tool is advertised and the model calls it → idle tools are evicted, frequent ones promoted.
 
+```mermaid
+flowchart TD
+    J["Job with no fitting equipped tool"] --> ST["search_tools(intent)<br/>off-context LLM lookup → ranked shortlist<br/>(ids + one-liners, no schemas)"]
+    ST --> LT["load_tool(id)<br/>connect server + fetch fresh schema<br/>+ add to equipped set"]
+    LT --> NEXT["Next loop iteration — tool advertised"]
+    NEXT --> CALL["Model calls the tool; executor proxies"]
+    CALL --> LRU["Idle tools evicted (LRU under cap);<br/>frequent ones kept by recency"]
+    PROAC["Procedural recall names a routine's tools"] -.->|"load nudge (proactive)"| LT
+```
+
 ## 6. Trust model — the developer's whitelist
 
 The entire trust decision is the **developer's whitelist**, made once, ahead of time: it defines

@@ -89,6 +89,21 @@ activity recency. Presence is **volatile** (in-memory, not persisted; a restart 
 | **Away-short** | gone minutes–hours | light solo work; have something ready for return |
 | **Absent-long** | gone longer | catch-up posture; bond pressure rising |
 
+```mermaid
+stateDiagram-v2
+    [*] --> Active
+    Active: Active — typing / just sent
+    Attentive: Attentive — tab open, idle a little
+    AwayShort: Away-short — gone minutes–hours
+    AbsentLong: Absent-long — gone longer
+    Active --> Attentive: idle a little
+    Attentive --> AwayShort: gone minutes–hours
+    AwayShort --> AbsentLong: gone longer
+    Attentive --> Active: types / sends
+    AwayShort --> Active: returns
+    AbsentLong --> Active: returns
+```
+
 Other environment inputs: available tools, the lead frontier, time since last contact,
 **remaining energy** (§8), and the **user's affect** — the companion's rolling read of the user's
 mood and *its change* turn to turn, sensed in the agent loop (§7). Rule of thumb: **present
@@ -99,6 +114,16 @@ on return; **idle whenever nothing clears the bar.**
 
 Every invocation runs this loop. Steps 1–4 are **token-free** (cheap DB counts + in-memory
 presence), so *staying idle costs nothing*. Only step 5 spends tokens (energy).
+
+```mermaid
+flowchart TD
+    S1["1. Sense — level_d from environment + memory"] --> S2["2. Weight — pressure_d = level_d × weight_d"]
+    S2 --> S3["3. Propose — enumerate candidate behaviours"]
+    S3 --> S4{"4. Score & gate<br/>max score(b) ≥ θ?<br/>energy left? dial ≠ off?"}
+    S4 -->|"no"| IDLE["Idle — return null (token-free)"]
+    S4 -->|"yes"| S5["5. Act — read leads into memory,<br/>spend energy, post report note"]
+    S5 --> S6["6. Learn — on the chat turn the user reacts (§7)"]
+```
 
 1. **Sense** — for each drive `d`, compute its level `level_d ∈ [0,1]` from environment + memory.
 2. **Weight** — `pressure_d = level_d × weight_d`. Personality bends raw needs.
@@ -162,6 +187,16 @@ The companion learns the way a person does: across **every** turn it senses how 
 crucially, **how that feeling changes** in response to what the companion just said or did. There is
 **no approve/reject button** — tying learning to a UI control was the wrong abstraction. Two loops
 run off **one perception**.
+
+```mermaid
+flowchart TD
+    U["User turn"] --> PER["Perception — read affect (valence + note),<br/>store as the rolling read<br/>(after reply streams; not awaited)"]
+    PER --> FAST["Fast loop — attunement:<br/>feed forward into next reply's tone/warmth<br/>(moves no weights)"]
+    PER --> GATE{"A report note<br/>awaiting a reaction?"}
+    GATE -->|"no"| NOOP["Sense only — no weight change"]
+    GATE -->|"yes"| SLOW["Slow loop — delta = valence_now − valence_before<br/>w ← clamp(w + α·delta)"]
+    SLOW --> REC["Record on proactive_outcomes.reward<br/>(attributed to that act's drive)"]
+```
 
 **Perception — sense every turn, in the agent loop.** On each user turn the harness reads the user's
 affect: a **valence ∈ [−1, 1]** plus a short natural-language **note** ("relieved", "frustrated,

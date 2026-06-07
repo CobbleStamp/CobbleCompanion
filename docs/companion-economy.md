@@ -36,14 +36,14 @@ note and §7 for the open question it raises.
 
 ## 2. The loop
 
-```
-companion grows  ──►  system mints TREATS  ──►  user spends treats on a FOOD  ──►  food tops up a
-(axis band gained /    (starting balance +       (the Kitchen, POST /feed —          VITALITY pool
- capability observed)   milestone reward)          1 treat per food)                  (stamina / energy)
-                                                                                          │
-                                                                          powers ◄────────┘
-                                                                  conversation (stamina) /
-                                                                  autonomous work (energy)
+```mermaid
+flowchart LR
+    G["Companion grows<br/>(axis band gained /<br/>capability observed)"]
+    M["System mints TREATS<br/>(starting balance +<br/>milestone reward)"]
+    F["User spends treats on a FOOD<br/>(the Kitchen, POST /feed —<br/>1 treat per food)"]
+    V["Food tops up a<br/>VITALITY pool<br/>(stamina / energy)"]
+    P["Powers conversation (stamina) /<br/>autonomous work (energy)"]
+    G --> M --> F --> V -->|powers| P
 ```
 
 The user never *works* to earn treats — they accrue automatically from the companion growing. The
