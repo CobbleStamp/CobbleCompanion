@@ -6,14 +6,16 @@ This document defines general rules for how documentation is organized — by ty
 
 ## Doc Types
 
-| Type             | Suffix                          | Question it answers                                              | Litmus test                                                    |
-|------------------|---------------------------------|------------------------------------------------------------------|----------------------------------------------------------------|
-| Product Overview | `product-overview.md`           | What is the product and what value does it provide?              | Can a stakeholder understand the product's value without code? |
-| Development Plan | `development-plan.md`           | What are we building, in what priority, and to what acceptance criteria? | Can a contributor tell what to build next and how to know it's done? |
-| Architecture     | `-architecture.md`              | What is it? Components, responsibilities, interactions, flows    | Can a new engineer draw it on a whiteboard?                    |
-| Implementation   | `-implementation.md`            | How does it work internally? Data models, algorithms, config     | Can a developer modify the system using only this doc?         |
-| API              | `-api.md` or `-reference.md`    | How do I integrate with it? Endpoints, contracts, schemas        | Can another team build an integration from this alone?         |
-| README           | `README.md`                     | How do I orient and get started?                                 | Can someone install, run, and verify in under 5 minutes?       |
+| Type             | Suffix                          | Question it answers                                              | Litmus test                                                    | When to create                                  |
+|------------------|---------------------------------|------------------------------------------------------------------|----------------------------------------------------------------|-------------------------------------------------|
+| Product Overview | `product-overview.md`           | What is the product and what value does it provide?              | Can a stakeholder understand the product's value without code? | Always                                          |
+| Development Plan | `development-plan.md`           | What are we building, in what priority, and to what acceptance criteria? | Can a contributor tell what to build next and how to know it's done? | When prioritized requirements / acceptance criteria exist |
+| Architecture     | `-architecture.md`              | What is it? Components, responsibilities, interactions, flows    | Can a new engineer draw it on a whiteboard?                    | When 2+ layers/modules or design decisions exist |
+| Implementation   | `-implementation.md`            | How does it work internally? Data models, algorithms, config     | Can a developer modify the system using only this doc?         | When models/algorithms exceed code comments     |
+| API              | `-api.md` or `-reference.md`    | How do I integrate with it? Endpoints, contracts, schemas        | Can another team build an integration from this alone?         | When consumed by other services / external clients |
+| README           | `README.md`                     | How do I orient and get started?                                 | Can someone install, run, and verify in under 5 minutes?       | Always                                          |
+
+> Create a doc only when there is meaningful content for its type — do not create empty shells.
 
 > **Not exhaustive.** Domain-contract docs (e.g. this repo's `ontology.md`) sit
 > outside this generic taxonomy and are owned per-repo — see `AGENTS.md`
@@ -22,9 +24,6 @@ This document defines general rules for how documentation is organized — by ty
 ---
 
 ### Product Overview
-
-The **what and why**. Companion to the Development Plan, which carries the
-scope, priorities, and acceptance criteria.
 
 **Contains:**
 - Product vision and purpose (1 paragraph)
@@ -37,9 +36,6 @@ scope, priorities, and acceptance criteria.
 **Does NOT contain:** priorities, detailed requirements, acceptance criteria, roadmap (those live in the Development Plan); technical architecture, database schemas, implementation details, API schemas, code snippets.
 
 ### Development Plan
-
-The **scope and priority**. Companion to the Product Overview, which carries
-the what and why.
 
 **Contains:**
 - Prioritized requirements and scope (what's in, what's out, in what order)
@@ -106,53 +102,16 @@ the what and why.
 
 ## Diagrams as First-Class Citizens
 
-Documentation here is **visual-first, not text-only**. A wall of prose that *describes* a structure, a flow, or a set of relationships is a defect when a diagram would convey it faster and more precisely. **Default to including a diagram for any non-trivial structure or behavior — do not wait to be asked.**
+Documentation here is **visual-first**. When a structure, flow, or set of relationships would read faster as a picture, the picture is mandatory, not optional: **every Architecture and Implementation doc MUST carry at least one diagram**, and the diagram leads while prose annotates — never the reverse.
 
-**The rule:** every Architecture and Implementation doc MUST carry at least one diagram. Whenever you describe components and how they interact, a sequence of steps, a state machine, or a data model, **lead with the diagram and let prose annotate it** — not the reverse.
+**Format — Mermaid by default.** Author diagrams as **Mermaid** fenced blocks (` ```mermaid `) embedded in the Markdown, so they are diffable, PR-reviewable, GitHub-rendered, and versioned beside the prose. Don't commit PNG/JPEG for anything Mermaid can express; reserve image files (in an `assets/` folder beside the doc) for screenshots or visuals Mermaid genuinely can't produce.
 
-### Format: Mermaid by default
+**Diagram types:**
+- **C4 (architecture, by zoom):** *Context* (the system among its users and external systems) → *Container* (deployable/runtime units and how they communicate) → *Component* (a container's internal modules). Include the levels that carry meaning; the *Code* level is generated on demand from the IDE, not hand-kept.
+- **Behavioral:** sequence (request/response, the agent loop), state (lifecycles, e.g. approval-queue states), flowchart (decision logic).
+- **Relational:** ERD (data models and their relationships), plus class/type and component-dependency diagrams where they clarify design.
 
-- Author diagrams as **Mermaid** fenced code blocks (` ```mermaid `) embedded directly in the Markdown. They are diffable, reviewable in PRs, and render natively on GitHub — they live and version alongside the prose they explain.
-- Do **not** commit binary image exports (PNG/JPEG) for anything Mermaid can express. They can't be diffed, they rot, and they silently drift from the code.
-- Reserve raster/vector image files for screenshots, hand-drawn concepts, or visuals Mermaid genuinely cannot produce; store them under an `assets/` or `images/` folder beside the doc and link them in.
-
-### System architecture — the C4 model
-
-Describe systems at increasing zoom. Include the levels that carry meaning for the reader, not all four by rote:
-
-- **Context** — the system as one box among its users and the external systems it talks to. (Product Overview, Architecture)
-- **Container** — the major deployable/runtime units (web client, API, database, workers) and how they communicate. (Architecture)
-- **Component** — the internal module breakdown of a single container. (Architecture / Implementation)
-- **Code** — class/function-level structure. Generate on demand from the IDE rather than hand-maintaining it; usually omitted from docs.
-
-### Behavioral & flow diagrams — how things move and change
-
-- **Sequence diagrams** — request/response across components, the agent loop, message ordering.
-- **State diagrams** — lifecycle and state transitions (e.g. the approval-queue states).
-- **Flowcharts / activity diagrams** — decision logic and process flows.
-
-### Static & relational diagrams — how things are structured
-
-- **Entity-relationship diagrams (ERD)** — data models, tables, and their relationships.
-- **Class / type diagrams** — type contracts and relationships where they clarify design.
-- **Component-relationship diagrams** — module dependencies and ownership boundaries.
-
-### Expected diagrams by doc type
-
-| Doc type         | Expected diagrams                                                          |
-|------------------|----------------------------------------------------------------------------|
-| Product Overview | C4 Context; major user-journey flows                                       |
-| Development Plan | Roadmap/phase timeline or dependency graph where sequencing is non-obvious |
-| Architecture     | C4 Container & Component; sequence diagrams for key flows; state diagrams   |
-| Implementation   | ERD for data models; sequence/state diagrams for algorithms and mechanisms |
-| API              | Sequence diagrams for request/response and auth handshakes                 |
-| README           | Optional high-level Context diagram if it speeds orientation               |
-
-### Keep diagrams honest
-
-1. **A diagram is documentation.** It falls under the same single-source-of-truth and update rules as prose — when the thing it depicts changes, update the diagram in the *same* change.
-2. **One idea per diagram.** Prefer several small, focused diagrams over one that tries to show everything.
-3. **Prose annotates, never duplicates.** Don't restate in a paragraph what the diagram already shows — point to it and add only what it can't express.
+Which diagrams belong in which doc is listed in each type's **Contains** above. Keep each diagram to one idea, let prose annotate rather than restate it, and update it in the same change as the thing it depicts.
 
 ---
 
@@ -169,20 +128,6 @@ Describe systems at increasing zoom. Include the levels that carry meaning for t
 | `api-<surface>.md`         | API usage/contracts                  | `api-sync-service.md`                      |
 
 Use `-reference.md` instead of `-api.md` when the name already contains "api" (avoids `foo-api-api.md`).
-
----
-
-## When to Create vs Skip a Doc Type
-
-Create only when there is meaningful content for that type. Do not create empty shells.
-
-**Thresholds:**
-- **Product Overview:** always exists — source of truth for features and user journeys
-- **Development Plan:** exists once there are prioritized requirements or acceptance criteria to track
-- **Architecture:** create when 2+ distinct layers/modules or meaningful design decisions exist
-- **Implementation:** create when data models, algorithms, or mechanisms go beyond code comments
-- **API:** create when an API surface is consumed by other services or external clients
-- **README:** always exists — every project has one
 
 ---
 
