@@ -4,7 +4,9 @@
 > decides, on its own, whether and how to act. For the *what & why* of proactivity see
 > `product-overview.md` §5.4–§5.6; for how the engine plugs into the agent loop (the `Initiator`
 > seam, the body-then-will split) see `architecture.md` §4.5; for scope/sequencing see
-> `development-plan.md` §3; for schema see `implementation.md` §1. Each fact lives in
+> `development-plan.md` §3; for schema see `implementation.md` §1; for the **energy** budget
+> autonomous work bills to (and its sibling **stamina** pool) see the feeding economy in
+> `companion-economy.md`. Each fact lives in
 > exactly one place — this doc owns the drive model, the arbitration mechanism, seeding, and
 > learning. What lies beyond this release is collected in §10.
 >

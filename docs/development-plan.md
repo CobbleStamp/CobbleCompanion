@@ -68,8 +68,8 @@ proving the full request→harness→model→response loop and persistence work 
 persists across sessions; CI runs tests at ≥80% coverage.
 
 **Delivered** (PR #1): TS monorepo (`packages/{core,api,web,shared,eval}`, `db/`, `infra/`).
-Stack resolved in `architecture.md` §5 — TS end-to-end, Fastify API, React+Vite SPA,
-Postgres+`pgvector` via Drizzle, OpenRouter gateway, Google Sign-In (+ `dev_bypass`). Single-turn
+Stack resolved here — the canonical list of choices lives in `architecture.md` §5 (not re-enumerated
+here). Single-turn
 streaming harness with the `RetrieveContext`/tool/`Initiator` hook seams stubbed (`architecture.md`
 §4); transcript-as-episodic-substrate (`messages.companion_id`); read-only memory browser; live
 eval harness (`packages/eval`). CI runs Vitest at ≥80% coverage on `shared/db/core/api`.
@@ -495,7 +495,7 @@ Owned here (single-source). Each is assigned a decision point:
 
 | Question | Decide by |
 |---|---|
-| ~~Final stack: framework, client, store engine, LLM provider~~ | **Decided (Phase 0):** TS end-to-end, Fastify, React+Vite, Postgres+`pgvector`/Drizzle, OpenRouter, Google Sign-In (`architecture.md` §5) |
+| ~~Final stack: framework, client, store engine, LLM provider~~ | **Decided (Phase 0):** see `architecture.md` §5 (canonical stack) |
 | Single companion vs. multiple per user | Phase 2 (identity model) — **MVP: one companion per user**; multiple is a deferred capability |
 | ~~One continuous conversation vs. multiple sessions per companion~~ | **Decided (Phase 0): one continuous, lifelong conversation per companion** — no session/thread entity (`architecture.md` §2, invariant #6) |
 | Initial tool/skill integrations (maps, calendar, search, booking) | Phase 3 |
@@ -503,7 +503,7 @@ Owned here (single-source). Each is assigned a decision point:
 | Surface rollout confirmed (web → mobile → desktop) | Phase 5 decision gate |
 | Monetization model (subscription, ability packs) | Phase 8 |
 | Push-notification cadence & away-proactivity rules | Phase 6 |
-| ~~Tool whitelist governance — where the CLI/MCP whitelist lives (config vs DB) and the operator flow to admit a tool~~ | **Decided (Phases 9–10):** MCP = server whitelist in config (`MCP_SERVERS` → `AppConfig.mcpServers`), per-server admission; CLI = per-tool folders under `CLI_TOOLS_PATH` (`TOOL.json`+`TOOL.md`), the read-only deployment-controlled folder set is the trust boundary. Both config not DB, admit-by-deploy, no per-call approval (`companion-tools.md` §6) |
+| ~~Tool whitelist governance — where the CLI/MCP whitelist lives (config vs DB) and the operator flow to admit a tool~~ | **Decided (Phases 9–10):** both whitelists live in deployment config (not the DB), admit-by-deploy, no per-call approval. Trust model + the exact config surface → `companion-tools.md` §6 |
 | User-addable tools (vs developer-whitelisted only) | Deferred — after the tool-acquisition workstream (`companion-tools.md` §9) |
 | External-tool cost metering (the monetary cost of CLI/MCP calls, beyond LLM tokens) | Deferred — revisit with the workstream / Phase 8 |
 

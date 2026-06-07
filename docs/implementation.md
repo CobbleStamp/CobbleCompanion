@@ -11,6 +11,65 @@ Postgres (with `pgvector`). Multi-tenant: every row is scoped by owner
 (`architecture.md` §2, invariant #5). Field types are indicative; authoritative DDL lives in
 migrations under `db/`.
 
+The data model splits into two clusters. The first is the **knowledge & memory spine** — the one
+transcript, its consolidated episodes, and the three-layer ingested-knowledge stack
+(`sources` → `sections` → `facts`) with its reading-progress jobs. Every row hangs off a single
+`companions` "home". The diagram shows keys and relationships only; the per-table field detail is in
+the sections that follow.
+
+```mermaid
+erDiagram
+    users          ||--o{ companions      : owns
+    users          ||--o| user_token_usage : "stamina cap (§ below)"
+    companions     ||--o{ messages        : "one lifelong transcript"
+    companions     ||--o{ episodes        : "consolidated from transcript"
+    companions     ||--o{ sources         : ingests
+    companions     ||--o{ ingestion_jobs  : "reading progress"
+    companions     ||--o{ sections        : "retrieval units"
+    companions     ||--o{ facts           : "typed overlay"
+    sources        ||--o{ sections        : "segmented into"
+    sources        ||--o{ ingestion_jobs  : "read by"
+    sources        |o--o{ messages        : "attachment chip (SET NULL)"
+    sections       ||--o{ facts           : "provenance (non-null)"
+
+    users {
+        uuid id PK
+    }
+    companions {
+        uuid id PK
+        uuid owner_id FK
+    }
+    messages {
+        uuid id PK
+        bigserial seq
+        uuid companion_id FK
+        uuid source_id FK "nullable"
+    }
+    episodes {
+        uuid id PK
+        uuid companion_id FK
+    }
+    sources {
+        uuid id PK
+        uuid companion_id FK
+    }
+    ingestion_jobs {
+        uuid id PK
+        uuid companion_id FK
+        uuid source_id FK
+    }
+    sections {
+        uuid id PK
+        uuid companion_id FK
+        uuid source_id FK
+    }
+    facts {
+        uuid id PK
+        uuid companion_id FK
+        uuid section_id FK
+    }
+```
+
 ### `users`
 | Field | Type | Notes |
 |---|---|---|
@@ -113,6 +172,32 @@ migrations under `db/`.
 > The durable status surface is what makes the in-process runner replaceable by a real worker
 > with no schema/API change (`architecture.md` §4.8, §8), and lets deferred jobs survive a restart.
 
+The `status` column is a state machine. Parsing extracts text without the LLM; the three AI passes
+(segment → enrich → embed) are metered, so a job that would breach the daily token cap is parked in
+`deferred` with its `parsed_doc` held, then resumes when the window resets:
+
+```mermaid
+stateDiagram-v2
+    [*] --> queued
+    queued --> parsing : runner picks up
+    parsing --> deferred : over daily cap (parsed_doc held)
+    deferred --> segmenting : cap window resets
+    parsing --> segmenting : under cap
+    segmenting --> enriching : Pass 1 — topics
+    enriching --> embedding : Pass 2 — context headers
+    embedding --> done : vectors written
+    done --> [*]
+    parsing --> failed
+    segmenting --> failed
+    enriching --> failed
+    embedding --> failed
+    failed --> [*]
+    note right of failed
+        user-safe reason in `error`;
+        detail stays in logs
+    end note
+```
+
 ### `user_token_usage` — daily token cap state
 | Field | Type | Notes |
 |---|---|---|
@@ -186,6 +271,24 @@ hit carries provenance (source title, chapter, topic, para/page range) + the ver
 > marks the lead `ingested`, a reject marks it `discarded` (best-effort, never fails the user's action).
 > Without the link a lead would be stranded at `read` forever — clogging `/leads` and never re-proposed.
 
+The approval-queue lifecycle, and how resolving a proposal closes its originating lead:
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending : effectful tool call blocked + enqueued
+    pending --> approved : confirm — execute + log call, re-enter loop
+    pending --> rejected : reject
+    approved --> [*]
+    rejected --> [*]
+    note right of pending
+        exactly-once: confirm/reject is a conditional
+        UPDATE WHERE status='pending', so only the
+        winner resolves. Explore-origin proposals also
+        advance their lead: confirm -> lead `ingested`,
+        reject -> lead `discarded`.
+    end note
+```
+
 ### `tool_calls` — audit log
 | Field | Type | Notes |
 |---|---|---|
@@ -227,6 +330,64 @@ hit carries provenance (source title, chapter, topic, para/page range) + the ver
 
 The schema the motivation engine and growth service use (full mechanisms →
 `companion-motivation.md`, `companion-economy.md`; authoritative DDL → `db/`).
+
+The second cluster is the **will & economy** — the approval queue and its reading-list leads, the
+tool/procedure logs the loop writes, and the per-companion singletons that carry mood, the two
+budget pools, and the growth mirror. As above, only keys and relationships are shown; fields are in
+the prose below.
+
+```mermaid
+erDiagram
+    users       ||--o| user_token_usage   : "stamina pool (per user)"
+    companions  ||--o| companion_energy    : "energy pool"
+    companions  ||--o| companion_affect    : "rolling mood read"
+    companions  ||--o| companion_growth    : "growth mirror"
+    companions  ||--o{ proposals           : "approval queue"
+    companions  ||--o{ leads               : "reading list"
+    companions  ||--o{ tool_calls          : "audit log"
+    companions  ||--o{ procedural_memories : "learned routines"
+    companions  ||--o{ proactive_outcomes  : "reinforcement log"
+    leads       |o--o{ proposals           : "explore-origin (SET NULL)"
+    messages    |o--o| proactive_outcomes  : "report note reacted to"
+
+    companions {
+        uuid id PK
+    }
+    user_token_usage {
+        uuid user_id PK
+    }
+    companion_energy {
+        uuid companion_id PK
+    }
+    companion_affect {
+        uuid companion_id PK
+    }
+    companion_growth {
+        uuid companion_id PK
+    }
+    proposals {
+        uuid id PK
+        uuid companion_id FK
+        uuid lead_id FK "nullable"
+    }
+    leads {
+        uuid id PK
+        uuid companion_id FK
+    }
+    tool_calls {
+        uuid id PK
+        uuid companion_id FK
+    }
+    procedural_memories {
+        uuid id PK
+        uuid companion_id FK
+    }
+    proactive_outcomes {
+        uuid id PK
+        uuid companion_id FK
+        uuid note_message_id FK
+    }
+```
 
 - **`proposals.origin`** — `text` enum `chat | explore | autonomous`, default `chat`. Lets the
   confirm route re-enter the loop only for `chat`-origin proposals (the §4.4 resolution) and bill
@@ -277,6 +438,17 @@ Presence is **not** a table — it is a volatile, heartbeat-fed in-memory signal
   `core/src/growth/config.ts` (`DEFAULT_GROWTH_CONFIG`) — no scattered literals. For the
   earn→spend **feeding economy** these constants drive (treats, foods, the feed flow), see
   `companion-economy.md`.
+
+### Migrations & versioning
+
+The schema is **code-first** in `db/src/schema.ts`; `pnpm db:generate` (Drizzle Kit) diffs it
+against the recorded snapshot and emits a timestamped SQL migration under `db/migrations/`, tracked
+by the `meta/` journal. `pnpm db:migrate` applies pending migrations in order. During the PoC the
+history is kept as a **single squashed baseline** (`0000_*.sql`) rather than an accreting chain;
+once schema changes ship against a live database, new migrations append forward-only. Two tests
+guard the contract — a **journal** test (the recorded migrations match the schema) and a **replay**
+test (applying the migrations from empty reproduces the expected schema), so a schema change that
+forgot its migration fails CI rather than drifting.
 
 ## 2. Harness & Agent-Loop Internals
 

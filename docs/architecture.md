@@ -619,6 +619,30 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
 
 ## 6. Interactions, Boundary & State
 
+**System context.** The companion is a self-contained cloud system with exactly one required
+external dependency — the LLM/embedding provider — plus one optional, redacted export for tracing.
+The user reaches it through a surface; everything inside the boundary is ours:
+
+```mermaid
+flowchart TB
+    user([User])
+    subgraph cc["CobbleCompanion (cloud home)"]
+        surface["Surface — web SPA<br/>(mobile/desktop later)"]
+        api["Fastify API + Core<br/>(agent loop, gateways)"]
+        db[("Postgres + pgvector<br/>memory & state")]
+        surface --> api
+        api --> db
+    end
+    google["Google Sign-In<br/>(OIDC — ID-token verify)"]
+    openrouter["OpenRouter<br/>(LLM + embeddings)"]
+    langfuse["Langfuse Cloud<br/>(optional, redacted traces)"]
+
+    user -->|"HTTPS / SSE"| surface
+    surface -.->|"ID token"| google
+    api -->|"outbound HTTPS<br/>(trust boundary §8)"| openrouter
+    api -.->|"sampled, scrubbed<br/>(off by default)"| langfuse
+```
+
 - **Surface ↔ core contract.** The core is reached only through the API; the request/response
   and streaming contract lives in shared types. No surface-specific logic crosses into the core
   (invariant #1). Future mobile and desktop surfaces consume the *same* contract; their OS access
