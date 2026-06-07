@@ -53,10 +53,10 @@ the what and why.
 
 **Contains:**
 - System/app/service purpose and responsibilities (1 paragraph)
-- Component/module map (layers, what each owns)
+- Component/module map (layers, what each owns) — as C4 Container & Component diagrams (see Diagrams as First-Class Citizens)
 - Folder structure overview
 - Data flow diagrams (sequence diagrams, state transitions)
-- Interactions with external services (protocol, direction)
+- Interactions with external services (protocol, direction) — as a C4 Context diagram
 - State management approach
 - Design principles and decisions
 - Non-goals and scope boundaries
@@ -66,8 +66,8 @@ the what and why.
 ### Implementation
 
 **Contains:**
-- Data models / database schemas (tables, fields, types, indexes)
-- Algorithms and internal mechanisms
+- Data models / database schemas (tables, fields, types, indexes) — with an entity-relationship diagram (see Diagrams as First-Class Citizens)
+- Algorithms and internal mechanisms — with sequence/state diagrams where flow or lifecycle matters
 - Internal code structure (key files, module responsibilities)
 - Configuration details (env vars, feature flags, tuning parameters)
 - Error handling patterns
@@ -101,6 +101,58 @@ the what and why.
 **Does NOT contain:** detailed data models, full architecture descriptions, environment variable tables, project structure trees, deployment guides. These belong in the appropriate doc type; README should link to them.
 
 **Size guideline:** A README that exceeds ~100 lines is a sign that content should be extracted to dedicated docs.
+
+---
+
+## Diagrams as First-Class Citizens
+
+Documentation here is **visual-first, not text-only**. A wall of prose that *describes* a structure, a flow, or a set of relationships is a defect when a diagram would convey it faster and more precisely. **Default to including a diagram for any non-trivial structure or behavior — do not wait to be asked.**
+
+**The rule:** every Architecture and Implementation doc MUST carry at least one diagram. Whenever you describe components and how they interact, a sequence of steps, a state machine, or a data model, **lead with the diagram and let prose annotate it** — not the reverse.
+
+### Format: Mermaid by default
+
+- Author diagrams as **Mermaid** fenced code blocks (` ```mermaid `) embedded directly in the Markdown. They are diffable, reviewable in PRs, and render natively on GitHub — they live and version alongside the prose they explain.
+- Do **not** commit binary image exports (PNG/JPEG) for anything Mermaid can express. They can't be diffed, they rot, and they silently drift from the code.
+- Reserve raster/vector image files for screenshots, hand-drawn concepts, or visuals Mermaid genuinely cannot produce; store them under an `assets/` or `images/` folder beside the doc and link them in.
+
+### System architecture — the C4 model
+
+Describe systems at increasing zoom. Include the levels that carry meaning for the reader, not all four by rote:
+
+- **Context** — the system as one box among its users and the external systems it talks to. (Product Overview, Architecture)
+- **Container** — the major deployable/runtime units (web client, API, database, workers) and how they communicate. (Architecture)
+- **Component** — the internal module breakdown of a single container. (Architecture / Implementation)
+- **Code** — class/function-level structure. Generate on demand from the IDE rather than hand-maintaining it; usually omitted from docs.
+
+### Behavioral & flow diagrams — how things move and change
+
+- **Sequence diagrams** — request/response across components, the agent loop, message ordering.
+- **State diagrams** — lifecycle and state transitions (e.g. the approval-queue states).
+- **Flowcharts / activity diagrams** — decision logic and process flows.
+
+### Static & relational diagrams — how things are structured
+
+- **Entity-relationship diagrams (ERD)** — data models, tables, and their relationships.
+- **Class / type diagrams** — type contracts and relationships where they clarify design.
+- **Component-relationship diagrams** — module dependencies and ownership boundaries.
+
+### Expected diagrams by doc type
+
+| Doc type         | Expected diagrams                                                          |
+|------------------|----------------------------------------------------------------------------|
+| Product Overview | C4 Context; major user-journey flows                                       |
+| Development Plan | Roadmap/phase timeline or dependency graph where sequencing is non-obvious |
+| Architecture     | C4 Container & Component; sequence diagrams for key flows; state diagrams   |
+| Implementation   | ERD for data models; sequence/state diagrams for algorithms and mechanisms |
+| API              | Sequence diagrams for request/response and auth handshakes                 |
+| README           | Optional high-level Context diagram if it speeds orientation               |
+
+### Keep diagrams honest
+
+1. **A diagram is documentation.** It falls under the same single-source-of-truth and update rules as prose — when the thing it depicts changes, update the diagram in the *same* change.
+2. **One idea per diagram.** Prefer several small, focused diagrams over one that tries to show everything.
+3. **Prose annotates, never duplicates.** Don't restate in a paragraph what the diagram already shows — point to it and add only what it can't express.
 
 ---
 
