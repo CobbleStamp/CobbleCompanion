@@ -81,6 +81,21 @@ export {
   createEquippedRegistryResolver,
   type EquippedRegistryResolverOptions,
 } from './mcp/equipped-resolver.js';
+// CLI tool acquisition (companion-tools.md — Phase 10): host CLIs as a second
+// capability source over the same spine; run_command is the sandboxed executor.
+export {
+  type CommandRequest,
+  type CommandResult,
+  type CommandSandbox,
+  FakeCommandSandbox,
+} from './cli/sandbox.js';
+export { type CliToolDef, type CliToolLimits, parseCliToolDef } from './cli/tool-def.js';
+export {
+  type CliToolAdapterOptions,
+  cliToolName,
+  cliToolToTool,
+  runCliTool,
+} from './cli/adapter.js';
 
 // Identity (the companion "home")
 export {
