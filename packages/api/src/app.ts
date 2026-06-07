@@ -1,3 +1,4 @@
+import { CompanionNotFoundError } from '@cobble/core';
 import type {
   CompanionAffectStore,
   ConsolidationRunner,
@@ -148,7 +149,10 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   // never leak. Client errors (4xx: validation, bad content-type) are logged at
   // `info` for visibility and pass their message through.
   app.setErrorHandler((error: FastifyError, request, reply) => {
-    const statusCode = error.statusCode ?? 500;
+    // A debit/feed against a missing (or deleted) companion is a 404, wherever it
+    // surfaces — map it centrally so every route is uniform (the core error stays
+    // HTTP-agnostic; the status lives here).
+    const statusCode = error instanceof CompanionNotFoundError ? 404 : (error.statusCode ?? 500);
     const context: Record<string, unknown> = {
       operation: 'http.request',
       method: request.method,

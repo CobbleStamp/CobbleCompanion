@@ -11,7 +11,7 @@ import { foodDef, type FoodType } from '@cobble/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Logger } from '../logging.js';
 import { DrizzleIdentityStore } from '../identity/store.js';
-import { DrizzleVitalityStore } from '../quota/vitality-store.js';
+import { CompanionNotFoundError, DrizzleVitalityStore } from '../quota/vitality-store.js';
 import { DEFAULT_GROWTH_CONFIG } from './config.js';
 import { feed, type FeedDeps } from './economy.js';
 import { DrizzleFoodStore } from './food-store.js';
@@ -154,6 +154,27 @@ describe('feed', () => {
       userId,
       food: 'spark',
       error: boom,
+    });
+  });
+
+  it('audits and rethrows when the fed companion does not exist (no phantom success)', async () => {
+    // A spark grants energy; feeding a missing companion consumes the food, then the
+    // wallet add throws CompanionNotFoundError rather than silently granting nothing.
+    const missing = '00000000-0000-0000-0000-000000000000';
+    const pantryBefore = (await food.getPantry(userId)).spark;
+
+    await expect(feed(deps, { companionId: missing, userId, food: 'spark' })).rejects.toThrow(
+      CompanionNotFoundError,
+    );
+
+    // The food is gone (no refund) and the loss is audited — same contract as any
+    // post-consume add failure.
+    expect((await food.getPantry(userId)).spark).toBe(pantryBefore - 1);
+    expect(logger.errors).toHaveLength(1);
+    expect(logger.errors[0]?.context).toMatchObject({
+      companionId: missing,
+      userId,
+      food: 'spark',
     });
   });
 

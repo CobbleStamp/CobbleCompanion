@@ -213,6 +213,7 @@ export {
 // companions row (architecture.md §4.8). One store implementation meters both, picked
 // by `kind`; also the generic metering contract the ingestion pipeline bills through.
 export {
+  CompanionNotFoundError,
   DrizzleVitalityStore,
   type VitalityKind,
   type VitalityStore,
