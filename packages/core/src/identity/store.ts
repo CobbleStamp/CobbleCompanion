@@ -1,5 +1,5 @@
 import type { CompanionDto, DriveWeights, PersonalityKnobs, ProactivityDial } from '@cobble/shared';
-import { companions, type Database, users } from '@cobble/db';
+import { companions, type Database, DEFAULT_STARTING_VITALITY_TOKENS, users } from '@cobble/db';
 import { and, eq } from 'drizzle-orm';
 
 export interface UserRecord {
@@ -83,9 +83,6 @@ export interface DrizzleIdentityStoreOptions {
   readonly startingVitalityTokens?: number;
 }
 
-/** Schema-default wallet seed; mirrors `companions.{stamina,energy}_balance_tokens`. */
-const DEFAULT_STARTING_VITALITY_TOKENS = 1_000_000;
-
 export class DrizzleIdentityStore implements IdentityStore {
   private readonly startingVitalityTokens: number;
 
@@ -93,8 +90,15 @@ export class DrizzleIdentityStore implements IdentityStore {
     private readonly db: Database,
     options: DrizzleIdentityStoreOptions = {},
   ) {
-    this.startingVitalityTokens =
-      options.startingVitalityTokens ?? DEFAULT_STARTING_VITALITY_TOKENS;
+    const seed = options.startingVitalityTokens ?? DEFAULT_STARTING_VITALITY_TOKENS;
+    // Validate at construction so a bad seed fails loudly here rather than writing a
+    // corrupt wallet (negative balance, or a fractional value the bigint column would
+    // silently coerce) into every companion this store creates. The env path already
+    // enforces this via Zod, but the option is taken on trust from any caller.
+    if (!Number.isInteger(seed) || seed < 0) {
+      throw new RangeError(`startingVitalityTokens must be a non-negative integer, got ${seed}`);
+    }
+    this.startingVitalityTokens = seed;
   }
 
   async ensureUserByEmail(email: string): Promise<UserRecord> {

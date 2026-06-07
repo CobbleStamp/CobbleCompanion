@@ -1,4 +1,5 @@
 import type { McpWhitelistEntry, RedactionMode } from '@cobble/core';
+import { DEFAULT_STARTING_VITALITY_TOKENS } from '@cobble/db';
 import { z } from 'zod';
 
 /**
@@ -93,7 +94,11 @@ const envSchema = z
       .default('true')
       .transform((value) => value === 'true'),
     INGESTION_QUEUE_MAX: z.coerce.number().int().positive().default(100),
-    STARTING_VITALITY_TOKENS: z.coerce.number().int().positive().default(1_000_000),
+    STARTING_VITALITY_TOKENS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(DEFAULT_STARTING_VITALITY_TOKENS),
     // The MCP server whitelist as a JSON array (companion-tools.md §6); default
     // empty so runtime tool acquisition is off unless an operator lists servers.
     MCP_SERVERS: z.string().default('[]'),

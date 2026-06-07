@@ -51,6 +51,16 @@ import {
 export const EMBEDDING_DIMENSIONS = 1024;
 
 /**
+ * Single source of truth for the vitality-wallet seed. Used as the column
+ * `.default()` below (the bare-insert safety net) AND re-exported so the
+ * application seed path (`DrizzleIdentityStore`) and the `STARTING_VITALITY_TOKENS`
+ * env default can mirror it without drift (architecture.md §4.8). The generated
+ * migration carries the same literal — it is derived from this default by
+ * `drizzle-kit generate`, not an independent copy.
+ */
+export const DEFAULT_STARTING_VITALITY_TOKENS = 1_000_000;
+
+/**
  * NOTE: the `vector` columns below require the pgvector extension. `drizzle-kit
  * generate` does NOT emit `CREATE EXTENSION`, so any regenerated migration must
  * have `CREATE EXTENSION IF NOT EXISTS vector;` prepended by hand as its first
@@ -121,10 +131,10 @@ export const companions = pgTable(
     // a bare insert (DrizzleVitalityStore meters these columns — `vitality-store.ts`).
     staminaBalanceTokens: bigint('stamina_balance_tokens', { mode: 'number' })
       .notNull()
-      .default(1_000_000),
+      .default(DEFAULT_STARTING_VITALITY_TOKENS),
     energyBalanceTokens: bigint('energy_balance_tokens', { mode: 'number' })
       .notNull()
-      .default(1_000_000),
+      .default(DEFAULT_STARTING_VITALITY_TOKENS),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index('companions_owner_idx').on(table.ownerId)],
