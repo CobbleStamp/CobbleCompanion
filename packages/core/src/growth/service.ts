@@ -1,10 +1,10 @@
 /**
  * Growth service (Phase 5, development-plan.md §3) — turns the real memory/activity
  * substrate into the companion's four-axis growth standing as a MIRROR (knowledge,
- * bond, initiative, character), persists the idempotent high-water mark, awards treats
- * and posts in-character reflections on genuine forward progress, and builds the
+ * bond, initiative, character), persists the idempotent high-water mark, and posts
+ * in-character reflections on genuine forward progress, and builds the
  * surface `GrowthDto`. Growth is DERIVED every call and may move in either direction;
- * only `treats` is stored. The high-water mark exists ONLY so a reflection fires once
+ * only the high-water mark is stored. It exists ONLY so a reflection fires once
  * per band reached (it never floors what the surface shows). Posting a reflection
  * reuses the announcer idea (a best-effort transcript write that never breaks the
  * caller); the note text is canned (the progression pass is token-free).

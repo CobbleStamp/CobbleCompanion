@@ -92,7 +92,7 @@ export function registerMemoryRoutes(
       if (!companion) {
         return reply.code(404).send({ error: 'companion not found' });
       }
-      // Search spends an embedding, so it's gated by the same daily stamina cap.
+      // Search spends an embedding, so it's gated by the same stamina wallet.
       const overCap = await overCapGuard(quota, companion.id);
       if (overCap) {
         return reply.code(429).send({ error: overCap });

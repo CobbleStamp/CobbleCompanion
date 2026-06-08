@@ -1,7 +1,7 @@
 /**
  * Integration tests for personality evolution against the real in-memory DB:
  * it re-synthesizes the evolved persona from recent episodes, advances the
- * evolution cursor, self-gates when nothing is new, gates on the daily cap, and
+ * evolution cursor, self-gates when nothing is new, gates on the stamina wallet, and
  * never throws. The LLM is faked.
  */
 
@@ -106,7 +106,7 @@ describe('LlmPersonalityEvolver', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it('skips synthesis when the owner is over the daily cap', async () => {
+  it('skips synthesis when the stamina wallet is empty', async () => {
     await seedEpisodes(8);
     const llm = new FakeLlmGateway([PERSONA_TEXT]);
     const spy = vi.spyOn(llm, 'stream');

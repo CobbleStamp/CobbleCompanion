@@ -1,7 +1,7 @@
 /**
  * Integration tests for the consolidation service + sweep against the real
  * in-memory database: it reflects a transcript window into embedded episodes,
- * advances the cursor (even on filler), gates on minTurns and the daily cap,
+ * advances the cursor (even on filler), gates on minTurns and the stamina wallet,
  * degrades when embeddings fail, and the sweep wakes only companions with a
  * long-enough pending tail. The LLM + embeddings are faked.
  */
@@ -137,7 +137,7 @@ describe('ConsolidationService', () => {
     expect(await episodic.consolidatedThroughSeq(companionId)).toBe(8);
   });
 
-  it('skips (no cursor advance) when the owner is over the daily cap', async () => {
+  it('skips (no cursor advance) when the stamina wallet is empty', async () => {
     await seedTurns(8);
     await service({ quota: new FakeQuota(true) }).consolidate(companionId);
     expect(await episodic.countEpisodes(companionId)).toBe(0);

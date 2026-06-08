@@ -369,9 +369,9 @@ async function main(): Promise<void> {
     consoleLogger.info('failed interrupted ingestion jobs on startup', { count: failed });
   }
 
-  // Resume parked (deferred) jobs now and on a timer, so work that hit yesterday's
-  // cap drains as allowances reset (architecture.md §4.8). Serial + cap-gated, so
-  // it never overspends.
+  // Resume parked (deferred) jobs now and on a timer, so work that hit an empty
+  // wallet drains as companions are fed (architecture.md §4.8). Serial + wallet-gated,
+  // so it never overspends.
   const sweepDeps = { semantic, quota, ingestion, logger: consoleLogger };
   await resumeDeferredJobs(sweepDeps);
   const sweepTimer = setInterval(() => {

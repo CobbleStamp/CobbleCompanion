@@ -67,4 +67,28 @@ describe('DrizzleFoodStore', () => {
     // The other user's pantry is seeded fresh and untouched.
     expect((await store.getPantry(other.id)).treat).toBe(INITIAL);
   });
+
+  it('concurrent consumes never overspend — exactly `initialFood` of them win', async () => {
+    // Fire twice as many consumes as there is stock, all at once. The guarded
+    // `UPDATE … WHERE count > 0` serialises at the row, so exactly INITIAL of them
+    // return true and the rest return false — the count can't drive negative.
+    const results = await Promise.all(
+      Array.from({ length: INITIAL * 2 }, () => store.consume(userId, 'ration')),
+    );
+    expect(results.filter((won) => won).length).toBe(INITIAL);
+    expect((await store.getPantry(userId)).ration).toBe(0);
+  });
+
+  it('two racing consumes at the last unit yield exactly one winner', async () => {
+    // Drain to a single ration, then race two consumes for it.
+    await store.consume(userId, 'ration');
+    await store.consume(userId, 'ration');
+    expect((await store.getPantry(userId)).ration).toBe(1);
+    const [a, b] = await Promise.all([
+      store.consume(userId, 'ration'),
+      store.consume(userId, 'ration'),
+    ]);
+    expect([a, b].filter((won) => won).length).toBe(1);
+    expect((await store.getPantry(userId)).ration).toBe(0);
+  });
 });

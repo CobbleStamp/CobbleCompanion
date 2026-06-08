@@ -194,10 +194,10 @@ describe('confirmProposal error surfacing', () => {
     );
   }
 
-  it('throws the server body on a 429 over-cap (not the status code)', async () => {
-    stubErrorResponse(429, "You're over your daily token limit.");
+  it('throws the server body on a 429 out-of-stamina (not the status code)', async () => {
+    stubErrorResponse(429, 'Cobble is out of stamina for now. Feed it a Ration to continue.');
     await expect(confirmProposal('companion-1', 'p1').next()).rejects.toThrow(
-      "You're over your daily token limit.",
+      'Cobble is out of stamina for now. Feed it a Ration to continue.',
     );
   });
 

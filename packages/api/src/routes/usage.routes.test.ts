@@ -1,4 +1,4 @@
-/** Usage route: a companion's daily stamina standing. */
+/** Usage route: a companion's stamina-wallet standing. */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { makeTestApp, type TestApp } from '../test/helpers.js';

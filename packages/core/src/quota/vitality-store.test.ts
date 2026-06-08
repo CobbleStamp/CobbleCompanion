@@ -132,4 +132,62 @@ describe('DrizzleVitalityStore', () => {
     expect(await store.getBalance(companionId)).toBe(START - 400_000);
     expect(await store.getBalance(sibling.id)).toBe(START);
   });
+
+  describe("the 'energy' discriminator meters the other column", () => {
+    let energy: DrizzleVitalityStore;
+
+    beforeEach(() => {
+      energy = new DrizzleVitalityStore(db, 'energy');
+    });
+
+    it('reports the same starting seed as stamina', async () => {
+      expect(await energy.getBalance(companionId)).toBe(START);
+      expect(await energy.isEmpty(companionId)).toBe(false);
+    });
+
+    it('spends, floors, and feeds the energy column', async () => {
+      await energy.spend(companionId, 300_000);
+      expect(await energy.getBalance(companionId)).toBe(START - 300_000);
+      await energy.spend(companionId, START); // overshoot
+      expect(await energy.getBalance(companionId)).toBe(0);
+      await energy.add(companionId, 150_000);
+      expect(await energy.getBalance(companionId)).toBe(150_000);
+    });
+
+    it('is independent of the stamina wallet on the same companion', async () => {
+      // The two halves of vitality are separate columns: draining one leaves the
+      // other untouched, so the discriminator truly selects a distinct wallet.
+      await energy.spend(companionId, START);
+      expect(await energy.getBalance(companionId)).toBe(0);
+      expect(await store.getBalance(companionId)).toBe(START);
+    });
+
+    it('throws CompanionNotFoundError for a missing companion', async () => {
+      await expect(energy.spend('00000000-0000-0000-0000-000000000000', 1000)).rejects.toThrow(
+        CompanionNotFoundError,
+      );
+    });
+  });
+
+  describe('concurrent debits and feeds (atomic, no lost update)', () => {
+    it('parallel spends totalling the whole wallet land exactly at 0', async () => {
+      // Ten concurrent debits of 100k against a 1M wallet. The atomic
+      // `GREATEST(0, balance - n)` update serialises at the row, so no debit is
+      // lost and the balance settles at exactly 0 — never negative.
+      await Promise.all(Array.from({ length: 10 }, () => store.spend(companionId, START / 10)));
+      expect(await store.getBalance(companionId)).toBe(0);
+    });
+
+    it('parallel spends that overshoot still floor at 0 with no negative drift', async () => {
+      await Promise.all(Array.from({ length: 20 }, () => store.spend(companionId, 100_000)));
+      expect(await store.getBalance(companionId)).toBe(0);
+      expect(await store.isEmpty(companionId)).toBe(true);
+    });
+
+    it('parallel feeds all apply (no lost update)', async () => {
+      await store.spend(companionId, START); // empty it
+      await Promise.all(Array.from({ length: 8 }, () => store.add(companionId, 50_000)));
+      expect(await store.getBalance(companionId)).toBe(8 * 50_000);
+    });
+  });
 });

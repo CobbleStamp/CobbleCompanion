@@ -690,8 +690,8 @@ flowchart TB
       personality/     evolvedPersona synthesis from episodes
       identity/        companion "home" model + store
       motivation/      the "will" (§4.4–§4.5): drives × presence arbitration, autonomous explore burst, engine runner/sweep, affect perception + change-as-reward reinforcement
-      growth/          four mirror axes derived from substrate (§4.3 hint arm) + the feeding economy: axis readings (band+fill), capabilities registry, growth store/service/runner, foods
-      quota/           per-companion vitality wallets (stamina + energy) + the per-user food pantry (§4.8)
+      growth/          four mirror axes derived from substrate (§4.3 hint arm) + the feeding economy: axis readings (band+fill), capabilities registry, growth store/service/runner, foods, the per-user food pantry/store (§4.8)
+      quota/           per-companion vitality wallets (stamina + energy) (§4.8)
     api/               BFF / surface boundary (Fastify); memory + source + usage + proposal/inventory routes; presence + proactivity (dial/energy) routes; growth + feed routes
       tracing/         Langfuse Cloud TraceSink adapter (fetch-based; sampling + redaction before export) — runbook-tracing.md
     web/               React web client; chat w/ citations + ingestion-status panel + approval cards, sources page, memory browser, usage badge; vitality meter + proactivity dial; growth view + kitchen

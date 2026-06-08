@@ -90,7 +90,7 @@ export function fileSourceAcknowledgement(filename: string): string {
 
 /**
  * Canned proactive notes used when an in-character LLM note can't be generated
- * (owner over their daily token cap, generation failed, or persona unavailable).
+ * (companion's stamina wallet empty, generation failed, or persona unavailable).
  * The companion always tells the user how a read ended — it never goes silent.
  */
 export function ingestionDoneFallback(sourceTitle: string): string {
@@ -168,9 +168,9 @@ export function uploadKindForFilename(filename: string): UploadSourceKind | null
 
 /**
  * Ingestion job lifecycle states, in pipeline order. `deferred` is off the main
- * line: a job that parsed successfully but whose AI passes wait for the owner's
- * daily token allowance to reset (architecture.md §4.8); it resumes to
- * `segmenting` once under the cap.
+ * line: a job that parsed successfully but whose AI passes wait for the companion's
+ * stamina wallet to be refilled by feeding (architecture.md §4.8); it resumes to
+ * `segmenting` once the wallet is no longer empty.
  */
 export type IngestionStatus =
   | 'queued'

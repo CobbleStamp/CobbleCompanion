@@ -8,9 +8,9 @@ import type { IngestionJobDto } from '@cobble/shared';
 
 /**
  * Job states that still change on their own — callers poll while any source is
- * in one. `deferred` is excluded: it waits (possibly hours) for the daily token
- * allowance to reset, so fast polling would be wasteful. `failed`/`done` are
- * terminal.
+ * in one. `deferred` is excluded: it waits (possibly hours) for the companion to
+ * be fed (its stamina wallet refilled), so fast polling would be wasteful.
+ * `failed`/`done` are terminal.
  */
 export function isActiveJob(job: IngestionJobDto): boolean {
   return job.status !== 'done' && job.status !== 'failed' && job.status !== 'deferred';
@@ -30,7 +30,7 @@ export function jobStatusLabel(job: IngestionJobDto): string {
   if (job.status === 'done') return `read · ${job.sectionsTotal} sections`;
   if (job.status === 'failed') return `failed: ${job.error ?? 'unknown error'}`;
   if (job.status === 'deferred') {
-    return 'waiting for your daily allowance to reset, then Cobble finishes reading it';
+    return 'waiting to be fed, then Cobble finishes reading it';
   }
   return `${job.status}… ${job.sectionsDone}/${job.sectionsTotal || '?'} sections`;
 }

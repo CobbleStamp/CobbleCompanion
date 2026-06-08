@@ -68,11 +68,11 @@ describe('ProposalCard', () => {
   it('surfaces an error if the action fails', async () => {
     // The card surfaces whatever message the rejected promise carries; the client
     // (confirmProposal → stream → send) now preserves the server's 409/429 body, so
-    // this is the real over-cap text the user sees end to end. The client side of
-    // that contract is pinned in api/client.test.ts.
-    const onConfirm = vi.fn().mockRejectedValue(new Error('over your daily limit'));
+    // this is the real out-of-stamina text the user sees end to end. The client side
+    // of that contract is pinned in api/client.test.ts.
+    const onConfirm = vi.fn().mockRejectedValue(new Error('Cobble is out of stamina for now.'));
     render(<ProposalCard proposal={proposal} onConfirm={onConfirm} onReject={vi.fn()} />);
     fireEvent.click(screen.getByText('Approve'));
-    await waitFor(() => expect(screen.getByText(/over your daily limit/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/out of stamina/)).toBeTruthy());
   });
 });

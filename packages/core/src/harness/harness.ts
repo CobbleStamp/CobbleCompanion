@@ -769,7 +769,7 @@ export class Harness {
   }
 
   /**
-   * Debit the turn's tokens against the companion's daily stamina cap (chat is
+   * Debit the turn's tokens against the companion's stamina wallet (chat is
    * user-initiated work — the stamina half of the companion's vitality,
    * architecture.md §4.8). Best-effort: a metering failure is logged but never
    * breaks the conversation (logging.md), and turns with no quota (e.g. tests)

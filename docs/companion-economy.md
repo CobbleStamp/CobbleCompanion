@@ -15,7 +15,7 @@
 > the wallets.
 >
 > **Where it lives.** `packages/core/src/growth/economy.ts` (the feed), the per-user food store in
-> `packages/core/src/quota/` (the pantry + atomic consume), the food catalogue in `contracts.ts`
+> `packages/core/src/growth/food-store.ts` (the pantry + atomic consume), the food catalogue in `contracts.ts`
 > (`FOODS`), and the route `POST /companions/:companionId/feed`
 > (`packages/api/src/routes/growth.routes.ts`). The Growth view's "Kitchen"
 > (`packages/web/src/pages/Growth.tsx`) is the one mutating affordance.

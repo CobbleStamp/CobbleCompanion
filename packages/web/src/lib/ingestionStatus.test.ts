@@ -65,8 +65,8 @@ describe('jobStatusLabel', () => {
     expect(jobStatusLabel(job({ status: 'failed', error: null }))).toBe('failed: unknown error');
   });
 
-  it('explains a deferred job is waiting on the daily allowance', () => {
-    expect(jobStatusLabel(job({ status: 'deferred' }))).toMatch(/waiting for your daily allowance/);
+  it('explains a deferred job is waiting to be fed', () => {
+    expect(jobStatusLabel(job({ status: 'deferred' }))).toMatch(/waiting to be fed/);
   });
 
   it('shows live section progress for an active job', () => {

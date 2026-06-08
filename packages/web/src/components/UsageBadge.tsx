@@ -1,8 +1,9 @@
 /**
- * Live daily-stamina indicator (architecture.md §4.8). Self-contained: polls the
- * companion's `/usage` on an interval and renders the percent consumed plus a hover
- * detail. Non-critical — a failed poll is swallowed so the badge never disrupts a
- * page. Dropped into each page header for the active companion.
+ * Live stamina-wallet indicator (architecture.md §4.8). Self-contained: polls the
+ * companion's `/usage` on an interval and renders the remaining balance (or a "feed
+ * me" prompt when empty) plus a hover detail. Non-critical — a failed poll is
+ * swallowed so the badge never disrupts a page. Dropped into each page header for
+ * the active companion.
  */
 
 import type { UsageDto } from '@cobble/shared';

@@ -109,7 +109,7 @@ export class OpenRouterEmbeddingGateway implements EmbeddingGateway {
  * from the inputs when the provider omits it so accounting is never silently 0.
  * `totalTokens` is derived from `promptTokens` rather than trusted from the
  * provider: embeddings have no completion tokens, and a provider returning
- * `total_tokens: 0` alongside real `prompt_tokens` must not zero the daily-cap
+ * `total_tokens: 0` alongside real `prompt_tokens` must not zero the wallet
  * debit.
  */
 function toUsage(

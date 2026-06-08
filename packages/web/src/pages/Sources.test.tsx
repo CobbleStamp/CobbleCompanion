@@ -83,7 +83,7 @@ describe('Sources', () => {
     vi.mocked(deleteSource).mockResolvedValue();
 
     render(<Sources companionName="Pebble" companionId="companion-1" onBack={() => {}} />);
-    await waitFor(() => expect(screen.getByText(/waiting for your daily allowance/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/waiting to be fed/)).toBeTruthy());
 
     fireEvent.click(screen.getByRole('button', { name: /Delete Peru/ }));
     await waitFor(() => expect(deleteSource).toHaveBeenCalledWith('companion-1', 's1'));

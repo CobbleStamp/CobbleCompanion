@@ -178,7 +178,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   const requireAuth = makeRequireAuth(deps);
 
-  // The per-user daily token cap (architecture.md token budget) is the cost
+  // The per-companion vitality wallet (architecture.md §4.8) is the cost
   // guardrail; routes enforce it inline (chat/search pre-flight, ingestion
   // defer), so there are no per-route request-count limiters.
   registerAuthRoutes(app, deps, requireAuth);

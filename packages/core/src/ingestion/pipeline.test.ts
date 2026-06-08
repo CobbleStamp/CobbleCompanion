@@ -272,7 +272,7 @@ describe('IngestionPipeline', () => {
     expect(vectorHits).toHaveLength(0);
   });
 
-  it('defers the AI passes (holding the parse) when the owner is over the daily cap', async () => {
+  it('defers the AI passes (holding the parse) when the stamina wallet is empty', async () => {
     const quota = new StubQuota();
     quota.over = true;
     const llm = new ScriptedLlmGateway([SEGMENT_RESPONSE, ENRICH_CONQUEST, ENRICH_CUISINE]);

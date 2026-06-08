@@ -1,10 +1,10 @@
 /**
- * Deferred-job sweeper (architecture.md §4.8). Ingestion jobs parked at the
- * daily stamina cap (`status: 'deferred'`) carry their parsed text; this resumes
- * the ones whose companion is now under cap, one at a time through the serial
- * runner. Run it on a timer and at startup. Because the runner's own quota gate
- * re-checks at run time, a queue drains *incrementally* across cycles: a companion
- * that crosses the cap again mid-drain simply leaves its remaining jobs parked.
+ * Deferred-job sweeper (architecture.md §4.8). Ingestion jobs parked on an empty
+ * stamina wallet (`status: 'deferred'`) carry their parsed text; this resumes the
+ * ones whose companion has since been fed (wallet no longer empty), one at a time
+ * through the serial runner. Run it on a timer and at startup. Because the runner's
+ * own quota gate re-checks at run time, a queue drains *incrementally* across cycles:
+ * a companion whose wallet empties again mid-drain simply leaves its remaining jobs parked.
  */
 
 import type { Logger } from '../logging.js';
