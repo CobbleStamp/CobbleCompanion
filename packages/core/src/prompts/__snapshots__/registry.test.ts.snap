@@ -31,8 +31,8 @@ exports[`prompt registry > locks prompt versions against accidental drift 1`] = 
     "semver": "1.0.0",
   },
   "persona": {
-    "contentHash": "ea2b97a20a4dfb6c",
-    "semver": "1.0.0",
+    "contentHash": "ce6eca074551d692",
+    "semver": "1.1.0",
   },
   "persona-evolve": {
     "contentHash": "f308121ccfdc2d4d",

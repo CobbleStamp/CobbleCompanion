@@ -8,6 +8,13 @@
       "when": 1780861110088,
       "tag": "0000_lean_wilson_fisk",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1780905320761,
+      "tag": "0001_calm_kree",
+      "breakpoints": true
     }
   ]
 }

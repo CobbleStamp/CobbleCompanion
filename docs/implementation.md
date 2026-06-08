@@ -34,6 +34,7 @@ erDiagram
 
     users {
         uuid id PK
+        text display_name "nullable"
     }
     companions {
         uuid id PK
@@ -75,12 +76,15 @@ erDiagram
 |---|---|---|
 | `id` | uuid (PK) | |
 | `email` | text, unique | login identity |
+| `display_name` | text, nullable | what the companion calls the user. **Seeded once** at JIT-provision from the Google ID token's (unverified) `name` claim; set-once on insert, so a later sign-in never overwrites it. Null when Google supplied no name — the cue for the persona's "what should I call you?". **Capturing a name the user then states in conversation is not yet wired** (the `setUserDisplayName` primitive exists for it; the mechanism is an open design question — `companion-memory.md`). |
 | `created_at` | timestamptz | |
 
 > **Auth note:** there is no local credential/token table. Sign-in is **Google Sign-In**; the
 > SPA obtains a Google ID token and the API validates it against Google's JWKS, then
 > JIT-provisions the `users` row from the verified `email` claim (Google requires
-> `email_verified === true`). See §5.
+> `email_verified === true`). The token's `name` claim (profile display name, **unverified** —
+> used only as a seed for `display_name`, never for identity/authorization) is passed through to
+> seed the row on first provision. See §5.
 
 ### `companions` — the canonical "home"
 | Field | Type | Notes |
@@ -521,7 +525,9 @@ separately.
 
 A turn's prompt is composed, in order, from: **(1)** the companion identity row (`name`, `form`,
 `temperament` → persona system prompt — `evolved_persona` is blended in beside the seed when
-present), **(2)** the base system prompt, **(3)** `RetrieveContext` output. The hook is one slot;
+present, and the user's `display_name` is named so the reply addresses a specific someone; when it
+is null the persona says the name is unknown, cueing the companion to ask rather than invent one),
+**(2)** the base system prompt, **(3)** `RetrieveContext` output. The hook is one slot;
 `composeRetrieveContext` runs the arms in order — **episodic** memory blocks (time-anchored,
 fenced), then top-K **semantic** grounding blocks (verbatim sections with source/para
 preambles), then the most-recent N transcript messages (the recency window, appended once by the

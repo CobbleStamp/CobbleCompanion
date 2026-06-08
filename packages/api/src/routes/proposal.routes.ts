@@ -181,11 +181,13 @@ export function registerProposalRoutes(
       //   a confirm-route reflex (and per-approval re-entry is incoherent for a
       //   batch). So nudge the engine and stream just the outcome — no LLM turn.
       if (proposal.origin === 'chat') {
+        const user = await identity.getUserById(request.userId!);
         await streamSse(
           reply,
           harness.continueAfterApproval({
             companion,
             ownerId: request.userId!,
+            userName: user?.displayName ?? null,
             outcome: result.content,
           }),
           logger,

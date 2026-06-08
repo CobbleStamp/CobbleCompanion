@@ -14,28 +14,42 @@ const companion: CompanionDto = {
 
 describe('buildPersona', () => {
   it('embeds the companion identity', () => {
-    const persona = buildPersona(companion);
+    const persona = buildPersona(companion, null);
     expect(persona).toContain('Pebble');
     expect(persona).toContain('fox');
     expect(persona).toContain('curious and gentle');
   });
 
   it('keeps the seed temperament and omits the evolved clause before any evolution', () => {
-    const persona = buildPersona(companion);
+    const persona = buildPersona(companion, null);
     expect(persona).toContain('began as "curious and gentle"');
     expect(persona).not.toContain('Through your history together');
   });
 
   it('blends the evolved persona alongside the seed once it exists', () => {
-    const evolved = buildPersona({
-      ...companion,
-      evolvedPersona: "You've grown playful and you know they cook to unwind.",
-    });
+    const evolved = buildPersona(
+      {
+        ...companion,
+        evolvedPersona: "You've grown playful and you know they cook to unwind.",
+      },
+      null,
+    );
     // The immutable seed is preserved …
     expect(evolved).toContain('began as "curious and gentle"');
     // … and the evolved growth is blended in.
     expect(evolved).toContain('Through your history together, you have grown');
     expect(evolved).toContain('they cook to unwind');
+  });
+
+  it('names the user when known', () => {
+    const persona = buildPersona(companion, 'Ada');
+    expect(persona).toContain('called Ada');
+  });
+
+  it('flags an unknown name so the companion asks rather than guesses', () => {
+    const persona = buildPersona(companion, null);
+    expect(persona).toContain("do not yet know the user's name");
+    expect(persona).not.toContain('called ');
   });
 });
 
@@ -75,6 +89,11 @@ describe('assembleContext', () => {
   it('omits attunement for a neutral/empty mood read', () => {
     expect(assembleContext(companion, [], { valence: 0, note: '' })).toHaveLength(1);
     expect(assembleContext(companion, [], null)).toHaveLength(1);
+  });
+
+  it('threads the user name into the persona system prompt', () => {
+    const messages = assembleContext(companion, [], null, 'Ada');
+    expect(messages[0]?.content).toContain('called Ada');
   });
 });
 

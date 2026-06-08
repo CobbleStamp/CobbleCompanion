@@ -4,6 +4,13 @@ import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
 export interface VerifiedClaims {
   readonly sub: string;
   readonly email?: string;
+  /**
+   * The profile display name (Google's `name` claim). UNVERIFIED — Google does not
+   * vouch for it the way it does `email_verified` — so it is used only as a *seed*
+   * for what the companion calls the user, never for identity or authorization. The
+   * companion confirms or replaces it on first meeting.
+   */
+  readonly name?: string;
 }
 
 /**
@@ -45,9 +52,12 @@ export class GoogleIdTokenVerifier implements TokenVerifier {
     if (payload.email_verified !== true) {
       throw new Error('email not verified');
     }
-    return typeof payload.email === 'string'
-      ? { sub: payload.sub, email: payload.email }
-      : { sub: payload.sub };
+    const name = typeof payload.name === 'string' ? payload.name : undefined;
+    return {
+      sub: payload.sub,
+      ...(typeof payload.email === 'string' ? { email: payload.email } : {}),
+      ...(name ? { name } : {}),
+    };
   }
 }
 

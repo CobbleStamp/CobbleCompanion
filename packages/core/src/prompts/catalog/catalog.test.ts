@@ -39,6 +39,7 @@ describe('personaTemplate.build', () => {
       form: 'a small fox',
       temperament: 'curious',
       evolvedPersona: 'You have grown more playful with them.',
+      userName: null,
     });
     const system = built.messages[0]?.content ?? '';
     expect(system).toContain('Through your history together, you have grown:');
@@ -51,9 +52,30 @@ describe('personaTemplate.build', () => {
       form: 'a small fox',
       temperament: 'curious',
       evolvedPersona: '   ',
+      userName: null,
     });
     const system = built.messages[0]?.content ?? '';
     expect(system).not.toContain('you have grown');
+  });
+
+  it('names the user when known and prompts to ask when not', () => {
+    const named = personaTemplate.build({
+      name: 'Pebble',
+      form: 'a small fox',
+      temperament: 'curious',
+      evolvedPersona: null,
+      userName: 'Ada',
+    });
+    expect(named.messages[0]?.content ?? '').toContain('called Ada');
+
+    const unknown = personaTemplate.build({
+      name: 'Pebble',
+      form: 'a small fox',
+      temperament: 'curious',
+      evolvedPersona: null,
+      userName: null,
+    });
+    expect(unknown.messages[0]?.content ?? '').toContain("do not yet know the user's name");
   });
 });
 

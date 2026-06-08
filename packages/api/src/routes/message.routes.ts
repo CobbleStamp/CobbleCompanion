@@ -104,6 +104,10 @@ export function registerMessageRoutes(
       // is streamed in place (`reflection` event) so it's felt now, not on the
       // next transcript fetch. The recompute is token-free and runs after `done`,
       // so it never delays the reply — only the stream's close. Idempotent.
+      // What the companion calls the user (seeded from Google at sign-in, then
+      // confirmed/learned). Threaded into the persona so the reply addresses a
+      // specific someone; null leaves the companion's "find out their name" cue.
+      const user = await identity.getUserById(request.userId!);
       await streamSse(
         reply,
         withGrowthReflections(
@@ -111,6 +115,7 @@ export function registerMessageRoutes(
             companion,
             userContent: parsed.data.content,
             ownerId: request.userId!,
+            userName: user?.displayName ?? null,
           }),
           growth,
           companion.id,

@@ -29,9 +29,11 @@ export function makeRequireAuth(deps: AppDeps): RequireAuth {
     const token = header.slice('Bearer '.length).trim();
 
     let email: string | undefined;
+    let seedName: string | undefined;
     try {
       const claims = await deps.tokenVerifier.verify(token);
       email = claims.email;
+      seedName = claims.name;
     } catch (error) {
       // An expired token is a routine client condition, not a server fault: the
       // browser simply needs to re-authenticate. Log it at info (no stack) so it
@@ -52,7 +54,7 @@ export function makeRequireAuth(deps: AppDeps): RequireAuth {
       return;
     }
 
-    const user = await deps.identity.ensureUserByEmail(email);
+    const user = await deps.identity.ensureUserByEmail(email, seedName);
     request.userId = user.id;
   };
 }

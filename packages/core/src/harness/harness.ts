@@ -109,6 +109,8 @@ export interface RunTurnParams {
   readonly userContent: string;
   /** The companion's owner — the account the turn's tokens are debited to. */
   readonly ownerId?: string;
+  /** What the companion calls the user (null/omitted = not yet known). */
+  readonly userName?: string | null;
   readonly signal?: AbortSignal;
 }
 
@@ -116,6 +118,8 @@ export interface RunTurnParams {
 export interface ContinueParams {
   readonly companion: CompanionDto;
   readonly ownerId?: string;
+  /** What the companion calls the user (null/omitted = not yet known). */
+  readonly userName?: string | null;
   /** The completed action's result line, injected so the model knows it's done. */
   readonly outcome: string;
   readonly signal?: AbortSignal;
@@ -193,7 +197,7 @@ export class Harness {
    * transcript is the source of truth, §4.7).
    */
   async *runTurn(params: RunTurnParams): AsyncGenerator<ChatStreamEvent> {
-    const { companion, userContent, ownerId, signal } = params;
+    const { companion, userContent, ownerId, userName, signal } = params;
     const trace = this.traceSink.startTrace({
       traceId: randomUUID(),
       name: 'turn',
@@ -203,7 +207,7 @@ export class Harness {
     let traceError: string | undefined;
     try {
       await this.memory.appendMessage(companion.id, 'user', userContent);
-      const prep = await this.prepare(companion, userContent, trace);
+      const prep = await this.prepare(companion, userContent, trace, userName ?? null);
       // Snapshot the transcript for the post-turn affect read NOW, while the user's
       // message is still the final row. Once the reply persists (end of runLoop) it
       // becomes the final row, and `affectContext` — which drops the final turn as
@@ -269,7 +273,7 @@ export class Harness {
    * and continues whatever was asked ("…then summarize what you saved").
    */
   async *continueAfterApproval(params: ContinueParams): AsyncGenerator<ChatStreamEvent> {
-    const { companion, ownerId, outcome, signal } = params;
+    const { companion, ownerId, userName, outcome, signal } = params;
     const trace = this.traceSink.startTrace({
       traceId: randomUUID(),
       name: 'turn',
@@ -278,7 +282,7 @@ export class Harness {
     });
     let traceError: string | undefined;
     try {
-      const prep = await this.prepare(companion, '', trace);
+      const prep = await this.prepare(companion, '', trace, userName ?? null);
       prep.messages.push({
         role: 'user',
         content:
@@ -402,6 +406,7 @@ export class Harness {
     companion: CompanionDto,
     userContent: string,
     trace: TraceHandle,
+    userName: string | null,
   ): Promise<PreparedTurn> {
     const span = trace.startSpan({ kind: 'assemble_context', name: 'assemble_context' });
     try {
@@ -413,7 +418,7 @@ export class Harness {
       // is fed forward so this reply adjusts tone/detail to where they are.
       // Best-effort — a store hiccup must never block the reply (just lose attunement).
       const affect = await this.priorAffect(companion.id);
-      const messages = assembleContext(companion, history, affect);
+      const messages = assembleContext(companion, history, affect, userName);
       const citations = dedupeCitations(history.flatMap((block) => block.provenance ?? []));
       span.end({
         attributes: { blocks: history.length, citations: citations.length },
@@ -790,6 +795,11 @@ export class Harness {
     }
   }
 
+  // The no-memory FALLBACK used only when no `retrieveContext` is injected (bare
+  // harness, most unit tests): a plain recency window, no recall. Production wires
+  // the real stack — episodic + procedural + semantic recall arms composed via
+  // `composeRetrieveContext` (see packages/api/src/index.ts) — so "the harness only
+  // does recency" is true of THIS default, never of the running app.
   private defaultRetrieveContext: RetrieveContext = async ({ companionId }) => {
     const recent = await this.memory.getRecentMessages(companionId, this.recentLimit);
     return {

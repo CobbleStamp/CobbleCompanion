@@ -68,6 +68,47 @@ describe('DrizzleIdentityStore', () => {
     expect(second.id).toBe(first.id);
   });
 
+  describe('display name', () => {
+    it('defaults to null when no seed is supplied', async () => {
+      const user = await identity.ensureUserByEmail('noname@example.com');
+      expect(user.displayName).toBeNull();
+    });
+
+    it('seeds the display name from the Google name on first provision', async () => {
+      const user = await identity.ensureUserByEmail('ada@example.com', 'Ada Lovelace');
+      expect(user.displayName).toBe('Ada Lovelace');
+    });
+
+    it('treats a blank seed as absent', async () => {
+      const user = await identity.ensureUserByEmail('blank@example.com', '   ');
+      expect(user.displayName).toBeNull();
+    });
+
+    it('never re-clobbers an existing name on a later sign-in (set-once)', async () => {
+      await identity.ensureUserByEmail('ada@example.com', 'Ada');
+      // A later token carrying a different profile name must not overwrite it.
+      const again = await identity.ensureUserByEmail('ada@example.com', 'Augusta');
+      expect(again.displayName).toBe('Ada');
+    });
+
+    it('backfills a name onto a row that was created without one', async () => {
+      const first = await identity.ensureUserByEmail('ada@example.com');
+      expect(first.displayName).toBeNull();
+      // onConflictDoNothing keeps the existing row, so the seed only lands on the
+      // initial insert — a name learned later comes through setUserDisplayName.
+      await identity.setUserDisplayName(first.id, 'Ada');
+      const reread = await identity.getUserById(first.id);
+      expect(reread?.displayName).toBe('Ada');
+    });
+
+    it('setUserDisplayName overrides the Google seed (the confirmed name wins)', async () => {
+      const user = await identity.ensureUserByEmail('ada@example.com', 'Ada Lovelace');
+      await identity.setUserDisplayName(user.id, 'Ada');
+      const reread = await identity.getUserById(user.id);
+      expect(reread?.displayName).toBe('Ada');
+    });
+  });
+
   it('scopes getCompanion by owner (tenancy)', async () => {
     const owner = await identity.ensureUserByEmail('owner@example.com');
     const other = await identity.ensureUserByEmail('other@example.com');

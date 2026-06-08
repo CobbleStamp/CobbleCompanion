@@ -630,7 +630,7 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
 | Data access | Type-safe query layer (Drizzle) | Explicit types end-to-end; no raw SQL by default |
 | LLM access | **Provider-agnostic gateway, default OpenRouter** | Swap models/providers without touching the harness |
 | Embeddings | **Provider-agnostic gateway, OpenRouter `/embeddings`** — default `perplexity/pplx-embed-v1-0.6b` | Single vendor with the LLM gateway; dimensions pinned to the vector column (`implementation.md` §3) |
-| Auth | **Google Sign-In (OIDC)** | No auth service to run, no tenant, no extra Pulumi stack — the SPA gets a Google ID token and the API verifies it then JIT-provisions users by email. Token verification, client persistence, and expiry handling → `implementation.md` §5. `dev_bypass` mode for local/tests |
+| Auth | **Google Sign-In (OIDC)** | No auth service to run, no tenant, no extra Pulumi stack — the SPA gets a Google ID token and the API verifies it then JIT-provisions users by email (the token's unverified `name` claim is passed through to seed `display_name` — what the companion calls the user — once, never overwriting a confirmed name). Token verification, client persistence, and expiry handling → `implementation.md` §5. `dev_bypass` mode for local/tests |
 
 ## 6. Interactions, Boundary & State
 

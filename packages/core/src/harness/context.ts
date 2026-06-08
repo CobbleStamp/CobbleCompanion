@@ -70,15 +70,17 @@ export function affectAttunementLine(affect: AffectReading | null | undefined): 
 
 /**
  * Build the persona system prompt from the companion "home" identity row
- * (architecture.md §4.3 input #1).
+ * (architecture.md §4.3 input #1). `userName` is what the companion calls the user
+ * (null when not yet known — the persona then prompts the companion to find out).
  */
-export function buildPersona(companion: CompanionDto): string {
+export function buildPersona(companion: CompanionDto, userName: string | null): string {
   return singleContent(
     render(personaTemplate, {
       name: companion.name,
       form: companion.form,
       temperament: companion.temperament,
       evolvedPersona: companion.evolvedPersona,
+      userName,
     }),
   );
 }
@@ -93,8 +95,9 @@ export function assembleContext(
   companion: CompanionDto,
   history: readonly ContextBlock[],
   affect?: AffectReading | null,
+  userName: string | null = null,
 ): LlmMessage[] {
-  const messages: LlmMessage[] = [{ role: 'system', content: buildPersona(companion) }];
+  const messages: LlmMessage[] = [{ role: 'system', content: buildPersona(companion, userName) }];
   const attunement = affectAttunementLine(affect);
   if (attunement) {
     messages.push({ role: 'system', content: attunement });
