@@ -80,6 +80,47 @@ describe('DrizzleUserModelStore', () => {
       const current = await store.listCurrent(userId);
       expect(current.map((f) => f.predicate).sort()).toEqual(['livesIn', 'name']);
     });
+
+    function recordLanguage(object: string): Promise<{ id: string }> {
+      return store.recordTranscriptFact({
+        userId,
+        predicate: 'languages',
+        object,
+        learnedByCompanionId: companionId,
+      });
+    }
+
+    it('accretes distinct values for a multi-valued predicate (no data loss)', async () => {
+      await recordLanguage('French');
+      await recordLanguage('German');
+      // Both languages stay current — a new value does not supersede a different one.
+      const current = await store.listCurrent(userId);
+      expect(current.map((f) => f.object).sort()).toEqual(['French', 'German']);
+      expect(current.every((f) => f.predicate === 'languages')).toBe(true);
+    });
+
+    it('collapses an identical restatement of a multi-valued predicate (idempotent)', async () => {
+      const first = await recordLanguage('French');
+      const second = await recordLanguage('French');
+      // The exact repeat supersedes the prior — one current "French", history kept.
+      const current = await store.listCurrent(userId);
+      expect(current).toHaveLength(1);
+      expect(current[0]?.id).toBe(second.id);
+      const [old] = await db.select().from(userFacts).where(eq(userFacts.id, first.id));
+      expect(old?.supersededAt).not.toBeNull();
+      expect(old?.supersededBy).toBe(second.id);
+    });
+
+    it('does not let a multi-valued value supersede a singular predicate', async () => {
+      // Sanity: accretion is scoped to the predicate, never bleeds into singletons.
+      await recordName('Sam');
+      await recordLanguage('French');
+      await recordLanguage('German');
+      const current = await store.listCurrent(userId);
+      const names = current.filter((f) => f.predicate === 'name');
+      expect(names).toHaveLength(1);
+      expect(names[0]?.object).toBe('Sam');
+    });
   });
 
   describe('seedName', () => {

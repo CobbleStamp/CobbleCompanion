@@ -591,11 +591,12 @@ export const userFactSourceSchema = z.enum(['transcript', 'auth_seed', 'user_edi
 export type UserFactSource = z.infer<typeof userFactSourceSchema>;
 
 /**
- * The singular identity attributes that make up the **Tier-1 core profile** — the
- * subset of user-fact predicates that are one-per-user (a person has one name, one
- * birthday) and are carried in the persona prompt every turn. "Singular" means a new
- * value supersedes the prior one rather than accreting (companion-memory.md §4). Other
- * predicates (Tier-2 beliefs: `prefers`, `interestedIn`, …) accrete and arrive in Phase 12.
+ * The identity attributes that make up the **Tier-1 core profile** — the subset of
+ * user-fact predicates carried in the persona prompt every turn. Most are *singular*
+ * (one name, one birthday): a new value supersedes the prior one. A few are genuinely
+ * *multi-valued* ({@link MULTI_VALUED_PREDICATES}) and accrete instead. Other predicates
+ * (Tier-2 beliefs: `prefers`, `interestedIn`, …) accrete via retrieval and arrive in
+ * Phase 12 (companion-memory.md §4).
  */
 export const TIER1_PREDICATES = [
   'name',
@@ -609,6 +610,22 @@ export const TIER1_PREDICATES = [
   'relationships',
 ] as const;
 export type Tier1Predicate = (typeof TIER1_PREDICATES)[number];
+
+/**
+ * The Tier-1 predicates that are **multi-valued** — a person speaks several languages
+ * and has many relationships, so a new value *accretes* as its own row rather than
+ * superseding the prior one. The store supersedes these only on an identical
+ * `(predicate, object)` restatement (idempotent); every other Tier-1 predicate is
+ * singular and supersedes on `predicate` alone. Single source of truth for "which
+ * Tier-1 predicates accrete" — read by the store and the extractor (companion-memory.md §4).
+ */
+export const MULTI_VALUED_PREDICATES = ['languages', 'relationships'] as const;
+export type MultiValuedPredicate = (typeof MULTI_VALUED_PREDICATES)[number];
+
+/** Whether a predicate accretes (multi-valued) rather than superseding (singular). */
+export function isMultiValuedPredicate(predicate: string): boolean {
+  return (MULTI_VALUED_PREDICATES as readonly string[]).includes(predicate);
+}
 
 /**
  * A fact the companion knows about its user, as shown in the memory browser's

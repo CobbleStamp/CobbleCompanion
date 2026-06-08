@@ -98,7 +98,7 @@ tiers:
 
 | Tier | What it holds | Where it lives | How it enters a turn |
 | --- | --- | --- | --- |
-| **1 — Core profile** | Singular identity facts: name, pronouns/gender, `bornOn`/age, `livesIn`, `worksAs`, languages, key relationships | singular `user_facts` — the **name is just one such fact**, not a `users` column (`implementation.md` §1) | Rendered into the **persona prompt every turn** — small, always carried (no retrieval) |
+| **1 — Core profile** | Identity facts: name, pronouns/gender, `bornOn`/age, `livesIn`, `worksAs` (all **singular** — a new value supersedes); plus `languages` and key `relationships` (**multi-valued** — distinct values accrete as separate rows, see `MULTI_VALUED_PREDICATES`) | `user_facts` — the **name is just one such fact**, not a `users` column (`implementation.md` §1) | Rendered into the **persona prompt every turn** — small, always carried (no retrieval) |
 | **2 — Learned beliefs** | Preferences, interests, opinions, habits, goals (`prefers`/`dislikes`/`interestedIn`/`believes`) | `user_facts`, typed, with confidence · salience · provenance · supersession | A **retrieval arm**: hybrid-search the *current* beliefs, inject the top-K relevant ones (`architecture.md` §4.3) |
 | **3 — User persona** | A synthesized narrative — "who you are to me" | `companions.user_persona` | Blended into the persona prompt beside `evolvedPersona` |
 

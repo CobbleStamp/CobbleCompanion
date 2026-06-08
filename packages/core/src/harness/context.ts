@@ -93,12 +93,20 @@ const PROFILE_LABELS: Readonly<Record<string, string>> = {
  */
 export function buildPersona(companion: CompanionDto, profile: readonly UserFactDto[]): string {
   const nameFact = profile.find((fact) => fact.predicate === 'name');
-  const userProfile = profile
-    .filter((fact) => fact.predicate !== null && fact.predicate !== 'name')
-    .map((fact) => ({
-      label: PROFILE_LABELS[fact.predicate as string] ?? (fact.predicate as string),
-      value: fact.object,
-    }));
+  // Group by predicate so a multi-valued attribute (several `languages` rows) renders as
+  // one line — "speaks: French, German" — rather than repeating the label per value.
+  const byPredicate = new Map<string, string[]>();
+  for (const fact of profile) {
+    if (fact.predicate === null || fact.predicate === 'name') {
+      continue;
+    }
+    const values = byPredicate.get(fact.predicate) ?? [];
+    byPredicate.set(fact.predicate, [...values, fact.object]);
+  }
+  const userProfile = [...byPredicate].map(([predicate, values]) => ({
+    label: PROFILE_LABELS[predicate] ?? predicate,
+    value: values.join(', '),
+  }));
   return singleContent(
     render(personaTemplate, {
       name: companion.name,

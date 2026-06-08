@@ -1,15 +1,18 @@
 /**
  * The User-Model store (Phase 11, docs/companion-memory.md §4) — persistence for
  * the companion's typed knowledge about its USER. Owns the `user_facts` table: the
- * Tier-1 core profile (singular identity attributes that supersede on revision).
+ * Tier-1 core profile (identity attributes carried in the persona every turn).
  * Keyed by `user_id` (per-user; facts are objective truths shared across a user's
  * companions). Tier-2 belief accrual + retrieval arrive in Phase 12.
  *
- * Singular attributes are revised by **superseding**, never overwriting: a new value
- * is inserted as current and the prior current row for that `(user_id, predicate)` is
- * marked `superseded_at`/`superseded_by`, so history is kept (ontology.md §4).
+ * Facts are revised by **superseding**, never overwriting: a new value is inserted as
+ * current and the prior row is marked `superseded_at`/`superseded_by`, so history is
+ * kept (ontology.md §4). SINGULAR predicates supersede the prior value for the
+ * `(user_id, predicate)` (one current value); MULTI-VALUED predicates
+ * (`MULTI_VALUED_PREDICATES`: languages, relationships) accrete and supersede only an
+ * identical `(predicate, object)` restatement, so distinct values coexist.
  */
-import type { UserFactDto } from '@cobble/shared';
+import { isMultiValuedPredicate, type UserFactDto } from '@cobble/shared';
 import { type Database, userFacts } from '@cobble/db';
 import { and, eq, isNull, ne } from 'drizzle-orm';
 
@@ -24,10 +27,11 @@ const AUTH_SEED_CONFIDENCE = 0.5;
 /** A value the user set directly is authoritative — it wins over any inference. */
 const USER_EDIT_CONFIDENCE = 1;
 
-/** A singular Tier-1 identity attribute learned from a transcript turn. */
+/** A Tier-1 identity attribute learned from a transcript turn. */
 export interface RecordTranscriptFactInput {
   readonly userId: string;
-  /** A singular identity attribute (`name`, `livesIn`, …); one current value per predicate. */
+  /** A Tier-1 identity attribute (`name`, `livesIn`, `languages`, …). Singular predicates
+   *  keep one current value; multi-valued ones accrete (`MULTI_VALUED_PREDICATES`). */
   readonly predicate: string;
   readonly object: string;
   /** The companion whose conversation taught this — the recorded provenance (the
@@ -45,17 +49,20 @@ export interface RecordTranscriptFactInput {
  * Persistence boundary for the User Model. All reads/writes are scoped by `userId`
  * (tenancy); edit/forget additionally verify the fact belongs to the user.
  *
- * The "exactly one current row per `(userId, predicate)`" invariant is enforced by
- * the supersede-within-transaction writes here PLUS the harness serializing captures
- * per-user (harness.ts `userFactChains`), not by a DB unique constraint — sufficient
- * for the single-instance PoC (the affect store makes the same assumption).
+ * The "one current row per `(userId, predicate)` for singular predicates" invariant is
+ * enforced by the supersede-within-transaction writes here PLUS the harness serializing
+ * captures per-user (harness.ts `userFactChains`), not by a DB unique constraint —
+ * sufficient for the single-instance PoC (the affect store makes the same assumption).
+ * Multi-valued predicates hold several current rows by design.
  */
 export interface UserModelStore {
   /** Every current (non-superseded) fact for the user, oldest-first. */
   listCurrent(userId: string): Promise<readonly UserFactDto[]>;
   /**
-   * Record a singular identity attribute learned in conversation, superseding the
-   * prior current value for the same `(userId, predicate)`. Returns the new fact.
+   * Record an identity attribute learned in conversation. A singular predicate
+   * supersedes the prior current value for the same `(userId, predicate)`; a
+   * multi-valued one accretes, superseding only an identical `(predicate, object)`
+   * restatement. Returns the new fact.
    */
   recordTranscriptFact(input: RecordTranscriptFactInput): Promise<UserFactDto>;
   /**
@@ -111,8 +118,11 @@ export class DrizzleUserModelStore implements UserModelStore {
       if (!created) {
         throw new Error('failed to record user fact');
       }
-      // Supersede every OTHER current fact for this (user, predicate) — only the new
-      // row stays current, so a singular attribute keeps exactly one current value.
+      // Supersede the prior current value(s) for this predicate. A SINGULAR attribute
+      // (name, age, …) keeps exactly one current value, so every other current row for
+      // the predicate is superseded. A MULTI-VALUED attribute (languages, relationships)
+      // accretes, so only an identical (predicate, object) restatement is collapsed —
+      // distinct values coexist as separate current rows.
       await tx
         .update(userFacts)
         .set({ supersededAt: new Date(), supersededBy: created.id, updatedAt: new Date() })
@@ -120,6 +130,9 @@ export class DrizzleUserModelStore implements UserModelStore {
           and(
             eq(userFacts.userId, input.userId),
             eq(userFacts.predicate, input.predicate),
+            isMultiValuedPredicate(input.predicate)
+              ? eq(userFacts.object, input.object)
+              : undefined,
             isNull(userFacts.supersededAt),
             ne(userFacts.id, created.id),
           ),

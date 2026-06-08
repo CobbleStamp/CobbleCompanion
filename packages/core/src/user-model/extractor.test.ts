@@ -70,6 +70,31 @@ describe('coerceCandidates', () => {
     ).toEqual([{ predicate: 'name', object: 'Samuel' }]);
   });
 
+  it('keeps each distinct value when a multi-valued predicate is repeated', () => {
+    expect(
+      coerceCandidates({
+        facts: [
+          { attribute: 'languages', value: 'French' },
+          { attribute: 'languages', value: 'German' },
+        ],
+      }),
+    ).toEqual([
+      { predicate: 'languages', object: 'French' },
+      { predicate: 'languages', object: 'German' },
+    ]);
+  });
+
+  it('collapses an exact repeat of a multi-valued value within one read', () => {
+    expect(
+      coerceCandidates({
+        facts: [
+          { attribute: 'languages', value: 'French' },
+          { attribute: 'languages', value: 'French' },
+        ],
+      }),
+    ).toEqual([{ predicate: 'languages', object: 'French' }]);
+  });
+
   it('returns empty for a non-array or absent facts field', () => {
     expect(coerceCandidates({})).toEqual([]);
     expect(coerceCandidates({ facts: 'nope' })).toEqual([]);
