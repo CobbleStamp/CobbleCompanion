@@ -75,9 +75,8 @@ describe('message routes', () => {
     expect(res.json().error).toBe('message content is required');
   });
 
-  it('refuses a turn with 429 when the owner is over the daily token cap', async () => {
-    const owner = await ctx.deps.identity.ensureUserByEmail('owner@example.com');
-    await ctx.deps.quota.recordUsage(owner.id, ctx.deps.config.tokenCapPerDay);
+  it('refuses a turn with 429 when the companion is out of stamina', async () => {
+    await ctx.deps.quota.spend(companionId, ctx.deps.config.startingVitalityTokens);
 
     const res = await ctx.app.inject({
       method: 'POST',
@@ -87,7 +86,7 @@ describe('message routes', () => {
     });
 
     expect(res.statusCode).toBe(429);
-    expect(res.json().error).toMatch(/allowance/i);
+    expect(res.json().error).toMatch(/stamina/i);
     // The refused turn left no transcript behind.
     const messages = await ctx.app.inject({
       method: 'GET',
@@ -127,10 +126,10 @@ describe('message routes', () => {
       ['assistant', 'Hi there'],
     ]);
 
-    // The turn's tokens (LLM + query embedding) are debited to the owner's cap.
-    const owner = await ctx.deps.identity.ensureUserByEmail('owner@example.com');
-    const usage = await ctx.deps.quota.getUsage(owner.id);
-    expect(usage.usedTokens).toBeGreaterThan(0);
+    // The turn's tokens (LLM + query embedding) are debited from the companion's
+    // stamina wallet, dropping its balance below the seeded start.
+    const balance = await ctx.deps.quota.getBalance(companionId);
+    expect(balance).toBeLessThan(ctx.deps.config.startingVitalityTokens);
   });
 
   // The fix for "growth, felt": when a turn crosses a growth band, the post-turn
@@ -228,13 +227,12 @@ describe('message routes', () => {
     expect(requestSpy).toHaveBeenCalledWith(companionId);
   });
 
-  // The over-cap wall is a clean 429 with no turn run, so there's nothing new
+  // The out-of-stamina wall is a clean 429 with no turn run, so there's nothing new
   // to reflect — the consolidation nudge must not fire on a refused turn.
-  it('does not request consolidation when the turn is refused over the daily cap', async () => {
+  it('does not request consolidation when the turn is refused out of stamina', async () => {
     const requestSpy = vi.spyOn(ctx.deps.consolidation, 'request').mockImplementation(() => {});
 
-    const owner = await ctx.deps.identity.ensureUserByEmail('owner@example.com');
-    await ctx.deps.quota.recordUsage(owner.id, ctx.deps.config.tokenCapPerDay);
+    await ctx.deps.quota.spend(companionId, ctx.deps.config.startingVitalityTokens);
 
     const res = await ctx.app.inject({
       method: 'POST',

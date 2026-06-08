@@ -286,7 +286,7 @@ export function registerSourceRoutes(
   );
 
   // Delete a source (and its job + sections). Lets a user prune the queue — e.g.
-  // a job parked at the daily cap they no longer want to wait on.
+  // a job deferred on an empty wallet they no longer want to wait on.
   app.delete(
     '/companions/:companionId/sources/:sourceId',
     { preHandler: requireAuth },

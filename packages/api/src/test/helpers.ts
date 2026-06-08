@@ -27,9 +27,11 @@ import {
   DrizzleProposalStore,
   DrizzleSemanticMemoryStore,
   DrizzleCompanionAffectStore,
-  DrizzleCompanionEnergyStore,
-  DrizzleTokenQuotaStore,
+  DrizzleVitalityStore,
+  DrizzleFoodStore,
   DrizzleToolCallLog,
+  type CliToolStore,
+  type CommandSandbox,
   FakeEmbeddingGateway,
   FakeLlmGateway,
   FakeMcpGateway,
@@ -53,7 +55,7 @@ import {
 } from '@cobble/core';
 import type { FastifyInstance } from 'fastify';
 import { buildApp, type AppDeps } from '../app.js';
-import { buildMcpWiring } from '../mcp/wiring.js';
+import { buildToolAcquisitionWiring } from '../acquisition/wiring.js';
 import type { TokenVerifier, VerifiedClaims } from '../auth/jwt-verifier.js';
 import type { AppConfig } from '../config.js';
 
@@ -92,9 +94,11 @@ export const testConfig: AppConfig = {
   ingestionMaxBytes: 25 * 1024 * 1024,
   useContextHeader: true,
   ingestionQueueMax: 100,
-  tokenCapPerDay: 1_000_000,
+  startingVitalityTokens: 1_000_000,
   mcpServers: [],
   maxEquippedTools: 8,
+  cliToolsPath: '',
+  cliScratchDir: '',
   appUrl: 'http://localhost:3001',
   authMode: 'google',
   googleClientId: 'test-google-client-id',
@@ -137,6 +141,15 @@ export interface TestAppOptions {
    */
   readonly mcpGateway?: McpGateway;
   /**
+   * Inject a CLI tool store + sandbox for Phase 10 tests. Combined with a
+   * `config.cliToolsPath`, this wires host CLIs as a capability source: the catalog
+   * indexes the store's tools and search_tools/load_tool + the per-step resolver
+   * run them through the sandbox. Tests pass a real FileSystemCliToolStore over a
+   * temp fixture dir + a FakeCommandSandbox (deterministic, cross-platform).
+   */
+  readonly cliToolStore?: CliToolStore;
+  readonly cliSandbox?: CommandSandbox;
+  /**
    * Omit the per-turn affect read (Phase 4.2). It shares the FakeLlmGateway, so a
    * test that drives several messages and asserts an exact scripted-turn sequence
    * (e.g. the Phase 9 DoD) sets this to keep the sequence deterministic.
@@ -162,11 +175,13 @@ export async function makeTestApp(
   // option); otherwise we create one here and close it on teardown.
   const ownsDb = options.database === undefined;
   const { db, close: closeDb } = options.database ?? (await createTestDatabase());
-  const identity = new DrizzleIdentityStore(db);
+  const identity = new DrizzleIdentityStore(db, {
+    startingVitalityTokens: config.startingVitalityTokens,
+  });
   const memory = new TranscriptMemoryStore(db);
   const semantic = new DrizzleSemanticMemoryStore(db);
   const episodic = new DrizzleEpisodicMemoryStore(db);
-  const quota = new DrizzleTokenQuotaStore(db, { defaultCapTokens: config.tokenCapPerDay });
+  const quota = new DrizzleVitalityStore(db, 'stamina');
   const embeddings = new FakeEmbeddingGateway();
   // Retrieval arms share a memoizing gateway (mirrors index.ts); ingestion and
   // consolidation use the raw fake.
@@ -224,35 +239,37 @@ export async function makeTestApp(
     }),
     createIngestSourceTool({ semantic, ingestion, logger: silentLogger }),
   ];
-  // Phase 9: wire MCP tool acquisition when the test configures a whitelist +
-  // injects a (fake) gateway; off otherwise (behaviour identical to pre-Phase-9).
-  const mcpWiring = buildMcpWiring({
+  // Phases 9–10: wire tool acquisition when the test configures a source — an MCP
+  // whitelist + a (fake) gateway, and/or a CLI tools path + an injected store +
+  // sandbox; off otherwise (behaviour identical to pre-Phase-9).
+  const acquisitionWiring = buildToolAcquisitionWiring({
     config,
     db,
-    gateway: options.mcpGateway ?? new FakeMcpGateway(),
+    mcpGateway: options.mcpGateway ?? new FakeMcpGateway(),
+    ...(options.cliToolStore ? { cliToolStore: options.cliToolStore } : {}),
+    ...(options.cliSandbox ? { cliSandbox: options.cliSandbox } : {}),
     llmGateway,
     baseTools,
     quota,
     logger: silentLogger,
   });
-  // Mirror production startup: build the discovery catalog from the whitelist so a
+  // Mirror production startup: build the discovery catalog from the sources so a
   // configured test can search_tools/load_tool immediately.
-  if (mcpWiring) {
-    await mcpWiring.refreshCatalog();
+  if (acquisitionWiring) {
+    await acquisitionWiring.refreshCatalog();
   }
-  const tools = new ToolRegistry(mcpWiring ? mcpWiring.nativeTools : baseTools);
+  const tools = new ToolRegistry(acquisitionWiring ? acquisitionWiring.nativeTools : baseTools);
   const proposals = new DrizzleProposalStore(db);
   const toolCallLog = new DrizzleToolCallLog(db);
   const leads = new DrizzleLeadStore(db);
   const procedural = new DrizzleProceduralStore(db);
   const presence = new InMemoryPresenceStore();
-  const energy = new DrizzleCompanionEnergyStore(db, { defaultCapTokens: config.tokenCapPerDay });
+  const energy = new DrizzleVitalityStore(db, 'energy');
+  const food = new DrizzleFoodStore(db, { initialFood: DEFAULT_GROWTH_CONFIG.initialFood });
   const rewards = new DrizzleProactiveOutcomeStore(db);
   const affectStore = new DrizzleCompanionAffectStore(db);
-  // Growth & feeding economy (P5) — derived four-axis growth + treats over the same db.
-  const growthStore = new DrizzleGrowthStore(db, {
-    initialTreats: DEFAULT_GROWTH_CONFIG.initialTreats,
-  });
+  // Growth (P5) — derived four-axis growth over the same db (decoupled from feeding).
+  const growthStore = new DrizzleGrowthStore(db);
   const growth = new GrowthService({
     identity,
     semantic,
@@ -300,6 +317,7 @@ export async function makeTestApp(
     presence,
     motivation,
     energy,
+    food,
     rewards,
     growth,
     growthStore,
@@ -321,7 +339,7 @@ export async function makeTestApp(
             },
           }),
       registry: tools,
-      ...(mcpWiring ? { resolveRegistry: mcpWiring.resolveRegistry } : {}),
+      ...(acquisitionWiring ? { resolveRegistry: acquisitionWiring.resolveRegistry } : {}),
       beforeToolCall: createApprovalGate(proposals, tools, silentLogger),
       afterToolCall: createLoggingAfterToolCall(toolCallLog, silentLogger),
       retrieveContext: composeRetrieveContext(
@@ -337,9 +355,9 @@ export async function makeTestApp(
           createProceduralRetrieveContext({
             procedural,
             logger: silentLogger,
-            ...(mcpWiring ? { loadAdvisor: mcpWiring.loadAdvisor } : {}),
+            ...(acquisitionWiring ? { loadAdvisor: acquisitionWiring.loadAdvisor } : {}),
           }),
-          ...(mcpWiring ? [mcpWiring.equippedArm] : []),
+          ...(acquisitionWiring ? [acquisitionWiring.equippedArm] : []),
           createSemanticRetrieveContext({
             memory,
             semantic,

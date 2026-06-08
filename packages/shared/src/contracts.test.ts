@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   autonomousReadFallback,
   createCompanionSchema,
+  feedSchema,
   proactivityDialSchema,
   proposalOriginSchema,
   sendMessageSchema,
   setProactivityDialSchema,
-  topUpSchema,
 } from './contracts.js';
 
 describe('createCompanionSchema', () => {
@@ -63,21 +63,12 @@ describe('Phase 4 proactivity schemas', () => {
     expect(setProactivityDialSchema.safeParse({ dial: 'loud' }).success).toBe(false);
   });
 
-  it('validates a top-up: positive integer amount into a known pool', () => {
-    expect(topUpSchema.parse({ pool: 'energy', amount: 500 })).toEqual({
-      pool: 'energy',
-      amount: 500,
-    });
-    expect(topUpSchema.safeParse({ pool: 'energy', amount: 0 }).success).toBe(false);
-    expect(topUpSchema.safeParse({ pool: 'mana', amount: 10 }).success).toBe(false);
-    expect(topUpSchema.safeParse({ pool: 'stamina', amount: 1.5 }).success).toBe(false);
-  });
-
-  it('accepts a top-up at exactly the inclusive maximum amount', () => {
-    // 10_000_000 is the inclusive ceiling — one above it rejects (tested elsewhere),
-    // exactly it must pass.
-    const parsed = topUpSchema.parse({ pool: 'stamina', amount: 10_000_000 });
-    expect(parsed).toEqual({ pool: 'stamina', amount: 10_000_000 });
+  it('validates a feed: a known food type, rejecting unknown ones', () => {
+    expect(feedSchema.parse({ food: 'ration' })).toEqual({ food: 'ration' });
+    expect(feedSchema.parse({ food: 'spark' })).toEqual({ food: 'spark' });
+    expect(feedSchema.parse({ food: 'treat' })).toEqual({ food: 'treat' });
+    expect(feedSchema.safeParse({ food: 'mana' }).success).toBe(false);
+    expect(feedSchema.safeParse({}).success).toBe(false);
   });
 });
 

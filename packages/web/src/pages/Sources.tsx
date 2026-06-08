@@ -85,7 +85,7 @@ export function Sources({ companionName, companionId, onBack }: SourcesProps): J
     <main className="chat">
       <header>
         <h1>{companionName} · Sources</h1>
-        <UsageBadge />
+        <UsageBadge companionId={companionId} />
         <button type="button" onClick={onBack}>
           Back to chat
         </button>

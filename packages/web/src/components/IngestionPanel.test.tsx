@@ -51,7 +51,7 @@ describe('IngestionPanel', () => {
       />,
     );
     expect(screen.getByText('failed: corrupt PDF')).toBeTruthy();
-    expect(screen.getByText(/waiting for your daily allowance/)).toBeTruthy();
+    expect(screen.getByText(/waiting to be fed/)).toBeTruthy();
   });
 
   it('shows the empty state when every job is done', () => {

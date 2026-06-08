@@ -1,7 +1,7 @@
 /**
  * Integration tests for the consolidation service + sweep against the real
  * in-memory database: it reflects a transcript window into embedded episodes,
- * advances the cursor (even on filler), gates on minTurns and the daily cap,
+ * advances the cursor (even on filler), gates on minTurns and the stamina wallet,
  * degrades when embeddings fail, and the sweep wakes only companions with a
  * long-enough pending tail. The LLM + embeddings are faked.
  */
@@ -12,7 +12,7 @@ import { FakeEmbeddingGateway } from '../embedding/fake.js';
 import type { EmbeddingGateway } from '../embedding/gateway.js';
 import { FakeLlmGateway } from '../llm/fake.js';
 import type { LlmGateway } from '../llm/gateway.js';
-import type { TokenQuotaStore, UsageSnapshot } from '../quota/stamina-store.js';
+import type { VitalityStore } from '../quota/vitality-store.js';
 import { DrizzleIdentityStore } from '../identity/store.js';
 import {
   ConsolidationService,
@@ -25,20 +25,20 @@ import { TranscriptMemoryStore } from './store.js';
 const EMBEDDING_DIMENSIONS = 1024;
 const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn() };
 
-/** A fake quota with a fixed over-cap verdict and a recordUsage spy. */
-class FakeQuota implements TokenQuotaStore {
+/** A fake quota with a fixed empty (out-of-vitality) verdict and a spend spy. */
+class FakeQuota implements VitalityStore {
   recorded = 0;
   constructor(private readonly overCap = false) {}
-  async getUsage(): Promise<UsageSnapshot> {
-    return { usedTokens: 0, capTokens: 1_000_000, resetsAt: '2026-01-01T00:00:00.000Z' };
+  async getBalance(): Promise<number> {
+    return this.overCap ? 0 : 1_000_000;
   }
-  async recordUsage(_userId: string, totalTokens: number): Promise<void> {
+  async spend(_companionId: string, totalTokens: number): Promise<void> {
     this.recorded += totalTokens;
   }
-  async isOverCap(): Promise<boolean> {
+  async add(): Promise<void> {}
+  async isEmpty(): Promise<boolean> {
     return this.overCap;
   }
-  async topUp(): Promise<void> {}
 }
 
 const EPISODE_JSON =
@@ -137,7 +137,7 @@ describe('ConsolidationService', () => {
     expect(await episodic.consolidatedThroughSeq(companionId)).toBe(8);
   });
 
-  it('skips (no cursor advance) when the owner is over the daily cap', async () => {
+  it('skips (no cursor advance) when the stamina wallet is empty', async () => {
     await seedTurns(8);
     await service({ quota: new FakeQuota(true) }).consolidate(companionId);
     expect(await episodic.countEpisodes(companionId)).toBe(0);

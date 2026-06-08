@@ -6,8 +6,8 @@
  *
  * Kept separate from the pipeline so the pipeline stays ignorant of personas,
  * chat, and token metering: it just signals a terminal outcome. The note is
- * generated in the companion's voice when the owner has budget; otherwise (over
- * cap, generation failure, or no persona) it falls back to a single-sourced
+ * generated in the companion's voice when the companion has stamina; otherwise
+ * (no stamina, generation failure, or no persona) it falls back to a single-sourced
  * canned line — the user is always told, the companion never goes silent.
  */
 
@@ -17,13 +17,13 @@ import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import type { MemoryStore } from '../memory/store.js';
 import { ingestionAnnounceTemplate, render } from '../prompts/index.js';
-import type { TokenQuotaStore } from '../quota/stamina-store.js';
+import type { VitalityStore } from '../quota/vitality-store.js';
 import { createUsageAccumulator, meteredLlmGateway } from '../usage.js';
 
 /** A terminal ingestion outcome worth telling the user about. */
 export interface IngestionOutcome {
   readonly companionId: string;
-  /** Owner whose persona voices the note and whose cap meters its tokens. */
+  /** Owner — resolves the companion (ownership check) so its persona voices the note. */
   readonly ownerId?: string;
   readonly sourceTitle: string;
   readonly outcome: 'done' | 'failed';
@@ -41,8 +41,8 @@ export interface LlmIngestionAnnouncerOptions {
   /** Cheap model for the short note — reuse the ingestion model. */
   readonly model: string;
   readonly logger: Logger;
-  /** Meters the note's tokens and gates generation when over cap; omit = unmetered. */
-  readonly quota?: TokenQuotaStore;
+  /** Meters the note's tokens and gates generation when the wallet is empty; omit = unmetered. */
+  readonly quota?: VitalityStore;
 }
 
 export class LlmIngestionAnnouncer implements IngestionAnnouncer {
@@ -71,8 +71,8 @@ export class LlmIngestionAnnouncer implements IngestionAnnouncer {
     if (!ownerId) {
       return fallback;
     }
-    // Don't spend tokens the owner doesn't have — a canned line still informs them.
-    if (this.options.quota && (await this.options.quota.isOverCap(ownerId))) {
+    // Don't spend stamina the companion doesn't have — a canned line still informs.
+    if (this.options.quota && (await this.options.quota.isEmpty(outcome.companionId))) {
       return fallback;
     }
     const companion = await this.options.identity.getCompanion(outcome.companionId, ownerId);
@@ -80,7 +80,7 @@ export class LlmIngestionAnnouncer implements IngestionAnnouncer {
       return fallback;
     }
     try {
-      const generated = await this.generateInVoice(companion, outcome, ownerId);
+      const generated = await this.generateInVoice(companion, outcome);
       return generated.length > 0 ? generated : fallback;
     } catch (error) {
       this.options.logger.error('failed to generate in-character ingestion note', {
@@ -93,11 +93,10 @@ export class LlmIngestionAnnouncer implements IngestionAnnouncer {
     }
   }
 
-  /** Generate a short note in the companion's voice and debit its tokens. */
+  /** Generate a short note in the companion's voice and debit its stamina. */
   private async generateInVoice(
     companion: { readonly name: string; readonly form: string; readonly temperament: string },
     outcome: IngestionOutcome,
-    ownerId: string,
   ): Promise<string> {
     const usage = createUsageAccumulator();
     const llm = meteredLlmGateway(this.options.llm, usage.sink);
@@ -118,21 +117,21 @@ export class LlmIngestionAnnouncer implements IngestionAnnouncer {
       text += delta;
     }
 
-    await this.debit(ownerId, usage.total().totalTokens);
+    await this.debit(outcome.companionId, usage.total().totalTokens);
     return text.trim();
   }
 
-  /** Meter the note's tokens against the owner's cap; best-effort (logging.md). */
-  private async debit(ownerId: string, totalTokens: number): Promise<void> {
+  /** Meter the note's tokens against the companion's stamina; best-effort (logging.md). */
+  private async debit(companionId: string, totalTokens: number): Promise<void> {
     if (!this.options.quota || totalTokens <= 0) {
       return;
     }
     try {
-      await this.options.quota.recordUsage(ownerId, totalTokens);
+      await this.options.quota.spend(companionId, totalTokens);
     } catch (error) {
       this.options.logger.error('failed to record ingestion-note token usage', {
         operation: 'ingestion.announcer.debit',
-        ownerId,
+        companionId,
         error,
       });
     }

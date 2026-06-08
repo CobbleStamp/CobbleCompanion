@@ -2,18 +2,21 @@
  * load_tool tests: equips a catalog tool with its FRESH schema (not the catalog
  * stub); denies an off-catalog id; denies a tool whose server left the whitelist;
  * and enforces the loaded-tier cap by evicting the LRU on overflow. Never throws.
+ * Exercised through the MCP capability source, since load_tool is source-agnostic.
  */
 
 import { type Database } from '@cobble/db';
 import { createTestDatabase } from '@cobble/db/testing';
 import type { TurnCtx } from '../harness/hooks.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { CapabilitySource } from './capability-source.js';
 import { DrizzleEquippedToolStore } from './equipped-store.js';
-import { FakeMcpGateway } from './fake.js';
-import { type McpToolDef } from './gateway.js';
+import { FakeMcpGateway } from '../mcp/fake.js';
+import { type McpToolDef } from '../mcp/gateway.js';
 import { createLoadToolTool } from './load-tool.js';
+import { createMcpCapabilitySource } from '../mcp/mcp-source.js';
 import { DrizzleToolCatalogStore } from './tool-catalog-store.js';
-import { McpWhitelist } from './whitelist.js';
+import { McpWhitelist } from '../mcp/whitelist.js';
 import { DrizzleIdentityStore } from '../identity/store.js';
 
 const silentLogger = { error: () => undefined, warn: () => undefined, info: () => undefined };
@@ -32,7 +35,14 @@ describe('load_tool', () => {
   let ctx: TurnCtx;
 
   const whitelist = new McpWhitelist([{ ref: 'stocks', endpoint: 'https://s.example.com' }]);
-  const gateway = (): FakeMcpGateway => new FakeMcpGateway({ stocks: { tools: [freshQuote] } });
+  /** Wrap the whitelist + a fresh fake gateway as the MCP capability source. */
+  const sources = (): readonly CapabilitySource[] => [
+    createMcpCapabilitySource({
+      whitelist,
+      gateway: new FakeMcpGateway({ stocks: { tools: [freshQuote] } }),
+      logger: silentLogger,
+    }),
+  ];
 
   beforeEach(async () => {
     const created = await createTestDatabase();
@@ -66,8 +76,7 @@ describe('load_tool', () => {
     const tool = createLoadToolTool({
       catalog,
       equipped,
-      gateway: gateway(),
-      whitelist,
+      sources: sources(),
       maxEquippedTools: 8,
       logger: silentLogger,
     });
@@ -83,8 +92,7 @@ describe('load_tool', () => {
     const tool = createLoadToolTool({
       catalog,
       equipped,
-      gateway: gateway(),
-      whitelist,
+      sources: sources(),
       maxEquippedTools: 8,
       logger: silentLogger,
     });
@@ -106,8 +114,7 @@ describe('load_tool', () => {
     const tool = createLoadToolTool({
       catalog,
       equipped,
-      gateway: gateway(),
-      whitelist,
+      sources: sources(),
       maxEquippedTools: 8,
       logger: silentLogger,
     });
@@ -127,8 +134,7 @@ describe('load_tool', () => {
     const tool = createLoadToolTool({
       catalog,
       equipped,
-      gateway: gateway(),
-      whitelist,
+      sources: sources(),
       maxEquippedTools: 1,
       logger: silentLogger,
     });

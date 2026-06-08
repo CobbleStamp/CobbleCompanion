@@ -84,9 +84,13 @@ Before claiming any work is done, verify:
 | `docs/architecture.md`         | System architecture, data flows, arch decisions, folder structure          | Implementation details                                   |
 | `docs/implementation.md`       | Data models, algorithms, internal code structure, configuration, security  | Product requirements, high-level architecture            |
 | `docs/companion-memory.md`      | Guide to the memory mechanism; how to browse & evaluate memory             | Canonical data model/schema (lives in `implementation.md`) |
-| `docs/companion-economy.md`    | Guide to the feeding economy; how treats are earned & spent on foods to top up vitality | Canonical schema (`implementation.md` §1), tunable constants (`config.ts`, `contracts.ts`) |
+| `docs/companion-economy.md`    | Guide to the feeding economy; how a user spends their food pantry to feed (refill) a companion's vitality wallets | Canonical schema (`implementation.md` §1), tunable constants (`config.ts`, `contracts.ts`) |
 | `docs/companion-tools.md`      | Guide to tool acquisition; acquiring whitelisted CLIs/MCP servers at runtime & the whitelist trust model | Canonical schema/DDL (`implementation.md` §1), scope/acceptance (`development-plan.md`), product vision (`product-overview.md`) |
+| `docs/companion-motivation.md` | Guide to the proactivity/motivation mechanism (drives, presence arbitration, affect & change-as-reward reinforcement) | Canonical schema (`implementation.md` §1), scope/acceptance (`development-plan.md`), product vision (`product-overview.md`) |
 | `docs/ontology.md`             | Ontology contract & governance (fixed types + rules for the dynamic part)  | Leaf-type catalog (that's data, lives in the database)   |
+| `docs/guide-prompts.md`        | How-to for authoring, versioning & changing prompts (the code-as-truth registry) | Prompt data model (`implementation.md` §2.2), component placement (`architecture.md` §3) |
+| `docs/howto-run-evals.md`      | How to run the offline eval harness (tiers, datasets, the prompt A/B knob) | What memory eval measures & why (`companion-memory.md` §5) |
+| `docs/runbook-tracing.md`      | Operating & enabling online tracing (Langfuse) + privacy posture           | Tracing seam/data model (`architecture.md` §3, `implementation.md` §3), env vars (`.env.example`) |
 | `docs/documentation-rules.md`  | Doc taxonomy rules (types, scopes, naming)                                 | Actual doc content                                       |
 | `README.md`                    | Orientation, quick start, setup steps                                      | Architecture, cross-component concepts                   |
 
@@ -144,8 +148,12 @@ Before claiming any work is done, verify:
 | Technical architecture (incl. agent loop) | `docs/architecture.md`|
 | Internal implementation         | `docs/implementation.md`        |
 | Memory: browsing & evaluation   | `docs/companion-memory.md`       |
-| Feeding economy (treats & foods) | `docs/companion-economy.md`    |
+| Feeding economy (food pantry & vitality) | `docs/companion-economy.md`    |
 | Tool acquisition & use (MCP/CLI) | `docs/companion-tools.md`      |
+| Proactivity & motivation        | `docs/companion-motivation.md`  |
 | Ontology contract & governance  | `docs/ontology.md`              |
+| Prompt management & iteration   | `docs/guide-prompts.md`         |
+| Running evals (offline harness) | `docs/howto-run-evals.md`       |
+| Online tracing / observability  | `docs/runbook-tracing.md`       |
 | Documentation rules             | `docs/documentation-rules.md`   |
 | Local dev setup                 | `README.md`                     |

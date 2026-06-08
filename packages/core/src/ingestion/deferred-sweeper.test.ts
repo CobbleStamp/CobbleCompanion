@@ -1,14 +1,14 @@
 /**
  * Deferred-sweeper tests against the real store + serial runner with a fake
- * pipeline target: under-cap owners' parked jobs resume; over-cap owners' stay
- * deferred; resumes carry the held parse (no re-parse).
+ * pipeline target: under-cap companions' parked jobs resume; over-cap companions'
+ * stay deferred; resumes carry the held parse (no re-parse).
  */
 
 import { createTestDatabase } from '@cobble/db/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DrizzleIdentityStore } from '../identity/store.js';
 import { DrizzleSemanticMemoryStore } from '../memory/semantic-store.js';
-import type { TokenQuotaStore, UsageSnapshot } from '../quota/stamina-store.js';
+import type { VitalityStore } from '../quota/vitality-store.js';
 import { resumeDeferredJobs } from './deferred-sweeper.js';
 import type { ParsedDocument } from './parser.js';
 import type { IngestionRunParams } from './pipeline.js';
@@ -16,17 +16,17 @@ import { IngestionRunner, type IngestionTarget } from './runner.js';
 
 const silentLogger = { error: () => undefined, warn: () => undefined, info: () => undefined };
 
-/** Quota fake: an owner is over cap iff its id is in the set. */
-class SetQuota implements TokenQuotaStore {
-  readonly overOwners = new Set<string>();
-  async getUsage(): Promise<UsageSnapshot> {
-    return { usedTokens: 0, capTokens: 1000, resetsAt: '2026-06-04T00:00:00.000Z' };
+/** Quota fake: a companion's wallet is empty iff its id is in the set. */
+class SetQuota implements VitalityStore {
+  readonly overCompanions = new Set<string>();
+  async getBalance(companionId: string): Promise<number> {
+    return this.overCompanions.has(companionId) ? 0 : 1000;
   }
-  async recordUsage(): Promise<void> {}
-  async isOverCap(userId: string): Promise<boolean> {
-    return this.overOwners.has(userId);
+  async spend(): Promise<void> {}
+  async add(): Promise<void> {}
+  async isEmpty(companionId: string): Promise<boolean> {
+    return this.overCompanions.has(companionId);
   }
-  async topUp(): Promise<void> {}
 }
 
 const PARSED: ParsedDocument = { rawText: 'held', paragraphs: [{ ord: 1, text: 'held' }] };
@@ -47,7 +47,9 @@ describe('resumeDeferredJobs', () => {
   });
 
   /** A companion owned by `email`, with one note source parked as `deferred`. */
-  async function seedDeferredJob(email: string): Promise<{ ownerId: string; jobId: string }> {
+  async function seedDeferredJob(
+    email: string,
+  ): Promise<{ ownerId: string; companionId: string; jobId: string }> {
     const user = await identity.ensureUserByEmail(email);
     const companion = await identity.createCompanion(user.id, {
       name: 'Pebble',
@@ -61,7 +63,7 @@ describe('resumeDeferredJobs', () => {
     });
     const job = await semantic.createJob(companion.id, source.id);
     await semantic.updateJob(job.id, { status: 'deferred', parsedDoc: PARSED });
-    return { ownerId: user.id, jobId: job.id };
+    return { ownerId: user.id, companionId: companion.id, jobId: job.id };
   }
 
   /** A runner whose fake target records resume runs and marks each job done. */
@@ -97,10 +99,10 @@ describe('resumeDeferredJobs', () => {
     expect(await semantic.listDeferredJobs()).toHaveLength(0);
   });
 
-  it('leaves an over-cap owner’s job parked', async () => {
-    const { ownerId } = await seedDeferredJob('owner@example.com');
+  it('leaves an over-cap companion’s job parked', async () => {
+    const { companionId } = await seedDeferredJob('owner@example.com');
     const quota = new SetQuota();
-    quota.overOwners.add(ownerId);
+    quota.overCompanions.add(companionId);
     const { runner, runs } = recordingRunner();
 
     const resumed = await resumeDeferredJobs({
@@ -135,11 +137,11 @@ describe('resumeDeferredJobs', () => {
     expect(await semantic.listDeferredJobs()).toHaveLength(0);
   });
 
-  it('resumes only the under-cap owners when several are parked', async () => {
+  it('resumes only the under-cap companions when several are parked', async () => {
     const a = await seedDeferredJob('a@example.com');
     await seedDeferredJob('b@example.com');
     const quota = new SetQuota();
-    quota.overOwners.add(a.ownerId); // a over cap, b under
+    quota.overCompanions.add(a.companionId); // a over cap, b under
     const { runner, runs } = recordingRunner();
 
     const resumed = await resumeDeferredJobs({

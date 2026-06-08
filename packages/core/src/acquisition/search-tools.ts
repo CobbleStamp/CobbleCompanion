@@ -16,7 +16,7 @@ import {
   toolSearchTemplate,
   type ToolSearchCatalogItem,
 } from '../prompts/index.js';
-import type { TokenQuotaStore } from '../quota/stamina-store.js';
+import type { VitalityStore } from '../quota/vitality-store.js';
 import { readStringArg, type Tool } from '../tools/tool.js';
 import { createUsageAccumulator, meteredLlmGateway } from '../usage.js';
 import type { ToolCatalogStore } from './tool-catalog-store.js';
@@ -29,7 +29,7 @@ export interface SearchToolsOptions {
   /** How many matches to return as the shortlist (default 5). */
   readonly topK?: number;
   /** Bills the lookup to the owner's stamina; omit = unmetered (tests). */
-  readonly quota?: TokenQuotaStore;
+  readonly quota?: VitalityStore;
   readonly logger?: Logger;
 }
 
@@ -127,11 +127,11 @@ export function createSearchToolsTool(options: SearchToolsOptions): Tool {
           isError: true,
         };
       } finally {
-        // Bill the lookup to the owner's stamina (like the affect read), so an
+        // Bill the lookup to the companion's stamina (like the affect read), so an
         // off-loop model call is never free. Best-effort.
         const spent = usage.total().totalTokens;
-        if (options.quota && ctx.ownerId && spent > 0) {
-          await options.quota.recordUsage(ctx.ownerId, spent).catch((error: unknown) =>
+        if (options.quota && ctx.companionId && spent > 0) {
+          await options.quota.spend(ctx.companionId, spent).catch((error: unknown) =>
             logger.error('failed to bill search_tools usage', {
               operation: 'mcp.searchTools.bill',
               companionId: ctx.companionId,

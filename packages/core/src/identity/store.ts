@@ -1,5 +1,5 @@
 import type { CompanionDto, DriveWeights, PersonalityKnobs, ProactivityDial } from '@cobble/shared';
-import { companions, type Database, users } from '@cobble/db';
+import { companions, type Database, DEFAULT_STARTING_VITALITY_TOKENS, users } from '@cobble/db';
 import { and, eq } from 'drizzle-orm';
 
 export interface UserRecord {
@@ -74,8 +74,32 @@ export interface IdentityStore {
   updateDriveWeights(companionId: string, driveWeights: DriveWeights): Promise<void>;
 }
 
+export interface DrizzleIdentityStoreOptions {
+  /**
+   * Tokens each new companion's stamina + energy wallets are seeded with at
+   * creation (architecture.md §4.8). Defaults to the schema default; production
+   * passes `STARTING_VITALITY_TOKENS` through here so the env override takes effect.
+   */
+  readonly startingVitalityTokens?: number;
+}
+
 export class DrizzleIdentityStore implements IdentityStore {
-  constructor(private readonly db: Database) {}
+  private readonly startingVitalityTokens: number;
+
+  constructor(
+    private readonly db: Database,
+    options: DrizzleIdentityStoreOptions = {},
+  ) {
+    const seed = options.startingVitalityTokens ?? DEFAULT_STARTING_VITALITY_TOKENS;
+    // Validate at construction so a bad seed fails loudly here rather than writing a
+    // corrupt wallet (negative balance, or a fractional value the bigint column would
+    // silently coerce) into every companion this store creates. The env path already
+    // enforces this via Zod, but the option is taken on trust from any caller.
+    if (!Number.isInteger(seed) || seed < 0) {
+      throw new RangeError(`startingVitalityTokens must be a non-negative integer, got ${seed}`);
+    }
+    this.startingVitalityTokens = seed;
+  }
 
   async ensureUserByEmail(email: string): Promise<UserRecord> {
     await this.db.insert(users).values({ email }).onConflictDoNothing();
@@ -94,7 +118,14 @@ export class DrizzleIdentityStore implements IdentityStore {
   async createCompanion(ownerId: string, input: CreateCompanionInput): Promise<CompanionDto> {
     const [row] = await this.db
       .insert(companions)
-      .values({ ownerId, ...input })
+      .values({
+        ownerId,
+        ...input,
+        // Seed both vitality wallets at creation (architecture.md §4.8); the store
+        // meters these columns thereafter.
+        staminaBalanceTokens: this.startingVitalityTokens,
+        energyBalanceTokens: this.startingVitalityTokens,
+      })
       .returning();
     if (!row) {
       throw new Error('failed to create companion');

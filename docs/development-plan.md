@@ -44,7 +44,7 @@ being is proven, because they add platform cost without changing whether the cor
 | **7** | Desktop surface | + Desktop | File/workspace OS tools, heavier local storage | Planned |
 | **8** | Hardening & launch readiness | All | Security, scale, privacy controls, monetization | Planned |
 | **9** | Tool acquisition — MCP | Web / server-host | Whitelisted HTTP MCP servers discovered, loaded & used at runtime, no redeploy | ✅ **Done** (PR #10) |
-| **10** | Tool acquisition — CLI | Web / server-host | Whitelisted host CLIs learned & driven at runtime, no redeploy | Planned |
+| **10** | Tool acquisition — CLI | Web / server-host | Whitelisted host CLIs discovered, loaded & driven at runtime, no redeploy | ✅ **Done** (PR #11) |
 
 ⭐ = the differentiators the web PoC exists to prove. **Phases 0–5 are the PoC.**
 
@@ -67,12 +67,11 @@ proving the full request→harness→model→response loop and persistence work 
 **Done when:** a new user signs in, names a companion, exchanges messages; conversation
 persists across sessions; CI runs tests at ≥80% coverage.
 
-**Delivered** (PR #1): TS monorepo (`packages/{core,api,web,shared,eval}`, `db/`, `infra/`).
-Stack resolved in `architecture.md` §5 — TS end-to-end, Fastify API, React+Vite SPA,
-Postgres+`pgvector` via Drizzle, OpenRouter gateway, Google Sign-In (+ `dev_bypass`). Single-turn
-streaming harness with the `RetrieveContext`/tool/`Initiator` hook seams stubbed (`architecture.md`
-§4); transcript-as-episodic-substrate (`messages.companion_id`); read-only memory browser; live
-eval harness (`packages/eval`). CI runs Vitest at ≥80% coverage on `shared/db/core/api`.
+**Delivered** (PR #1): the TS monorepo and its package layout (folder structure →
+`architecture.md` §7); the canonical stack choices live in `architecture.md` §5 (not re-enumerated
+here). A single-turn streaming harness with the `RetrieveContext`/tool/`Initiator` hook seams stubbed
+(`architecture.md` §4); the transcript-as-episodic-substrate model (schema → `implementation.md` §1);
+a read-only memory browser; and the live eval harness. CI runs Vitest at ≥80% coverage.
 
 ### Phase 1 — The Knowledge Organism ⭐
 **Goal:** prove the headline claim — feed Cobble sources and it recalls them accurately and in
@@ -86,9 +85,10 @@ context. This is the heart of the PoC.
   (`product-overview.md` §2.1).
 - Grounded recall in chat: retrieval-augmented answers with provenance ("from your Peru book").
 - Ingestion status/feedback UI ("Cobble has read 3 of 5 books").
-- **Cost guardrail:** a per-user **daily token cap** (the one spend control — replaces per-route
-  request limits) with a live usage indicator; over cap, chat/search 429 and ingestion **defers**
-  until reset (`architecture.md` §4.8).
+- **Spend control:** a per-companion **vitality wallet** (the one spend control — replaces per-route
+  request limits) with a live remaining-balance indicator; when empty, chat/search 429 and ingestion
+  **defers** until the wallet is refilled by feeding (`architecture.md` §4.8). (An account-wide
+  real-money cap across a user's companions is deferred — `architecture.md` §9.)
 
 **Done when:** a user uploads sources and Cobble answers questions grounded in them with correct
 citations; answers degrade gracefully when knowledge is absent (no confident hallucination).
@@ -129,7 +129,7 @@ rolls spans of the one lifelong transcript into timestamped **episodes** (each c
 span and a self-reported salience) via a pgvector + FTS hybrid, recalled **by topic**, off the
 request path, reusing the P1 runner/quota/sweeper pattern; episodic recall fills the same
 `RetrieveContext` hook as P1 (no
-loop change). **Personality evolution** re-synthesizes an `evolvedPersona` ("who I've become with
+loop change). **Personality evolution** re-synthesizes an **evolved persona** ("who I've become with
 you") from accumulated episodes and blends it into the persona prompt alongside the immutable
 seed temperament. Web adds the episode timeline + evolved persona to the memory browser; the eval
 harness gained a Phase-2 episodic config (tiny recency window + episodic recall) that
@@ -139,7 +139,7 @@ window of **2**) recalling **100%** of buried facts at **0% hallucination** vs *
 `window-2` with the same window — episodic memory reaching beyond the recency window, the Phase 2
 differentiator. The manual e2e passed against the live stack: a conversation crossed the
 consolidation boundary → episodes formed (the key fact recorded at salience 0.8), the topic-match
-hybrid returned it top-ranked, the `evolvedPersona` reflected the accumulated history, and a recall
+hybrid returned it top-ranked, the evolved persona reflected the accumulated history, and a recall
 question whose source turn was beyond the 20-message recency window was answered accurately from
 episodic memory.
 
@@ -165,23 +165,22 @@ approval; nothing consequential executes without confirmation; every tool call i
 
 **Implemented** (this branch): the harness single-pass loop became the real **inner loop**
 (`architecture.md` §4.1–4.2) — each turn streams, then runs the tools it requested and turns again,
-guarded by a max-iteration + token ceiling (`§4.7`). A **tool framework + registry** (`core/tools/`)
-ships three tools: read-only **`web_fetch`** (reuses the SSRF-guarded link resolver + content
-parsers, and harvests outbound links into the lead inventory) and **`memory_search`** (P1 hybrid
-store), and the effectful **`ingest_source`** (commits a page to long-term memory, reusing the P1
-ingestion pipeline). **Propose→approve** is the `beforeToolCall` gate: a read-only call runs freely,
-an effectful call is **held as a pending proposal and the loop EXITs** (`§4.4`); the **approval
-queue** (`proposals` table) + confirm/reject routes resolve it **exactly once** (atomic claim) and
-execute the held call via the shared `dispatchTool`. **Every tool call is logged** (`tool_calls`).
-The **lead inventory** (`leads`) is the companion's reading list — the body-then-will substrate the
+guarded by a max-iteration + token ceiling (`§4.7`). A **tool framework + registry** ships three
+tools: read-only **`web_fetch`** (reuses the SSRF-guarded link resolver + content parsers, and
+harvests outbound links into the lead inventory) and **`memory_search`** (the P1 hybrid store), and
+the effectful **`ingest_source`** (commits a page to long-term memory, reusing the P1 ingestion
+pipeline). **Propose→approve** is the tool-call gate: a read-only call runs freely, an effectful call
+is **held as a pending proposal and the loop EXITs** (`§4.4`); the **approval queue** + confirm/reject
+routes resolve it **exactly once** (atomic claim) and execute the held call. **Every tool call is
+logged.** The **lead inventory** is the companion's reading list — the body-then-will substrate the
 Phase 4 motivation engine will work on idle; in Phase 3 `POST /explore` works it on command.
-**Procedural memory** is seeded: an approved workflow is recorded (`procedural_memories`) and
-browsable. Web adds one-tap approval cards, a reading-list view, and the procedural section. **Gate
-passed** (offline, deterministic — P3's differentiator is *safe action*, mechanically verifiable,
-not a recall-quality score like P1/P2): the end-to-end DoD test
-(`packages/api/src/routes/phase3-dod.test.ts`) drives a multi-step task (read → propose) to a held
-proposal, asserts **nothing executed before confirmation** and **every tool call logged**, then
-approves and asserts the action executes once + seeds a procedure. Full suite green at ≥80% coverage.
+**Procedural memory** is seeded: an approved workflow is recorded and browsable. Web adds one-tap
+approval cards, a reading-list view, and the procedural section. (Data model → `implementation.md`
+§1; loop + gate → `architecture.md` §4.) **Gate passed** (offline, deterministic — P3's
+differentiator is *safe action*, mechanically verifiable, not a recall-quality score like P1/P2): the
+end-to-end Phase 3 DoD test drives a multi-step task (read → propose) to a held proposal, asserts
+**nothing executed before confirmation** and **every tool call logged**, then approves and asserts the
+action executes once + seeds a procedure. Full suite green at ≥80% coverage.
 
 ### Phase 4 — Proactivity Engine ⭐
 **Goal:** prove Cobble can usefully initiate — the second core differentiator. This is the **"will"**
@@ -216,10 +215,11 @@ deterministic tests; the will only by measurement — so it lands on a trusted f
   **v1 ships only focus length live** (the burst limit); boredom and distractibility are persisted
   but inert until the multi-step / multi-behaviour loop lands (`companion-motivation.md` §6, §10).
   Different Cobbles run different constants (tenacious deep-reader vs. magpie), seeded at creation.
-- **Stamina & energy (the budget made legible).** Reframe the per-user daily cap into two pools —
-  **stamina** (user-initiated work) and **energy** (the engine's self-initiated work) — so autonomy
-  can never starve conversation (`architecture.md` §4.8). Phase 4 ships the mechanism plus a
-  **simple meter + manual top-up**; the full feeding/"food" game economy is **Phase 5**.
+- **Stamina & energy (the budget made legible).** Two per-companion **vitality wallets** —
+  **stamina** (user-initiated work) and **energy** (the engine's self-initiated work) — that spend
+  down with use and refill only by feeding, so autonomy can never starve conversation
+  (`architecture.md` §4.8). Phase 4 ships the wallets plus a **remaining-balance meter**; the
+  feeding/"food" game economy that refills them is **Phase 5**.
 - **Reinforcement (mood change, Phase 4.2).** The companion learns from **conversation** the way a
   person does: the agent loop senses the user's mood on **every** turn and feeds the prior read
   forward to **attune** the next reply (the fast loop). After it reads and posts a report note, the
@@ -246,35 +246,26 @@ engagement/dismissal (the reinforcement signal) from day one.
 change to move bond/understanding/persona, not only on a drive-serving act); **unprompted
 conversation** beyond the report note (tips/questions/check-ins) + a sense of **purpose/agenda** → a
 later phase; continuous work-while-away → Phase 6 (needs push); the stamina/energy **game economy**
-(food types, feeding, store, rich meters) → Phase 5; deeper RL beyond the additive weight nudge;
+(food types, feeding, the pantry, rich meters) → Phase 5; deeper RL beyond the additive weight nudge;
 **approval for outward/ irreversible tools** (when such tools exist — autonomous reads are internal +
 energy-bounded today).
 
-**Implemented** (Phase 4.1, this branch): the reserved `Initiator` seam is filled by a **motivation
-engine** (`packages/core/src/motivation/`) on a **lazy trigger** — `motivation.request` on a sent
-turn + on opening the transcript (return), plus a periodic `sweepMotivation`, all coalesced off the
-request path by a `MotivationRunner` (mirrors the consolidation runner). Each tick reads **drives ×
-presence** and either stays idle (token-free) or runs a **bounded autonomous burst**: a **presence
-spectrum** (`presence.ts`, fed by a heartbeat) gates self-initiation; a token-free **arbitration**
-gate (`arbitration.ts`: `pressure = level × weight` vs the dial threshold, burst sized to what energy
-affords) decides; when it commits, `runAutonomousBurst` **reads** the next leads into the companion's
-own memory **with no approval** (the shared ingestion pipeline, real tokens billed to energy via a
-per-run **meter override**) and posts **one in-character report note**. **Stamina/energy** split the
-old daily cap into two pools — chat draws stamina, the engine's reads draw **energy**
-(`companion_energy`), so autonomy can never starve interaction; out of energy → the engine idles
-while chat runs on. **Reinforcement = mood change in the loop (Phase 4.2)**: the agent loop senses the
-user's mood on every turn (`motivation/affect.ts`, stored in `companion_affect`, migration `0015`) and
-feeds the prior read forward to **attune** the next reply (`context.ts`, the fast loop). The burst
-logs a `proactive_outcomes` row linked to the note (migration `0014`); when the user reacts, the
-**change** in mood (`delta`) is applied as an **additive nudge** to the served **drive weight**
-(`motivation/reinforce.ts`; neutral start, a zero change is a no-op), so a Cobble is *raised* into its
-disposition from conversation — no separate critic, no button (the 4.1 `sentiment-reward.ts` is
-removed). The approval gate is kept for **chat** effectful calls + the user-initiated `/explore`
-command (which still proposes). Web adds a two-pool **vitality meter** + one-tap feed and an
-**off/gentle/active** dial. **Gate passed** (offline, deterministic): the DoD test
-(`packages/api/src/routes/phase4-dod.test.ts`) proves open-app→autonomous read + report note + energy
-consumed, out-of-energy/dial-off → no initiation, and reaction-to-note → mood-change reward + weight
-shift. Full suite green at ≥80% coverage. Canonical mechanism: `docs/companion-motivation.md`.
+**Implemented** (Phase 4.1–4.2, this branch): the reserved `Initiator` seam is filled by a
+**motivation engine** on a **lazy trigger** coalesced off the request path. Each tick weighs
+**drives × presence** and either stays idle (token-free) or runs a **bounded autonomous burst** that
+**reads** the next leads into the companion's own memory **with no approval** and posts **one
+in-character report note**. Work spends two per-companion vitality wallets — chat draws **stamina**,
+autonomous reads draw **energy** — so autonomy can never starve interaction; out of energy the engine
+idles while chat runs on. **Reinforcement is conversational:** the loop senses the user's mood on
+every turn and feeds the prior read forward to **attune** the next reply; the **change** in mood
+across the user's reaction to a report note is the reward — an additive nudge to the served drive
+weight (neutral start, a zero change is a no-op, no separate critic, no button), so a Cobble is
+*raised* into its disposition from conversation. The approval gate is kept for **chat** effectful
+calls + the user-initiated `/explore`. Web adds a two-wallet **vitality meter**, one-tap feed, and an
+**off/gentle/active** dial. (Data model → `implementation.md` §1; full mechanism →
+`companion-motivation.md`.) **Gate passed** (offline, deterministic): the Phase 4 DoD test proves
+open-app → autonomous read + report note + energy consumed; out-of-energy/dial-off → no initiation;
+reaction-to-note → mood-change reward + weight shift. Full suite green at ≥80% coverage.
 
 ### Phase 5 — Bond & Growth (PoC complete)
 **Goal:** make Cobble feel raised, not used — closing the PoC loop.
@@ -287,41 +278,39 @@ shift. Full suite green at ≥80% coverage. Canonical mechanism: `docs/companion
 - Each axis shown as a descriptive **band** + gauge (no levels/XP); readings may move either way and
   young axes read honestly empty. A separate **capabilities** checklist of what the companion has been
   observed doing.
-- **Stamina/energy game economy:** the Phase 4 vitality meters grow into a feeding loop — "food"
-  the user gives that favours stamina or energy (the one deliberate game loop; `companion-economy.md`).
+- **Stamina/energy game economy:** the Phase 4 vitality meters grow into a feeding loop — the user
+  spends "food" from a per-user pantry that favours stamina or energy (the one deliberate game loop;
+  `companion-economy.md`).
 
 **Done when:** a returning user can see and feel how their Cobble has grown; the web PoC
 demonstrates all three differentiators (knowledge organism, embodiment groundwork, proactivity)
 end-to-end. **Decision gate:** validate the concept before funding native surfaces.
 
-**Implemented** (this branch): growth is a **mirror** — **derived from substrate that already exists**,
-never an XP grind, and allowed to move in either direction. A `GrowthService`
-(`packages/core/src/growth/`) reads the semantic/episodic counts, the tool/procedure/affect logs, the
-proactive-outcome log, and the learned `drive_weights`, and computes **four axis readings** (Knowledge,
-Bond, Initiative, Character) — each a descriptive **band** + an intra-band gauge fill — plus a
-**capabilities checklist** (6 capabilities flipped from real logs: web research, memory recall, reading
-sources, a learned routine, multi-step tasks, mood attunement) and the **character card** ("Who *X* has
-become" — per-drive weights + `evolved_persona`). Young axes read honestly empty ("Hasn't ventured out
-yet", "Still forming"). A `companion_growth` row stores only the
-**idempotent high-water mark** (highest band per axis + observed capabilities) **+ treats** — the
-readings recompute freely and the mark **never floors** the surface; it exists only so a reflection
-fires **exactly once** per band/capability reached (a compare-and-set on the monotonic band indices +
-observed set, mirroring the P2 cursor). Recompute runs **post-turn only**, inline off the message
-stream (off the request path), posting one in-character **growth reflection** to the transcript on a genuine advance
-(reusing the announcer pattern; canned, numberless text since the pass is token-free);
-`GET /companions/:id/growth` is a **read-only** snapshot of the live derived standing, so a read (or a
-client poll) never advances the mark or writes to the transcript. The **feeding economy** (the one deliberate game loop — `companion-economy.md`)
-turns the P4 vitality meters into a kitchen: typed **foods** (`ration`→stamina, `spark`→energy,
-`treat`→both) spend earned **treats** (a starting balance + milestone rewards) via the existing atomic
-top-ups (`POST /companions/:id/feed`). **Procedural retrieval-as-hint** makes the capabilities
+**Implemented** (this branch): growth is a **mirror** — **derived from substrate that already
+exists**, never an XP grind, and allowed to move in either direction. A growth service reads the
+semantic/episodic counts, the tool/procedure/affect logs, the proactive-outcome log, and the learned
+drive weights, and computes **four axis readings** (Knowledge, Bond, Initiative, Character) — each a
+descriptive **band** + an intra-band gauge fill — plus a **capabilities checklist** (six capabilities
+flipped from real logs: web research, memory recall, reading sources, a learned routine, multi-step
+tasks, mood attunement) and a **character card** ("Who *X* has become" — the emerged drive disposition
++ evolved persona). Young axes read honestly empty ("Hasn't ventured out yet", "Still forming"). A
+stored **idempotent high-water mark** (highest band per axis + observed capabilities) lets the
+readings recompute freely while the mark **never floors** the surface; it exists only so a reflection
+fires **exactly once** per band/capability reached. Recompute runs **post-turn
+only**, off the request path, posting one in-character **growth reflection** to the transcript on a
+genuine advance; the growth read is a **read-only** snapshot of the live derived standing, so a read
+(or a client poll) never advances the mark or writes to the transcript. The **feeding economy** (the
+one deliberate game loop, decoupled from growth) turns the P4 vitality meters into a kitchen: the user
+spends typed **foods** from a per-user **pantry** (seeded, no currency) to refill the two wallets.
+**Procedural retrieval-as-hint** makes the capabilities
 *functional*: a new `RetrieveContext` arm surfaces a relevant learned routine into context (no loop
-change — invariant #3). Web adds a **Growth view** (four axis readings, capabilities checklist, character
-card, kitchen); the redundant header stage badge was dropped. **Gate passed** (offline, deterministic —
-growth is mechanical, not a recall-quality score): the DoD test
-(`packages/api/src/routes/phase5-dod.test.ts`) proves substrate change → a band rises + capabilities
-observed + treats earned + reflection posted; feeding spends treats and tops up the right pool (out of
-treats → 409); recompute is idempotent (no double-award/double-reflection); and a learned procedure
-resurfaces as a context hint. Full suite green at ≥80% coverage.
+change — invariant #3). Web adds a **Growth view** (four axis readings, capabilities checklist,
+character card, kitchen). (Data model → `implementation.md` §1; mechanisms → `companion-economy.md`,
+`companion-memory.md`.) **Gate passed** (offline, deterministic — growth is mechanical, not a
+recall-quality score): the Phase 5 DoD test proves substrate change → a band rises + capabilities
+observed + reflection posted; feeding consumes a food from the pantry and refills the right wallet
+(out of that food → refused); recompute is idempotent (no double-reflection); and a learned
+procedure resurfaces as a context hint. Full suite green at ≥80% coverage.
 
 ## 4. Phases (Full Product)
 
@@ -397,68 +386,96 @@ on MCP results.
 
 **Implemented** (PR #10): the full **discover → load → call → remember** spine plus the **MCP
 executor**, off by default (empty whitelist). The static boot registry became a **composition of
-capability sources** resolved **per model step** (`core/mcp/equipped-resolver.ts`) behind the
-unchanged `list()`/`get()` interface, so a tool loaded mid-turn is callable on the next loop
-iteration (loop shape unchanged — invariant #3); it degrades to the static registry if resolution
-throws, so acquisition never breaks a turn. A deployment-wide **catalog** (`tool_catalog` table,
-`catalog-builder.ts`, `tool-catalog-store.ts`) indexes every whitelisted server's tools as
-lightweight entries (id, name, one-liner — no schemas), and **`search_tools`** (`search-tools.ts`) is
-a cheap off-loop LLM lookup over it in its own context → ranked ids; **`load_tool`** (`load-tool.ts`)
-connects the server if needed, fetches the **fresh** schema, and equips it. The per-companion
-**equipped set** (`equipped_tools` table, `equipped-store.ts`) is a single tier bounded by
-`maxEquippedTools` (`MAX_EQUIPPED_TOOLS`, LRU eviction); the fixed core tools (native + the two
+capability sources** resolved **per model step** behind the unchanged tool-registry interface, so a
+tool loaded mid-turn is callable on the next loop iteration (loop shape unchanged — invariant #3) and
+degrades to the static registry if resolution throws, so acquisition never breaks a turn. A
+deployment-wide **catalog** indexes every whitelisted server's tools as lightweight entries (id, name,
+one-liner — no schemas); **`search_tools`** is a cheap off-loop LLM lookup over it → ranked ids, and
+**`load_tool`** connects the server if needed, fetches the **fresh** schema, and equips it. The
+per-companion **equipped set** is a single LRU-bounded tier; the fixed core tools (native + the two
 discovery meta-tools) live in code, never counted. **Promotion = proactive loading**: a recalled
-procedural routine names tools it needs that aren't equipped and the companion `load_tool`s them up
-front (`load-advisor.ts`). The MCP executor is a provider-agnostic `McpGateway` (`mcp/gateway.ts`) +
-adapter (`mcp/adapter.ts`: namespaced `mcp__<ref>__<tool>`, sha256-anchored truncation to avoid
-name collisions, results fenced as untrusted external data) + `FakeMcpGateway`, with the production
-`StreamableHttpMcpGateway` (`api/mcp/sdk-client.ts`) over the official MCP SDK — **HTTP/SSE only**,
-routed through the **SSRF-guarded** `ssrfSafeFetch` (connection-layer DNS re-validation, not just a
-string check). The **whitelist** (`mcp/whitelist.ts`) is the entire MCP trust decision — binary
-allow/deny, construction-time SSRF + ref validation; admission is **per-server** (a whitelisted
-server admits every tool it advertises). Config: `MCP_SERVERS` (JSON whitelist → `AppConfig.mcpServers`)
-+ `MAX_EQUIPPED_TOOLS`; `buildMcpWiring` returns null when no servers are whitelisted, so behaviour
-is unchanged unless configured. **Gate passed** (offline, deterministic — like P3/P5, the
-differentiator is *mechanical*: acquisition without redeploy, not a recall-quality score): the DoD
-test (`packages/api/src/routes/phase9-dod.test.ts`) proves a relevant turn drives
-`search_tools → load_tool → call` with the loaded tool callable on the **next** iteration (every
-call logged); an **off-catalog** id is denied before any gateway call (and still audited); only the
-small core set is advertised regardless of catalog size (no `mcp__` tool until loaded — the catalog
-scales without inflating per-turn context); and an equipped tool **survives a process restart** (a
-cold app instance rebuilds the registry from the persisted equipped row, no re-discovery). Full
-suite green at ≥80% coverage. Canonical mechanism: `docs/companion-tools.md`.
+procedural routine names tools it needs that aren't equipped and the companion loads them up front.
+The executor is a provider-agnostic MCP gateway + adapter (namespaced, collision-safe tool names;
+results fenced as untrusted external data) over the official MCP SDK — **HTTP/SSE only**, routed
+through an **SSRF-guarded** fetch (connection-layer DNS re-validation, not just a string check). The
+**whitelist** is the entire MCP trust decision — binary allow/deny, admission **per-server** (a
+whitelisted server admits every tool it advertises). (Schema + config → `implementation.md` §1, §3;
+trust model + full mechanism → `companion-tools.md`.) **Gate passed** (offline, deterministic — like
+P3/P5, the differentiator is *mechanical*: acquisition without redeploy, not a recall-quality score):
+the Phase 9 DoD test proves a relevant turn drives `search_tools → load_tool → call` with the loaded
+tool callable on the **next** iteration (every call logged); an **off-catalog** id is denied before
+any gateway call (and still audited); only the small core set is advertised regardless of catalog
+size (no acquired tool until loaded — the catalog scales without inflating per-turn context); and an
+equipped tool **survives a process restart** (a cold instance rebuilds the registry from the
+persisted equipped row, no re-discovery). Full suite green at ≥80% coverage. Canonical mechanism:
+`docs/companion-tools.md`.
 
 ### Phase 10 — Runtime Tool Acquisition: CLI
 **Goal:** a developer can whitelist a host CLI; given the tool's docs, the companion learns to drive
 it and preserves the working invocation — no code change, no redeploy.
 
+**Design note (resolved):** CLI tools work **like MCP tools** — a second capability source over the
+same discover → load → call → remember spine; the only difference is the transport at the leaf (a
+local subprocess instead of HTTP). CLI tools are **developer-described folders** (the analogue of an
+MCP server's self-description), so the model fills a fixed argument schema rather than composing
+free-form commands, and "remember" reuses the existing procedural + proactive-loading spine (no
+CLI-specific learning machinery). Full design → `companion-tools.md`.
+
 **Scope**
-- **`run_command`** primitive driving any whitelisted CLI.
-- **Whitelist / argument-validation policy engine** — specific binary + validated argument patterns,
-  binary allow/deny; entries are narrow (the policy is the trust boundary, no runtime approval).
-- **Host sandbox** — per-tenant working directory, no cross-tenant data/secrets, CPU/time/output
-  ceilings (mirrors the `web_fetch` byte-cap posture).
-- **Experimentation / learning loop** — ingest the tool's docs into **semantic memory**; record a
-  working invocation into **procedural memory**; both feed catalog discovery and proactive loading.
-  Experimentation is bounded by the whitelist (it can try only *validated* invocations).
-- **Trust/security:** same developer-whitelist binary model; output sandboxed and treated as
-  untrusted.
+- **`CLI_TOOLS_PATH` tool folders** — each whitelisted tool is a folder (`TOOL.json` = binary +
+  model-facing argument schema + argv template + mandatory limits; `TOOL.md` = the usage prompt). The
+  **folder set is the CLI trust boundary** (read-only, deployment-controlled), config not DB.
+- **CLI sandbox** — the executor each `cli__<ref>` tool delegates to: **no shell** (argv verbatim),
+  scrubbed env, per-tenant ephemeral working dir, time/output ceilings (mirrors the `web_fetch`
+  byte-cap posture). Portable subprocess tier; OS-level/network isolation deferred (`companion-tools.md`
+  §7/§9).
+- **Argument validation** — the model fills the tool's JSON-Schema `parameters`; an argv template
+  renders validated values into **discrete argv elements**. Binary allow/deny, no per-call approval,
+  no free-form command or per-arg regex policy.
+- **Same spine, symmetric with MCP** — a `CapabilitySource` refactor lets CLI plug into the existing
+  catalog / `search_tools` / `load_tool` / per-step registry / proactive loading unchanged.
+- **Trust/security:** developer-whitelist (the folder set); output sandboxed + treated as untrusted;
+  a removed folder revokes the tool immediately (call-time re-read).
 
-**Done when:** a developer whitelists a CLI (binary + argument patterns); given the tool's docs, the
-companion gets a **valid invocation working**, the know-how **persists** (semantic + procedural), and
-it **reuses** the CLI on a later relevant turn without re-deliberating; **off-whitelist / invalid
-arguments are denied**; output is sandboxed and untrusted; every run is logged.
+**Done when:** a developer drops a tool folder under `CLI_TOOLS_PATH`; on a relevant turn the
+companion **`search_tools` → `load_tool` → calls** it (callable on the next loop iteration); the
+equipped tool **survives a restart**; an **unknown/invalid** id is denied before any subprocess;
+output is **sandboxed + untrusted**; every run is logged.
 
-**Key risks:** host-execution safety (mitigated by whitelist + sandbox on the multi-tenant host),
-experimentation token cost (drawn from the energy/stamina budget), and prompt-injection-to-execution
-(bounded by the whitelist — no invocation can escape it).
+**Key risks:** host-execution safety (mitigated by the read-only trusted folder set + the no-shell
+sandbox on the multi-tenant host; network isolation deferred to Phase 8), and
+prompt-injection-to-execution (bounded by the fixed binary + schema-validated argv — no value can
+become a command).
+
+**Implemented** (PR #11): the CLI track as a **second capability source over the Phase 9 spine**,
+off by default (no tools directory configured). A capability-source refactor made the three MCP-only
+seams (catalog builder, `load_tool` schema resolution, equipped-registry resolver)
+**source-polymorphic** — MCP became one such source, with MCP behaviour provably unchanged (the
+Phase 9 DoD passes verbatim). The CLI source treats tools as **developer-described folders** (a
+`TOOL.json` declaring the binary, a `parameters` JSON Schema, an argv template, and mandatory per-run
+limits, plus a `TOOL.md` usage prompt): the model's args are validated against the schema, each
+parameter is rendered into a **discrete argv element** (no shell, injection-inert), run through a
+sandbox, and the output fenced as untrusted. The store **re-reads the def at call time**, so a
+removed folder is revoked immediately. The production sandbox spawns with no shell, a scrubbed env, a
+per-tenant ephemeral cwd, and wall-clock + output-byte kills; the production store scans the tools
+directory, skips+logs invalid folders, and rejects path-traversal refs. The folder set under the
+configured tools path is the entire CLI trust boundary (admit-by-deploy). (Schema + config →
+`implementation.md` §1, §3; trust model + the `TOOL.json` contract → `companion-tools.md`.) **Gate
+passed** (offline, deterministic): the Phase 10 DoD test drives `search_tools → load_tool → call`
+over a real file-system tool store (temp fixture) + a fake sandbox with every call logged; an
+off-catalog id is denied before any subprocess; only the core set is advertised regardless of catalog
+size; and an equipped CLI tool **survives a process restart**. A separate test exercises the real
+subprocess sandbox (argv verbatim, byte cap, timeout kill, missing binary). Full suite green at ≥80%
+coverage. Canonical mechanism: `docs/companion-tools.md`. **Deferred** (Beyond the PoC): tool-doc
+ingestion into semantic memory, an experimentation/probe harness, and OS-level sandbox + network
+isolation.
 
 ## 5. Open Questions to Resolve (owned here)
 Owned here (single-source). Each is assigned a decision point:
 
 | Question | Decide by |
 |---|---|
-| ~~Final stack: framework, client, store engine, LLM provider~~ | **Decided (Phase 0):** TS end-to-end, Fastify, React+Vite, Postgres+`pgvector`/Drizzle, OpenRouter, Google Sign-In (`architecture.md` §5) |
+| ~~Final stack: framework, client, store engine, LLM provider~~ | **Decided (Phase 0):** see `architecture.md` §5 (canonical stack) |
 | Single companion vs. multiple per user | Phase 2 (identity model) — **MVP: one companion per user**; multiple is a deferred capability |
 | ~~One continuous conversation vs. multiple sessions per companion~~ | **Decided (Phase 0): one continuous, lifelong conversation per companion** — no session/thread entity (`architecture.md` §2, invariant #6) |
 | Initial tool/skill integrations (maps, calendar, search, booking) | Phase 3 |
@@ -466,7 +483,7 @@ Owned here (single-source). Each is assigned a decision point:
 | Surface rollout confirmed (web → mobile → desktop) | Phase 5 decision gate |
 | Monetization model (subscription, ability packs) | Phase 8 |
 | Push-notification cadence & away-proactivity rules | Phase 6 |
-| Tool whitelist governance — where the CLI/MCP whitelist lives (config vs DB) and the operator flow to admit a tool | **MCP decided (Phase 9):** server whitelist in config (`MCP_SERVERS` env → `AppConfig.mcpServers`), per-server admission, no redeploy to edit (`companion-tools.md` §6). **CLI** argument-pattern policy engine → Phase 10 |
+| ~~Tool whitelist governance — where the CLI/MCP whitelist lives (config vs DB) and the operator flow to admit a tool~~ | **Decided (Phases 9–10):** both whitelists live in deployment config (not the DB), admit-by-deploy, no per-call approval. Trust model + the exact config surface → `companion-tools.md` §6 |
 | User-addable tools (vs developer-whitelisted only) | Deferred — after the tool-acquisition workstream (`companion-tools.md` §9) |
 | External-tool cost metering (the monetary cost of CLI/MCP calls, beyond LLM tokens) | Deferred — revisit with the workstream / Phase 8 |
 

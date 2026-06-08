@@ -1,5 +1,24 @@
+import { tmpdir } from 'node:os';
+import { isAbsolute, relative, resolve } from 'node:path';
 import type { McpWhitelistEntry, RedactionMode } from '@cobble/core';
+import { DEFAULT_STARTING_VITALITY_TOKENS } from '@cobble/db';
 import { z } from 'zod';
+
+/**
+ * True when two filesystem paths are the same directory or one is nested inside
+ * the other (after resolving to absolute). Used to fail-fast a config where the
+ * read-only CLI tool dir overlaps a path the app writes to — a writable tools dir
+ * lets anyone who can write there admit a binary the companion will run
+ * (companion-tools.md §6; the constraint the .env.example warns about).
+ */
+export function pathsOverlap(a: string, b: string): boolean {
+  const ra: string = resolve(a);
+  const rb: string = resolve(b);
+  if (ra === rb) return true;
+  const nested = (rel: string): boolean =>
+    rel.length > 0 && !rel.startsWith('..') && !isAbsolute(rel);
+  return nested(relative(ra, rb)) || nested(relative(rb, ra));
+}
 
 /**
  * Authentication mode. `google` (default) gates the app behind Google Sign-In:
@@ -31,8 +50,11 @@ export interface AppConfig {
   readonly useContextHeader: boolean;
   /** Backstop cap on queued+in-flight ingestion runs across all owners. */
   readonly ingestionQueueMax: number;
-  /** Per-user daily token cap (LLM + embedding), the cost guardrail across all routes. */
-  readonly tokenCapPerDay: number;
+  /**
+   * The token balance a new companion is seeded with in **each** vitality wallet
+   * (stamina + energy). Not a cap — wallets only refill by feeding (architecture.md §4.8).
+   */
+  readonly startingVitalityTokens: number;
   /**
    * The developer's MCP server whitelist (companion-tools.md §6) — the entire MCP
    * trust decision. Parsed from `MCP_SERVERS` (a JSON array). Empty (default) leaves
@@ -40,8 +62,20 @@ export interface AppConfig {
    */
   readonly mcpServers: readonly McpWhitelistEntry[];
   /** Max tools a companion may carry equipped at once; the LRU evicts beyond it
-   *  (companion-tools.md §4). Only meaningful when `mcpServers` is non-empty. */
+   *  (companion-tools.md §4). Only meaningful when tool acquisition is configured. */
   readonly maxEquippedTools: number;
+  /**
+   * Directory of CLI tool-definition folders (companion-tools.md §6) — the CLI
+   * trust boundary. Each subfolder (`TOOL.md` + `TOOL.json`) is one whitelisted
+   * tool. Must be **read-only + deployment-controlled** and must NOT overlap any
+   * path the app writes to. Empty (default) leaves the CLI track off.
+   */
+  readonly cliToolsPath: string;
+  /**
+   * Root for the per-tenant ephemeral working directories CLI runs execute in
+   * (separate from `cliToolsPath`). Empty → the OS temp dir.
+   */
+  readonly cliScratchDir: string;
   readonly appUrl: string;
   readonly authMode: AuthMode;
   readonly googleClientId: string;
@@ -78,13 +112,22 @@ const envSchema = z
       .default('true')
       .transform((value) => value === 'true'),
     INGESTION_QUEUE_MAX: z.coerce.number().int().positive().default(100),
-    TOKEN_CAP_PER_DAY: z.coerce.number().int().positive().default(1_000_000),
+    STARTING_VITALITY_TOKENS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(DEFAULT_STARTING_VITALITY_TOKENS),
     // The MCP server whitelist as a JSON array (companion-tools.md §6); default
     // empty so runtime tool acquisition is off unless an operator lists servers.
     MCP_SERVERS: z.string().default('[]'),
     // Max tools a companion carries equipped at once (companion-tools.md §4); the
     // LRU evicts the least-recently-used tool beyond this.
     MAX_EQUIPPED_TOOLS: z.coerce.number().int().positive().default(8),
+    // The CLI tool-definition directory (companion-tools.md §6) — the CLI trust
+    // boundary; default empty so the CLI track is off unless an operator sets it.
+    CLI_TOOLS_PATH: z.string().default(''),
+    // Root for per-tenant ephemeral CLI working dirs; empty → the OS temp dir.
+    CLI_SCRATCH_DIR: z.string().default(''),
     APP_URL: z.string().url().default('http://localhost:3001'),
     AUTH_MODE: z.enum(['google', 'dev_bypass']).default('google'),
     // Public OAuth Web client ID — shipped to the browser, not a secret.
@@ -143,6 +186,21 @@ const envSchema = z
         path: ['LANGFUSE_SECRET_KEY'],
       });
     }
+    // The read-only CLI tool dir must not overlap the writable CLI scratch dir
+    // (its default is the OS temp dir when CLI_SCRATCH_DIR is unset) — else a
+    // scratch write could land a binary inside the trust boundary (companion-tools.md §6).
+    if (env.CLI_TOOLS_PATH.length > 0) {
+      const scratchDir = env.CLI_SCRATCH_DIR.length > 0 ? env.CLI_SCRATCH_DIR : tmpdir();
+      if (pathsOverlap(env.CLI_TOOLS_PATH, scratchDir)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            'CLI_TOOLS_PATH must not overlap the CLI scratch dir (CLI_SCRATCH_DIR, or the OS ' +
+            'temp dir when it is unset) — the tools dir must stay read-only (companion-tools.md §6)',
+          path: ['CLI_TOOLS_PATH'],
+        });
+      }
+    }
   });
 
 /** One MCP whitelist entry as it appears in the `MCP_SERVERS` JSON array. */
@@ -190,9 +248,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     ingestionMaxBytes: parsed.INGESTION_MAX_BYTES,
     useContextHeader: parsed.USE_CONTEXT_HEADER,
     ingestionQueueMax: parsed.INGESTION_QUEUE_MAX,
-    tokenCapPerDay: parsed.TOKEN_CAP_PER_DAY,
+    startingVitalityTokens: parsed.STARTING_VITALITY_TOKENS,
     mcpServers: parseMcpServers(parsed.MCP_SERVERS),
     maxEquippedTools: parsed.MAX_EQUIPPED_TOOLS,
+    cliToolsPath: parsed.CLI_TOOLS_PATH,
+    cliScratchDir: parsed.CLI_SCRATCH_DIR,
     appUrl: parsed.APP_URL,
     authMode: parsed.AUTH_MODE,
     googleClientId: parsed.GOOGLE_CLIENT_ID,

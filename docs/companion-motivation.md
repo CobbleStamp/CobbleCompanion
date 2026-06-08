@@ -4,7 +4,9 @@
 > decides, on its own, whether and how to act. For the *what & why* of proactivity see
 > `product-overview.md` §5.4–§5.6; for how the engine plugs into the agent loop (the `Initiator`
 > seam, the body-then-will split) see `architecture.md` §4.5; for scope/sequencing see
-> `development-plan.md` §3; for schema see `implementation.md` §1. Each fact lives in
+> `development-plan.md` §3; for schema see `implementation.md` §1; for the **energy** wallet
+> autonomous work spends (and its sibling **stamina** wallet) see the feeding economy in
+> `companion-economy.md`. Each fact lives in
 > exactly one place — this doc owns the drive model, the arbitration mechanism, seeding, and
 > learning. What lies beyond this release is collected in §10.
 >
@@ -267,15 +269,15 @@ stays policy-neutral and the drive-serving gate above bounds it meanwhile.
 
 ## 8. Budget interplay — energy gates the will
 
-Self-initiated work draws the **energy** pool; user-initiated work draws **stamina** (the two-pool
-model, `architecture.md` §4.8). Consequences:
+Self-initiated work spends the **energy** wallet; user-initiated work spends **stamina** (the
+two-wallet vitality model, `architecture.md` §4.8). Consequences:
 
-- Every autonomous read spends **real provider tokens** (the ingestion passes), debited to energy
+- Every autonomous read spends **real provider tokens** (the ingestion passes), drawn from energy
   through a per-run meter override on the shared pipeline (`architecture.md` §4.8) — energy is the
-  actual token cap on self-initiated work, not a placeholder.
-- When **energy is exhausted**, step 4 idles — the companion **stops initiating** but still answers
+  actual token budget for self-initiated work, not a placeholder.
+- When **energy is empty**, step 4 idles — the companion **stops initiating** but still answers
   on stamina. Out of energy ≠ out of conversation.
-- Autonomous work can **never starve interaction** — separate counters (energy vs stamina).
+- Autonomous work can **never starve interaction** — separate wallets (energy vs stamina).
 - **Energy-aware planning:** the burst is sized to what energy can afford — `limit = min(focus
   length, ⌊energyRemaining / estimated-read-cost⌋)`, and below one read's worth the engine idles. So
   the companion *scopes its plan to its means* rather than only stopping at zero. (The `architecture.md`
@@ -354,8 +356,8 @@ Out of scope for this release; the roadmap is owned by `development-plan.md`. (T
 ## 11. See also
 - `architecture.md` §4.5 — the `Initiator` seam, body-then-will, loop integration.
 - `architecture.md` §4.4 — propose→approve gate + the `origin` resolution.
-- `architecture.md` §4.8 — stamina/energy two-pool budget.
+- `architecture.md` §4.8 — stamina/energy two-wallet vitality.
 - `product-overview.md` §5.4–§5.6 — proactivity & vitality (the what & why).
-- `implementation.md` §1 — schema (`drive_weights`, `personality_knobs`, `companion_energy`,
-  `proactive_outcomes`, `proposals.origin`, `companion_affect`).
+- `implementation.md` §1 — schema (`drive_weights`, `personality_knobs`,
+  `companions.energy_balance_tokens`, `proactive_outcomes`, `proposals.origin`, `companion_affect`).
 - `development-plan.md` §3 — scope, DoD, and deferrals.

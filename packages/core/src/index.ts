@@ -48,36 +48,68 @@ export {
 export { mcpToolName, mcpToolToTool, type McpToolAdapterOptions } from './mcp/adapter.js';
 export { FakeMcpGateway, type FakeMcpCall, type FakeMcpServer } from './mcp/fake.js';
 export { McpWhitelist, type McpWhitelistEntry } from './mcp/whitelist.js';
+export { createMcpCapabilitySource, type McpCapabilitySourceOptions } from './mcp/mcp-source.js';
+// The source-agnostic acquisition spine (companion-tools.md §8): a CapabilitySource
+// abstracts where a tool comes from (MCP servers, host CLIs) behind the catalog +
+// equipped set + per-step registry, so sources compose without knowing each other.
+export {
+  type CapabilitySource,
+  type CatalogContribution,
+  indexCapabilitySources,
+} from './acquisition/capability-source.js';
 export {
   DrizzleToolCatalogStore,
   type ToolCatalogEntry,
   type ToolCatalogStore,
-} from './mcp/tool-catalog-store.js';
+} from './acquisition/tool-catalog-store.js';
 export {
   DrizzleEquippedToolStore,
   type EquipInput,
   type EquippedStoreOptions,
   type EquippedToolRecord,
   type EquippedToolStore,
-} from './mcp/equipped-store.js';
-export { refreshToolCatalog, type RefreshCatalogOptions } from './mcp/catalog-builder.js';
-export { createSearchToolsTool, type SearchToolsOptions } from './mcp/search-tools.js';
-export { createLoadToolTool, type LoadToolOptions } from './mcp/load-tool.js';
+} from './acquisition/equipped-store.js';
+export { refreshToolCatalog, type RefreshCatalogOptions } from './acquisition/catalog-builder.js';
+export { createSearchToolsTool, type SearchToolsOptions } from './acquisition/search-tools.js';
+export { createLoadToolTool, type LoadToolOptions } from './acquisition/load-tool.js';
 export {
   createToolLoadAdvisor,
   type ToolLoadAdvisor,
   type ToolLoadAdvisorOptions,
-} from './mcp/load-advisor.js';
+} from './acquisition/load-advisor.js';
 export {
   createEquippedRegistryResolver,
   type EquippedRegistryResolverOptions,
-} from './mcp/equipped-resolver.js';
+} from './acquisition/equipped-resolver.js';
+// CLI tool acquisition (companion-tools.md — Phase 10): host CLIs as a second
+// capability source over the same spine; run_command is the sandboxed executor.
+export {
+  type CommandRequest,
+  type CommandResult,
+  type CommandSandbox,
+  FakeCommandSandbox,
+} from './cli/sandbox.js';
+export {
+  type CliToolDef,
+  type CliToolLimits,
+  parseCliToolDef,
+  unsafeArgvPlaceholders,
+} from './cli/tool-def.js';
+export {
+  type CliToolAdapterOptions,
+  cliToolName,
+  cliToolToTool,
+  runCliTool,
+} from './cli/adapter.js';
+export { type CliToolStore, InMemoryCliToolStore } from './cli/tool-store.js';
+export { type CliCapabilitySourceOptions, createCliCapabilitySource } from './cli/cli-source.js';
 
 // Identity (the companion "home")
 export {
   DrizzleIdentityStore,
   type CompanionRecord,
   type CreateCompanionInput,
+  type DrizzleIdentityStoreOptions,
   type IdentityStore,
   type UserRecord,
 } from './identity/store.js';
@@ -182,22 +214,23 @@ export {
   type EmbeddingResult,
 } from './embedding/gateway.js';
 
-// Stamina quota (per-user daily cap state)
+// Vitality wallets — the per-companion stamina + energy balances, two columns on the
+// companions row (architecture.md §4.8). One store implementation meters both, picked
+// by `kind`; also the generic metering contract the ingestion pipeline bills through.
 export {
-  DrizzleTokenQuotaStore,
-  type DrizzleTokenQuotaStoreOptions,
-  type TokenQuotaStore,
-  type UsageSnapshot,
-} from './quota/stamina-store.js';
+  CompanionNotFoundError,
+  DrizzleVitalityStore,
+  type VitalityKind,
+  type VitalityStore,
+} from './quota/vitality-store.js';
 
-// Companion energy (per-companion self-initiated pool — the motivation engine's fuel, Phase 4)
+// Food pantry — the per-user supply the feeding economy spends (companion-economy.md).
 export {
-  type CompanionEnergyStore,
-  DrizzleCompanionEnergyStore,
-  type DrizzleCompanionEnergyStoreOptions,
-  type EnergySnapshot,
-} from './quota/energy-store.js';
-export { EnergyQuotaAdapter } from './quota/energy-quota-adapter.js';
+  type FoodInventory,
+  type FoodStore,
+  DrizzleFoodStore,
+  type DrizzleFoodStoreOptions,
+} from './growth/food-store.js';
 
 // Motivation engine — presence (Phase 4)
 export {
@@ -282,7 +315,7 @@ export {
   DrizzleCompanionAffectStore,
 } from './motivation/affect-store.js';
 
-// Token usage / metering (per-user daily cap)
+// Token usage / metering (vitality wallets, architecture.md §4.8)
 export {
   addUsage,
   createUsageAccumulator,
@@ -326,7 +359,7 @@ export {
 export {
   createEquippedSummaryContext,
   type EquippedSummaryOptions,
-} from './harness/equipped-summary.js';
+} from './acquisition/equipped-summary.js';
 
 // Growth & feeding economy (Phase 5 — bond & growth, development-plan.md §3)
 export { DEFAULT_GROWTH_CONFIG, type GrowthConfig } from './growth/config.js';

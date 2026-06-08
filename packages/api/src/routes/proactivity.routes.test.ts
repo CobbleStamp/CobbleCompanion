@@ -23,7 +23,7 @@ describe('proactivity routes', () => {
     await ctx.close();
   });
 
-  it('reports both vitality pools', async () => {
+  it('reports both vitality wallet balances', async () => {
     const res = await ctx.app.inject({
       method: 'GET',
       url: `/companions/${companionId}/budget`,
@@ -31,78 +31,18 @@ describe('proactivity routes', () => {
     });
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    expect(body.stamina.capTokens).toBe(ctx.deps.config.tokenCapPerDay);
-    expect(body.stamina.usedTokens).toBe(0);
-    expect(body.energy.capTokens).toBe(ctx.deps.config.tokenCapPerDay);
-    expect(body.energy.percentUsed).toBe(0);
+    expect(body.stamina.balanceTokens).toBe(ctx.deps.config.startingVitalityTokens);
+    expect(body.energy.balanceTokens).toBe(ctx.deps.config.startingVitalityTokens);
   });
 
-  it('tops up the energy pool, raising its effective cap', async () => {
+  it('reflects an energy spend in the reported balance', async () => {
+    await ctx.deps.energy.spend(companionId, 5000);
     const res = await ctx.app.inject({
-      method: 'POST',
-      url: `/companions/${companionId}/budget/topup`,
-      headers: auth,
-      payload: { pool: 'energy', amount: 5000 },
-    });
-    expect(res.statusCode).toBe(200);
-    expect(res.json().energy.capTokens).toBe(ctx.deps.config.tokenCapPerDay + 5000);
-  });
-
-  it('tops up the stamina pool, raising its effective cap', async () => {
-    const res = await ctx.app.inject({
-      method: 'POST',
-      url: `/companions/${companionId}/budget/topup`,
-      headers: auth,
-      payload: { pool: 'stamina', amount: 3000 },
-    });
-    expect(res.statusCode).toBe(200);
-    expect(res.json().stamina.capTokens).toBe(ctx.deps.config.tokenCapPerDay + 3000);
-  });
-
-  it.each([
-    ['a zero amount', { pool: 'energy', amount: 0 }],
-    ['a negative amount', { pool: 'energy', amount: -100 }],
-    ['a fractional amount', { pool: 'energy', amount: 1.5 }],
-    ['an amount over the ceiling', { pool: 'energy', amount: 10_000_001 }],
-    ['a missing amount', { pool: 'energy' }],
-    ['a missing pool', { amount: 100 }],
-    ['an unknown pool', { pool: 'vibes', amount: 100 }],
-    ['an empty body', {}],
-  ] as Array<[string, Record<string, unknown>]>)(
-    'rejects a top-up with %s (400)',
-    async (_label, payload) => {
-      const res = await ctx.app.inject({
-        method: 'POST',
-        url: `/companions/${companionId}/budget/topup`,
-        headers: auth,
-        payload,
-      });
-      expect(res.statusCode).toBe(400);
-    },
-  );
-
-  it('a rejected top-up never raises the cap (no infinite energy)', async () => {
-    const before = await ctx.app.inject({
       method: 'GET',
       url: `/companions/${companionId}/budget`,
       headers: auth,
     });
-    const capBefore = before.json().energy.capTokens;
-
-    const bad = await ctx.app.inject({
-      method: 'POST',
-      url: `/companions/${companionId}/budget/topup`,
-      headers: auth,
-      payload: { pool: 'energy', amount: -999_999 },
-    });
-    expect(bad.statusCode).toBe(400);
-
-    const after = await ctx.app.inject({
-      method: 'GET',
-      url: `/companions/${companionId}/budget`,
-      headers: auth,
-    });
-    expect(after.json().energy.capTokens).toBe(capBefore);
+    expect(res.json().energy.balanceTokens).toBe(ctx.deps.config.startingVitalityTokens - 5000);
   });
 
   it('sets the proactivity dial', async () => {
@@ -136,13 +76,6 @@ describe('proactivity routes', () => {
       headers,
     });
     expect(getRes.statusCode).toBe(404);
-    const topupRes = await ctx.app.inject({
-      method: 'POST',
-      url: `/companions/${companionId}/budget/topup`,
-      headers,
-      payload: { pool: 'energy', amount: 100 },
-    });
-    expect(topupRes.statusCode).toBe(404);
     const dialRes = await ctx.app.inject({
       method: 'PATCH',
       url: `/companions/${companionId}/proactivity`,

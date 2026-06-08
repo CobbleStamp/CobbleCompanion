@@ -90,7 +90,7 @@ export function fileSourceAcknowledgement(filename: string): string {
 
 /**
  * Canned proactive notes used when an in-character LLM note can't be generated
- * (owner over their daily token cap, generation failed, or persona unavailable).
+ * (companion's stamina wallet empty, generation failed, or persona unavailable).
  * The companion always tells the user how a read ended — it never goes silent.
  */
 export function ingestionDoneFallback(sourceTitle: string): string {
@@ -168,9 +168,9 @@ export function uploadKindForFilename(filename: string): UploadSourceKind | null
 
 /**
  * Ingestion job lifecycle states, in pipeline order. `deferred` is off the main
- * line: a job that parsed successfully but whose AI passes wait for the owner's
- * daily token allowance to reset (architecture.md §4.8); it resumes to
- * `segmenting` once under the cap.
+ * line: a job that parsed successfully but whose AI passes wait for the companion's
+ * stamina wallet to be refilled by feeding (architecture.md §4.8); it resumes to
+ * `segmenting` once the wallet is no longer empty.
  */
 export type IngestionStatus =
   | 'queued'
@@ -202,14 +202,13 @@ export interface IngestionJobDto {
   readonly error: string | null;
 }
 
-/** The signed-in user's daily token-budget standing, for the live usage indicator. */
+/**
+ * A companion's vitality-wallet standing, for the live indicator. The wallet is a
+ * token balance that only spends down (work) or refills by feeding — no cap, no
+ * window (architecture.md §4.8), so the remaining balance is the whole story.
+ */
 export interface UsageDto {
-  readonly usedTokens: number;
-  readonly capTokens: number;
-  /** Whole-percent of the cap consumed, clamped to 0–100. */
-  readonly percentUsed: number;
-  /** ISO instant the daily allowance resets (00:00 UTC). */
-  readonly resetsAt: string;
+  readonly balanceTokens: number;
 }
 
 // --- Phase 4 — proactivity & vitality (companion-motivation.md) ---
@@ -257,9 +256,9 @@ export interface PersonalityKnobs {
 }
 
 /**
- * The companion's two vitality pools (architecture.md §4.8). Stamina powers
+ * The companion's two vitality wallets (architecture.md §4.8). Stamina powers
  * user-initiated work (chat, tasks); energy powers self-initiated work (the
- * motivation engine). Separate pools so autonomy can never starve interaction.
+ * motivation engine). Separate wallets so autonomy can never starve interaction.
  */
 export interface StaminaEnergyDto {
   readonly stamina: UsageDto;
@@ -331,9 +330,9 @@ export interface CharacterDto {
 
 /**
  * The companion's full growth standing (development-plan.md §3) as a MIRROR: four
- * axis readings (knowledge, bond, initiative, character), the capabilities checklist,
- * and the earned `treats` currency. All but `treats` are DERIVED from substrate and
- * may move either way; `treats` is the feeding-economy balance (`companion-economy.md`).
+ * axis readings (knowledge, bond, initiative, character) and the capabilities
+ * checklist. All are DERIVED from substrate and may move either way. Decoupled from
+ * feeding — growth stores nothing spendable (`companion-economy.md`).
  */
 export interface GrowthDto {
   readonly knowledge: AxisReadingDto;
@@ -341,26 +340,32 @@ export interface GrowthDto {
   readonly initiative: AxisReadingDto;
   readonly character: CharacterDto;
   readonly capabilities: readonly CapabilityDto[];
-  readonly treats: number;
+}
+
+/** The user's food pantry — counts of each food type they hold (companion-economy.md). */
+export interface FoodInventoryDto {
+  readonly ration: number;
+  readonly spark: number;
+  readonly treat: number;
 }
 
 /**
- * The result of feeding (Phase 5 feeding economy) — the updated vitality meter plus
- * the full growth standing, so a single reply refreshes both the client's pools and
- * its treats balance. Single-sourced here so the server route reply and the web
- * client's typed result never drift.
+ * The result of feeding (the feeding economy) — the fed companion's updated vitality
+ * wallets plus the user's remaining pantry, so a single reply refreshes both the
+ * client's wallets and its food counts. Single-sourced here so the server route reply
+ * and the web client's typed result never drift.
  */
 export interface FeedResultDto {
   readonly budget: StaminaEnergyDto;
-  readonly growth: GrowthDto;
+  readonly food: FoodInventoryDto;
 }
 
 /**
  * The feeding economy's "food" (development-plan.md §3) — typed top-ups the user
- * gives, each favouring a vitality pool. The catalogue is a shared product
+ * gives, each favouring a vitality wallet. The catalogue is a shared product
  * contract (like {@link UPLOAD_FORMATS}) so the client's kitchen and the server's
- * grant logic never drift. Each food costs `treatCost` treats and adds
- * `staminaTokens`/`energyTokens` to the respective pools.
+ * refill logic never drift. Each food adds `staminaTokens`/`energyTokens` to the
+ * respective wallets; foods are held in the user's pantry (no currency, no cost).
  */
 export type FoodType = 'ration' | 'spark' | 'treat';
 
@@ -368,19 +373,16 @@ export interface FoodDef {
   readonly type: FoodType;
   readonly label: string;
   readonly emoji: string;
-  /** Tokens this food adds to the stamina pool (0 if it doesn't feed stamina). */
+  /** Tokens this food adds to the stamina wallet (0 if it doesn't feed stamina). */
   readonly staminaTokens: number;
-  /** Tokens this food adds to the energy pool (0 if it doesn't feed energy). */
+  /** Tokens this food adds to the energy wallet (0 if it doesn't feed energy). */
   readonly energyTokens: number;
-  /** Treats the food costs to give. */
-  readonly treatCost: number;
 }
 
 /**
  * The foods the kitchen offers. A `ration` favours stamina (so you can keep
  * talking), a `spark` favours energy (so it can go explore), a `treat` feeds both
- * a little. Token grants are product constants single-sourced here; the per-day
- * caps remain server config.
+ * a little. Token grants are product constants single-sourced here.
  */
 export const FOODS: readonly FoodDef[] = [
   {
@@ -389,7 +391,6 @@ export const FOODS: readonly FoodDef[] = [
     emoji: '🍞',
     staminaTokens: 200_000,
     energyTokens: 0,
-    treatCost: 1,
   },
   {
     type: 'spark',
@@ -397,7 +398,6 @@ export const FOODS: readonly FoodDef[] = [
     emoji: '⚡',
     staminaTokens: 0,
     energyTokens: 200_000,
-    treatCost: 1,
   },
   {
     type: 'treat',
@@ -405,7 +405,6 @@ export const FOODS: readonly FoodDef[] = [
     emoji: '🍪',
     staminaTokens: 80_000,
     energyTokens: 80_000,
-    treatCost: 1,
   },
 ];
 
@@ -624,14 +623,7 @@ export const setProactivityDialSchema = z.object({
 });
 export type SetProactivityDialBody = z.infer<typeof setProactivityDialSchema>;
 
-/** Manually add to a vitality pool — the simple feed control (Phase 4; superseded by the food economy below). */
-export const topUpSchema = z.object({
-  pool: z.enum(['stamina', 'energy']),
-  amount: z.number().int().min(1).max(10_000_000),
-});
-export type TopUpBody = z.infer<typeof topUpSchema>;
-
-/** Give the companion a food (Phase 5 feeding economy) — spends treats, tops up a pool. */
+/** Give the companion a food (the feeding economy) — consumes one from the user's pantry, refills a wallet. */
 export const feedSchema = z.object({
   food: z.enum(['ration', 'spark', 'treat']),
 });

@@ -3,8 +3,8 @@
  * depend on, centralized in one named, typed object (AGENTS.md: nothing hardcoded —
  * config, never scattered literals). These are product-tuning values, not environment
  * secrets, so they live as a code constant (like `DEFAULT_DRIVE_WEIGHTS`), tunable in
- * one place. The per-day vitality caps remain server config; only the growth/economy
- * shape lives here.
+ * one place. The starting vitality balance remains server config
+ * (`STARTING_VITALITY_TOKENS`); only the growth/economy shape lives here.
  *
  * The four axes are MIRROR readings, not game levels: a raw measure maps to a
  * descriptive **band** (+ an intra-band fill for the gauge). Knowledge and bond map
@@ -48,13 +48,9 @@ export interface GrowthConfig {
   /** The character band ladder, low → high. */
   readonly characterBands: readonly string[];
 
-  // --- Feeding economy (treats currency — companion-economy.md) ---
-  /** Treats a brand-new companion starts with (so feeding works on day one). */
-  readonly initialTreats: number;
-  /** Treats granted per axis band gained (knowledge / bond / initiative). */
-  readonly treatsPerBand: number;
-  /** Treats granted per capability first observed. */
-  readonly treatsPerCapability: number;
+  // --- Feeding economy (food pantry — companion-economy.md) ---
+  /** Count of each food type a brand-new user's pantry is seeded with. */
+  readonly initialFood: number;
 }
 
 export const DEFAULT_GROWTH_CONFIG: GrowthConfig = {
@@ -75,7 +71,5 @@ export const DEFAULT_GROWTH_CONFIG: GrowthConfig = {
   characterBandThresholds: [0, 0.25, 0.5, 0.75],
   characterBands: ['Still forming', 'Emerging', 'Distinct', 'Strongly formed'],
 
-  initialTreats: 5,
-  treatsPerBand: 2,
-  treatsPerCapability: 1,
+  initialFood: 10,
 };

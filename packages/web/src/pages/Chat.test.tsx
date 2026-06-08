@@ -61,7 +61,6 @@ vi.mock('../api/client.js', () => ({
   sendHeartbeat: vi.fn(() => Promise.resolve()),
   // The budget meter (P4) polls this; reject so it stays hidden in these tests.
   fetchBudget: vi.fn(() => Promise.reject(new Error('no budget'))),
-  topUpBudget: vi.fn(() => Promise.resolve()),
   setProactivityDial: vi.fn(() => Promise.resolve('gentle')),
   // The approval-queue hook polls this; default to empty so no cards show.
   listProposals: vi.fn(() => Promise.resolve([])),
@@ -449,7 +448,7 @@ describe('Chat ingestion status indicator', () => {
   });
 
   it('hides the header indicator for a deferred job', async () => {
-    // Deferred = parked until the daily allowance resets; not actively reading.
+    // Deferred = parked until the companion is fed (wallet refilled); not actively reading.
     vi.mocked(listSources).mockResolvedValue([
       {
         id: 's1',
@@ -749,7 +748,7 @@ describe('Chat transcript fidelity (rich rows survive reload)', () => {
     vi.mocked(confirmProposal).mockImplementation(async function* () {
       // The confirm stream errors before any frame: send() throws the server's
       // 429 body (the client now preserves it) before readSse yields anything.
-      throw new Error("You're over your daily token limit.");
+      throw new Error('Cobble is out of stamina for now. Feed it a Ration to continue.');
     });
 
     renderChat();
@@ -759,7 +758,9 @@ describe('Chat transcript fidelity (rich rows survive reload)', () => {
 
     // The real server message is surfaced verbatim.
     await waitFor(() =>
-      expect(screen.getByText("You're over your daily token limit.")).toBeTruthy(),
+      expect(
+        screen.getByText('Cobble is out of stamina for now. Feed it a Ration to continue.'),
+      ).toBeTruthy(),
     );
     // The optimistic empty assistant bubble was dropped, not left dangling.
     expect(document.querySelector('.proposal-queue')).not.toBeNull();

@@ -3,65 +3,52 @@
  * fixed core tools (native tools + search_tools/load_tool) with the companion's
  * **equipped** tools into one {@link ToolRegistry}, behind the same interface the
  * harness consumes. The harness calls this **per model step**, so a tool loaded
- * mid-turn appears on the next step. Each equipped tool's snapshot is adapted on
- * the fly; a server that has since dropped off the whitelist contributes nothing
- * (de-whitelisting revokes its tools immediately, even mid-conversation). A
- * successful or failed call bumps the tool's recency so the LRU keeps the tools
- * actually in use (equipped-store.ts).
+ * mid-turn appears on the next step. Each equipped tool is adapted on the fly by
+ * its {@link CapabilitySource}; a tool whose source has since revoked it (a
+ * de-whitelisted MCP server, a removed CLI tool) contributes nothing (revocation
+ * takes effect immediately, even mid-conversation). A successful or failed call
+ * bumps the tool's recency so the LRU keeps the tools actually in use
+ * (equipped-store.ts).
  */
 
+import { type CapabilitySource, indexCapabilitySources } from './capability-source.js';
 import { consoleLogger, type Logger } from '../logging.js';
 import { type Tool } from '../tools/tool.js';
 import { ToolRegistry } from '../tools/registry.js';
-import { mcpToolToTool } from './adapter.js';
 import type { EquippedToolStore } from './equipped-store.js';
-import type { McpGateway, McpServerSpec } from './gateway.js';
-import type { McpWhitelist, McpWhitelistEntry } from './whitelist.js';
 
 export interface EquippedRegistryResolverOptions {
   /** The always-present core tools: native tools + search_tools + load_tool. */
   readonly nativeTools: readonly Tool[];
   readonly equipped: EquippedToolStore;
-  readonly whitelist: McpWhitelist;
-  readonly gateway: McpGateway;
-  /** Resolve a server's request headers (e.g. its auth-token env) at call time. */
-  readonly authHeaders?: (entry: McpWhitelistEntry) => Readonly<Record<string, string>> | undefined;
+  /** The capability sources that adapt equipped records into callable tools. */
+  readonly sources: readonly CapabilitySource[];
   readonly logger?: Logger;
 }
 
 /**
- * Build a `resolveRegistry(companionId)` for the harness: core tools + the companion's
- * equipped (and still-whitelisted) MCP tools. The harness degrades to its static
- * registry if this throws, so a store hiccup never breaks a turn.
+ * Build a `resolveRegistry(companionId)` for the harness: core tools + the
+ * companion's equipped (and still-admissible) tools. The harness degrades to its
+ * static registry if this throws, so a store hiccup never breaks a turn.
  */
 export function createEquippedRegistryResolver(
   options: EquippedRegistryResolverOptions,
 ): (companionId: string) => Promise<ToolRegistry> {
   const logger = options.logger ?? consoleLogger;
+  const sources = indexCapabilitySources(options.sources);
   return async (companionId) => {
     const equipped = await options.equipped.list(companionId);
-    const mcpTools: Tool[] = [];
+    const acquired: Tool[] = [];
     for (const record of equipped) {
-      const server = options.whitelist.get(record.serverRef);
-      if (!server) {
-        // De-whitelisted since it was equipped → drop its tool.
+      const source = sources.get(record.source);
+      // `adapt` returns null when the record's source has revoked it → drop it.
+      const base = source?.adapt(record) ?? null;
+      if (!base) {
         continue;
       }
-      const headers = options.authHeaders?.(server);
-      const spec: McpServerSpec = {
-        ref: server.ref,
-        endpoint: server.endpoint,
-        ...(headers ? { headers } : {}),
-      };
-      const base = mcpToolToTool({
-        gateway: options.gateway,
-        spec,
-        mcpTool: record.snapshot,
-        logger,
-      });
-      mcpTools.push(withUsageTracking(base, options.equipped, companionId, record.toolId, logger));
+      acquired.push(withUsageTracking(base, options.equipped, companionId, record.toolId, logger));
     }
-    return new ToolRegistry([...options.nativeTools, ...mcpTools], logger);
+    return new ToolRegistry([...options.nativeTools, ...acquired], logger);
   };
 }
 
@@ -80,7 +67,7 @@ function withUsageTracking(
       // The tool was used regardless of outcome — record recency/frequency.
       await equipped.touch(companionId, toolId).catch((error: unknown) =>
         logger.error('failed to record equipped-tool usage', {
-          operation: 'mcp.equippedResolver.touch',
+          operation: 'acquisition.equippedResolver.touch',
           companionId,
           toolId,
           error,

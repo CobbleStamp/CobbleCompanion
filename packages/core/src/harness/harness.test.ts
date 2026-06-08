@@ -6,7 +6,7 @@ import { FakeEmbeddingGateway } from '../embedding/fake.js';
 import { FakeLlmGateway } from '../llm/fake.js';
 import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
-import type { TokenQuotaStore } from '../quota/stamina-store.js';
+import type { VitalityStore } from '../quota/vitality-store.js';
 import { DrizzleIdentityStore } from '../identity/store.js';
 import { DrizzleSemanticMemoryStore } from '../memory/semantic-store.js';
 import { TranscriptMemoryStore } from '../memory/store.js';
@@ -16,18 +16,18 @@ import { createSemanticRetrieveContext } from './semantic-retrieve.js';
 const silentLogger: Logger = { error: () => {}, warn: () => {}, info: () => {} };
 
 /** Records every debit so a test can assert what a turn billed (or didn't). */
-class RecordingQuota implements TokenQuotaStore {
+class RecordingQuota implements VitalityStore {
   readonly recorded: number[] = [];
-  async getUsage(): Promise<{ usedTokens: number; capTokens: number; resetsAt: string }> {
-    return { usedTokens: 0, capTokens: 1_000_000, resetsAt: '' };
+  async getBalance(): Promise<number> {
+    return 1_000_000;
   }
-  async recordUsage(_userId: string, totalTokens: number): Promise<void> {
-    this.recorded.push(totalTokens);
+  async spend(_companionId: string, tokens: number): Promise<void> {
+    this.recorded.push(tokens);
   }
-  async isOverCap(): Promise<boolean> {
+  async add(): Promise<void> {}
+  async isEmpty(): Promise<boolean> {
     return false;
   }
-  async topUp(): Promise<void> {}
 }
 
 describe('Harness.runTurn (Phase 0 single-pass loop)', () => {

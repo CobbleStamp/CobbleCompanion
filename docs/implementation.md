@@ -11,6 +11,65 @@ Postgres (with `pgvector`). Multi-tenant: every row is scoped by owner
 (`architecture.md` §2, invariant #5). Field types are indicative; authoritative DDL lives in
 migrations under `db/`.
 
+The data model splits into two clusters. The first is the **knowledge & memory spine** — the one
+transcript, its consolidated episodes, and the three-layer ingested-knowledge stack
+(`sources` → `sections` → `facts`) with its reading-progress jobs. Every row hangs off a single
+`companions` "home". The diagram shows keys and relationships only; the per-table field detail is in
+the sections that follow.
+
+```mermaid
+erDiagram
+    users          ||--o{ companions      : owns
+    users          ||--o| user_food       : "food pantry (§ below)"
+    companions     ||--o{ messages        : "one lifelong transcript"
+    companions     ||--o{ episodes        : "consolidated from transcript"
+    companions     ||--o{ sources         : ingests
+    companions     ||--o{ ingestion_jobs  : "reading progress"
+    companions     ||--o{ sections        : "retrieval units"
+    companions     ||--o{ facts           : "typed overlay"
+    sources        ||--o{ sections        : "segmented into"
+    sources        ||--o{ ingestion_jobs  : "read by"
+    sources        |o--o{ messages        : "attachment chip (SET NULL)"
+    sections       ||--o{ facts           : "provenance (non-null)"
+
+    users {
+        uuid id PK
+    }
+    companions {
+        uuid id PK
+        uuid owner_id FK
+    }
+    messages {
+        uuid id PK
+        bigserial seq
+        uuid companion_id FK
+        uuid source_id FK "nullable"
+    }
+    episodes {
+        uuid id PK
+        uuid companion_id FK
+    }
+    sources {
+        uuid id PK
+        uuid companion_id FK
+    }
+    ingestion_jobs {
+        uuid id PK
+        uuid companion_id FK
+        uuid source_id FK
+    }
+    sections {
+        uuid id PK
+        uuid companion_id FK
+        uuid source_id FK
+    }
+    facts {
+        uuid id PK
+        uuid companion_id FK
+        uuid section_id FK
+    }
+```
+
 ### `users`
 | Field | Type | Notes |
 |---|---|---|
@@ -44,15 +103,15 @@ migrations under `db/`.
 | `companion_id` | uuid (FK → `companions.id`) | indexed with `seq` (`messages_companion_idx`) for recency recall |
 | `role` | text | `user` \| `assistant` \| `system` |
 | `content` | text | |
-| `kind` | text | `message` \| `tool_step` \| `proposal` — `$type<MessageKind>()`, default `message`. What the row *is*, so the rich conversation (grounded answers, read-only look-ups, held actions) reconstructs identically on reload. **Only `message` rows enter the LLM-context projection** (`getMessagesSince` and the recency window filter to `kind='message'`); `tool_step`/`proposal` are UI chrome — never re-fed to the model nor consolidated into episodes |
-| `metadata` | jsonb | nullable `MessageMetadata`: `citations` on a grounded `message`; `toolName` on a `tool_step`; `toolName`+`proposalId` on a `proposal` (the id wires the row to the live approval queue). Lets the surface re-render the row faithfully |
-| `source_id` | uuid (FK → `sources.id`, **`ON DELETE SET NULL`**) | nullable; set on a file upload's attachment chip (a `user` turn) and its acknowledgement (an `assistant` turn) so the chat reconstructs the 📎 chip + "View status →" link on reload. `SET NULL` (not cascade): deleting a source must never delete an append-only transcript turn — it just drops the link |
+| `kind` | text | `message` \| `tool_step` \| `proposal` — `$type<MessageKind>()`, default `message`.<br>What the row *is*, so the rich conversation (grounded answers, read-only look-ups, held actions) reconstructs identically on reload.<br>**Only `message` rows enter the LLM-context projection** (`getMessagesSince` and the recency window filter to `kind='message'`); `tool_step`/`proposal` are UI chrome — never re-fed to the model nor consolidated into episodes |
+| `metadata` | jsonb | nullable `MessageMetadata`: `citations` on a grounded `message`; `toolName` on a `tool_step`; `toolName`+`proposalId` on a `proposal` (the id wires the row to the live approval queue).<br>Lets the surface re-render the row faithfully |
+| `source_id` | uuid (FK → `sources.id`, **`ON DELETE SET NULL`**) | nullable; set on a file upload's attachment chip (a `user` turn) and its acknowledgement (an `assistant` turn) so the chat reconstructs the 📎 chip + "View status →" link on reload.<br>`SET NULL` (not cascade): deleting a source must never delete an append-only transcript turn — it just drops the link |
 | `created_at` | timestamptz | episodic memory builds on these timestamped turns |
 
 > **Proactive ingestion notes.** A successful or failed read appends a single `assistant` turn
 > here via the **Ingestion Announcer** (`packages/core/src/ingestion/announcer.ts`): an
-> in-character note generated through the metered LLM gateway (debited to the owner's daily cap),
-> with a single-sourced **canned fallback** (`@cobble/shared`) when the owner is over cap, when
+> in-character note generated through the metered LLM gateway (spent from the companion's stamina),
+> with a single-sourced **canned fallback** (`@cobble/shared`) when stamina is empty, when
 > generation throws, or when no persona is available. It is appended *before* the job's terminal
 > status flip, and an announcement failure is logged but never alters the job outcome
 > (`architecture.md` §4.8). These notes carry no `source_id` (no chip/link — just a message).
@@ -104,7 +163,7 @@ migrations under `db/`.
 | Field | Type | Notes |
 |---|---|---|
 | `id` / `companion_id` / `source_id` | uuid | cascade FKs |
-| `status` | text | `queued → parsing → segmenting → enriching → embedding → done` \| `failed`; `deferred` is off-line (parsed, awaiting the daily token cap to reset — `architecture.md` §4.8) |
+| `status` | text | `queued → parsing → segmenting → enriching → embedding → done` \| `failed`; `deferred` is off-line (parsed, awaiting stamina — resumes once the companion is fed — `architecture.md` §4.8) |
 | `sections_total` / `sections_done` | integer | drives "read N of M" |
 | `error` | text, nullable | user-safe failure reason; detail stays in logs |
 | `parsed_doc` | jsonb, nullable | parsed paragraphs held while `deferred`, so the AI passes resume without a re-upload; null otherwise |
@@ -113,21 +172,60 @@ migrations under `db/`.
 > The durable status surface is what makes the in-process runner replaceable by a real worker
 > with no schema/API change (`architecture.md` §4.8, §8), and lets deferred jobs survive a restart.
 
-### `user_token_usage` — daily token cap state
+The `status` column is a state machine. Parsing extracts text without the LLM; the three AI passes
+(segment → enrich → embed) are metered, so a job the companion can't afford from stamina is parked in
+`deferred` with its `parsed_doc` held, then resumes once it has stamina again (after feeding):
+
+```mermaid
+stateDiagram-v2
+    [*] --> queued
+    queued --> parsing : runner picks up
+    parsing --> deferred : stamina empty (parsed_doc held)
+    deferred --> segmenting : stamina restored (fed)
+    parsing --> segmenting : has stamina
+    segmenting --> enriching : Pass 1 — topics
+    enriching --> embedding : Pass 2 — context headers
+    embedding --> done : vectors written
+    done --> [*]
+    parsing --> failed
+    segmenting --> failed
+    enriching --> failed
+    embedding --> failed
+    failed --> [*]
+    note right of failed
+        user-safe reason in `error`;
+        detail stays in logs
+    end note
+```
+
+### `companions` — vitality columns (stamina + energy wallets)
+The two halves of a companion's vitality are **inline columns on the `companions` row** (1:1 with
+the companion — no separate wallet table):
+
 | Field | Type | Notes |
 |---|---|---|
-| `user_id` | uuid (PK, FK → `users.id`, cascade) | one row per user |
-| `window_reset_at` | timestamptz | when the current fixed-daily (UTC) window rolls; overage carries as debt clamped to one cap |
-| `used_tokens` | bigint | tokens spent in the current window (LLM + embedding) |
-| `cap_override` | integer, nullable | per-account cap; null → the `TOKEN_CAP_PER_DAY` default |
-| `top_up_tokens` | bigint, default 0 | manual feed grant; effective cap = `(cap_override ?? default) + top_up_tokens`. Added by an atomic SQL increment (concurrent feeds can't lose an update), persists across window rolls, and — being separate from `cap_override` — keeps tracking later changes to the default. Mirrors `companion_energy` exactly. |
+| `stamina_balance_tokens` | bigint, not null, default 1_000_000 | tokens left for **user-initiated** work (chat, assigned tasks). |
+| `energy_balance_tokens` | bigint, not null, default 1_000_000 | tokens left for **self-initiated** work (the motivation engine). A separate wallet so autonomy can't starve interaction. |
+
+> Each balance is seeded at companion creation from `STARTING_VITALITY_TOKENS` (the column default is
+> the safety net for a bare insert). Spend decrements it (atomic SQL `GREATEST(0, balance - n)` — a
+> turn can't drive it negative, so there is no debt); feeding increments it. No cap, no window, no
+> auto-refill — a balance only goes down (spending) or up (feeding). Postgres-backed so it is correct
+> across replicas. Routes enforce stamina inline: chat/search 429 when empty, ingestion defers until
+> it has tokens again (`architecture.md` §4.8). `GET /companions/:id/usage` exposes the stamina
+> balance for the web client's live indicator. One store meters both columns, picked by a
+> `'stamina' | 'energy'` discriminator (`packages/core/src/quota/vitality-store.ts`).
+
+### `user_food` — the per-user food pantry
+| Field | Type | Notes |
+|---|---|---|
+| `user_id` | uuid (PK, FK → `users.id`, cascade) | one row per user; the foods the user holds, spendable on any of their companions |
+| `ration` / `spark` / `treat` | integer, not null | counts of each food type. Seeded with `initialFood` (default 10 each) on the row's first creation; a feed decrements one (atomic SQL `count - 1`, guarded ≥ 0). Not replenished in the PoC. |
 | `updated_at` | timestamptz | |
 
-> Postgres-backed so the cap is correct across replicas. Routes enforce it inline: chat/search
-> 429 over cap, ingestion defers (`architecture.md` §4.8). `GET /usage` exposes the standing for
-> the web client's live indicator. The manual top-up (`POST /companions/:id/budget/topup`, the Feed control)
-> raises `top_up_tokens`; the per-user stamina store is the structural twin of the per-companion
-> energy store (`packages/core/src/quota/stamina-store.ts` ↔ `energy-store.ts`).
+> The feeding economy's supply (`companion-economy.md`). `POST /companions/:id/feed` consumes one
+> food from this row and adds its grants to the fed companion's wallet(s). When a count hits 0 the
+> feed returns 409; a developer raises it directly in the DB (no buying in the PoC).
 
 ### `sections` — Layer 1: retrieval units
 | Field | Type | Notes |
@@ -186,6 +284,24 @@ hit carries provenance (source title, chapter, topic, para/page range) + the ver
 > marks the lead `ingested`, a reject marks it `discarded` (best-effort, never fails the user's action).
 > Without the link a lead would be stranded at `read` forever — clogging `/leads` and never re-proposed.
 
+The approval-queue lifecycle, and how resolving a proposal closes its originating lead:
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending : effectful tool call blocked + enqueued
+    pending --> approved : confirm — execute + log call, re-enter loop
+    pending --> rejected : reject
+    approved --> [*]
+    rejected --> [*]
+    note right of pending
+        exactly-once: confirm/reject is a conditional
+        UPDATE WHERE status='pending', so only the
+        winner resolves. Explore-origin proposals also
+        advance their lead: confirm -> lead `ingested`,
+        reject -> lead `discarded`.
+    end note
+```
+
 ### `tool_calls` — audit log
 | Field | Type | Notes |
 |---|---|---|
@@ -228,16 +344,78 @@ hit carries provenance (source title, chapter, topic, para/page range) + the ver
 The schema the motivation engine and growth service use (full mechanisms →
 `companion-motivation.md`, `companion-economy.md`; authoritative DDL → `db/`).
 
+The second cluster is the **will & economy** — the approval queue and its reading-list leads, the
+tool/procedure logs the loop writes, the per-companion singletons that carry mood, and the growth
+mirror, plus the per-user food pantry the feeding economy spends. The two vitality wallets are
+inline columns on `companions` (above), not their own tables. As above, only keys and relationships
+are shown; fields are in the prose below.
+
+```mermaid
+erDiagram
+    users       ||--o| user_food           : "food pantry"
+    companions  ||--o| companion_affect    : "rolling mood read"
+    companions  ||--o| companion_growth    : "growth mirror"
+    companions  ||--o{ proposals           : "approval queue"
+    companions  ||--o{ leads               : "reading list"
+    companions  ||--o{ tool_calls          : "audit log"
+    companions  ||--o{ procedural_memories : "learned routines"
+    companions  ||--o{ proactive_outcomes  : "reinforcement log"
+    leads       |o--o{ proposals           : "explore-origin (SET NULL)"
+    messages    |o--o| proactive_outcomes  : "report note reacted to"
+
+    companions {
+        uuid id PK
+    }
+    user_food {
+        uuid user_id PK
+    }
+    companion_affect {
+        uuid companion_id PK
+    }
+    companion_growth {
+        uuid companion_id PK
+    }
+    proposals {
+        uuid id PK
+        uuid companion_id FK
+        uuid lead_id FK "nullable"
+    }
+    leads {
+        uuid id PK
+        uuid companion_id FK
+    }
+    tool_calls {
+        uuid id PK
+        uuid companion_id FK
+    }
+    procedural_memories {
+        uuid id PK
+        uuid companion_id FK
+    }
+    proactive_outcomes {
+        uuid id PK
+        uuid companion_id FK
+        uuid note_message_id FK
+    }
+```
+
 - **`proposals.origin`** — `text` enum `chat | explore | autonomous`, default `chat`. Lets the
-  confirm route re-enter the loop only for `chat`-origin proposals (the §4.4 resolution) and bill
-  effectful work to the right budget pool (chat→stamina, explore/autonomous→energy).
+  confirm route re-enter the loop only for `chat`-origin proposals (the §4.4 resolution) and spend
+  effectful work from the right wallet (chat→stamina, explore/autonomous→energy).
 - **`companions`** also carries: `proactivity_dial` (`off | gentle | active`, default `gentle` — the
   tunability dial); `personality_knobs` (jsonb `{focusLength, boredom, distractibility}` — the
   "creature" constants, at shared defaults, null → defaults); `drive_weights` (jsonb — per-drive
-  weights the reinforcement loop updates; **starts neutral**, null → neutral defaults).
-- **`companion_energy`** (new) — the **energy** pool (self-initiated work), mirroring
-  `user_token_usage` (which becomes the **stamina** pool) but keyed per **companion**: window reset,
-  used tokens, a manual top-up grant. Separate counters so autonomy can't starve interaction (§4.8).
+  weights the reinforcement loop updates; **starts neutral**, null → neutral defaults); and the two
+  **vitality** columns `stamina_balance_tokens` / `energy_balance_tokens` (see the columns table
+  above) — the two halves of a companion's vitality, held inline (1:1, no wallet table). Each
+  spending-decrements (floored at 0) and feeding-increments — no cap, no window, no auto-refill.
+  **Energy** meters self-initiated work, **stamina** user-initiated work; they are **separate
+  wallets** so autonomy can't starve interaction (§4.8). Seeded at creation from
+  `STARTING_VITALITY_TOKENS`.
+- **`user_food`** — the per-**user** food pantry the feeding economy spends: integer counts of
+  `ration` / `spark` / `treat`, seeded with `initialFood` (10 each) on first use, a feed consuming one
+  (atomic, guarded ≥ 0). Per user, not per companion, so one pantry feeds all of a user's companions
+  (`companion-economy.md`).
 - **`companion_affect`** — the companion's **rolling read of the
   user's mood**, one row per companion: `valence` ∈ [−1, 1] + a short natural-language `note`. The
   agent loop upserts it on every *successful* read (last-write-wins); the prior read is fed forward to
@@ -260,23 +438,32 @@ The schema the motivation engine and growth service use (full mechanisms →
 Presence is **not** a table — it is a volatile, heartbeat-fed in-memory signal (§4.5).
 
 - **`companion_growth`** —
-  the bond/growth standing as a **MIRROR**. Growth itself is **DERIVED** every read from substrate
-  that already exists (sources/sections/episode counts, the tool/procedure/affect logs, the
-  proactive-outcome log, learned `drive_weights`) and **may move in either direction**; this row is
-  **not** a parallel score and **never floors** what the surface shows. It stores only the **acknowledged
-  high-water mark** — `knowledge_band`, `bond_band`, `initiative_band` (the highest band index already
-  reflected on), `observed_capabilities` (jsonb `CapabilityKey[]`) — plus the earned **`treats`** balance
-  (the one stored, non-derived value). The mark exists ONLY to make reflections **idempotent**: `advance`
-  is a compare-and-set on the monotonic band indices + observed-capability set (the same trick as the
-  consolidation cursor), so two concurrent post-turn recomputes (e.g. rapid back-to-back turns,
-  or two app instances) can never double-award treats or double-post a growth reflection. (`GET /growth`
-  itself is read-only — it never recomputes — so a read can never award or post.) The row is created
-  lazily on first recompute, seeded with `initialTreats` so feeding works on day one. `treats` moves by atomic SQL
-  increment (milestone reward) / guarded decrement (feeding, never below zero) — mirrors the energy
-  top-up. Growth curves, the capabilities catalogue, food grants, and treat rewards are centralized in
-  `core/src/growth/config.ts` (`DEFAULT_GROWTH_CONFIG`) — no scattered literals. For the
-  earn→spend **feeding economy** these constants drive (treats, foods, the feed flow), see
-  `companion-economy.md`.
+  the bond/growth standing as a **MIRROR**, fully **decoupled** from feeding (growing earns nothing
+  spendable). Growth itself is **DERIVED** every read from substrate that already exists
+  (sources/sections/episode counts, the tool/procedure/affect logs, the proactive-outcome log, learned
+  `drive_weights`) and **may move in either direction**; this row is **not** a parallel score and
+  **never floors** what the surface shows. It stores only the **acknowledged high-water mark** —
+  `knowledge_band`, `bond_band`, `initiative_band` (the highest band index already reflected on) and
+  `observed_capabilities` (jsonb `CapabilityKey[]`). The mark exists ONLY to make reflections
+  **idempotent**: `advance` is a compare-and-set on the monotonic band indices + observed-capability
+  set (the same trick as the consolidation cursor), so two concurrent post-turn recomputes (e.g. rapid
+  back-to-back turns, or two app instances) can never double-post a growth reflection. (`GET /growth`
+  itself is read-only — it never recomputes — so a read can never post.) The row is created lazily on
+  first recompute. Growth curves and the capabilities catalogue are centralized in
+  `core/src/growth/config.ts` (`DEFAULT_GROWTH_CONFIG`) — no scattered literals — alongside the
+  feeding economy's constants (food grants, the food seed), which drive the separate **feeding**
+  flow; see `companion-economy.md`.
+
+### Migrations & versioning
+
+The schema is **code-first** in `db/src/schema.ts`; `pnpm db:generate` (Drizzle Kit) diffs it
+against the recorded snapshot and emits a timestamped SQL migration under `db/migrations/`, tracked
+by the `meta/` journal. `pnpm db:migrate` applies pending migrations in order. During the PoC the
+history is kept as a **single squashed baseline** (`0000_*.sql`) rather than an accreting chain;
+once schema changes ship against a live database, new migrations append forward-only. Two tests
+guard the contract — a **journal** test (the recorded migrations match the schema) and a **replay**
+test (applying the migrations from empty reproduces the expected schema), so a schema change that
+forgot its migration fails CI rather than drifting.
 
 ## 2. Harness & Agent-Loop Internals
 
@@ -293,8 +480,8 @@ loop.
 // embeds the question) needs it; the recency window ignores it. The object
 // param keeps future fields additive. The return is a RetrieveResult carrying
 // the blocks plus the `usage` spent recalling them (the query embedding), so
-// the harness can meter the whole turn against the daily cap
-// (`user_token_usage`, §1).
+// the harness can meter the whole turn against the companion's stamina wallet
+// (`companions.stamina_balance_tokens`, §1).
 interface RetrieveParams { companionId: string; userContent: string }
 interface RetrieveResult { blocks: readonly ContextBlock[]; usage: TokenUsage }
 type RetrieveContext = (params: RetrieveParams) => Promise<RetrieveResult>;
@@ -413,10 +600,12 @@ Loaded from environment / a secret manager; required values validated at startup
 | `INGESTION_MODEL` | Cheap model for the two ingestion reading passes (default `google/gemini-2.5-flash`) — input-heavy, output-bounded (`architecture.md` §4.8) |
 | `INGESTION_MAX_BYTES` | Source upload size cap, also the link-fetch body ceiling (default 25 MiB) |
 | `USE_CONTEXT_HEADER` | `true` (default) \| `false` — prefix the Pass-2 context header onto embedding inputs (the eval A/B knob, `companion-memory.md` §5) |
-| `TOKEN_CAP_PER_DAY` | Per-user daily token cap (LLM + embedding) — the cost guardrail across all routes; fixed daily UTC window, overage carries as clamped debt (default 1 000 000). Per-account override → `user_token_usage.cap_override` |
+| `STARTING_VITALITY_TOKENS` | The token balance a new companion is seeded with in **each** vitality column (`stamina_balance_tokens` + `energy_balance_tokens`) at creation (default 1 000 000). Not a cap — wallets only refill by feeding (§4.8). |
 | `INGESTION_QUEUE_MAX` | Backstop cap on queued+in-flight ingestion runs across all owners; submissions past it get 429 (default 100) |
-| `MCP_SERVERS` | Developer whitelist of MCP servers as a JSON array of `{ ref, endpoint, label?, authTokenEnv? }` — the trust boundary for tool acquisition; empty (default `[]`) disables MCP. HTTP/SSE endpoints only (`companion-tools.md` §7) |
+| `MCP_SERVERS` | Developer whitelist of MCP servers as a JSON array of `{ ref, endpoint, label?, authTokenEnv? }` — the trust boundary for tool acquisition.<br>Empty (default `[]`) disables MCP. HTTP/SSE endpoints only (`companion-tools.md` §7) |
 | `MAX_EQUIPPED_TOOLS` | Per-companion cap on the equipped-tool set (default 8); the single tier evicts LRU past it (`development-plan.md` Phase 9) |
+| `CLI_TOOLS_PATH` | Directory of CLI tool-definition folders (each a `TOOL.json` + `TOOL.md`) — the CLI track's trust boundary, must be **read-only + deployment-controlled** and not overlap the CLI scratch dir (rejected at startup).<br>Empty (default) disables the CLI track (`companion-tools.md` §6) |
+| `CLI_SCRATCH_DIR` | Root for the per-tenant ephemeral working dirs CLI runs execute in (separate from `CLI_TOOLS_PATH`; cleaned up after each run). Empty (default) → the OS temp dir (`companion-tools.md` §7) |
 | `TRACING_PROVIDER` | Online tracing backend: `none` (default) \| `langfuse` (`runbook-tracing.md`) |
 | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | Langfuse credentials (secret; required when `TRACING_PROVIDER=langfuse`) |
 | `LANGFUSE_HOST` | Langfuse base URL (default `https://cloud.langfuse.com`) — **HTTPS only** (it carries the keys + payload); `http://` permitted solely for `localhost` |
@@ -439,9 +628,9 @@ chars) and link-harvest cap (`MAX_HARVESTED_LINKS`, default 20), and the `/explo
 
 **Motivation tuning constants** are likewise in-code: the motivation **sweep cadence**
 (`MOTIVATION_SWEEP_INTERVAL_MS`, `api/src/index.ts`) and the autonomous-burst focus length
-(`motivation/`). The per-companion **energy** pool reuses `TOKEN_CAP_PER_DAY` as its default cap
-(`api/src/index.ts`), and the post-turn **affect read** runs on `INGESTION_MODEL` (billed to
-stamina) — see §1 and `companion-motivation.md` §7–§8.
+(`motivation/`). Both per-companion vitality wallets (**stamina** and **energy**) are seeded from
+`STARTING_VITALITY_TOKENS` (`api/src/index.ts`), and the post-turn **affect read** runs on
+`INGESTION_MODEL` (spent from the companion's stamina) — see §1 and `companion-motivation.md` §7–§8.
 
 ## 4. Error Handling
 
@@ -497,8 +686,10 @@ Out of scope for this release; the roadmap is owned by `development-plan.md`.
 **Out of scope / future.**
 - **Onboarding personality seed** — drive weights stay neutral so the character card is *earned*.
 - **Deeper reinforcement** — a contextual-bandit policy beyond the additive change-as-reward nudge.
-- **Runtime tool acquisition** — the implementation behind `companion-tools.md`. **The MCP track is
-  built** (`development-plan.md` Phase 9, PR #10): a per-deployment **tool catalog** (`tool_catalog`
+- **Runtime tool acquisition** — the implementation behind `companion-tools.md`, **both tracks built**
+  (`development-plan.md` Phases 9–10) over one **source-polymorphic `CapabilitySource`** seam
+  (`core/acquisition/`) the catalog builder, `load_tool`, and the equipped-registry resolver dispatch
+  on. **MCP** (Phase 9, PR #10): a per-deployment **tool catalog** (`tool_catalog`
   table — lightweight index of id, name, one-line description, source over every whitelisted tool;
   no argument schemas); a per-companion **equipped set** (`equipped_tools` table) rebuilt at startup,
   a single tier bounded by **`maxEquippedTools`** (env `MAX_EQUIPPED_TOOLS`, LRU eviction; the fixed
@@ -513,11 +704,24 @@ Out of scope for this release; the roadmap is owned by `development-plan.md`.
   the companion `load_tool`s them before the job starts (a tool-load advisor bridges procedural
   recall → the equipped set; anticipation, not a frequency-pinned tier); and config (`MCP_SERVERS`
   JSON whitelist with per-server auth-secret env refs → `AppConfig.mcpServers`; `MAX_EQUIPPED_TOOLS`).
-  **The CLI track remains future** (Phase 10): a **CLI policy engine** (binary + argument-pattern
-  whitelist → binary allow/deny), a **`run_command` sandbox** (per-tenant working dir, no
-  cross-tenant data/secrets, CPU/time/output ceilings), a **`learned_tools`** store for learned CLI
-  usages, and the experimentation loop that captures a working invocation into semantic/procedural
-  memory; its DDL and config keys land when built. Mechanism → `companion-tools.md`; scope →
+  **CLI** (Phase 10, PR #11): tools are **developer-described folders** under `CLI_TOOLS_PATH` (the
+  CLI trust boundary), each a `TOOL.json` (binary + model-facing `parameters` JSON Schema + argv
+  template + mandatory limits) + `TOOL.md` (usage prompt); `parseCliToolDef` validates them and
+  `cliToolToTool` validates the model's args against the schema, renders each `{param}` into a
+  **discrete argv element** (no shell), and fences output as untrusted. No-shell kills *command*
+  injection but not *option* injection (a value like `-rf`/`--config=/x` that the binary parses as a
+  flag); `unsafeArgvPlaceholders` flags any bare leading-placeholder argv element and
+  `FileSystemCliToolStore` logs an operator warning at load (not a skip — the curator anchors it as
+  `--in={path}` or behind a `--`, `companion-tools.md` §7). The **`CliToolStore`** seam
+  (production `FileSystemCliToolStore` scans the dir, skips+logs invalid folders, rejects
+  path-traversal refs) is re-read at load **and at call time**, so a removed folder is revoked
+  immediately; the **`CommandSandbox`** seam (production `SubprocessSandbox`: `child_process.spawn`,
+  no-shell, scrubbed env, per-tenant ephemeral cwd, wall-clock + output-byte kill) is the executor —
+  the portable tier, with OS-level/network isolation deferred. No new tables (CLI reuses
+  `tool_catalog`/`equipped_tools` via the shared spine). Config: `CLI_TOOLS_PATH` + `CLI_SCRATCH_DIR`
+  (per-run wall-clock + output-byte ceilings are declared per tool in each TOOL.json's mandatory
+  `limits` block — no deployment default); `buildToolAcquisitionWiring` composes MCP + CLI sources
+  (null only when neither is configured). Mechanism → `companion-tools.md`; scope →
   `development-plan.md`.
 - **Auth** — an app-issued session JWT and silent refresh / 401-driven re-auth beyond the ~1h
   Google ID token.

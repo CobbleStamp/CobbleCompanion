@@ -95,8 +95,8 @@ export function registerProposalRoutes(
         return reply.code(404).send({ error: 'companion not found' });
       }
       // Executing the action (and reading its result) spends tokens downstream,
-      // so it's gated by the same daily cap as a chat turn.
-      const overCap = await overCapGuard(quota, request.userId!);
+      // so it's gated by the same stamina wallet as a chat turn.
+      const overCap = await overCapGuard(quota, companion.id);
       if (overCap) {
         return reply.code(429).send({ error: overCap });
       }

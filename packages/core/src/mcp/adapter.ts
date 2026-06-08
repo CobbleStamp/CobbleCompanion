@@ -50,7 +50,7 @@ export function mcpToolName(ref: string, toolName: string): string {
   // the registry's by-name dispatch (registry.ts) while both still advertise.
   // Anchor the truncated name with a short hash of the *full* name so distinct
   // tools stay distinct. Deterministic by construction: the equipped summary
-  // recomputes this name independently (harness/equipped-summary.ts) and must agree.
+  // recomputes this name independently (acquisition/equipped-summary.ts) and must agree.
   const suffix = `_${createHash('sha256').update(full).digest('hex').slice(0, NAME_HASH_LENGTH)}`;
   return `${full.slice(0, MAX_TOOL_NAME_LENGTH - suffix.length)}${suffix}`;
 }

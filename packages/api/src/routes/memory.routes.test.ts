@@ -91,9 +91,8 @@ describe('memory routes', () => {
     expect(res.statusCode).toBe(400);
   });
 
-  it('refuses a search with 429 when the owner is over the daily token cap', async () => {
-    const owner = await ctx.deps.identity.ensureUserByEmail('owner@example.com');
-    await ctx.deps.quota.recordUsage(owner.id, ctx.deps.config.tokenCapPerDay);
+  it('refuses a search with 429 when the companion is out of stamina', async () => {
+    await ctx.deps.quota.spend(companionId, ctx.deps.config.startingVitalityTokens);
 
     const res = await ctx.app.inject({
       method: 'POST',
@@ -102,7 +101,7 @@ describe('memory routes', () => {
       payload: { query: 'ceviche lime' },
     });
     expect(res.statusCode).toBe(429);
-    expect(res.json().error).toMatch(/allowance/i);
+    expect(res.json().error).toMatch(/stamina/i);
   });
 
   it('404s the snapshot when the companion is not owned', async () => {

@@ -1,15 +1,15 @@
-import type { ChatStreamEvent, StaminaEnergyDto } from '@cobble/shared';
+import type { ChatStreamEvent, FoodInventoryDto, StaminaEnergyDto } from '@cobble/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   confirmProposal,
   createCompanion,
   fetchBudget,
   fetchMessages,
+  getFood,
   sendHeartbeat,
   sendMessage,
   setAccessTokenGetter,
   setProactivityDial,
-  topUpBudget,
 } from './client.js';
 
 /**
@@ -194,10 +194,10 @@ describe('confirmProposal error surfacing', () => {
     );
   }
 
-  it('throws the server body on a 429 over-cap (not the status code)', async () => {
-    stubErrorResponse(429, "You're over your daily token limit.");
+  it('throws the server body on a 429 out-of-stamina (not the status code)', async () => {
+    stubErrorResponse(429, 'Cobble is out of stamina for now. Feed it a Ration to continue.');
     await expect(confirmProposal('companion-1', 'p1').next()).rejects.toThrow(
-      "You're over your daily token limit.",
+      'Cobble is out of stamina for now. Feed it a Ration to continue.',
     );
   });
 
@@ -218,19 +218,11 @@ describe('phase 4 budget/dial/heartbeat methods', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   const BUDGET: StaminaEnergyDto = {
-    stamina: {
-      usedTokens: 10,
-      capTokens: 100,
-      percentUsed: 10,
-      resetsAt: '2999-01-01T00:00:00.000Z',
-    },
-    energy: {
-      usedTokens: 20,
-      capTokens: 100,
-      percentUsed: 20,
-      resetsAt: '2999-01-01T00:00:00.000Z',
-    },
+    stamina: { balanceTokens: 900_000 },
+    energy: { balanceTokens: 800_000 },
   };
+
+  const FOOD: FoodInventoryDto = { ration: 10, spark: 10, treat: 10 };
 
   beforeEach(() => {
     setAccessTokenGetter(async () => 'tok');
@@ -250,13 +242,11 @@ describe('phase 4 budget/dial/heartbeat methods', () => {
     expect(fetchMock.mock.calls[0]![0]).toContain('/companions/c1/budget');
   });
 
-  it('POSTs a top-up with the pool + amount payload', async () => {
-    fetchMock.mockResolvedValue({ ok: true, json: async () => BUDGET });
-    await topUpBudget('c1', 'energy', 100_000);
-    const [url, init] = fetchMock.mock.calls[0]!;
-    expect(url).toContain('/companions/c1/budget/topup');
-    expect(init.method).toBe('POST');
-    expect(JSON.parse(init.body as string)).toEqual({ pool: 'energy', amount: 100_000 });
+  it('GETs the user food pantry and unwraps the food field', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ food: FOOD }) });
+    const food = await getFood();
+    expect(food).toEqual(FOOD);
+    expect(fetchMock.mock.calls[0]![0]).toContain('/food');
   });
 
   it('PATCHes the proactivity dial and unwraps the dial field', async () => {

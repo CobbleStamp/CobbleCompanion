@@ -13,7 +13,7 @@ import { DrizzleIdentityStore } from '../identity/store.js';
 import type { LlmGateway, LlmStreamParams, StreamResult } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import { DrizzleSemanticMemoryStore } from '../memory/semantic-store.js';
-import type { TokenQuotaStore, UsageSnapshot } from '../quota/stamina-store.js';
+import type { VitalityStore } from '../quota/vitality-store.js';
 import { estimateUsage } from '../usage.js';
 import type { IngestionAnnouncer, IngestionOutcome } from './announcer.js';
 import { createHttpLinkResolver } from './link-resolver.js';
@@ -60,21 +60,21 @@ class ThrowingEmbeddingGateway implements EmbeddingGateway {
   }
 }
 
-/** Quota fake with a flippable over-cap flag (we own the seam). */
-class StubQuota implements TokenQuotaStore {
+/** Quota fake with a flippable empty (out-of-vitality) flag (we own the seam). */
+class StubQuota implements VitalityStore {
   over = false;
   recorded = 0;
 
-  async getUsage(): Promise<UsageSnapshot> {
-    return { usedTokens: this.recorded, capTokens: 1000, resetsAt: '2026-06-04T00:00:00.000Z' };
+  async getBalance(): Promise<number> {
+    return this.over ? 0 : 1000;
   }
-  async recordUsage(_userId: string, total: number): Promise<void> {
+  async spend(_companionId: string, total: number): Promise<void> {
     this.recorded += total;
   }
-  async isOverCap(): Promise<boolean> {
+  async add(): Promise<void> {}
+  async isEmpty(): Promise<boolean> {
     return this.over;
   }
-  async topUp(): Promise<void> {}
 }
 
 const NOTE_TEXT = [
@@ -118,7 +118,7 @@ describe('IngestionPipeline', () => {
   function makePipeline(
     llm: LlmGateway,
     useContextHeader = false,
-    quota?: TokenQuotaStore,
+    quota?: VitalityStore,
     announcer?: IngestionAnnouncer,
   ): IngestionPipeline {
     return new IngestionPipeline({
@@ -272,7 +272,7 @@ describe('IngestionPipeline', () => {
     expect(vectorHits).toHaveLength(0);
   });
 
-  it('defers the AI passes (holding the parse) when the owner is over the daily cap', async () => {
+  it('defers the AI passes (holding the parse) when the stamina wallet is empty', async () => {
     const quota = new StubQuota();
     quota.over = true;
     const llm = new ScriptedLlmGateway([SEGMENT_RESPONSE, ENRICH_CONQUEST, ENRICH_CUISINE]);

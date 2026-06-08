@@ -1,19 +1,22 @@
 /**
  * Equipped-registry-resolver tests: composes the core tools with the companion's
  * equipped tools (namespaced), drops a tool whose server left the whitelist, and
- * bumps a tool's recency when it is called (keeps the LRU honest).
+ * bumps a tool's recency when it is called (keeps the LRU honest). Exercised
+ * through the MCP capability source, since the resolver is source-agnostic.
  */
 
 import { type Database } from '@cobble/db';
 import { createTestDatabase } from '@cobble/db/testing';
 import type { ToolResult, TurnCtx } from '../harness/hooks.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { CapabilitySource } from './capability-source.js';
 import { DrizzleIdentityStore } from '../identity/store.js';
 import type { Tool } from '../tools/tool.js';
 import { createEquippedRegistryResolver } from './equipped-resolver.js';
 import { DrizzleEquippedToolStore } from './equipped-store.js';
-import { FakeMcpGateway } from './fake.js';
-import { McpWhitelist } from './whitelist.js';
+import { FakeMcpGateway } from '../mcp/fake.js';
+import { createMcpCapabilitySource } from '../mcp/mcp-source.js';
+import { McpWhitelist } from '../mcp/whitelist.js';
 
 const silentLogger = { error: () => undefined, warn: () => undefined, info: () => undefined };
 
@@ -34,6 +37,10 @@ describe('createEquippedRegistryResolver', () => {
   let ctx: TurnCtx;
 
   const whitelist = new McpWhitelist([{ ref: 'stocks', endpoint: 'https://s.example.com' }]);
+  /** Wrap the whitelist + a gateway as the MCP capability source the resolver adapts through. */
+  const sources = (gateway: FakeMcpGateway): readonly CapabilitySource[] => [
+    createMcpCapabilitySource({ whitelist, gateway, logger: silentLogger }),
+  ];
 
   beforeEach(async () => {
     const created = await createTestDatabase();
@@ -63,8 +70,7 @@ describe('createEquippedRegistryResolver', () => {
     const resolve = createEquippedRegistryResolver({
       nativeTools: [nativeTool],
       equipped,
-      whitelist,
-      gateway: new FakeMcpGateway({ stocks: { tools: [snapshot] } }),
+      sources: sources(new FakeMcpGateway({ stocks: { tools: [snapshot] } })),
       logger: silentLogger,
     });
     const registry = await resolve(ctx.companionId);
@@ -83,8 +89,7 @@ describe('createEquippedRegistryResolver', () => {
     const resolve = createEquippedRegistryResolver({
       nativeTools: [nativeTool],
       equipped,
-      whitelist,
-      gateway: new FakeMcpGateway({}),
+      sources: sources(new FakeMcpGateway({})),
       logger: silentLogger,
     });
     const names = (await resolve(ctx.companionId)).list().map((t) => t.name);
@@ -104,8 +109,7 @@ describe('createEquippedRegistryResolver', () => {
     const resolve = createEquippedRegistryResolver({
       nativeTools: [nativeTool],
       equipped: clocked,
-      whitelist,
-      gateway: new FakeMcpGateway({ stocks: { tools: [snapshot] } }),
+      sources: sources(new FakeMcpGateway({ stocks: { tools: [snapshot] } })),
       logger: silentLogger,
     });
     const registry = await resolve(ctx.companionId);

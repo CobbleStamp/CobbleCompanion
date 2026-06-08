@@ -1,20 +1,20 @@
 /**
- * Deferred-job sweeper (architecture.md §4.8). Ingestion jobs parked at the
- * daily token cap (`status: 'deferred'`) carry their parsed text; this resumes
- * the ones whose owner is now under cap, one at a time through the serial
- * runner. Run it on a timer and at startup. Because the runner's own quota gate
- * re-checks at run time, a queue drains *incrementally* across cycles: an owner
- * who crosses the cap again mid-drain simply leaves their remaining jobs parked.
+ * Deferred-job sweeper (architecture.md §4.8). Ingestion jobs parked on an empty
+ * stamina wallet (`status: 'deferred'`) carry their parsed text; this resumes the
+ * ones whose companion has since been fed (wallet no longer empty), one at a time
+ * through the serial runner. Run it on a timer and at startup. Because the runner's
+ * own quota gate re-checks at run time, a queue drains *incrementally* across cycles:
+ * a companion whose wallet empties again mid-drain simply leaves its remaining jobs parked.
  */
 
 import type { Logger } from '../logging.js';
 import type { SemanticMemoryStore } from '../memory/semantic-store.js';
-import type { TokenQuotaStore } from '../quota/stamina-store.js';
+import type { VitalityStore } from '../quota/vitality-store.js';
 import { IngestionQueueFullError, type IngestionRunner } from './runner.js';
 
 export interface DeferredSweepDeps {
   readonly semantic: SemanticMemoryStore;
-  readonly quota: TokenQuotaStore;
+  readonly quota: VitalityStore;
   readonly ingestion: IngestionRunner;
   readonly logger: Logger;
 }
@@ -30,8 +30,8 @@ export async function resumeDeferredJobs(deps: DeferredSweepDeps): Promise<numbe
   let resumed = 0;
   for (const job of jobs) {
     try {
-      if (await deps.quota.isOverCap(job.ownerId)) {
-        continue; // still over cap — leave it parked for a later sweep
+      if (await deps.quota.isEmpty(job.companionId)) {
+        continue; // still empty — leave it parked for a later sweep
       }
       // Atomically claim before enqueue: only the sweep that flips it out of
       // `deferred` proceeds, so an overlapping sweep that read the same row

@@ -12,7 +12,7 @@ import { consoleLogger, type Logger } from '../logging.js';
 import type { MemoryStore } from '../memory/store.js';
 import { senseAffect, type AffectReading } from '../motivation/affect.js';
 import type { CompanionAffectStore } from '../motivation/affect-store.js';
-import type { TokenQuotaStore } from '../quota/stamina-store.js';
+import type { VitalityStore } from '../quota/vitality-store.js';
 import { dispatchTool } from '../tools/dispatch.js';
 import { ToolRegistry } from '../tools/registry.js';
 import {
@@ -95,8 +95,8 @@ export interface HarnessOptions {
   readonly maxToolIterations?: number;
   /** Optional cumulative token ceiling per run — the second dead-loop guard (§4.7). */
   readonly turnTokenBudget?: number;
-  /** Debits the turn's tokens against the owner's daily cap; omitted = no metering. */
-  readonly quota?: TokenQuotaStore;
+  /** Spends the turn's tokens from the companion's stamina wallet; omitted = no metering. */
+  readonly quota?: VitalityStore;
   /** Affect perception + learning (Phase 4.2); omitted = no mood sensing. */
   readonly affect?: HarnessAffect;
   /** Online tracing sink (Phase C); omitted = noop (tracing off). */
@@ -150,7 +150,7 @@ export class Harness {
   private readonly afterToolCall: AfterToolCall;
   private readonly maxToolIterations: number;
   private readonly turnTokenBudget: number | undefined;
-  private readonly quota: TokenQuotaStore | undefined;
+  private readonly quota: VitalityStore | undefined;
   private readonly affect: HarnessAffect | undefined;
   private readonly traceSink: TraceSink;
   private readonly logger: Logger;
@@ -227,7 +227,7 @@ export class Harness {
       // upsert lands before the next read captures `prior` (no double-count, no
       // clobber). `.catch` isolates a prior link's failure; the snapshot was
       // already taken above, so the chained read still reflects this turn.
-      this.trackBackground(this.chainAffect(companion.id, affectSnapshot, userContent, ownerId));
+      this.trackBackground(this.chainAffect(companion.id, affectSnapshot, userContent));
     } catch (error) {
       traceError = error instanceof Error ? error.message : String(error);
       yield this.failed(companion.id, error);
@@ -305,12 +305,11 @@ export class Harness {
     companionId: string,
     recent: readonly MessageDto[],
     userContent: string,
-    ownerId: string | undefined,
   ): Promise<void> {
     const prior = this.affectChains.get(companionId) ?? Promise.resolve();
     const next = prior
       .catch(() => undefined)
-      .then(() => this.perceiveAndLearn(companionId, userContent, recent, ownerId));
+      .then(() => this.perceiveAndLearn(companionId, userContent, recent));
     this.affectChains.set(companionId, next);
     void next.finally(() => {
       if (this.affectChains.get(companionId) === next) {
@@ -332,7 +331,6 @@ export class Harness {
     companionId: string,
     userContent: string,
     recent: readonly MessageDto[],
-    ownerId: string | undefined,
   ): Promise<void> {
     if (!this.affect) {
       return;
@@ -354,7 +352,7 @@ export class Harness {
           ...(this.quota ? { quota: this.quota } : {}),
         },
         {
-          ...(ownerId ? { ownerId } : {}),
+          companionId,
           recentContext: affectContext(recent),
           userText: userContent,
         },
@@ -475,7 +473,6 @@ export class Harness {
           settledNormally = true;
           yield* this.finish(
             companion.id,
-            ownerId,
             lastText || PARTIAL_FALLBACK,
             citations,
             retrievalUsage,
@@ -515,7 +512,7 @@ export class Harness {
         // No tool calls → this is the assistant's answer; the run EXITs (§4.1).
         if (toolCalls.length === 0) {
           settledNormally = true;
-          yield* this.finish(companion.id, ownerId, turnText, citations, retrievalUsage, acc);
+          yield* this.finish(companion.id, turnText, citations, retrievalUsage, acc);
           return;
         }
 
@@ -586,7 +583,6 @@ export class Harness {
           settledNormally = true;
           yield* this.finishBlocked(
             companion.id,
-            ownerId,
             turnText,
             heldProposals,
             blockReason,
@@ -610,7 +606,7 @@ export class Harness {
         await activeStream
           ?.return({ usage: ZERO_USAGE, toolCalls: [] } satisfies StreamResult)
           .catch(() => undefined);
-        await this.debit(ownerId, addUsage(retrievalUsage, acc.total()));
+        await this.debit(companion.id, addUsage(retrievalUsage, acc.total()));
       }
     }
   }
@@ -676,7 +672,6 @@ export class Harness {
   /** Persist the assistant turn, debit the run's tokens once, and emit `done`. */
   private async *finish(
     companionId: string,
-    ownerId: string | undefined,
     text: string,
     citations: readonly Citation[],
     retrievalUsage: TokenUsage,
@@ -688,7 +683,7 @@ export class Harness {
       text,
       citations.length > 0 ? { metadata: { citations } } : undefined,
     );
-    await this.debit(ownerId, addUsage(retrievalUsage, acc.total()));
+    await this.debit(companionId, addUsage(retrievalUsage, acc.total()));
     yield { type: 'done', message };
   }
 
@@ -700,7 +695,6 @@ export class Harness {
    */
   private async *finishBlocked(
     companionId: string,
-    ownerId: string | undefined,
     turnText: string,
     heldProposals: readonly ProposalDto[],
     blockReason: string,
@@ -738,7 +732,7 @@ export class Harness {
       }
       yield { type: 'proposal', proposal };
     }
-    await this.debit(ownerId, addUsage(retrievalUsage, acc.total()));
+    await this.debit(companionId, addUsage(retrievalUsage, acc.total()));
     // The stream MUST terminate with a persisted `done`. It carries the
     // companion's words when it spoke, else the last held proposal row. If
     // neither persisted — turnText was empty and every proposal-row write failed,
@@ -775,20 +769,22 @@ export class Harness {
   }
 
   /**
-   * Debit the turn's tokens against the owner's daily cap. Best-effort: a
-   * metering failure is logged but never breaks the conversation (logging.md),
-   * and turns with no owner/quota (e.g. tests) simply skip metering.
+   * Debit the turn's tokens against the companion's stamina wallet (chat is
+   * user-initiated work — the stamina half of the companion's vitality,
+   * architecture.md §4.8). Best-effort: a metering failure is logged but never
+   * breaks the conversation (logging.md), and turns with no quota (e.g. tests)
+   * simply skip metering.
    */
-  private async debit(ownerId: string | undefined, usage: TokenUsage): Promise<void> {
-    if (!this.quota || !ownerId || usage.totalTokens <= 0) {
+  private async debit(companionId: string, usage: TokenUsage): Promise<void> {
+    if (!this.quota || usage.totalTokens <= 0) {
       return;
     }
     try {
-      await this.quota.recordUsage(ownerId, usage.totalTokens);
+      await this.quota.spend(companionId, usage.totalTokens);
     } catch (error) {
       this.logger.error('failed to record chat token usage', {
         operation: 'harness.debit',
-        ownerId,
+        companionId,
         error,
       });
     }

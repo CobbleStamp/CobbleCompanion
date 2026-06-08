@@ -92,8 +92,8 @@ export function registerMemoryRoutes(
       if (!companion) {
         return reply.code(404).send({ error: 'companion not found' });
       }
-      // Search spends an embedding, so it's gated by the same daily token cap.
-      const overCap = await overCapGuard(quota, request.userId!);
+      // Search spends an embedding, so it's gated by the same stamina wallet.
+      const overCap = await overCapGuard(quota, companion.id);
       if (overCap) {
         return reply.code(429).send({ error: overCap });
       }
@@ -117,9 +117,9 @@ export function registerMemoryRoutes(
           error,
         });
       }
-      // Best-effort debit against the daily cap — never fails the search (logging.md).
+      // Best-effort spend from the companion's stamina — never fails the search (logging.md).
       try {
-        await quota.recordUsage(request.userId!, searchTokens);
+        await quota.spend(companion.id, searchTokens);
       } catch (error) {
         deps.logger.error('failed to record search token usage', {
           operation: 'memory.search',

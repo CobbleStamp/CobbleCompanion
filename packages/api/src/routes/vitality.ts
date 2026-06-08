@@ -1,48 +1,26 @@
 /**
  * Shared vitality-meter assembly (architecture.md §4.8) — builds the
- * stamina/energy `StaminaEnergyDto` from the two pools. Used by both the
- * proactivity routes (the meter + the simple top-up) and the Phase 5 feed route,
- * so the meter shape is single-sourced.
+ * stamina/energy `StaminaEnergyDto` from the two wallets. Used by both the
+ * proactivity route's meter and the feed route, so the meter shape is single-sourced.
+ * Each wallet reports just its remaining balance — no cap, no window (the wallet
+ * refills only by feeding).
  */
 
 import type { StaminaEnergyDto, UsageDto } from '@cobble/shared';
-import type { CompanionEnergyStore, TokenQuotaStore } from '@cobble/core';
+import type { VitalityStore } from '@cobble/core';
 
-/** Whole-percent of a pool consumed, clamped to 0–100. */
-export function percentUsed(used: number, cap: number): number {
-  if (cap <= 0) return 100;
-  return Math.min(100, Math.max(0, Math.round((used / cap) * 100)));
+async function walletDto(store: VitalityStore, companionId: string): Promise<UsageDto> {
+  return { balanceTokens: await store.getBalance(companionId) };
 }
 
-async function staminaDto(quota: TokenQuotaStore, userId: string): Promise<UsageDto> {
-  const s = await quota.getUsage(userId);
-  return {
-    usedTokens: s.usedTokens,
-    capTokens: s.capTokens,
-    percentUsed: percentUsed(s.usedTokens, s.capTokens),
-    resetsAt: s.resetsAt,
-  };
-}
-
-async function energyDto(energy: CompanionEnergyStore, companionId: string): Promise<UsageDto> {
-  const e = await energy.getEnergy(companionId);
-  return {
-    usedTokens: e.usedTokens,
-    capTokens: e.capTokens,
-    percentUsed: percentUsed(e.usedTokens, e.capTokens),
-    resetsAt: e.resetsAt,
-  };
-}
-
-/** The vitality meter: stamina (per-user) + energy (per-companion). */
+/** The vitality meter: stamina + energy, both per-companion wallets (architecture.md §4.8). */
 export async function buildBudget(
-  quota: TokenQuotaStore,
-  energy: CompanionEnergyStore,
-  userId: string,
+  stamina: VitalityStore,
+  energy: VitalityStore,
   companionId: string,
 ): Promise<StaminaEnergyDto> {
   return {
-    stamina: await staminaDto(quota, userId),
-    energy: await energyDto(energy, companionId),
+    stamina: await walletDto(stamina, companionId),
+    energy: await walletDto(energy, companionId),
   };
 }

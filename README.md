@@ -59,10 +59,9 @@ with `http://localhost:3001` as an authorized origin (see `infra/README.md`).
 
 ## Deployment
 
-A single GCP Cloud Run service is managed with Pulumi under `infra/gcp` (Cloud Run, Artifact
-Registry, Secret Manager); auth is Google Sign-In, so there is no auth service to provision —
-just a Console-created OAuth client ID (`infra/README.md`). The Fastify API serves the built SPA
-from one origin. See `infra/gcp/README.md` and the repo-root `Makefile` (`make deploy-dev`).
+Deployed as a single GCP Cloud Run service via Pulumi (the Fastify API serves the built SPA from
+one origin). Full setup — components, the OAuth client, and `make deploy-dev` — lives in
+[`infra/README.md`](./infra/README.md) and [`infra/gcp/README.md`](./infra/gcp/README.md).
 
 ### Verify
 

@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { FakeLlmGateway } from '../llm/fake.js';
 import type { ToolCall } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
-import type { TokenQuotaStore } from '../quota/stamina-store.js';
+import type { VitalityStore } from '../quota/vitality-store.js';
 import { coerceReading, NEUTRAL_AFFECT, senseAffect } from './affect.js';
 
 const silent: Logger = { error: () => {}, warn: () => {}, info: () => {} };
@@ -83,9 +83,9 @@ describe('senseAffect', () => {
     expect(reading).toBeNull();
   });
 
-  it('meters its tokens to the stamina pool when given a quota + owner', async () => {
-    const recordUsage = vi.fn(async (_ownerId: string, _total: number) => {});
-    const quota = { recordUsage } as unknown as TokenQuotaStore;
+  it('meters its tokens to the stamina pool when given a quota + companion', async () => {
+    const spend = vi.fn(async (_companionId: string, _total: number) => {});
+    const quota = { spend } as unknown as VitalityStore;
     await senseAffect(
       {
         llm: new FakeLlmGateway(reportAffect({ valence: 0.2, note: 'calm' })),
@@ -93,19 +93,19 @@ describe('senseAffect', () => {
         logger: silent,
         quota,
       },
-      { ownerId: 'owner', recentContext: 'hi', userText: 'all good' },
+      { companionId: 'companion', recentContext: 'hi', userText: 'all good' },
     );
-    expect(recordUsage).toHaveBeenCalledTimes(1);
-    expect(recordUsage.mock.calls[0]![0]).toBe('owner');
-    expect(recordUsage.mock.calls[0]![1]).toBeGreaterThan(0);
+    expect(spend).toHaveBeenCalledTimes(1);
+    expect(spend.mock.calls[0]![0]).toBe('companion');
+    expect(spend.mock.calls[0]![1]).toBeGreaterThan(0);
   });
 
   it('keeps a valid reading even when billing throws (billing must not void it)', async () => {
     const quota = {
-      recordUsage: vi.fn(async () => {
+      spend: vi.fn(async () => {
         throw new Error('quota store down');
       }),
-    } as unknown as TokenQuotaStore;
+    } as unknown as VitalityStore;
     const reading = await senseAffect(
       {
         llm: new FakeLlmGateway(reportAffect({ valence: 0.9, note: 'delighted' })),
@@ -113,7 +113,7 @@ describe('senseAffect', () => {
         logger: silent,
         quota,
       },
-      { ownerId: 'owner', recentContext: '', userText: 'this is wonderful' },
+      { companionId: 'companion', recentContext: '', userText: 'this is wonderful' },
     );
     // The model already judged the mood; a quota hiccup must not drop it to neutral.
     expect(reading).toEqual({ valence: 0.9, note: 'delighted' });

@@ -119,8 +119,8 @@ provenance), the procedural section (learned-workflow count + list), and the
 reading-list (leads). Effectful actions surface as one-tap **approval cards** below
 the chat transcript (`ProposalCard` + the `useProposals` hook). The Sources page handles
 intake (file upload, note, link), shows reading progress, and lets the user delete a
-source (incl. one parked at the daily token cap); a usage indicator in each page
-header shows the day's token allowance. Grounded chat answers render their citations
+source (incl. one parked for want of stamina); a vitality indicator in each page
+header shows the companion's remaining stamina. Grounded chat answers render their citations
 inline in `Chat.tsx`.
 
 ## 5. Evaluating memory vs performance

@@ -1,19 +1,65 @@
+import { companions, type Database } from '@cobble/db';
 import { createTestDatabase } from '@cobble/db/testing';
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DrizzleIdentityStore } from './store.js';
 
 describe('DrizzleIdentityStore', () => {
+  let db: Database;
   let identity: DrizzleIdentityStore;
   let close: () => Promise<void>;
 
   beforeEach(async () => {
     const created = await createTestDatabase();
+    db = created.db;
     close = created.close;
-    identity = new DrizzleIdentityStore(created.db);
+    identity = new DrizzleIdentityStore(db);
   });
 
   afterEach(async () => {
     await close();
+  });
+
+  describe('startingVitalityTokens validation', () => {
+    it('rejects a negative seed at construction (no corrupt wallet)', () => {
+      expect(() => new DrizzleIdentityStore(db, { startingVitalityTokens: -1 })).toThrow(
+        RangeError,
+      );
+    });
+
+    it('rejects a fractional seed at construction (bigint column would coerce)', () => {
+      expect(() => new DrizzleIdentityStore(db, { startingVitalityTokens: 1.5 })).toThrow(
+        RangeError,
+      );
+    });
+
+    it('rejects a non-finite seed at construction', () => {
+      expect(() => new DrizzleIdentityStore(db, { startingVitalityTokens: NaN })).toThrow(
+        RangeError,
+      );
+    });
+
+    it('accepts a valid seed and seeds both wallets with it', async () => {
+      const seeded = new DrizzleIdentityStore(db, { startingVitalityTokens: 500 });
+      const owner = await seeded.ensureUserByEmail('seed@example.com');
+      const companion = await seeded.createCompanion(owner.id, {
+        name: 'Pebble',
+        form: 'fox',
+        temperament: 'curious',
+      });
+      // Both wallets carry the seed; the DTO doesn't expose them, so assert via SQL.
+      const [row] = await db
+        .select()
+        .from(companions)
+        .where(eq(companions.id, companion.id))
+        .limit(1);
+      expect(row?.staminaBalanceTokens).toBe(500);
+      expect(row?.energyBalanceTokens).toBe(500);
+    });
+
+    it('accepts a zero seed (an empty wallet is valid)', () => {
+      expect(() => new DrizzleIdentityStore(db, { startingVitalityTokens: 0 })).not.toThrow();
+    });
   });
 
   it('ensureUserByEmail is idempotent', async () => {

@@ -1,9 +1,10 @@
+import { CompanionNotFoundError } from '@cobble/core';
 import type {
   CompanionAffectStore,
-  CompanionEnergyStore,
   ConsolidationRunner,
   EmbeddingGateway,
   EpisodicMemoryStore,
+  FoodStore,
   GrowthService,
   GrowthStore,
   Harness,
@@ -20,7 +21,7 @@ import type {
   SemanticMemoryStore,
   ToolCallLog,
   ToolRegistry,
-  TokenQuotaStore,
+  VitalityStore,
 } from '@cobble/core';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
@@ -77,9 +78,12 @@ export interface AppDeps {
   readonly presence: PresenceStore;
   /** Off-request proactive ticks — routes request it on activity/return (P4). */
   readonly motivation: MotivationRunner;
-  readonly quota: TokenQuotaStore;
-  /** Per-companion energy pool — the self-initiated budget, surfaced as the meter (P4). */
-  readonly energy: CompanionEnergyStore;
+  /** Per-companion STAMINA wallet — the user-initiated budget (chat/search/tasks). */
+  readonly quota: VitalityStore;
+  /** Per-companion ENERGY wallet — the self-initiated budget, surfaced as the meter (P4). */
+  readonly energy: VitalityStore;
+  /** Per-user FOOD pantry — the feeding economy's supply (P5). */
+  readonly food: FoodStore;
   /** Reinforcement log — one outcome per proactive initiation (P4). */
   readonly rewards: ProactiveOutcomeStore;
   /** The rolling read of the user's mood, sensed in the agent loop (P4.2). */
@@ -90,7 +94,7 @@ export interface AppDeps {
    * so a crossed-band reflection is felt in place.
    */
   readonly growth: GrowthService;
-  /** The growth high-water mark + treats balance — used by the feeding economy (P5). */
+  /** The growth high-water mark — used to fire reflections once (P5). */
   readonly growthStore: GrowthStore;
   readonly tokenVerifier: TokenVerifier;
   readonly config: AppConfig;
@@ -98,7 +102,7 @@ export interface AppDeps {
 }
 
 // API route prefixes that must 404 (not fall through to the SPA index.html).
-const API_PREFIXES = ['/auth', '/companions', '/health', '/usage'] as const;
+const API_PREFIXES = ['/auth', '/companions', '/food', '/health'] as const;
 
 /** Build the Fastify app — the only surface↔core boundary (invariant #1). */
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
@@ -145,7 +149,10 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   // never leak. Client errors (4xx: validation, bad content-type) are logged at
   // `info` for visibility and pass their message through.
   app.setErrorHandler((error: FastifyError, request, reply) => {
-    const statusCode = error.statusCode ?? 500;
+    // A debit/feed against a missing (or deleted) companion is a 404, wherever it
+    // surfaces — map it centrally so every route is uniform (the core error stays
+    // HTTP-agnostic; the status lives here).
+    const statusCode = error instanceof CompanionNotFoundError ? 404 : (error.statusCode ?? 500);
     const context: Record<string, unknown> = {
       operation: 'http.request',
       method: request.method,
@@ -171,7 +178,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   const requireAuth = makeRequireAuth(deps);
 
-  // The per-user daily token cap (architecture.md token budget) is the cost
+  // The per-companion vitality wallet (architecture.md §4.8) is the cost
   // guardrail; routes enforce it inline (chat/search pre-flight, ingestion
   // defer), so there are no per-route request-count limiters.
   registerAuthRoutes(app, deps, requireAuth);

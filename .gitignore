@@ -16,3 +16,5 @@ db/migrations/meta/_journal.tmp
 pglite-data/
 # Local Postgres data (docker bind mount)
 data/
+# Per-task planning scratch (plans/checklists) — never part of the canonical doc set
+tasks/

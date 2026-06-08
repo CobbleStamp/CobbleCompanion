@@ -14,7 +14,7 @@
 import type { Logger } from '../logging.js';
 import type { LlmGateway } from '../llm/gateway.js';
 import type { MemoryStore } from '../memory/store.js';
-import type { CompanionEnergyStore } from '../quota/energy-store.js';
+import type { VitalityStore } from '../quota/vitality-store.js';
 import type { IdentityStore } from '../identity/store.js';
 import type { IngestionTarget } from '../ingestion/runner.js';
 import type { LeadStore } from '../tools/lead-store.js';
@@ -28,7 +28,7 @@ import { runAutonomousBurst, type AutonomousIngestStore } from './autonomous-bur
 export interface MotivationEngineDeps {
   readonly identity: IdentityStore;
   readonly presence: PresenceStore;
-  readonly energy: CompanionEnergyStore;
+  readonly energy: VitalityStore;
   readonly leads: LeadStore;
   /** Registers + tracks the reads the burst performs (the semantic store). */
   readonly semantic: AutonomousIngestStore;
@@ -97,8 +97,7 @@ export class MotivationEngine {
         : 'absent_long';
       const newLeads = await leads.listByStatus(companionId, ['new']);
       const levels = computeDrives({ newLeadCount: newLeads.length });
-      const snapshot = await energy.getEnergy(companionId);
-      const energyRemaining = Math.max(0, snapshot.capTokens - snapshot.usedTokens);
+      const energyRemaining = await energy.getBalance(companionId);
       const weights = resolveWeights(companion.driveWeights);
 
       const move = decideMove({
@@ -130,9 +129,10 @@ export class MotivationEngine {
         return IDLE;
       }
 
-      // Measure real spend as the energy delta across the burst (reads + note);
-      // nothing spent between sensing and here, so the snapshot is the baseline.
-      const before = snapshot.usedTokens;
+      // Measure real spend as the drop in the energy balance across the burst
+      // (reads + note); nothing spent between sensing and here, so the balance read
+      // above is the baseline.
+      const before = energyRemaining;
       const result = await runAutonomousBurst(
         {
           leads,
@@ -158,21 +158,17 @@ export class MotivationEngine {
           limit: move.limit,
         },
       );
-      // Spend = energy delta across the burst. If a UTC-midnight window roll
-      // landed mid-burst, `after` resets below `before`; the store was still
-      // debited correctly during the burst — this is a logged metric only — so
-      // fall back to the post-roll usage and flag the roll rather than report a
-      // misleading 0.
-      const after = (await energy.getEnergy(companionId)).usedTokens;
-      const rolledMidBurst = after < before;
-      const energySpent = rolledMidBurst ? after : after - before;
+      // Spend = the drop in balance across the burst (a wallet only goes down with
+      // work, so this is non-negative; clamp defensively in case a concurrent feed
+      // raised it mid-burst).
+      const after = await energy.getBalance(companionId);
+      const energySpent = Math.max(0, before - after);
       logger.info('motivation tick initiated', {
         companionId,
         move: move.kind,
         drive: move.drive,
         sourcesRead: result.read.length,
         energySpent,
-        ...(rolledMidBurst ? { energySpentApprox: true } : {}),
       });
       return {
         initiated: result.read.length > 0,

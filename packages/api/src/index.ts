@@ -29,8 +29,8 @@ import {
   DrizzleProposalStore,
   DrizzleSemanticMemoryStore,
   DrizzleCompanionAffectStore,
-  DrizzleCompanionEnergyStore,
-  DrizzleTokenQuotaStore,
+  DrizzleVitalityStore,
+  DrizzleFoodStore,
   DrizzleToolCallLog,
   DrizzleGrowthStore,
   FakeEmbeddingGateway,
@@ -63,8 +63,10 @@ import {
   type TokenVerifier,
 } from './auth/jwt-verifier.js';
 import { loadConfig, type AppConfig } from './config.js';
+import { FileSystemCliToolStore } from './cli/fs-tool-store.js';
+import { createSubprocessSandbox } from './cli/subprocess-sandbox.js';
 import { StreamableHttpMcpGateway } from './mcp/sdk-client.js';
-import { buildMcpWiring } from './mcp/wiring.js';
+import { buildToolAcquisitionWiring } from './acquisition/wiring.js';
 import { createTraceSink } from './tracing/langfuse-sink.js';
 
 function createGateway(config: AppConfig): LlmGateway {
@@ -98,7 +100,10 @@ async function main(): Promise<void> {
   }
   const { db } = createPgDatabase(config.databaseUrl);
 
-  const identity = new DrizzleIdentityStore(db);
+  // New companions get both vitality wallets seeded from STARTING_VITALITY_TOKENS.
+  const identity = new DrizzleIdentityStore(db, {
+    startingVitalityTokens: config.startingVitalityTokens,
+  });
   const memory = new TranscriptMemoryStore(db);
   // Reinforcement log + the rolling affect read — built early so the harness can
   // sense the user's mood each turn (Phase 4.2) and the will can learn from it.
@@ -106,7 +111,7 @@ async function main(): Promise<void> {
   const affectStore = new DrizzleCompanionAffectStore(db);
   const semantic = new DrizzleSemanticMemoryStore(db);
   const episodic = new DrizzleEpisodicMemoryStore(db);
-  const quota = new DrizzleTokenQuotaStore(db, { defaultCapTokens: config.tokenCapPerDay });
+  const quota = new DrizzleVitalityStore(db, 'stamina');
   const llmGateway = createGateway(config);
   const embeddings = createEmbeddingGateway(config);
   // Shared by the retrieve-context arms only: collapses each turn's duplicate
@@ -166,27 +171,38 @@ async function main(): Promise<void> {
     }),
     createIngestSourceTool({ semantic, ingestion, logger: consoleLogger }),
   ];
-  // Phase 9: runtime MCP tool acquisition. Off unless MCP_SERVERS is configured —
-  // then search_tools/load_tool join the native core tools, the catalog indexes the
-  // whitelisted tools off-context, a per-step resolver advertises the companion's
-  // equipped tools, and an arm lists what's currently equipped.
+  // Phases 9–10: runtime tool acquisition. Off unless MCP_SERVERS and/or
+  // CLI_TOOLS_PATH is configured — then search_tools/load_tool join the native core
+  // tools, the catalog indexes the whitelisted tools off-context, a per-step
+  // resolver advertises the companion's equipped tools, and an arm lists what's
+  // currently equipped. MCP proxies over HTTP; CLI runs a sandboxed subprocess.
   const mcpGateway = new StreamableHttpMcpGateway(consoleLogger);
-  const mcpWiring = buildMcpWiring({
+  const cliEnabled = config.cliToolsPath.length > 0;
+  const acquisitionWiring = buildToolAcquisitionWiring({
     config,
     db,
-    gateway: mcpGateway,
+    mcpGateway,
+    ...(cliEnabled
+      ? {
+          cliToolStore: new FileSystemCliToolStore(config.cliToolsPath, consoleLogger),
+          cliSandbox: createSubprocessSandbox({
+            scratchDir: config.cliScratchDir,
+            logger: consoleLogger,
+          }),
+        }
+      : {}),
     llmGateway,
     baseTools,
     quota,
     logger: consoleLogger,
   });
-  if (mcpWiring) {
-    // Build the discovery catalog from the whitelist at startup (best-effort: a
-    // server that's down keeps its stale entries; the catalog never blocks boot).
-    const indexed = await mcpWiring.refreshCatalog();
-    consoleLogger.info('MCP tool catalog built', { operation: 'mcp.startup', tools: indexed });
+  if (acquisitionWiring) {
+    // Build the discovery catalog from the configured sources at startup
+    // (best-effort: a source that's down keeps its stale entries; never blocks boot).
+    const indexed = await acquisitionWiring.refreshCatalog();
+    consoleLogger.info('tool catalog built', { operation: 'acquisition.startup', tools: indexed });
   }
-  const tools = new ToolRegistry(mcpWiring ? mcpWiring.nativeTools : baseTools);
+  const tools = new ToolRegistry(acquisitionWiring ? acquisitionWiring.nativeTools : baseTools);
   const retrieveArms = [
     createEpisodicRetrieveContext({
       episodic,
@@ -203,11 +219,11 @@ async function main(): Promise<void> {
     createProceduralRetrieveContext({
       procedural,
       logger: consoleLogger,
-      ...(mcpWiring ? { loadAdvisor: mcpWiring.loadAdvisor } : {}),
+      ...(acquisitionWiring ? { loadAdvisor: acquisitionWiring.loadAdvisor } : {}),
     }),
     // Phase 9: list the companion's currently-equipped tools (grounding-only),
     // before the semantic arm, which appends the recency window last.
-    ...(mcpWiring ? [mcpWiring.equippedArm] : []),
+    ...(acquisitionWiring ? [acquisitionWiring.equippedArm] : []),
     createSemanticRetrieveContext({
       memory,
       semantic,
@@ -244,7 +260,7 @@ async function main(): Promise<void> {
     // PER STEP (core tools + the companion's equipped tools), so a load_tool mid-turn is
     // callable next step. The gate keeps the native registry — MCP tools are
     // non-effectful and pass through it.
-    ...(mcpWiring ? { resolveRegistry: mcpWiring.resolveRegistry } : {}),
+    ...(acquisitionWiring ? { resolveRegistry: acquisitionWiring.resolveRegistry } : {}),
     beforeToolCall: createApprovalGate(proposals, tools, consoleLogger),
     afterToolCall: createLoggingAfterToolCall(toolCallLog, consoleLogger),
     // The memory-retrieval hook (invariant #3): episodic + procedural + (MCP tool
@@ -280,10 +296,10 @@ async function main(): Promise<void> {
   const consolidation = new ConsolidationRunner(consolidationService, consoleLogger);
 
   // Motivation engine (P4): the "will" that works the lead inventory on idle.
-  // Self-initiated work draws the per-companion ENERGY pool (separate from the
-  // user stamina pool, so autonomy can't starve chat). The runner keeps ticks off
-  // the request path; routes request() it on activity/return + a periodic sweep.
-  const energy = new DrizzleCompanionEnergyStore(db, { defaultCapTokens: config.tokenCapPerDay });
+  // Self-initiated work spends the per-companion ENERGY wallet (a separate wallet
+  // from stamina, so autonomy can't starve chat). The runner keeps ticks off the
+  // request path; routes request() it on activity/return + a periodic sweep.
+  const energy = new DrizzleVitalityStore(db, 'energy');
   const motivationEngine = new MotivationEngine({
     identity,
     presence,
@@ -299,12 +315,12 @@ async function main(): Promise<void> {
   });
   const motivation = new MotivationRunner(motivationEngine, consoleLogger);
 
-  // Growth & feeding economy (P5): four-axis growth DERIVED from substrate, with an
-  // idempotent high-water mark + earned treats. The service recomputes post-turn off
-  // the message stream (GET is read-only); feeding spends treats to top up the pools.
-  const growthStore = new DrizzleGrowthStore(db, {
-    initialTreats: DEFAULT_GROWTH_CONFIG.initialTreats,
-  });
+  // Growth (P5): four-axis growth DERIVED from substrate, with an idempotent
+  // high-water mark. The service recomputes post-turn off the message stream (GET is
+  // read-only). Decoupled from feeding — it stores nothing spendable.
+  const growthStore = new DrizzleGrowthStore(db);
+  // The feeding economy's supply: each user's seeded food pantry (companion-economy.md).
+  const food = new DrizzleFoodStore(db, { initialFood: DEFAULT_GROWTH_CONFIG.initialFood });
   const growth = new GrowthService({
     identity,
     semantic,
@@ -336,6 +352,7 @@ async function main(): Promise<void> {
     motivation,
     quota,
     energy,
+    food,
     rewards,
     affect: affectStore,
     growth,
@@ -352,9 +369,9 @@ async function main(): Promise<void> {
     consoleLogger.info('failed interrupted ingestion jobs on startup', { count: failed });
   }
 
-  // Resume parked (deferred) jobs now and on a timer, so work that hit yesterday's
-  // cap drains as allowances reset (architecture.md §4.8). Serial + cap-gated, so
-  // it never overspends.
+  // Resume parked (deferred) jobs now and on a timer, so work that hit an empty
+  // wallet drains as companions are fed (architecture.md §4.8). Serial + wallet-gated,
+  // so it never overspends.
   const sweepDeps = { semantic, quota, ingestion, logger: consoleLogger };
   await resumeDeferredJobs(sweepDeps);
   const sweepTimer = setInterval(() => {

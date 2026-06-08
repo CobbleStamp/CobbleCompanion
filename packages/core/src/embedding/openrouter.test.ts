@@ -51,7 +51,7 @@ describe('OpenRouterEmbeddingGateway', () => {
 
   it('derives totalTokens from prompt_tokens, ignoring a bogus total_tokens:0', async () => {
     // A provider that reports real prompt usage but total_tokens:0 must not zero
-    // the daily-cap debit — embeddings have no completion tokens.
+    // the wallet debit — embeddings have no completion tokens.
     vi.stubGlobal(
       'fetch',
       vi.fn(

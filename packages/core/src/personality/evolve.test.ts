@@ -1,7 +1,7 @@
 /**
  * Integration tests for personality evolution against the real in-memory DB:
  * it re-synthesizes the evolved persona from recent episodes, advances the
- * evolution cursor, self-gates when nothing is new, gates on the daily cap, and
+ * evolution cursor, self-gates when nothing is new, gates on the stamina wallet, and
  * never throws. The LLM is faked.
  */
 
@@ -11,25 +11,25 @@ import { DrizzleIdentityStore } from '../identity/store.js';
 import { FakeLlmGateway } from '../llm/fake.js';
 import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../ingestion/untrusted.js';
 import { DrizzleEpisodicMemoryStore, type NewEpisode } from '../memory/episodic-store.js';
-import type { TokenQuotaStore, UsageSnapshot } from '../quota/stamina-store.js';
+import type { VitalityStore } from '../quota/vitality-store.js';
 import { LlmPersonalityEvolver, type PersonalityEvolverOptions } from './evolve.js';
 
 const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn() };
 const PERSONA_TEXT = "You've grown playful with them, and you know they unwind by cooking.";
 
-class FakeQuota implements TokenQuotaStore {
+class FakeQuota implements VitalityStore {
   recorded = 0;
   constructor(private readonly overCap = false) {}
-  async getUsage(): Promise<UsageSnapshot> {
-    return { usedTokens: 0, capTokens: 1_000_000, resetsAt: '2026-01-01T00:00:00.000Z' };
+  async getBalance(): Promise<number> {
+    return this.overCap ? 0 : 1_000_000;
   }
-  async recordUsage(_userId: string, totalTokens: number): Promise<void> {
+  async spend(_companionId: string, totalTokens: number): Promise<void> {
     this.recorded += totalTokens;
   }
-  async isOverCap(): Promise<boolean> {
+  async add(): Promise<void> {}
+  async isEmpty(): Promise<boolean> {
     return this.overCap;
   }
-  async topUp(): Promise<void> {}
 }
 
 describe('LlmPersonalityEvolver', () => {
@@ -106,7 +106,7 @@ describe('LlmPersonalityEvolver', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it('skips synthesis when the owner is over the daily cap', async () => {
+  it('skips synthesis when the stamina wallet is empty', async () => {
     await seedEpisodes(8);
     const llm = new FakeLlmGateway([PERSONA_TEXT]);
     const spy = vi.spyOn(llm, 'stream');
@@ -178,7 +178,7 @@ describe('LlmPersonalityEvolver', () => {
     await seedEpisodes(8);
     const quota = new FakeQuota(false);
     const debitError = new Error('quota backend unavailable');
-    vi.spyOn(quota, 'recordUsage').mockRejectedValue(debitError);
+    vi.spyOn(quota, 'spend').mockRejectedValue(debitError);
     logger.error.mockClear();
 
     await evolver({ quota }, new FakeLlmGateway([PERSONA_TEXT])).evolve(companionId);

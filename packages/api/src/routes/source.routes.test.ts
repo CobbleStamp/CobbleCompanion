@@ -56,9 +56,11 @@ describe('source routes', () => {
     expect(jobs[0].status).toBe('done');
     expect(jobs[0].sectionsDone).toBe(jobs[0].sectionsTotal);
 
-    // Ingestion's LLM + embedding tokens are debited to the owner's daily cap.
-    const owner = await ctx.deps.identity.ensureUserByEmail('owner@example.com');
-    expect((await ctx.deps.quota.getUsage(owner.id)).usedTokens).toBeGreaterThan(0);
+    // Ingestion's LLM + embedding tokens are debited from the companion's stamina
+    // wallet, dropping its balance below the seeded start.
+    expect(await ctx.deps.quota.getBalance(companionId)).toBeLessThan(
+      ctx.deps.config.startingVitalityTokens,
+    );
   });
 
   it('rejects an invalid note body', async () => {

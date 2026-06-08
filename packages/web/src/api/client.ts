@@ -7,6 +7,7 @@ import type {
   EpisodeDto,
   EpisodeSearchResultDto,
   FeedResultDto,
+  FoodInventoryDto,
   FoodType,
   GrowthDto,
   IngestionJobDto,
@@ -191,27 +192,21 @@ export async function deleteSource(companionId: string, sourceId: string): Promi
   await send(`/companions/${companionId}/sources/${sourceId}`, { method: 'DELETE' });
 }
 
-/** The signed-in user's daily token-budget standing (the live usage indicator). */
-export async function getUsage(): Promise<UsageDto> {
-  const body = await request<{ usage: UsageDto }>(`/usage`);
+/** A companion's stamina-wallet balance (the live indicator). */
+export async function getUsage(companionId: string): Promise<UsageDto> {
+  const body = await request<{ usage: UsageDto }>(`/companions/${companionId}/usage`);
   return body.usage;
 }
 
-/** The companion's two vitality pools — stamina + energy (Phase 4 meter). */
+/** The companion's two vitality wallets — stamina + energy (Phase 4 meter). */
 export async function fetchBudget(companionId: string): Promise<StaminaEnergyDto> {
   return request<StaminaEnergyDto>(`/companions/${companionId}/budget`);
 }
 
-/** Feed a vitality pool (the simple manual top-up). Returns the updated meter. */
-export async function topUpBudget(
-  companionId: string,
-  pool: 'stamina' | 'energy',
-  amount: number,
-): Promise<StaminaEnergyDto> {
-  return request<StaminaEnergyDto>(`/companions/${companionId}/budget/topup`, {
-    method: 'POST',
-    body: JSON.stringify({ pool, amount }),
-  });
+/** The signed-in user's food pantry — the Kitchen's supply (per user). */
+export async function getFood(): Promise<FoodInventoryDto> {
+  const body = await request<{ food: FoodInventoryDto }>(`/food`);
+  return body.food;
 }
 
 /** The companion's four-axis growth standing (Phase 5). */
@@ -219,7 +214,7 @@ export async function fetchGrowth(companionId: string): Promise<GrowthDto> {
   return request<GrowthDto>(`/companions/${companionId}/growth`);
 }
 
-/** Give the companion a food (Phase 5 feeding economy) — spends treats, tops up a pool. */
+/** Feed the companion a food — consumes one from the user's pantry, refills a wallet. */
 export async function feedCompanion(companionId: string, food: FoodType): Promise<FeedResultDto> {
   return request<FeedResultDto>(`/companions/${companionId}/feed`, {
     method: 'POST',

@@ -1,5 +1,7 @@
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { loadConfig } from './config.js';
+import { loadConfig, pathsOverlap } from './config.js';
 
 const base = {
   DATABASE_URL: 'postgres://localhost/cobble',
@@ -25,18 +27,18 @@ describe('loadConfig', () => {
     expect(config.useContextHeader).toBe(true);
     expect(config.ingestionMaxBytes).toBeGreaterThan(0);
     expect(config.ingestionQueueMax).toBe(100);
-    expect(config.tokenCapPerDay).toBe(1_000_000);
+    expect(config.startingVitalityTokens).toBe(1_000_000);
   });
 
-  it('overrides the queue + token-cap knobs from the environment', () => {
+  it('overrides the queue + starting-vitality knobs from the environment', () => {
     const config = loadConfig({
       ...base,
       ...fakeProviders,
       INGESTION_QUEUE_MAX: '2',
-      TOKEN_CAP_PER_DAY: '50000',
+      STARTING_VITALITY_TOKENS: '50000',
     });
     expect(config.ingestionQueueMax).toBe(2);
-    expect(config.tokenCapPerDay).toBe(50000);
+    expect(config.startingVitalityTokens).toBe(50000);
   });
 
   it('requires GOOGLE_CLIENT_ID when AUTH_MODE=google', () => {
@@ -120,6 +122,67 @@ describe('loadConfig', () => {
       NODE_ENV: 'production',
     });
     expect(config.isProduction).toBe(true);
+  });
+
+  describe('CLI_TOOLS_PATH / CLI_SCRATCH_DIR overlap', () => {
+    it('accepts a tools dir disjoint from an explicit scratch dir', () => {
+      const config = loadConfig({
+        ...base,
+        ...fakeProviders,
+        CLI_TOOLS_PATH: '/opt/cli-tools',
+        CLI_SCRATCH_DIR: '/var/cli-scratch',
+      });
+      expect(config.cliToolsPath).toBe('/opt/cli-tools');
+      expect(config.cliScratchDir).toBe('/var/cli-scratch');
+    });
+
+    it('rejects a scratch dir nested inside the tools dir', () => {
+      expect(() =>
+        loadConfig({
+          ...base,
+          ...fakeProviders,
+          CLI_TOOLS_PATH: '/opt/cli-tools',
+          CLI_SCRATCH_DIR: '/opt/cli-tools/scratch',
+        }),
+      ).toThrow(/CLI_TOOLS_PATH must not overlap/);
+    });
+
+    it('rejects a tools dir equal to the scratch dir', () => {
+      expect(() =>
+        loadConfig({
+          ...base,
+          ...fakeProviders,
+          CLI_TOOLS_PATH: '/srv/cli',
+          CLI_SCRATCH_DIR: '/srv/cli',
+        }),
+      ).toThrow(/CLI_TOOLS_PATH must not overlap/);
+    });
+
+    it('rejects a tools dir under the default scratch (OS temp) when scratch is unset', () => {
+      expect(() =>
+        loadConfig({
+          ...base,
+          ...fakeProviders,
+          CLI_TOOLS_PATH: join(tmpdir(), 'cli-tools'),
+        }),
+      ).toThrow(/CLI_TOOLS_PATH must not overlap/);
+    });
+
+    it('leaves the check off when CLI_TOOLS_PATH is empty (CLI track disabled)', () => {
+      const config = loadConfig({ ...base, ...fakeProviders });
+      expect(config.cliToolsPath).toBe('');
+    });
+  });
+
+  describe('pathsOverlap', () => {
+    it('detects equality, nesting (both directions), and disjoint paths', () => {
+      expect(pathsOverlap('/a/b', '/a/b')).toBe(true);
+      expect(pathsOverlap('/a', '/a/b')).toBe(true);
+      expect(pathsOverlap('/a/b', '/a')).toBe(true);
+      expect(pathsOverlap('/a/b', '/a/c')).toBe(false);
+      // A shared name prefix is not nesting: /a/bc is not inside /a/b.
+      expect(pathsOverlap('/a/b', '/a/bc')).toBe(false);
+    });
   });
 
   describe('MCP_SERVERS', () => {

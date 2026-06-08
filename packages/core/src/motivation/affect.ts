@@ -23,7 +23,7 @@
 import type { LlmGateway, StreamResult } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import { affectSenseTemplate, render, REPORT_AFFECT } from '../prompts/index.js';
-import type { TokenQuotaStore } from '../quota/stamina-store.js';
+import type { VitalityStore } from '../quota/vitality-store.js';
 import { createUsageAccumulator, meteredLlmGateway } from '../usage.js';
 
 /** A single read of the user's emotional state. */
@@ -43,13 +43,16 @@ export interface AffectSenseDeps {
   /** Cheap model for the one-shot read (reuse the ingestion model). */
   readonly model: string;
   readonly logger: Logger;
-  /** Bills the read to the user's stamina; omit = unmetered (tests). */
-  readonly quota?: TokenQuotaStore;
+  /** Bills the read to the companion's stamina; omit = unmetered (tests). */
+  readonly quota?: VitalityStore;
 }
 
 export interface AffectSenseParams {
-  /** The user whose stamina the read is billed to. */
-  readonly ownerId?: string;
+  /**
+   * The companion whose stamina the read is billed to. The affect read rides the
+   * chat turn (user-initiated work), so it draws stamina (architecture.md §4.8).
+   */
+  readonly companionId?: string;
   /** A short slice of the recent conversation, for context. */
   readonly recentContext: string;
   /** The user's latest message — the turn being read. */
@@ -90,7 +93,7 @@ export async function senseAffect(
   } catch (error) {
     deps.logger.error('failed to sense user affect', {
       operation: 'motivation.affect.sense',
-      ownerId: params.ownerId,
+      companionId: params.companionId,
       error,
     });
     return null; // a hard failure is no read at all — never a fake neutral
@@ -99,15 +102,15 @@ export async function senseAffect(
     // mid-stream throw still bills what was already metered. Whether or not the
     // model reported, the read happened. A quota hiccup is our infra fault and must
     // never void the outcome (logging.md, billing-crash policy).
-    if (deps.quota && params.ownerId) {
+    if (deps.quota && params.companionId) {
       const total = usage.total().totalTokens;
       if (total > 0) {
         try {
-          await deps.quota.recordUsage(params.ownerId, total);
+          await deps.quota.spend(params.companionId, total);
         } catch (error) {
           deps.logger.error('failed to record affect read usage', {
             operation: 'motivation.affect.bill',
-            ownerId: params.ownerId,
+            companionId: params.companionId,
             error,
           });
         }

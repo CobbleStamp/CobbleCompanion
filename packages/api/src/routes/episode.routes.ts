@@ -2,7 +2,7 @@
  * Episodic memory routes (Phase 2) — the companion's consolidated memories of
  * your shared history. A read-only timeline for the memory browser and a recall
  * endpoint (hybrid topic search). All owner-scoped; search spends an embedding
- * so it is gated by the same daily token cap as semantic search.
+ * so it is gated by the same stamina wallet as semantic search.
  */
 
 import type { EpisodeDto, EpisodeSearchResultDto } from '@cobble/shared';
@@ -42,7 +42,7 @@ export function registerEpisodeRoutes(
     },
   );
 
-  // Recall episodes by topic (hybrid vector + FTS), gated by the daily cap.
+  // Recall episodes by topic (hybrid vector + FTS), gated by the stamina wallet.
   app.post(
     '/companions/:companionId/episodes/search',
     { preHandler: requireAuth },
@@ -56,7 +56,7 @@ export function registerEpisodeRoutes(
       if (!companion) {
         return reply.code(404).send({ error: 'companion not found' });
       }
-      const overCap = await overCapGuard(quota, request.userId!);
+      const overCap = await overCapGuard(quota, companion.id);
       if (overCap) {
         return reply.code(429).send({ error: overCap });
       }
@@ -81,7 +81,7 @@ export function registerEpisodeRoutes(
         });
       }
       try {
-        await quota.recordUsage(request.userId!, searchTokens);
+        await quota.spend(companion.id, searchTokens);
       } catch (error) {
         logger.error('failed to record episode-search token usage', {
           operation: 'episodes.search',

@@ -20,7 +20,7 @@
  */
 
 import type { Logger } from '../logging.js';
-import type { ToolLoadAdvisor } from '../mcp/load-advisor.js';
+import type { ToolLoadAdvisor } from '../acquisition/load-advisor.js';
 import type { ProceduralStore } from '../tools/procedural-store.js';
 import { ZERO_USAGE } from '../usage.js';
 import type { ContextBlock, RetrieveContext } from './hooks.js';
