@@ -16,8 +16,8 @@ linked here, never copied:
 
 ## 1. The mental model
 
-The companion's knowledge base is **three long-term memories** plus an approval
-queue (see [`product-overview.md`](./product-overview.md) §2.1):
+The companion's knowledge base is **three long-term memories** (see
+[`product-overview.md`](./product-overview.md) §2.1):
 
 | Memory         | Holds                                            | Example                                    |
 | -------------- | ------------------------------------------------ | ------------------------------------------ |
@@ -65,7 +65,7 @@ the fact overlay's contract: [`ontology.md`](./ontology.md).
 
 ## 3. What the memory system holds
 
-The companion holds all three long-term memories plus the inventory/approval substrate:
+The companion holds all three long-term memories plus the lead-inventory substrate:
 
 | Memory / feature    | What it is                                                                                              |
 | ------------------- | ------------------------------------------------------------------------------------------------------- |
@@ -74,8 +74,14 @@ The companion holds all three long-term memories plus the inventory/approval sub
 | Episodic store      | Consolidated episodes + personality evolution                                                            |
 | Procedural memory   | Workflows seeded from approved actions; a relevant learned routine also resurfaces in context as a retrieval-as-hint (`architecture.md` §4.3) |
 | Lead inventory      | The reading list (discovered URLs) — the body-then-will substrate, worked on command and by the motivation engine on idle |
-| Bond & growth       | Four-axis growth mirror derived from activity + the feeding economy (`companion-economy.md`)             |
-| Approval queue      | Propose→approve, exactly-once                                                                            |
+
+> **Not held *as* memory.** Two things the companion holds are surfaced near memory but are not
+> long-term memory, and are owned elsewhere — they are deliberately out of this table:
+> - the **growth mirror** (knowledge · bond · initiative · character) is a *derived readout* of the
+>   accumulation above, owned by the **Growth Service** (`architecture.md` §4.3, §3; data model
+>   `implementation.md` §1) and shown in the separate Growth view, not the memory browser;
+> - the **approval queue** is the propose→approve trust gate, owned by `architecture.md` §4.4
+>   (vision `product-overview.md` §5.3) — the browser merely *surfaces* it as approval cards (§4).
 
 The browser and eval harness below are designed so each memory kind slots in cleanly. A user-facing
 manage/delete capability is out of scope (§6).
