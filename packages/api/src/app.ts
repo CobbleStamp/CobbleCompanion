@@ -21,6 +21,7 @@ import type {
   SemanticMemoryStore,
   ToolCallLog,
   ToolRegistry,
+  UserModelStore,
   VitalityStore,
 } from '@cobble/core';
 import cors from '@fastify/cors';
@@ -56,6 +57,9 @@ declare module 'fastify' {
 /** Everything the API needs, injected so tests can supply fakes/in-memory deps. */
 export interface AppDeps {
   readonly identity: IdentityStore;
+  /** The User Model — per-user identity facts (Phase 11). Seeds the name on sign-in
+   *  and backs the user-model routes; the harness reads/writes it during a turn. */
+  readonly userModel: UserModelStore;
   readonly memory: MemoryStore;
   readonly semantic: SemanticMemoryStore;
   readonly episodic: EpisodicMemoryStore;

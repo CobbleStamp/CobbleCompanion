@@ -1,4 +1,4 @@
-import type { CompanionDto } from '@cobble/shared';
+import type { CompanionDto, UserFactDto } from '@cobble/shared';
 import type { LlmMessage } from '../llm/gateway.js';
 import type { AffectReading } from '../motivation/affect.js';
 import {
@@ -69,18 +69,44 @@ export function affectAttunementLine(affect: AffectReading | null | undefined): 
 }
 
 /**
- * Build the persona system prompt from the companion "home" identity row
- * (architecture.md §4.3 input #1). `userName` is what the companion calls the user
- * (null when not yet known — the persona then prompts the companion to find out).
+ * Human labels for the Tier-1 core-profile predicates the persona renders. Keeps
+ * the prompt readable ("lives in: Berlin") without leaking the predicate vocabulary;
+ * an unmapped predicate falls back to itself, so a new attribute still renders.
  */
-export function buildPersona(companion: CompanionDto, userName: string | null): string {
+const PROFILE_LABELS: Readonly<Record<string, string>> = {
+  pronouns: 'pronouns',
+  gender: 'gender',
+  bornOn: 'born on',
+  age: 'age',
+  livesIn: 'lives in',
+  worksAs: 'works as',
+  languages: 'speaks',
+  relationships: 'relationships',
+};
+
+/**
+ * Build the persona system prompt from the companion "home" identity row
+ * (architecture.md §4.3 input #1) and the user's Tier-1 core profile — the current
+ * `user_facts` (companion-memory.md §4). The `name` fact becomes how the companion
+ * addresses the user (absent → the persona prompts it to find out); the rest render
+ * as a compact "what I know about you" line.
+ */
+export function buildPersona(companion: CompanionDto, profile: readonly UserFactDto[]): string {
+  const nameFact = profile.find((fact) => fact.predicate === 'name');
+  const userProfile = profile
+    .filter((fact) => fact.predicate !== null && fact.predicate !== 'name')
+    .map((fact) => ({
+      label: PROFILE_LABELS[fact.predicate as string] ?? (fact.predicate as string),
+      value: fact.object,
+    }));
   return singleContent(
     render(personaTemplate, {
       name: companion.name,
       form: companion.form,
       temperament: companion.temperament,
       evolvedPersona: companion.evolvedPersona,
-      userName,
+      userName: nameFact?.object ?? null,
+      userProfile,
     }),
   );
 }
@@ -95,9 +121,9 @@ export function assembleContext(
   companion: CompanionDto,
   history: readonly ContextBlock[],
   affect?: AffectReading | null,
-  userName: string | null = null,
+  profile: readonly UserFactDto[] = [],
 ): LlmMessage[] {
-  const messages: LlmMessage[] = [{ role: 'system', content: buildPersona(companion, userName) }];
+  const messages: LlmMessage[] = [{ role: 'system', content: buildPersona(companion, profile) }];
   const attunement = affectAttunementLine(affect);
   if (attunement) {
     messages.push({ role: 'system', content: attunement });

@@ -5,8 +5,6 @@ import { and, eq } from 'drizzle-orm';
 export interface UserRecord {
   readonly id: string;
   readonly email: string;
-  /** What the companion calls the user; null until seeded from Google or learned. */
-  readonly displayName: string | null;
   readonly createdAt: string;
 }
 
@@ -46,22 +44,13 @@ export interface CompanionRecord {
  */
 export interface IdentityStore {
   /**
-   * JIT-provision the user for a verified email, returning the row. `seedName` is
-   * the Google ID token's (unverified) display name: it is written ONLY when the
-   * row is first created, never on a later sign-in — so a name later persisted via
-   * {@link setUserDisplayName} is never clobbered by Google.
+   * JIT-provision the user for a verified email, returning the row. Idempotent — a
+   * later sign-in returns the existing row. The user's NAME is not stored here: it is
+   * a Tier-1 `user_fact` (seeded from the Google name claim by the auth boundary,
+   * then refined in conversation — companion-memory.md §4, user-model/store.ts).
    */
-  ensureUserByEmail(email: string, seedName?: string): Promise<UserRecord>;
+  ensureUserByEmail(email: string): Promise<UserRecord>;
   getUserById(id: string): Promise<UserRecord | null>;
-  /**
-   * Persist the name the user wants to be called — authoritative over the Google
-   * seed; keyed by userId. NOTE: no caller yet. The path that captures a name the
-   * user states in conversation is not built (it is the open design question — see
-   * docs/companion-memory.md). Today `display_name` is only ever set by the Google
-   * seed in {@link ensureUserByEmail}; this method is the persistence primitive
-   * that capture path will use.
-   */
-  setUserDisplayName(userId: string, displayName: string): Promise<void>;
   createCompanion(ownerId: string, input: CreateCompanionInput): Promise<CompanionDto>;
   getCompanion(id: string, ownerId: string): Promise<CompanionDto | null>;
   /**
@@ -118,15 +107,10 @@ export class DrizzleIdentityStore implements IdentityStore {
     this.startingVitalityTokens = seed;
   }
 
-  async ensureUserByEmail(email: string, seedName?: string): Promise<UserRecord> {
-    // Set-once seed: `onConflictDoNothing` means an existing user keeps whatever
-    // display name they already have (Google seed or a confirmed name), so a later
-    // sign-in never overwrites it. A trimmed-empty seed is treated as absent.
-    const displayName = seedName?.trim() ? seedName.trim() : undefined;
-    await this.db
-      .insert(users)
-      .values({ email, ...(displayName ? { displayName } : {}) })
-      .onConflictDoNothing();
+  async ensureUserByEmail(email: string): Promise<UserRecord> {
+    // `onConflictDoNothing` makes provisioning idempotent: an existing user is left
+    // untouched and re-read below. The name lives in `user_facts`, not here.
+    await this.db.insert(users).values({ email }).onConflictDoNothing();
     const [row] = await this.db.select().from(users).where(eq(users.email, email)).limit(1);
     if (!row) {
       throw new Error('failed to ensure user by email');
@@ -137,10 +121,6 @@ export class DrizzleIdentityStore implements IdentityStore {
   async getUserById(id: string): Promise<UserRecord | null> {
     const [row] = await this.db.select().from(users).where(eq(users.id, id)).limit(1);
     return row ? toUserRecord(row) : null;
-  }
-
-  async setUserDisplayName(userId: string, displayName: string): Promise<void> {
-    await this.db.update(users).set({ displayName }).where(eq(users.id, userId));
   }
 
   async createCompanion(ownerId: string, input: CreateCompanionInput): Promise<CompanionDto> {
@@ -211,7 +191,6 @@ function toUserRecord(row: typeof users.$inferSelect): UserRecord {
   return {
     id: row.id,
     email: row.email,
-    displayName: row.displayName,
     createdAt: row.createdAt.toISOString(),
   };
 }

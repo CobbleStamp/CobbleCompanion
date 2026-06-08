@@ -32,8 +32,8 @@ export interface RecordTranscriptFactInput {
   readonly object: string;
   /** The companion whose conversation taught this (provenance). */
   readonly learnedByCompanionId: string;
-  /** The transcript `seq` this was learned from (provenance). */
-  readonly learnedFromSeq: number;
+  /** The transcript `seq` this was learned from, when known (provenance; nullable). */
+  readonly learnedFromSeq?: number | null;
   /** Core fact type; defaults to `attribute` (identity). */
   readonly factType?: string;
   /** Extractor self-reported confidence (0–1). */
@@ -106,7 +106,7 @@ export class DrizzleUserModelStore implements UserModelStore {
           userId: input.userId,
           source: 'transcript',
           learnedByCompanionId: input.learnedByCompanionId,
-          learnedFromSeq: input.learnedFromSeq,
+          learnedFromSeq: input.learnedFromSeq ?? null,
           factType: input.factType ?? DEFAULT_IDENTITY_FACT_TYPE,
           subject: USER_SUBJECT,
           predicate: input.predicate,

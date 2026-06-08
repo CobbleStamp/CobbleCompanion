@@ -80,14 +80,9 @@ const tsvector = customType<{ data: string }>({
 export const users = pgTable('users', {
   id: uuid('id').defaultRandom().primaryKey(),
   email: text('email').notNull().unique(),
-  // What the companion calls the user. Seeded once at JIT-provision from the
-  // Google ID token's (unverified) `name` claim; the login path only ever SEEDS it
-  // on insert, so a later sign-in never clobbers it (architecture.md §8). Null when
-  // Google supplied no name — the cue for the persona's "what should I call you?".
-  // Persisting a name the user then STATES is the open design question (no capture
-  // path is wired yet; the `setUserDisplayName` primitive exists for it). See
-  // docs/companion-memory.md.
-  displayName: text('display_name'),
+  // The user's NAME is not stored here — it is a Tier-1 `user_fact` (seeded from the
+  // Google name claim at the auth boundary, then refined in conversation; see
+  // `user_facts` below and docs/companion-memory.md §4).
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

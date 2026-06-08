@@ -54,7 +54,21 @@ export function makeRequireAuth(deps: AppDeps): RequireAuth {
       return;
     }
 
-    const user = await deps.identity.ensureUserByEmail(email, seedName);
+    const user = await deps.identity.ensureUserByEmail(email);
     request.userId = user.id;
+    // Seed the name from the Google `name` claim as an `auth_seed` user-fact — only if
+    // the user has no name fact yet, so a later sign-in can never resurrect the seed over
+    // a name the user has since stated/edited (seedName is idempotent + resurrection-
+    // guarded, user-model/store.ts). Best-effort: a seed hiccup must not block the request.
+    if (seedName) {
+      try {
+        await deps.userModel.seedName(user.id, seedName);
+      } catch (error) {
+        deps.logger.error('failed to seed user name from sign-in', {
+          operation: 'auth.seedName',
+          error,
+        });
+      }
+    }
   };
 }
