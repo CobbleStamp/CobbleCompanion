@@ -627,6 +627,17 @@ export interface UserFactDto {
   readonly updatedAt: string;
 }
 
+/** The current user-model facts, as returned by `GET /user/facts`. */
+export interface UserFactsDto {
+  readonly facts: readonly UserFactDto[];
+}
+
+/** Body for editing a user-fact's value in the browser (`PATCH /user/facts/:id`). */
+export const userFactEditSchema = z.object({
+  object: z.string().trim().min(1).max(500),
+});
+export type UserFactEditBody = z.infer<typeof userFactEditSchema>;
+
 // --- Request bodies (validated at the API boundary) ---
 
 export const createCompanionSchema = z.object({

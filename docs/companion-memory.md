@@ -183,10 +183,11 @@ affordance. Sensitive inferences (gender, age, health) are held to a higher conf
 deterministically, fuzzier preferences by LLM judge. A prompt change that loses identity facts or
 invents preferences fails the gate (`ontology.md` §5).
 
-> **Status.** Designed across all three tiers; rollout is the **User-Model workstream**
-> (`development-plan.md` §4c — Phase 11 core profile → 12 learned beliefs → 13 understanding &
-> hygiene). Until then, what the companion knows of you persists only as episodic narrative + the
-> set-once display name; this section is the target design that closes that gap.
+> **Status.** **Phase 11 (core profile) is implemented**: the `user_facts` store, inline capture of
+> explicit identity facts each turn, Tier-1 injection into the persona, the name seeded from sign-in
+> (no more `display_name` column), and the editable/forgettable browser panel — gated by the
+> `user-extract` eval. **Tiers 2–3 are designed, not yet built**: learned-belief retrieval (Phase 12)
+> and the synthesized user persona + decay (Phase 13) — `development-plan.md` §4c.
 
 ## 5. Browsing memory (read-only)
 

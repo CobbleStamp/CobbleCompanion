@@ -22,6 +22,8 @@ import type {
   SourceDto,
   StaminaEnergyDto,
   UsageDto,
+  UserFactDto,
+  UserFactsDto,
 } from '@cobble/shared';
 
 const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? '';
@@ -117,6 +119,25 @@ export async function fetchMessages(companionId: string): Promise<MessageDto[]> 
 export async function getCompanionMemory(companionId: string): Promise<MemorySnapshotDto> {
   const body = await request<{ memory: MemorySnapshotDto }>(`/companions/${companionId}/memory`);
   return body.memory;
+}
+
+/** The current facts the companion knows about the user (per-user; Phase 11). */
+export async function getUserFacts(): Promise<readonly UserFactDto[]> {
+  const body = await request<UserFactsDto>('/user/facts');
+  return body.facts;
+}
+
+/** Correct a fact the companion holds about the user (authoritative user edit). */
+export async function updateUserFact(factId: string, object: string): Promise<UserFactDto> {
+  return request<UserFactDto>(`/user/facts/${factId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ object }),
+  });
+}
+
+/** Forget a fact the companion holds about the user (it leaves the current set). */
+export async function forgetUserFact(factId: string): Promise<void> {
+  await send(`/user/facts/${factId}`, { method: 'DELETE' });
 }
 
 /** A source intake response: the created source and its queued ingestion job. */

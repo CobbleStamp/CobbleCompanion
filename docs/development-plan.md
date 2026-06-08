@@ -45,7 +45,7 @@ being is proven, because they add platform cost without changing whether the cor
 | **8** | Hardening & launch readiness | All | Security, scale, privacy controls, monetization | Planned |
 | **9** | Tool acquisition — MCP | Web / server-host | Whitelisted HTTP MCP servers discovered, loaded & used at runtime, no redeploy | ✅ **Done** (PR #10) |
 | **10** | Tool acquisition — CLI | Web / server-host | Whitelisted host CLIs discovered, loaded & driven at runtime, no redeploy | ✅ **Done** (PR #11) |
-| **11** | User Model — core profile | Web | Cobble captures & uses the user's identity facts (name, pronouns, age, …) ⭐ | Planned (§4c) |
+| **11** | User Model — core profile | Web | Cobble captures & uses the user's identity facts (name, pronouns, age, …) ⭐ | ✅ **Done** (§4c) |
 | **12** | User Model — learned beliefs | Web | Continuously learns preferences/interests/opinions; surfaces them unprompted | Planned (§4c) |
 | **13** | User Model — understanding & hygiene | Web | Synthesized user-persona; supersession/decay; full edit/forget UI | Planned (§4c) |
 
