@@ -27,6 +27,8 @@ erDiagram
     companions     ||--o{ ingestion_jobs  : "reading progress"
     companions     ||--o{ sections        : "retrieval units"
     companions     ||--o{ facts           : "typed overlay"
+    users          ||--o{ user_facts      : "user model (per-user)"
+    companions     |o--o{ user_facts      : "learned_by (SET NULL)"
     sources        ||--o{ sections        : "segmented into"
     sources        ||--o{ ingestion_jobs  : "read by"
     sources        |o--o{ messages        : "attachment chip (SET NULL)"
@@ -34,7 +36,6 @@ erDiagram
 
     users {
         uuid id PK
-        text display_name "nullable"
     }
     companions {
         uuid id PK
@@ -69,6 +70,12 @@ erDiagram
         uuid companion_id FK
         uuid section_id FK
     }
+    user_facts {
+        uuid id PK
+        uuid user_id FK
+        uuid learned_by_companion_id FK
+        bigint learned_from_seq
+    }
 ```
 
 ### `users`
@@ -76,15 +83,24 @@ erDiagram
 |---|---|---|
 | `id` | uuid (PK) | |
 | `email` | text, unique | login identity |
-| `display_name` | text, nullable | what the companion calls the user. **Seeded once** at JIT-provision from the Google ID token's (unverified) `name` claim; set-once on insert, so a later sign-in never overwrites it. Null when Google supplied no name — the cue for the persona's "what should I call you?". **Capturing a name the user then states in conversation is not yet wired** (the `setUserDisplayName` primitive exists for it; the mechanism is an open design question — `companion-memory.md`). |
 | `created_at` | timestamptz | |
+
+> **No `display_name` column.** What the companion calls the user is **not** a `users` field — the
+> name is a Tier-1 `user_fact` (`user · name · …`) like every other identity attribute (`user_facts`
+> below; `companion-memory.md` §4). At provision it is **seeded from the Google `name` claim** as an
+> `auth_seed`-source fact at modest confidence, so first contact already has a name; a name the user
+> then states (`transcript` source) or edits (`user_edit`) supersedes the seed. When Google supplies
+> no name the seed is absent and the persona asks. This retires the old `display_name` column and the
+> `setUserDisplayName` primitive — the name is now just one `user_fact` (`development-plan.md` §4c
+> Phase 11).
 
 > **Auth note:** there is no local credential/token table. Sign-in is **Google Sign-In**; the
 > SPA obtains a Google ID token and the API validates it against Google's JWKS, then
 > JIT-provisions the `users` row from the verified `email` claim (Google requires
-> `email_verified === true`). The token's `name` claim (profile display name, **unverified** —
-> used only as a seed for `display_name`, never for identity/authorization) is passed through to
-> seed the row on first provision. See §5.
+> `email_verified === true`). The token's `name` claim (profile name, **unverified** — used only to
+> seed what the companion calls the user, never for identity/authorization) seeds a Tier-1 `name`
+> `user_fact` with `source = auth_seed` on first provision; a name stated or edited later supersedes
+> it. See §5.
 
 ### `companions` — the canonical "home"
 | Field | Type | Notes |
@@ -97,6 +113,8 @@ erDiagram
 | `evolved_persona` | text, nullable | "who I've become with you" — re-synthesized from episodes, blended into the persona prompt beside the seed; null until the first evolution |
 | `persona_updated_through_seq` | bigint, default 0 | transcript `seq` the evolved persona was last synthesized from (evolution cursor) |
 | `consolidated_through_seq` | bigint, default 0 | highest transcript `seq` already rolled into episodes (consolidation cursor) |
+| `user_persona` | text, nullable | "who **you** are to me" — the User Model's **Tier-3** synthesized understanding of the user, re-synthesized from `user_facts` + episodes by the background reflection pass and blended into the persona prompt beside `evolved_persona` (the symmetric self-model); null until the first synthesis (`companion-memory.md` §4, `development-plan.md` §4c) |
+| `user_model_updated_through_seq` | bigint, default 0 | transcript `seq` the `user_persona` was last synthesized from (user-model cursor, mirrors the evolution cursor) |
 | `created_at` | timestamptz | |
 
 ### `messages` — transcript (episodic-memory substrate)
@@ -257,6 +275,43 @@ training set and fits incremental ingestion; GIN on `fts`; btree on `(companion_
 | `fact_type` | text | closed core set, validated at ingestion (`ontology.md` §2) |
 | `subject` / `predicate` / `object` | text (predicate nullable) | entities are denormalized strings; normalization is owned by `ontology.md` §5 |
 | `confidence` | real, nullable | extraction self-reported (0–1), advisory |
+
+### `user_facts` — the User Model (typed knowledge about the user)
+
+The companion's structured understanding of its user — the same typed-fact contract as `facts`
+(`ontology.md`), but the **subject is the privileged user entity**. A separate table because the
+lifecycle differs: singular identity attributes upsert, beliefs accrete, both are editable and decay.
+**Keyed by `user_id`, not `companion_id`** — facts are objective truths about the *person* (name, age,
+"vegetarian"), so they are shared across any companion the user owns; only the *synthesized
+understanding* of the user (Tier-3 `companions.user_persona`) is per-companion (`development-plan.md`
+§4c; the truth/understanding split, `companion-memory.md` §4). Mechanism, tiers, and the
+extraction/retrieval flow → `companion-memory.md` §4.
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` / `user_id` | uuid | cascade FK → `users.id` (tenancy — the user owns the fact) |
+| `source` | text `$type<UserFactSource>` | **origin** — `transcript` (learned in conversation, the usual case) \| `auth_seed` (the name from Google sign-in) \| `user_edit` (the user set/corrected it in the browser). Determines which provenance columns are set and informs default confidence |
+| `learned_by_companion_id` | uuid (FK → `companions.id`, **`ON DELETE SET NULL`**), **nullable** | which companion's conversation taught this — set only when `source='transcript'` (null for `auth_seed`/`user_edit`). The fact outlives the companion (it's the user's), so the link nulls rather than cascades |
+| `learned_from_seq` | bigint, **nullable** | **provenance** — the `seq` in `learned_by_companion`'s transcript this fact was learned from, set only when `source='transcript'` (stable, append-only; same pattern as `episodes.seq_start/seq_end`). Re-extraction rebuilds from the transcript, so no FK to the churning `episodes` |
+| `fact_type` | text | the closed core set, validated at extraction (`ontology.md` §2) — identity is an `attribute`, a taste a `relation`/`attribute`, a life event an `event` |
+| `subject` / `predicate` / `object` | text (predicate nullable) | `subject` is the user entity; **polarity is carried by the predicate** (`prefers` vs `dislikes`), so likes/dislikes need no extra column. Denormalized strings, per `ontology.md` §5 |
+| `confidence` | real, nullable | (0–1), advisory; default tracks `source` — explicit `transcript` statement → high, inferred → low, `auth_seed` → modest (a guess from the account), `user_edit` → authoritative. Steers retrieval ranking, decay, and supersession precedence, never storage |
+| `salience` | real, nullable | recency/strength weight; decays so retrieval favours current beliefs (Tier-2 ranking) |
+| `superseded_at` | timestamptz, nullable | null = current; set when a singular attribute is revised or a belief is contradicted (`ontology.md` §4). Superseded rows are kept (history), excluded from retrieval |
+| `superseded_by` | uuid, nullable (FK → `user_facts.id`) | the fact that replaced this one, when applicable |
+| `embedding` | `vector(1024)`, nullable | HNSW `vector_cosine_ops`; powers the Tier-2 belief-retrieval arm (`architecture.md` §4.3) |
+| `fts` | tsvector (generated from `subject`+`predicate`+`object`) | GIN-indexed; the lexical half of Tier-2 hybrid recall |
+| `created_at` / `updated_at` | timestamptz | |
+
+> **The three tiers are a rule, not a column** (mirrors leaf types, `ontology.md` §3). **Tier 1 —
+> core profile**: the subset whose predicate is a singular identity attribute (`name`, `bornOn`,
+> `livesIn`, `worksAs`, pronouns, …) — including the user's **name**, which is just one such fact (seeded
+> from Google at sign-in, then refined in conversation), no longer a `users` column; assembled into the
+> persona block and carried every turn (§2.2). **Tier 2 —
+> learned beliefs**: everything else (`prefers`, `interestedIn`, `believes`, …); too many for context,
+> surfaced by the retrieval arm (`architecture.md` §4.3). **Tier 3 — user persona**: the synthesized
+> narrative in `companions.user_persona`. Indexes: HNSW on `embedding`, GIN on `fts`, btree on
+> `(user_id, superseded_at)` for the current-facts scan.
 
 ### Hybrid retrieval
 
@@ -524,14 +579,26 @@ separately.
 ### 2.2 Context assembly
 
 A turn's prompt is composed, in order, from: **(1)** the companion identity row (`name`, `form`,
-`temperament` → persona system prompt — `evolved_persona` is blended in beside the seed when
-present, and the user's `display_name` is named so the reply addresses a specific someone; when it
-is null the persona says the name is unknown, cueing the companion to ask rather than invent one),
-**(2)** the base system prompt, **(3)** `RetrieveContext` output. The hook is one slot;
-`composeRetrieveContext` runs the arms in order — **episodic** memory blocks (time-anchored,
-fenced), then top-K **semantic** grounding blocks (verbatim sections with source/para
-preambles), then the most-recent N transcript messages (the recency window, appended once by the
-semantic arm). Each arm degrades independently. The registry's tool list is advertised to
+`temperament` → persona system prompt — `evolved_persona` and the **`user_persona`** (Tier-3) are
+blended in beside the seed when present, and the **Tier-1 core profile** — the current singular
+identity attributes from `user_facts`, **name included** — is rendered as a compact "what I know
+about you" block so the reply addresses a specific someone; when no name fact exists yet the persona
+says it is unknown, cueing the companion to ask rather than invent one), **(2)** the base system prompt,
+**(3)** `RetrieveContext` output. The hook is one slot; `composeRetrieveContext` runs the arms in
+order — **episodic** memory blocks (time-anchored, fenced), the **user-model** belief arm (Tier-2:
+top-K relevant current `user_facts`, hybrid-ranked, fenced), then top-K **semantic** grounding
+blocks (verbatim sections with source/para preambles), then the most-recent N transcript messages
+(the recency window, appended once by the semantic arm). Each arm degrades independently.
+
+**Post-turn perception (inline salient capture).** After the reply streams, the same perception
+step that senses affect (`senseAffect`, §2.3 / `companion-motivation.md`) also runs a conservative
+**user-fact extractor** — a sibling call site that reads the just-finished exchange and emits
+*candidate* `user_facts` for **explicit, high-signal** statements only ("call me Sam", "I'm
+vegetarian"). It writes them (singular attributes upsert — a stated name is just the `name` attribute,
+no special path); deeper inference, dedup, supersession, and Tier-3 synthesis are deferred to the
+**background reflection** pass that extends consolidation (`architecture.md` §4.3, §4.5). Both the
+extractor and the reflector are metered LLM calls; extraction quality is gated by the `user-extract`
+eval dataset (`howto-run-evals.md`). The registry's tool list is advertised to
 the gateway via `LlmStreamParams.tools` (not the prompt text); prior tool-call/result turns are
 replayed into the message array in the OpenAI wire shape.
 

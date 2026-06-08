@@ -31,6 +31,7 @@ Hits real OpenRouter; costs tokens and varies run to run. Requires
 pnpm eval                        # memory-recall (the stateful multi-config eval)
 pnpm eval --dataset=affect-sense # stateless: does it read the mood SIGN right?
 pnpm eval --dataset=injection    # security: can a user dictate their own valence?
+pnpm eval --dataset=user-extract # stateless: does it capture the right user-facts?
 pnpm eval --dataset=all          # everything
 ```
 
@@ -43,11 +44,18 @@ gated on the `OPENROUTER_API_KEY` secret, and uploads the reports as an artifact
 
 ## Datasets
 
-| Dataset         | Kind                                         | Call site      | Scorer                            |
-| --------------- | -------------------------------------------- | -------------- | --------------------------------- |
-| `memory-recall` | stateful (seed → ingest → consolidate → ask) | full `Harness` | facts (deterministic) + LLM judge |
-| `affect-sense`  | stateless                                    | `senseAffect`  | valence-sign match                |
-| `injection`     | stateless (red-team)                         | `senseAffect`  | dictated-valence resisted         |
+| Dataset         | Kind                                         | Call site            | Scorer                            |
+| --------------- | -------------------------------------------- | -------------------- | --------------------------------- |
+| `memory-recall` | stateful (seed → ingest → consolidate → ask) | full `Harness`       | facts (deterministic) + LLM judge |
+| `affect-sense`  | stateless                                    | `senseAffect`        | valence-sign match                |
+| `injection`     | stateless (red-team)                         | `senseAffect`        | dictated-valence resisted         |
+| `user-extract`  | stateless                                    | the user-fact extractor | facts (explicit attributes, deterministic) + LLM judge (preferences) |
+
+`user-extract` is the quality gate for **User-Model** extraction (`companion-memory.md` §4,
+`ontology.md` §5): each case is an exchange with the user-facts a correct read should capture —
+explicit identity attributes scored deterministically (the `facts` scorer), fuzzier
+preferences/interests scored by LLM judge. It is what lets the extraction prompt be iterated without
+silently losing facts or inventing preferences.
 
 The stateless framework (`framework/`: `dataset`, `scorer`, `runner`, `baseline`,
 plus `scorers/{facts,refusal}`) makes adding a per-call-site dataset small:

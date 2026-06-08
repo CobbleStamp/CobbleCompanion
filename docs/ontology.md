@@ -14,13 +14,25 @@ reads (`facts` table, `implementation.md` §1). The overlay is what makes semant
 *organized knowledge* rather than a search index — it powers entity-based metadata retrieval and
 cross-source connection.
 
+The **same typed-fact contract also models the user** (the User-Model workstream,
+`development-plan.md` §4c; mechanism `companion-memory.md` §4). The user is a **privileged
+entity**: facts whose subject is the user — `prefers`, `livesIn`, `bornOn`, `interestedIn`,
+`believes` — are the *same* core types (§2) as facts about a source's entities, drawn from the
+*same* ontology. There is **one ontology**, not two. What differs is only the **provenance
+substrate** (invariant #1 below): a source-fact points at a verbatim `section`; a user-fact points
+at the transcript `message`/`episode` it was learned from. User-facts live in their own
+`user_facts` table (a distinct lifecycle — singular identity attributes, accreting beliefs,
+editable, decaying — `implementation.md` §1), but share this contract verbatim.
+
 Its position in the architecture is fixed by two invariants:
 
-1. **The original text is canonical.** The overlay is an index *into* verbatim source text,
-   never a substitute for it. Every fact carries a `section_id` pointing at the verbatim passage
-   that supports it.
-2. **The overlay is rebuildable.** Deleting and re-extracting all facts from `sources.raw_text`
-   must lose nothing canonical. A wrong fact is a quality bug, not data corruption.
+1. **The substrate is canonical; the overlay indexes it.** The overlay is an index *into* a
+   canonical substrate, never a substitute for it. Every fact carries provenance pointing at the
+   passage that supports it — a source `section` for a source-fact, a transcript `message` or
+   `episode` for a user-fact. A fact that cannot point at its supporting substrate is not stored.
+2. **The overlay is rebuildable.** Deleting and re-extracting all facts from their substrate
+   (`sources.raw_text` for source-facts, the transcript for user-facts) must lose nothing
+   canonical. A wrong fact is a quality bug, not data corruption.
 
 ## 2. The Fixed Core (closed set)
 
@@ -35,6 +47,13 @@ is dropped and logged, never stored.
 | `relation`   | A connection between two entities          | entity · relation · entity           |
 | `event`      | Something that happened                    | actor · action · target/outcome      |
 | `definition` | What a term means in this source's context | term · — · meaning                   |
+
+The **user as subject** uses these same types — no new core type is needed: an identity attribute
+is an `attribute` (`user · bornOn · 1990`), a stated taste is an `attribute`/`relation`
+(`user · prefers · aisle seats`), a connection is a `relation` (`user · worksAs · architect`), a
+life event is an `event`. The user is just a privileged, well-known entity that the extractor may
+name as a subject; leaf qualifications (a `prefers` that is a *food* vs a *travel* taste) follow
+§3 unchanged.
 
 Changing this set is a **contract change**: it requires updating the extraction validation, the
 extraction prompt, this document, and consideration of facts already stored under the old set.
@@ -56,20 +75,35 @@ Within a core type, extraction may qualify facts with finer-grained **leaf subty
 
 ## 4. Provenance & Confidence Invariants
 
-- **Every fact has provenance.** `facts.section_id` is non-nullable; a fact that cannot point at
-  the verbatim passage supporting it must not be stored.
-- **Confidence is advisory.** `facts.confidence` (0–1, extraction self-reported) ranks and
-  filters; it never gates storage by itself.
-- **Tenancy.** Facts are scoped by `companion_id` and cascade-delete with their companion,
-  source, and section (`implementation.md` §1).
+- **Every fact records its origin.** A source-fact's `facts.section_id` is non-nullable (the verbatim
+  passage). A user-fact carries a **`source`** — `transcript` (learned in conversation; additionally
+  pins the turn it came from), `auth_seed` (the name from sign-in), or `user_edit` (the user set it
+  directly) (`implementation.md` §1). A fact whose origin cannot be named must not be stored; only a
+  `transcript`-sourced fact pins a transcript turn, but every fact knows where it came from.
+- **Confidence is advisory.** `confidence` (0–1, extraction self-reported) ranks and filters; it
+  never gates storage by itself. For user-facts an explicit statement extracts at high confidence,
+  an inferred preference at low — but confidence steers retrieval ranking and decay, never storage.
+- **Supersession over deletion (user-facts).** Because the user changes, a user-fact is **revised
+  by superseding**, not silently duplicated: a singular attribute (`name`, `bornOn`) upserts; a
+  contradicted belief ("quit coffee" vs "loves coffee") is marked superseded with a timestamp.
+  Reconciliation is owned by the background reflection pass (`companion-memory.md` §4), not the
+  inline writer — so write hygiene lives in one place.
+- **Tenancy.** Source-facts are scoped by `companion_id` and cascade-delete with their companion,
+  source, and section. **User-facts are scoped by `user_id`** — they are objective truths about the
+  *person*, shared across any companion the user owns, learned *by* a companion (a
+  `learned_by_companion_id` that nulls rather than cascades, so the fact outlives the companion). The
+  per-companion piece is only the *synthesized* understanding (Tier-3 `user_persona`), not the facts
+  (`implementation.md` §1; the truth/understanding split, `companion-memory.md` §4).
 
 ## 5. Governance & Evolution
 
-- **Re-extraction is the upgrade path.** Improving the extraction prompt/model re-runs Pass 2
-  over existing sections; the overlay is replaced, the canonical layers are untouched.
+- **Re-extraction is the upgrade path.** Improving the extraction prompt/model re-runs extraction
+  over the canonical substrate — Pass 2 over existing sections for source-facts, the transcript for
+  user-facts; the overlay is replaced, the canonical layers are untouched.
 - **Quality is measured, not assumed.** The eval harness (`companion-memory.md` §5) is the gate
   for extraction changes — grounded recall and hallucination move measurably or the change is
-  rejected.
+  rejected. User-fact extraction has its own dataset (`user-extract`, `howto-run-evals.md`): an
+  extraction prompt change that loses identity attributes or invents preferences fails the gate.
 - **Deferred (recorded decisions):**
   - **Entity normalization** — entities are currently denormalized strings in
     `facts.subject`/`facts.object`. A normalized entity table with resolution/dedup is a future,

@@ -45,7 +45,8 @@ The companion's intelligence is the combination of three things:
   | **Procedural** | Learned skills & workflows it runs without re-deliberating | Its growing repertoire of abilities — *how* it books a hotel for you, your morning routine, the cross-device sync it has learned |
 
 The companion **grows by accumulating all three** — and that growth is exactly the bond
-deepening (see §5.5).
+deepening (see §5.5). From these memories it also keeps an explicit, evolving **model of *you***
+(your identity, tastes, and views), which is what lets it truly know its person (§5.7).
 
 **One continuous conversation.** You and your companion share a *single, continuous, lifelong
 conversation* — not a list of separate chat sessions or threads like a chatbot. Whenever and
@@ -229,6 +230,24 @@ it's out of energy") — and **you decide when to top it up**. The feeding loop 
 layer: you keep a **pantry** of foods and spend them to refill a companion, and different "food"
 favours stamina or energy (the mechanics — see `companion-economy.md`).
 
+### 5.7 Knowing & Understanding You
+A companion that doesn't know *you* isn't a companion. Cobble builds a model of **you** the way it
+builds knowledge of the world — and the bond *is* that model deepening (§5.5).
+- **Core facts.** It remembers the stable things — your name, how you like to be addressed, and the
+  identity details you choose to share — and uses them naturally, so it never feels like talking to
+  someone who forgot who you are.
+- **Your tastes, interests, and views.** As you talk, it keeps learning what you prefer, the topics
+  you care about, and the opinions you hold — and brings the right ones to bear later, unprompted
+  ("you mentioned you hate red-eyes, so I looked for a morning flight").
+- **A picture of who you are.** Beyond isolated facts, it forms an evolving sense of you — the mirror
+  of the personality *it* is raised into with you (§5.5).
+- **Always yours to see and correct.** Everything it believes about you is legible: you can read it,
+  fix it, and tell it to forget. It learns continuously and on its own — but you hold the pen
+  (privacy posture → §7).
+
+> Mechanism (what's stored where, how it's learned and used) is the companion's memory system, not
+> repeated here: `companion-memory.md` §4. Rollout → `development-plan.md` §4c.
+
 ## 6. Who It's For
 Anyone who wants a single, trusted companion that *knows them and their world* and *acts for
 them* — travelers, lifelong learners, people pursuing goals and habits, and anyone who wants
@@ -244,8 +263,10 @@ companion typically syncs *derived* knowledge rather than raw sources.
 
 Because it holds deeply personal data, the product treats trust as a core feature: OS access is
 permission-gated per surface, the propose→approve model governs every consequential action, and
-users can inspect, manage, and delete what their companion holds. (Detailed data model and
-threat model: `architecture.md` / `implementation.md`.)
+users can inspect, manage, and delete what their companion holds — **including the model it builds
+of you** (§5.7): what it believes about your identity and preferences is legible and correctable,
+never a hidden dossier. (Detailed data model and threat model: `architecture.md` /
+`implementation.md`.)
 
 ## 8. Non-Goals
 - **Not a role-play or character-fiction app** — Cobble is a real personal companion, not a
