@@ -89,7 +89,12 @@ export {
   type CommandSandbox,
   FakeCommandSandbox,
 } from './cli/sandbox.js';
-export { type CliToolDef, type CliToolLimits, parseCliToolDef } from './cli/tool-def.js';
+export {
+  type CliToolDef,
+  type CliToolLimits,
+  parseCliToolDef,
+  unsafeArgvPlaceholders,
+} from './cli/tool-def.js';
 export {
   type CliToolAdapterOptions,
   cliToolName,

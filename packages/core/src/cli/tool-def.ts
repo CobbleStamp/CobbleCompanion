@@ -107,6 +107,48 @@ export function parseCliToolDef(ref: string, toolJson: string, usage: string): C
   };
 }
 
+/**
+ * Find argv placeholders whose substituted value the **binary's own argument
+ * parser** could read as an option flag rather than as data — "option injection".
+ * The no-shell sandbox keeps every value a single argv element (so shell
+ * metacharacters are inert), but it cannot stop the binary from treating a value
+ * like `-rf` or `--config=/x` as a flag when that value lands at the **start** of
+ * an argv token. Whitelisting fixes the *binary* and the *argv template*, never the
+ * model-supplied *value* — so a bare-placeholder element (`['{query}']`) is the gap.
+ *
+ * A placeholder is safe when a fixed literal sits before it in the same element
+ * (`--in={path}`, `-p{path}`), so the rendered token never begins with the value;
+ * or when a standalone `--` element precedes it (POSIX end-of-options), provided the
+ * binary honours `--`. Returns the deduped, sorted names of placeholders that sit in
+ * an option-injectable position — empty when the template is fully anchored.
+ */
+export function unsafeArgvPlaceholders(argv: readonly string[]): string[] {
+  const unsafe = new Set<string>();
+  let afterDoubleDash = false;
+  for (const element of argv) {
+    if (element === '--') {
+      afterDoubleDash = true;
+      continue; // a literal `--` makes every later element an operand, never an option
+    }
+    if (afterDoubleDash) {
+      continue;
+    }
+    let cursor = 0;
+    let literalBefore = false;
+    for (const match of element.matchAll(PLACEHOLDER)) {
+      const index = match.index ?? 0;
+      if (index > cursor) {
+        literalBefore = true; // fixed text precedes this placeholder within the token
+      }
+      if (!literalBefore) {
+        unsafe.add(match[1] ?? '');
+      }
+      cursor = index + match[0].length;
+    }
+  }
+  return [...unsafe].sort();
+}
+
 function parseLimits(raw: unknown): CliToolLimits {
   if (raw === undefined || raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error('TOOL.json "limits" must be an object with timeoutMs and maxOutputBytes');

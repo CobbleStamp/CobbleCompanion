@@ -768,8 +768,8 @@ owned by `development-plan.md`.
   Server-host only; tool outputs treated as untrusted (`implementation.md` §2.1). **Both tracks are
   built** (`development-plan.md` Phases 9–10), each off by default: the **MCP-connector** executor
   (HTTP/SSE + SSRF-guarded, §8) and the **CLI sandbox** executor (no-shell subprocess, scrubbed
-  env, per-tenant ephemeral cwd, time/output ceilings — portable tier; OS-level/network isolation
-  deferred to §8 hardening). CLI tools are developer-described folders under `CLI_TOOLS_PATH`, each
+  env, per-tenant ephemeral cwd, time/output ceilings — portable tier; OS-level/network/filesystem
+  isolation deferred to §9 / `development-plan.md` Phase 8 hardening). CLI tools are developer-described folders under `CLI_TOOLS_PATH`, each
   surfacing as its own callable `cli__<ref>`, so they flow through the same spine as MCP tools. Design → `companion-tools.md`; scope/sequencing →
   `development-plan.md`.
 - **Multiple companions per user & an account spend ceiling** — ownership is already modelled M:1

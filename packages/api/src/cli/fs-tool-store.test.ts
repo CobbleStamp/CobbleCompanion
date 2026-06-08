@@ -82,4 +82,62 @@ describe('FileSystemCliToolStore', () => {
     const store = new FileSystemCliToolStore(join(root, 'does-not-exist'), silentLogger);
     await expect(store.list()).rejects.toThrow();
   });
+
+  it('warns (but still loads) when an argv placeholder is option-injectable', async () => {
+    const warnings: Array<{ message: string; context: Record<string, unknown> | undefined }> = [];
+    const logger = {
+      error: () => undefined,
+      info: () => undefined,
+      warn: (message: string, context?: Record<string, unknown>) =>
+        warnings.push({ message, context }),
+    };
+    const json = JSON.stringify({
+      binary: 'grep',
+      description: 'Search files.',
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string' }, file: { type: 'string' } },
+        required: ['query', 'file'],
+        additionalProperties: false,
+      },
+      argv: ['{query}', '{file}'], // bare placeholders — `{query}` could render as a flag
+      limits: { timeoutMs: 5000, maxOutputBytes: 1024 },
+    });
+    await writeTool(root, 'grep', json, '# grep');
+
+    const store = new FileSystemCliToolStore(root, logger);
+    const def = await store.get('grep');
+
+    expect(def?.binary).toBe('grep'); // not skipped — a warning, not a rejection
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.message).toMatch(/option-injectable/);
+    expect(warnings[0]?.context).toMatchObject({ tool: 'grep', placeholders: ['file', 'query'] });
+  });
+
+  it('does not warn when every placeholder is anchored', async () => {
+    const warnings: string[] = [];
+    const logger = {
+      error: () => undefined,
+      info: () => undefined,
+      warn: (message: string) => warnings.push(message),
+    };
+    const json = JSON.stringify({
+      binary: 'grep',
+      description: 'Search files.',
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string' }, file: { type: 'string' } },
+        required: ['query', 'file'],
+        additionalProperties: false,
+      },
+      argv: ['--regexp={query}', '--', '{file}'], // anchored prefix + `--` operand guard
+      limits: { timeoutMs: 5000, maxOutputBytes: 1024 },
+    });
+    await writeTool(root, 'grep', json, '# grep');
+
+    const store = new FileSystemCliToolStore(root, logger);
+    await store.get('grep');
+
+    expect(warnings).toEqual([]);
+  });
 });

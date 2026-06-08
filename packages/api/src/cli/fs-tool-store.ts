@@ -22,6 +22,7 @@ import {
   type Logger,
   consoleLogger,
   parseCliToolDef,
+  unsafeArgvPlaceholders,
 } from '@cobble/core';
 
 const TOOL_JSON = 'TOOL.json';
@@ -77,7 +78,21 @@ export class FileSystemCliToolStore implements CliToolStore {
         readFile(join(dir, TOOL_JSON), 'utf8'),
         readFile(join(dir, TOOL_MD), 'utf8'),
       ]);
-      return parseCliToolDef(ref, toolJson, usage);
+      const def = parseCliToolDef(ref, toolJson, usage);
+      // A parse-valid def can still carry an option-injection risk: a bare-placeholder
+      // argv element whose value the binary may read as a flag (e.g. `-rf`). This does
+      // not break the tool, so it is a loud operator-facing warning, not a skip — the
+      // curator anchors the placeholder (`--in={path}`) or guards it behind a `--`.
+      const unsafe = unsafeArgvPlaceholders(def.argv);
+      if (unsafe.length > 0) {
+        this.logger.warn('CLI tool argv has option-injectable placeholders', {
+          operation: 'cli.fsToolStore.read',
+          tool: ref,
+          binary: def.binary,
+          placeholders: unsafe,
+        });
+      }
+      return def;
     } catch (error) {
       this.logger.error('skipping invalid CLI tool folder', {
         operation: 'cli.fsToolStore.read',

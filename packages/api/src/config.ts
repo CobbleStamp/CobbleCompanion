@@ -1,6 +1,24 @@
+import { tmpdir } from 'node:os';
+import { isAbsolute, relative, resolve } from 'node:path';
 import type { McpWhitelistEntry, RedactionMode } from '@cobble/core';
 import { DEFAULT_STARTING_VITALITY_TOKENS } from '@cobble/db';
 import { z } from 'zod';
+
+/**
+ * True when two filesystem paths are the same directory or one is nested inside
+ * the other (after resolving to absolute). Used to fail-fast a config where the
+ * read-only CLI tool dir overlaps a path the app writes to — a writable tools dir
+ * lets anyone who can write there admit a binary the companion will run
+ * (companion-tools.md §6; the constraint the .env.example warns about).
+ */
+export function pathsOverlap(a: string, b: string): boolean {
+  const ra: string = resolve(a);
+  const rb: string = resolve(b);
+  if (ra === rb) return true;
+  const nested = (rel: string): boolean =>
+    rel.length > 0 && !rel.startsWith('..') && !isAbsolute(rel);
+  return nested(relative(ra, rb)) || nested(relative(rb, ra));
+}
 
 /**
  * Authentication mode. `google` (default) gates the app behind Google Sign-In:
@@ -167,6 +185,21 @@ const envSchema = z
           'LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are required when TRACING_PROVIDER=langfuse',
         path: ['LANGFUSE_SECRET_KEY'],
       });
+    }
+    // The read-only CLI tool dir must not overlap the writable CLI scratch dir
+    // (its default is the OS temp dir when CLI_SCRATCH_DIR is unset) — else a
+    // scratch write could land a binary inside the trust boundary (companion-tools.md §6).
+    if (env.CLI_TOOLS_PATH.length > 0) {
+      const scratchDir = env.CLI_SCRATCH_DIR.length > 0 ? env.CLI_SCRATCH_DIR : tmpdir();
+      if (pathsOverlap(env.CLI_TOOLS_PATH, scratchDir)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            'CLI_TOOLS_PATH must not overlap the CLI scratch dir (CLI_SCRATCH_DIR, or the OS ' +
+            'temp dir when it is unset) — the tools dir must stay read-only (companion-tools.md §6)',
+          path: ['CLI_TOOLS_PATH'],
+        });
+      }
     }
   });
 

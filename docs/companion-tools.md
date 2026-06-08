@@ -204,7 +204,8 @@ capabilities exist at all*; propose→approve governs *named effectful tools*.
 
 Two consequences are load-bearing:
 
-- **Whitelist entries must be narrow** — a specific binary, constrained arguments, sandboxed output;
+- **Whitelist entries must be narrow** — a specific binary, an argv template with every placeholder
+  **anchored** so a value cannot be parsed as an option flag (§7), sandboxed output;
   for MCP, a specific server endpoint. Granularity stops at the server: there is **no per-operation
   filtering**, so admitting a server admits *every* tool it exposes — including any
   outward/destructive operations (`send` · `pay` · `delete`) it advertises, which run free with no
@@ -225,7 +226,8 @@ The whitelist is the admissibility floor; these boundaries harden what runs with
 (implementation → `implementation.md` §5, trust model → `architecture.md` §8):
 
 - **CLI execution is sandboxed.** The CLI sandbox spawns the binary with **no shell** (argv elements
-  pass verbatim, so a crafted argument is never a command), a **scrubbed environment** (no secrets),
+  pass verbatim, so a value like `; rm -rf /` is one inert argument, never a command), a **scrubbed
+  environment** (no secrets),
   and a **per-tenant ephemeral working directory** under a scratch root (never `CLI_TOOLS_PATH`),
   under wall-clock + output-byte ceilings (mirroring the `web_fetch` byte-cap posture). This is the
   **portable subprocess tier**: it runs identically on every host but does **not** enforce network
@@ -233,9 +235,22 @@ The whitelist is the admissibility floor; these boundaries harden what runs with
   scrubbed env keeps secrets out of the *environment* but not secrets a whitelisted binary could read
   from *disk* (config files, key material the process user can open). OS-level isolation
   (namespaces/containers, filesystem confinement, network egress control) is deferred to hardening
-  (§9), behind the same sandbox seam. The narrow per-tool whitelist + fixed binary are the mitigation
+  (§9 / `development-plan.md` Phase 8), behind the same sandbox seam. The narrow per-tool whitelist + fixed binary are the mitigation
   meanwhile. `CLI_TOOLS_PATH` must be **read-only + deployment-controlled** and must not overlap any
-  path the app writes to (it is the CLI trust boundary, §6).
+  path the app writes to (it is the CLI trust boundary, §6). Config load **rejects at startup** a
+  `CLI_TOOLS_PATH` that is equal to or nested with the CLI scratch dir (`CLI_SCRATCH_DIR`, or the OS
+  temp dir when unset) — the dangerous misconfig fails fast rather than booting unsafe.
+- **Argv templates must anchor every placeholder (no option injection).** No-shell kills *command*
+  injection, but it does not stop the binary's **own** argument parser from reading a model-supplied
+  value as a flag: with `argv: ['{query}']`, a value of `--config=/evil` or `-rf` lands at the start
+  of the token and the fixed binary parses it as an *option*, not data. Whitelisting fixes the binary
+  and the argv template, never the value — so the template must keep each value out of option
+  position. Two safe shapes: anchor the placeholder behind a fixed prefix in the same element
+  (`--in={path}`, `-p{port}`), so the rendered token never begins with the value; or place a bare
+  `{param}` element after a literal `--` element (POSIX end-of-options), for a binary that honours
+  `--`. Loading a def with a bare leading-placeholder element is **not rejected** — it may be the
+  only way to express some tools — but it logs an operator-facing warning naming the at-risk
+  placeholders (`unsafeArgvPlaceholders`, `implementation.md` §5) so the curator can anchor it.
 - **MCP is HTTP/SSE-only** on the server host, behind the same **SSRF** guard as link ingestion
   (`architecture.md` §8): scheme + blocked-host checks with connection-layer DNS re-validation. No
   **stdio** transport — the host never spawns a user-specified process (that rides with the future
@@ -311,7 +326,8 @@ Deferred from this workstream, recorded here so the boundary is explicit:
   and the equipped summary until the next restart — even though the tool folders still exist on disk
   and the call-time re-read that actually guards execution would succeed. (The pre-gate on the
   snapshot is belt-and-suspenders only; the authoritative revocation is the fresh per-call store
-  read.) New-folder discovery being startup-bound is the accepted Phase-9 staleness trait; the
+  read.) New-folder discovery being startup-bound is the accepted Phase-10 staleness trait
+  (inherited from the Phase-9 startup-bound catalog refresh the CLI track reuses); the
   fragility of *already-equipped* tools is the part to harden — by dropping the redundant pre-gate
   and trusting the call-time read, backing the admissibility check with the store, or adding a
   retried/periodic refresh.

@@ -604,6 +604,8 @@ Loaded from environment / a secret manager; required values validated at startup
 | `INGESTION_QUEUE_MAX` | Backstop cap on queued+in-flight ingestion runs across all owners; submissions past it get 429 (default 100) |
 | `MCP_SERVERS` | Developer whitelist of MCP servers as a JSON array of `{ ref, endpoint, label?, authTokenEnv? }` — the trust boundary for tool acquisition.<br>Empty (default `[]`) disables MCP. HTTP/SSE endpoints only (`companion-tools.md` §7) |
 | `MAX_EQUIPPED_TOOLS` | Per-companion cap on the equipped-tool set (default 8); the single tier evicts LRU past it (`development-plan.md` Phase 9) |
+| `CLI_TOOLS_PATH` | Directory of CLI tool-definition folders (each a `TOOL.json` + `TOOL.md`) — the CLI track's trust boundary, must be **read-only + deployment-controlled** and not overlap the CLI scratch dir (rejected at startup).<br>Empty (default) disables the CLI track (`companion-tools.md` §6) |
+| `CLI_SCRATCH_DIR` | Root for the per-tenant ephemeral working dirs CLI runs execute in (separate from `CLI_TOOLS_PATH`; cleaned up after each run). Empty (default) → the OS temp dir (`companion-tools.md` §7) |
 | `TRACING_PROVIDER` | Online tracing backend: `none` (default) \| `langfuse` (`runbook-tracing.md`) |
 | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | Langfuse credentials (secret; required when `TRACING_PROVIDER=langfuse`) |
 | `LANGFUSE_HOST` | Langfuse base URL (default `https://cloud.langfuse.com`) — **HTTPS only** (it carries the keys + payload); `http://` permitted solely for `localhost` |
@@ -706,7 +708,11 @@ Out of scope for this release; the roadmap is owned by `development-plan.md`.
   CLI trust boundary), each a `TOOL.json` (binary + model-facing `parameters` JSON Schema + argv
   template + mandatory limits) + `TOOL.md` (usage prompt); `parseCliToolDef` validates them and
   `cliToolToTool` validates the model's args against the schema, renders each `{param}` into a
-  **discrete argv element** (no shell), and fences output as untrusted. The **`CliToolStore`** seam
+  **discrete argv element** (no shell), and fences output as untrusted. No-shell kills *command*
+  injection but not *option* injection (a value like `-rf`/`--config=/x` that the binary parses as a
+  flag); `unsafeArgvPlaceholders` flags any bare leading-placeholder argv element and
+  `FileSystemCliToolStore` logs an operator warning at load (not a skip — the curator anchors it as
+  `--in={path}` or behind a `--`, `companion-tools.md` §7). The **`CliToolStore`** seam
   (production `FileSystemCliToolStore` scans the dir, skips+logs invalid folders, rejects
   path-traversal refs) is re-read at load **and at call time**, so a removed folder is revoked
   immediately; the **`CommandSandbox`** seam (production `SubprocessSandbox`: `child_process.spawn`,
