@@ -135,12 +135,12 @@ flowchart TB
     SEED["Google sign-in<br/>name claim"] -.->|"seed name<br/>(source=auth_seed)"| UF
 
     %% 2. PERSIST
-    INLINE -->|"upsert singular attrs<br/>(name: source=transcript)"| UF[("② user_facts (per-user)<br/>Tier-1 profile + Tier-2 beliefs")]
+    INLINE -->|"record facts: supersede singular,<br/>accrete multi-valued (name: source=transcript)"| UF[("② user_facts (per-user)<br/>Tier-1 profile + Tier-2 beliefs")]
     REFLECT --> UF
     REFLECT -->|"synthesize narrative"| UP[("② companions.user_persona<br/>Tier-3, per-companion")]
 
     %% 3. RETRIEVE + 4. INJECT (next turn)
-    UF -->|"Tier-1 singular attrs (incl. name)"| PERSONA["④ persona system prompt"]
+    UF -->|"Tier-1 core profile only (incl. name)"| PERSONA["④ persona system prompt"]
     UP -->|"beside evolvedPersona"| PERSONA
     UF -->|"③ embed turn → hybrid-search<br/>current (non-superseded) facts"| ARM["③ user-model arm<br/>top-K beliefs (fenced)"]
     PERSONA --> PROMPT[["assembled prompt → LLM"]]
@@ -167,10 +167,15 @@ The prose below elaborates each.
   Tier-3 user persona — exactly as consolidation already drives `evolvedPersona` (`architecture.md`
   §4.3).
 
-**Write discipline (owned by the reflector, so hygiene lives in one place):** singular attributes
-**upsert**; a new belief **dedups** against existing ones (embedding match) instead of duplicating; a
-contradiction **supersedes** the old with a timestamp (not silently both-true); confidence and a
-decaying salience steer retrieval toward what's current (`ontology.md` §4).
+**Write discipline (owned by the reflector, so hygiene lives in one place):** a fact is never
+overwritten in place — a revision **supersedes** (insert the new value as current, mark the old
+`superseded_at`/`superseded_by`), so history is kept. Singular attributes (`name`, `livesIn`, …)
+supersede the prior value for the predicate; **multi-valued** ones (`languages`, `relationships` —
+`MULTI_VALUED_PREDICATES`) **accrete**, superseding only an identical `(predicate, object)`
+restatement so distinct values coexist. A new belief **dedups** against existing ones (embedding
+match) instead of duplicating; a contradiction **supersedes** the old with a timestamp (not silently
+both-true); confidence and a decaying salience steer retrieval toward what's current (`ontology.md`
+§4).
 
 **Trust & control:** the companion is **fully trusted to write its own memory** — there is **no
 approval queue** for user-facts (that gate is for external side-effects, `architecture.md` §4.4). The

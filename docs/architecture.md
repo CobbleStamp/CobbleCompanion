@@ -131,10 +131,10 @@ flowchart TB
 | **Episodic Store** | Consolidated, time-anchored episodes (vector + FTS) + the consolidation cursor | Derived from the transcript (rebuildable); hybrid recall by topic (§4.3) |
 | **Consolidation Service + Runner** | Off-request reflection: transcript window → consolidated episodes, filler dropped | Mirrors the ingestion runner — coalesced, serial, quota-gated; post-turn trigger + startup/periodic sweep |
 | **Personality Evolver** | Re-synthesizes `evolvedPersona` from episodes after consolidation | Cursor-gated, metered; blended into the persona prompt beside the seed |
-| **User-Model Store** | The companion's structured + synthesized understanding of its user — `user_facts` (Tier-1 core profile + Tier-2 belief overlay, **incl. the name**) and `companions.user_persona` (Tier-3) | Behind the MemoryStore seam (invariant #2); **one ontology, the user is a privileged entity** (`ontology.md`); `user_facts` is **per-user** (objective truths, shared across the user's companions), Tier-3 is per-companion. Hybrid recall like the semantic/episodic arms (§4.3). Schema → `implementation.md` §1; mechanism → `companion-memory.md` §4 |
+| **User-Model Store** | The companion's structured + synthesized understanding of its user — `user_facts` (Tier-1 core profile, **incl. the name**; Tier-2 belief overlay + `companions.user_persona` Tier-3 are _designed, not built_) | Behind the MemoryStore seam (invariant #2); **one ontology, the user is a privileged entity** (`ontology.md`); `user_facts` is **per-user** (objective truths, shared across the user's companions), Tier-3 is per-companion. Tier-1 facts supersede on revision, except `languages`/`relationships` which accrete (`MULTI_VALUED_PREDICATES`). Hybrid recall (§4.3) arrives with Tier-2. **Built: Phase 11 Tier-1 only** — see `companion-memory.md` §4 Status. Schema → `implementation.md` §1; mechanism → `companion-memory.md` §4 |
 | **User-Fact Extractor** | Inline salient capture: a post-turn perception step that writes explicit, high-signal user-facts (sibling to affect sensing) | Conservative — explicit statements only; metered. Dedup/inference/hygiene deferred to the reflector (§4.3, §4.5); gated by the `user-extract` eval (`howto-run-evals.md`) |
-| **User-Model Reflector** | Background reflection over the transcript → inferred beliefs, dedup + supersession, and the Tier-3 `user_persona` synthesis | Extends the Consolidation Service pattern (off-request, cursor-gated, metered); the mirror of the Personality Evolver, modelling the user instead of the self |
-| **Identity Store** | Companion "home" record (incl. `evolvedPersona`, `user_persona` + evolution/consolidation/user-model cursors) | Source of truth surfaces load from |
+| **User-Model Reflector** _(designed, not built — Phase 12–13)_ | Background reflection over the transcript → inferred beliefs, dedup + supersession, and the Tier-3 `user_persona` synthesis | Extends the Consolidation Service pattern (off-request, cursor-gated, metered); the mirror of the Personality Evolver, modelling the user instead of the self. Not yet implemented (`companion-memory.md` §4 Status) |
+| **Identity Store** | Companion "home" record (incl. `evolvedPersona` + evolution/consolidation cursors; `user_persona` + the user-model cursor are _designed, not built_ — Phase 13) | Source of truth surfaces load from |
 | **Stamina Wallet** (`VitalityStore`) | The user-initiated half of a companion's vitality — a per-companion token balance (§4.8) | Postgres-backed (`companions.stamina_balance_tokens`); spend decrements (floor 0), feeding adds; routes 429 at the boundary when empty |
 | **Persistence** | Relational + vector storage | Postgres + `pgvector`; schemas → `implementation.md` |
 | **Eval Harness** | Offline dataset/scorer/runner eval framework (`packages/eval`) | Not on the serving path; live OpenRouter. memory-recall + stateless + injection datasets. See `companion-memory.md` §5, `howto-run-evals.md` |
@@ -270,10 +270,13 @@ flowchart LR
 > change — another arm in the one memory hook (invariant #3).
 
 > **User-model arms (knowing the user).** The companion's understanding of its user enters a turn in
-> three ways, two of them here. **Tier-1 (core profile)** — the current singular identity attributes
-> from `user_facts` (`name`, pronouns, `bornOn`, `livesIn`, `worksAs`, …; the name is just one such
-> fact, not a `users` column) — is rendered into the **persona system prompt** (input #1), small
-> enough to carry every turn (no retrieval). **Tier-3 (user persona)** — `companions.user_persona`, the synthesized
+> three ways, two of them here. **Tier-1 (core profile)** — the current identity attributes from
+> `user_facts` (`name`, pronouns, `bornOn`, `livesIn`, `worksAs`, …; the name is just one such fact,
+> not a `users` column) — is rendered into the **persona system prompt** (input #1), small enough to
+> carry every turn (no retrieval). Most are singular (a new value supersedes); `languages` and
+> `relationships` are multi-valued and accrete. The persona renders **Tier-1 only** — a non-Tier-1
+> predicate (a future Tier-2 belief sharing the table) is filtered out, never leaking into the
+> every-turn prompt. **Tier-3 (user persona)** — `companions.user_persona`, the synthesized
 > "who you are to me" — is blended into that same persona beside `evolvedPersona`, the symmetric
 > self-model. **Tier-2 (learned beliefs)** — `prefers`/`interestedIn`/`believes` user-facts, too many
 > for context — is a **retrieval arm**: it embeds the user's turn and hybrid-searches the *current*

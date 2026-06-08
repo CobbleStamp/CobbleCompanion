@@ -280,7 +280,7 @@ training set and fits incremental ingestion; GIN on `fts`; btree on `(companion_
 
 The companion's structured understanding of its user — the same typed-fact contract as `facts`
 (`ontology.md`), but the **subject is the privileged user entity**. A separate table because the
-lifecycle differs: singular identity attributes upsert, beliefs accrete, both are editable and decay.
+lifecycle differs: identity attributes supersede on revision (most singular; `languages`/`relationships` are multi-valued and accrete), beliefs accrete, all editable and decay.
 **Keyed by `user_id`, not `companion_id`** — facts are objective truths about the *person* (name, age,
 "vegetarian"), so they are shared across any companion the user owns; only the *synthesized
 understanding* of the user (Tier-3 `companions.user_persona`) is per-companion (`development-plan.md`
@@ -297,7 +297,7 @@ extraction/retrieval flow → `companion-memory.md` §4.
 | `subject` / `predicate` / `object` | text (predicate nullable) | `subject` is the user entity; **polarity is carried by the predicate** (`prefers` vs `dislikes`), so likes/dislikes need no extra column. Denormalized strings, per `ontology.md` §5 |
 | `confidence` | real, nullable | (0–1), advisory; default tracks `source` — explicit `transcript` statement → high, inferred → low, `auth_seed` → modest (a guess from the account), `user_edit` → authoritative. Steers retrieval ranking, decay, and supersession precedence, never storage |
 | `salience` | real, nullable | recency/strength weight; decays so retrieval favours current beliefs (Tier-2 ranking) |
-| `superseded_at` | timestamptz, nullable | null = current; set when a singular attribute is revised or a belief is contradicted (`ontology.md` §4). Superseded rows are kept (history), excluded from retrieval |
+| `superseded_at` | timestamptz, nullable | null = current; set when a singular attribute is revised, a multi-valued one (`languages`/`relationships`) is restated identically, or a belief is contradicted (`ontology.md` §4). Superseded rows are kept (history), excluded from retrieval |
 | `superseded_by` | uuid, nullable (FK → `user_facts.id`) | the fact that replaced this one, when applicable |
 | `created_at` / `updated_at` | timestamptz | |
 
@@ -309,10 +309,12 @@ extraction/retrieval flow → `companion-memory.md` §4.
 > Phase 12 (`development-plan.md` §4c).
 
 > **The three tiers are a rule, not a column** (mirrors leaf types, `ontology.md` §3). **Tier 1 —
-> core profile**: the subset whose predicate is a singular identity attribute (`name`, `bornOn`,
-> `livesIn`, `worksAs`, pronouns, …) — including the user's **name**, which is just one such fact (seeded
-> from Google at sign-in, then refined in conversation), no longer a `users` column; assembled into the
-> persona block and carried every turn (§2.2). **Tier 2 —
+> core profile**: the subset whose predicate is an identity attribute (`name`, `bornOn`, `livesIn`,
+> `worksAs`, pronouns, `languages`, `relationships`, …) — mostly singular, with `languages`/`relationships`
+> multi-valued (`MULTI_VALUED_PREDICATES`); including the user's **name**, which is just one such fact
+> (seeded from Google at sign-in, then refined in conversation), no longer a `users` column. Assembled
+> into the persona block and carried every turn (§2.2) — the persona renders **Tier-1 only**, filtering
+> out any non-Tier-1 predicate so a Phase-12 belief sharing the table cannot leak in. **Tier 2 —
 > learned beliefs**: everything else (`prefers`, `interestedIn`, `believes`, …); too many for context,
 > surfaced by the retrieval arm (`architecture.md` §4.3) — added in Phase 12. **Tier 3 — user persona**:
 > the synthesized narrative in `companions.user_persona` (Phase 13). Index (Phase 11): btree on
@@ -585,10 +587,12 @@ separately.
 
 A turn's prompt is composed, in order, from: **(1)** the companion identity row (`name`, `form`,
 `temperament` → persona system prompt — `evolved_persona` and the **`user_persona`** (Tier-3) are
-blended in beside the seed when present, and the **Tier-1 core profile** — the current singular
-identity attributes from `user_facts`, **name included** — is rendered as a compact "what I know
-about you" block so the reply addresses a specific someone; when no name fact exists yet the persona
-says it is unknown, cueing the companion to ask rather than invent one), **(2)** the base system prompt,
+blended in beside the seed when present, and the **Tier-1 core profile** — the current identity
+attributes from `user_facts`, **name included** (multi-valued `languages`/`relationships` grouped
+onto one line each) — is rendered as a compact "what I know about you" block so the reply addresses a
+specific someone; the render is **Tier-1 only**, dropping any non-Tier-1 predicate so a Phase-12
+belief sharing the table cannot leak into the every-turn prompt; when no name fact exists yet the
+persona says it is unknown, cueing the companion to ask rather than invent one), **(2)** the base system prompt,
 **(3)** `RetrieveContext` output. The hook is one slot; `composeRetrieveContext` runs the arms in
 order — **episodic** memory blocks (time-anchored, fenced), the **user-model** belief arm (Tier-2:
 top-K relevant current `user_facts`, hybrid-ranked, fenced), then top-K **semantic** grounding
@@ -599,8 +603,9 @@ blocks (verbatim sections with source/para preambles), then the most-recent N tr
 step that senses affect (`senseAffect`, §2.3 / `companion-motivation.md`) also runs a conservative
 **user-fact extractor** — a sibling call site that reads the just-finished exchange and emits
 *candidate* `user_facts` for **explicit, high-signal** statements only ("call me Sam", "I'm
-vegetarian"). It writes them (singular attributes upsert — a stated name is just the `name` attribute,
-no special path); deeper inference, dedup, supersession, and Tier-3 synthesis are deferred to the
+vegetarian"). It writes them (a revision **supersedes**, never overwrites — a stated name is just the `name`
+attribute, no special path; multi-valued `languages`/`relationships` accrete); deeper inference,
+dedup, supersession, and Tier-3 synthesis are deferred to the
 **background reflection** pass that extends consolidation (`architecture.md` §4.3, §4.5). Both the
 extractor and the reflector are metered LLM calls; extraction quality is gated by the `user-extract`
 eval dataset (`howto-run-evals.md`). A chat turn therefore now has **two** post-turn perception reads

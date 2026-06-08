@@ -44,7 +44,7 @@ const CASES: readonly UserExtractCase[] = [
     id: 'job-stated',
     recentContext: '',
     userText: 'These days I work as a data analyst.',
-    expectedFacts: [{ predicate: 'worksAs', object: 'analyst' }],
+    expectedFacts: [{ predicate: 'worksAs', object: 'data analyst' }],
   },
   {
     id: 'multiple-facts',
