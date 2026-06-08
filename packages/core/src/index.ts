@@ -120,6 +120,13 @@ export {
   type RecordTranscriptFactInput,
   type UserModelStore,
 } from './user-model/store.js';
+export {
+  captureUserFacts,
+  coerceCandidates,
+  type UserFactCandidate,
+  type UserFactCaptureDeps,
+  type UserFactCaptureParams,
+} from './user-model/extractor.js';
 
 // Memory
 export { TranscriptMemoryStore, type MemoryStore, type TranscriptEntry } from './memory/store.js';

@@ -17,6 +17,7 @@ const ALL_IDS: readonly PromptId[] = [
   'autonomous-note',
   'judge',
   'tool-search',
+  'user-extract',
 ];
 
 describe('prompt registry', () => {

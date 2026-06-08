@@ -24,7 +24,8 @@ export type PromptId =
   | 'affect-sense'
   | 'autonomous-note'
   | 'judge'
-  | 'tool-search';
+  | 'tool-search'
+  | 'user-extract';
 
 /**
  * A prompt's version: the author-declared `semver` (the human change-intent and
