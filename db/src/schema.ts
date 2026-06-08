@@ -411,6 +411,16 @@ export const userFacts = pgTable(
   (table) => [
     // The current-facts scan (superseded_at IS NULL) + supersede-by-predicate lookup.
     index('user_facts_user_current_idx').on(table.userId, table.supersededAt),
+    // Enforce one current `name` per user at the DB level. seedName runs on every
+    // authenticated request, outside the harness per-user serialization, so a fresh
+    // user's parallel first-load requests can both pass seedName's read-then-insert
+    // guard under READ COMMITTED and double-insert. This partial unique index makes the
+    // loser conflict instead (seedName handles it via ON CONFLICT DO NOTHING). Scoped to
+    // `name` only — multi-valued predicates (languages, relationships) keep many current
+    // rows by design, so a general (user_id, predicate) uniqueness would be wrong.
+    uniqueIndex('user_facts_one_current_name_uniq')
+      .on(table.userId, table.predicate)
+      .where(sql`${table.predicate} = 'name' AND ${table.supersededAt} IS NULL`),
   ],
 );
 

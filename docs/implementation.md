@@ -317,8 +317,13 @@ extraction/retrieval flow → `companion-memory.md` §4.
 > out any non-Tier-1 predicate so a Phase-12 belief sharing the table cannot leak in. **Tier 2 —
 > learned beliefs**: everything else (`prefers`, `interestedIn`, `believes`, …); too many for context,
 > surfaced by the retrieval arm (`architecture.md` §4.3) — added in Phase 12. **Tier 3 — user persona**:
-> the synthesized narrative in `companions.user_persona` (Phase 13). Index (Phase 11): btree on
-> `(user_id, superseded_at)` for the current-facts scan.
+> the synthesized narrative in `companions.user_persona` (Phase 13). Indexes (Phase 11): btree on
+> `(user_id, superseded_at)` for the current-facts scan; plus a **partial unique index**
+> `user_facts_one_current_name_uniq` on `(user_id, predicate)` `WHERE predicate = 'name' AND
+> superseded_at IS NULL` — DB-enforced "one current `name` per user", since `seedName` runs on every
+> authed request outside the harness per-user serialization and parallel first-load seeds would
+> otherwise double-insert (`seedName` absorbs the conflict via `ON CONFLICT DO NOTHING`). Scoped to
+> `name`; multi-valued predicates (`languages`/`relationships`) keep many current rows by design.
 
 ### Hybrid retrieval
 

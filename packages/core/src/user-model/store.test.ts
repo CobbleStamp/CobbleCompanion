@@ -168,6 +168,39 @@ describe('DrizzleUserModelStore', () => {
       expect(await store.seedName(userId, '   ')).toBeNull();
       expect(await store.listCurrent(userId)).toHaveLength(0);
     });
+
+    it('settles concurrent first-load seeds to one current name (no duplicate)', async () => {
+      // seedName runs on every authed request, outside the harness per-user
+      // serialization, so a fresh user's parallel first-load requests can race. The
+      // partial unique index + ON CONFLICT DO NOTHING must collapse them to one row.
+      const results = await Promise.all([
+        store.seedName(userId, 'Samuel Smith'),
+        store.seedName(userId, 'Samuel Smith'),
+        store.seedName(userId, 'Samuel Smith'),
+      ]);
+      // Exactly one call inserts the seed; the losers are no-ops (null), never an error.
+      expect(results.filter((fact) => fact !== null)).toHaveLength(1);
+      const current = await store.listCurrent(userId);
+      expect(current).toHaveLength(1);
+      expect(current[0]?.object).toBe('Samuel Smith');
+    });
+
+    it('rejects a second current name row at the database (partial unique index)', async () => {
+      // The invariant is DB-enforced, not just guarded in app code: a raw insert that
+      // would create a second current `name` for the user must fail outright.
+      await store.seedName(userId, 'Samuel Smith');
+      await expect(
+        db.insert(userFacts).values({
+          userId,
+          source: 'auth_seed',
+          factType: 'attribute',
+          subject: 'user',
+          predicate: 'name',
+          object: 'Imposter',
+          confidence: 0.5,
+        }),
+      ).rejects.toThrow();
+    });
   });
 
   describe('editFact', () => {

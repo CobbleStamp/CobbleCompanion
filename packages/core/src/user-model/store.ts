@@ -14,7 +14,7 @@
  */
 import { isMultiValuedPredicate, type UserFactDto } from '@cobble/shared';
 import { type Database, userFacts } from '@cobble/db';
-import { and, eq, isNull, ne } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 
 /** The privileged entity every user-fact is about (ontology.md §1). */
 const USER_SUBJECT = 'user';
@@ -51,9 +51,13 @@ export interface RecordTranscriptFactInput {
  *
  * The "one current row per `(userId, predicate)` for singular predicates" invariant is
  * enforced by the supersede-within-transaction writes here PLUS the harness serializing
- * captures per-user (harness.ts `userFactChains`), not by a DB unique constraint —
- * sufficient for the single-instance PoC (the affect store makes the same assumption).
- * Multi-valued predicates hold several current rows by design.
+ * captures per-user (harness.ts `userFactChains`). For `name` specifically — seeded on
+ * every authed request from auth-guard.ts, OUTSIDE that serialization — a partial unique
+ * index (`user_facts_one_current_name_uniq`) also enforces it at the DB, so parallel
+ * first-load seeds cannot double-insert; seedName absorbs the conflict. Other singular
+ * predicates rely on serialization alone (sufficient for the single-instance PoC; the
+ * affect store makes the same assumption). Multi-valued predicates hold several current
+ * rows by design.
  */
 export interface UserModelStore {
   /** Every current (non-superseded) fact for the user, oldest-first. */
@@ -100,8 +104,31 @@ export class DrizzleUserModelStore implements UserModelStore {
 
   async recordTranscriptFact(input: RecordTranscriptFactInput): Promise<UserFactDto> {
     return this.db.transaction(async (tx) => {
-      // Insert the new current fact first so the prior row can point its
-      // `superseded_by` at it (the replacement id must exist before the update).
+      // Supersede the prior current value(s) for this predicate BEFORE inserting the
+      // replacement. A SINGULAR attribute (name, age, …) keeps exactly one current value,
+      // so every current row for the predicate is superseded. A MULTI-VALUED attribute
+      // (languages, relationships) accretes, so only an identical (predicate, object)
+      // restatement is collapsed — distinct values coexist as separate current rows.
+      //
+      // Order matters: the `name` partial unique index (one current `name` per user)
+      // forbids two current rows even transiently, so we cannot insert-then-supersede.
+      // We supersede first (setting only `superseded_at`, so the rows leave the index),
+      // insert the lone current row, then back-fill `superseded_by` — which FK-references
+      // the new row and so must be set after it exists.
+      const superseded = await tx
+        .update(userFacts)
+        .set({ supersededAt: new Date(), updatedAt: new Date() })
+        .where(
+          and(
+            eq(userFacts.userId, input.userId),
+            eq(userFacts.predicate, input.predicate),
+            isMultiValuedPredicate(input.predicate)
+              ? eq(userFacts.object, input.object)
+              : undefined,
+            isNull(userFacts.supersededAt),
+          ),
+        )
+        .returning({ id: userFacts.id });
       const [created] = await tx
         .insert(userFacts)
         .values({
@@ -118,25 +145,17 @@ export class DrizzleUserModelStore implements UserModelStore {
       if (!created) {
         throw new Error('failed to record user fact');
       }
-      // Supersede the prior current value(s) for this predicate. A SINGULAR attribute
-      // (name, age, …) keeps exactly one current value, so every other current row for
-      // the predicate is superseded. A MULTI-VALUED attribute (languages, relationships)
-      // accretes, so only an identical (predicate, object) restatement is collapsed —
-      // distinct values coexist as separate current rows.
-      await tx
-        .update(userFacts)
-        .set({ supersededAt: new Date(), supersededBy: created.id, updatedAt: new Date() })
-        .where(
-          and(
-            eq(userFacts.userId, input.userId),
-            eq(userFacts.predicate, input.predicate),
-            isMultiValuedPredicate(input.predicate)
-              ? eq(userFacts.object, input.object)
-              : undefined,
-            isNull(userFacts.supersededAt),
-            ne(userFacts.id, created.id),
-          ),
-        );
+      if (superseded.length > 0) {
+        await tx
+          .update(userFacts)
+          .set({ supersededBy: created.id })
+          .where(
+            inArray(
+              userFacts.id,
+              superseded.map((row) => row.id),
+            ),
+          );
+      }
       return toUserFactDto(created);
     });
   }
@@ -168,11 +187,15 @@ export class DrizzleUserModelStore implements UserModelStore {
           object: trimmed,
           confidence: AUTH_SEED_CONFIDENCE,
         })
+        // Belt-and-suspenders with the read guard above: a concurrent seed (parallel
+        // first-load requests, same user) can pass the guard too, but the
+        // `user_facts_one_current_name_uniq` partial index makes the loser conflict
+        // rather than double-insert. Swallow it — the winner's row is the seed, so a
+        // lost race is a no-op, not an error.
+        .onConflictDoNothing()
         .returning();
-      if (!created) {
-        throw new Error('failed to seed user name');
-      }
-      return toUserFactDto(created);
+      // No row back means a concurrent seed won the race (conflict) — already seeded.
+      return created ? toUserFactDto(created) : null;
     });
   }
 
@@ -196,6 +219,14 @@ export class DrizzleUserModelStore implements UserModelStore {
       if (!target) {
         return null;
       }
+      // Supersede the target first so it leaves the `name` partial unique index before
+      // the replacement is inserted (one current `name` per user, enforced even within a
+      // transaction); `superseded_by` is back-filled after the insert since it
+      // FK-references the new row. See recordTranscriptFact for the same ordering.
+      await tx
+        .update(userFacts)
+        .set({ supersededAt: new Date(), updatedAt: new Date() })
+        .where(eq(userFacts.id, target.id));
       const [created] = await tx
         .insert(userFacts)
         .values({
@@ -213,7 +244,7 @@ export class DrizzleUserModelStore implements UserModelStore {
       }
       await tx
         .update(userFacts)
-        .set({ supersededAt: new Date(), supersededBy: created.id, updatedAt: new Date() })
+        .set({ supersededBy: created.id })
         .where(eq(userFacts.id, target.id));
       return toUserFactDto(created);
     });
