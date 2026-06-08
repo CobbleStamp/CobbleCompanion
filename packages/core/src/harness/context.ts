@@ -1,4 +1,4 @@
-import type { CompanionDto, UserFactDto } from '@cobble/shared';
+import { TIER1_PREDICATES, type CompanionDto, type UserFactDto } from '@cobble/shared';
 import type { LlmMessage } from '../llm/gateway.js';
 import type { AffectReading } from '../motivation/affect.js';
 import {
@@ -73,6 +73,14 @@ export function affectAttunementLine(affect: AffectReading | null | undefined): 
  * the prompt readable ("lives in: Berlin") without leaking the predicate vocabulary;
  * an unmapped predicate falls back to itself, so a new attribute still renders.
  */
+/**
+ * The persona carries the Tier-1 core profile ONLY. Phase 12 stores Tier-2 beliefs
+ * (`prefers`, `interestedIn`, …) in the same `user_facts` table; those reach the turn
+ * via the retrieval arm, never the always-carried persona (companion-memory.md §4).
+ * Enforce that contract here so a non-Tier-1 fact can't leak into every prompt.
+ */
+const TIER1_SET: ReadonlySet<string> = new Set(TIER1_PREDICATES);
+
 const PROFILE_LABELS: Readonly<Record<string, string>> = {
   pronouns: 'pronouns',
   gender: 'gender',
@@ -97,7 +105,9 @@ export function buildPersona(companion: CompanionDto, profile: readonly UserFact
   // one line — "speaks: French, German" — rather than repeating the label per value.
   const byPredicate = new Map<string, string[]>();
   for (const fact of profile) {
-    if (fact.predicate === null || fact.predicate === 'name') {
+    // Tier-1 only, minus `name` (rendered separately as `userName`). A non-Tier-1
+    // predicate (a Phase-12 belief) is dropped so it can't leak into the persona.
+    if (fact.predicate === null || fact.predicate === 'name' || !TIER1_SET.has(fact.predicate)) {
       continue;
     }
     const values = byPredicate.get(fact.predicate) ?? [];

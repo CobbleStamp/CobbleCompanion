@@ -79,6 +79,25 @@ describe('buildPersona', () => {
     // The name is the addressing line, not duplicated into the profile list.
     expect(persona).not.toContain('name: Ada');
   });
+
+  it('groups a multi-valued predicate into one labelled line', () => {
+    const persona = buildPersona(companion, [
+      userFact('languages', 'French'),
+      userFact('languages', 'German'),
+    ]);
+    expect(persona).toContain('speaks: French, German');
+  });
+
+  it('drops non-Tier-1 facts so Phase-12 beliefs cannot leak into the persona', () => {
+    const persona = buildPersona(companion, [
+      userFact('livesIn', 'Berlin'),
+      userFact('prefers', 'tea over coffee'),
+      userFact('interestedIn', 'astronomy'),
+    ]);
+    expect(persona).toContain('lives in: Berlin');
+    expect(persona).not.toContain('tea over coffee');
+    expect(persona).not.toContain('astronomy');
+  });
 });
 
 describe('assembleContext', () => {
