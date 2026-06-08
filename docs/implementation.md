@@ -299,9 +299,14 @@ extraction/retrieval flow → `companion-memory.md` §4.
 | `salience` | real, nullable | recency/strength weight; decays so retrieval favours current beliefs (Tier-2 ranking) |
 | `superseded_at` | timestamptz, nullable | null = current; set when a singular attribute is revised or a belief is contradicted (`ontology.md` §4). Superseded rows are kept (history), excluded from retrieval |
 | `superseded_by` | uuid, nullable (FK → `user_facts.id`) | the fact that replaced this one, when applicable |
-| `embedding` | `vector(1024)`, nullable | HNSW `vector_cosine_ops`; powers the Tier-2 belief-retrieval arm (`architecture.md` §4.3) |
-| `fts` | tsvector (generated from `subject`+`predicate`+`object`) | GIN-indexed; the lexical half of Tier-2 hybrid recall |
 | `created_at` / `updated_at` | timestamptz | |
+
+> **Phase 12 columns (not yet in the table).** Tier-2 belief **retrieval** adds `salience` (real,
+> nullable — recency/strength weight that decays so recall favours current beliefs), `embedding`
+> (`vector(1024)`, HNSW `vector_cosine_ops`), and `fts` (tsvector generated from
+> `subject`+`predicate`+`object`, GIN-indexed) — the hybrid-recall machinery (`architecture.md` §4.3).
+> Phase 11 (core profile) ships the columns above only; these three + their HNSW/GIN indexes land in
+> Phase 12 (`development-plan.md` §4c).
 
 > **The three tiers are a rule, not a column** (mirrors leaf types, `ontology.md` §3). **Tier 1 —
 > core profile**: the subset whose predicate is a singular identity attribute (`name`, `bornOn`,
@@ -309,8 +314,8 @@ extraction/retrieval flow → `companion-memory.md` §4.
 > from Google at sign-in, then refined in conversation), no longer a `users` column; assembled into the
 > persona block and carried every turn (§2.2). **Tier 2 —
 > learned beliefs**: everything else (`prefers`, `interestedIn`, `believes`, …); too many for context,
-> surfaced by the retrieval arm (`architecture.md` §4.3). **Tier 3 — user persona**: the synthesized
-> narrative in `companions.user_persona`. Indexes: HNSW on `embedding`, GIN on `fts`, btree on
+> surfaced by the retrieval arm (`architecture.md` §4.3) — added in Phase 12. **Tier 3 — user persona**:
+> the synthesized narrative in `companions.user_persona` (Phase 13). Index (Phase 11): btree on
 > `(user_id, superseded_at)` for the current-facts scan.
 
 ### Hybrid retrieval

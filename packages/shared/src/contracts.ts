@@ -579,6 +579,54 @@ export interface MemorySnapshotDto {
   readonly procedural: ProceduralMemorySection;
 }
 
+// --- User Model (Phase 11, companion-memory.md §4) ---
+
+/**
+ * Where a `user_fact` came from — its provenance origin (ontology.md §4):
+ * - `transcript` — learned in conversation (pins the transcript turn it came from).
+ * - `auth_seed`  — the name seeded from Google sign-in (modest confidence).
+ * - `user_edit`  — the user set/corrected it directly in the browser (authoritative).
+ */
+export const userFactSourceSchema = z.enum(['transcript', 'auth_seed', 'user_edit']);
+export type UserFactSource = z.infer<typeof userFactSourceSchema>;
+
+/**
+ * The singular identity attributes that make up the **Tier-1 core profile** — the
+ * subset of user-fact predicates that are one-per-user (a person has one name, one
+ * birthday) and are carried in the persona prompt every turn. "Singular" means a new
+ * value supersedes the prior one rather than accreting (companion-memory.md §4). Other
+ * predicates (Tier-2 beliefs: `prefers`, `interestedIn`, …) accrete and arrive in Phase 12.
+ */
+export const TIER1_PREDICATES = [
+  'name',
+  'pronouns',
+  'gender',
+  'bornOn',
+  'age',
+  'livesIn',
+  'worksAs',
+  'languages',
+  'relationships',
+] as const;
+export type Tier1Predicate = (typeof TIER1_PREDICATES)[number];
+
+/**
+ * A fact the companion knows about its user, as shown in the memory browser's
+ * user-model panel. The surface shape — the per-user tenancy and transcript
+ * provenance internals stay server-side (implementation.md §1).
+ */
+export interface UserFactDto {
+  readonly id: string;
+  readonly source: UserFactSource;
+  readonly factType: string;
+  readonly subject: string;
+  readonly predicate: string | null;
+  readonly object: string;
+  readonly confidence: number | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 // --- Request bodies (validated at the API boundary) ---
 
 export const createCompanionSchema = z.object({

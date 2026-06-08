@@ -114,6 +114,13 @@ export {
   type UserRecord,
 } from './identity/store.js';
 
+// User Model (Phase 11)
+export {
+  DrizzleUserModelStore,
+  type RecordTranscriptFactInput,
+  type UserModelStore,
+} from './user-model/store.js';
+
 // Memory
 export { TranscriptMemoryStore, type MemoryStore, type TranscriptEntry } from './memory/store.js';
 export {
