@@ -30,10 +30,11 @@ export interface RecordTranscriptFactInput {
   /** A singular identity attribute (`name`, `livesIn`, …); one current value per predicate. */
   readonly predicate: string;
   readonly object: string;
-  /** The companion whose conversation taught this (provenance). */
+  /** The companion whose conversation taught this — the recorded provenance (the
+   *  exact transcript `seq`, `user_facts.learned_from_seq`, stays NULL on this path:
+   *  the inline capture reads `MessageDto`, which omits `seq`; pinning the turn is
+   *  reserved for the Phase-12 reflector). */
   readonly learnedByCompanionId: string;
-  /** The transcript `seq` this was learned from, when known (provenance; nullable). */
-  readonly learnedFromSeq?: number | null;
   /** Core fact type; defaults to `attribute` (identity). */
   readonly factType?: string;
   /** Extractor self-reported confidence (0–1). */
@@ -43,12 +44,15 @@ export interface RecordTranscriptFactInput {
 /**
  * Persistence boundary for the User Model. All reads/writes are scoped by `userId`
  * (tenancy); edit/forget additionally verify the fact belongs to the user.
+ *
+ * The "exactly one current row per `(userId, predicate)`" invariant is enforced by
+ * the supersede-within-transaction writes here PLUS the harness serializing captures
+ * per-user (harness.ts `userFactChains`), not by a DB unique constraint — sufficient
+ * for the single-instance PoC (the affect store makes the same assumption).
  */
 export interface UserModelStore {
   /** Every current (non-superseded) fact for the user, oldest-first. */
   listCurrent(userId: string): Promise<readonly UserFactDto[]>;
-  /** A single fact owned by the user (current or superseded), or null. */
-  getFact(userId: string, factId: string): Promise<UserFactDto | null>;
   /**
    * Record a singular identity attribute learned in conversation, superseding the
    * prior current value for the same `(userId, predicate)`. Returns the new fact.
@@ -87,15 +91,6 @@ export class DrizzleUserModelStore implements UserModelStore {
     return rows.map(toUserFactDto);
   }
 
-  async getFact(userId: string, factId: string): Promise<UserFactDto | null> {
-    const [row] = await this.db
-      .select()
-      .from(userFacts)
-      .where(and(eq(userFacts.id, factId), eq(userFacts.userId, userId)))
-      .limit(1);
-    return row ? toUserFactDto(row) : null;
-  }
-
   async recordTranscriptFact(input: RecordTranscriptFactInput): Promise<UserFactDto> {
     return this.db.transaction(async (tx) => {
       // Insert the new current fact first so the prior row can point its
@@ -106,7 +101,6 @@ export class DrizzleUserModelStore implements UserModelStore {
           userId: input.userId,
           source: 'transcript',
           learnedByCompanionId: input.learnedByCompanionId,
-          learnedFromSeq: input.learnedFromSeq ?? null,
           factType: input.factType ?? DEFAULT_IDENTITY_FACT_TYPE,
           subject: USER_SUBJECT,
           predicate: input.predicate,

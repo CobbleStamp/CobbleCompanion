@@ -60,6 +60,8 @@ export function makeRequireAuth(deps: AppDeps): RequireAuth {
     // the user has no name fact yet, so a later sign-in can never resurrect the seed over
     // a name the user has since stated/edited (seedName is idempotent + resurrection-
     // guarded, user-model/store.ts). Best-effort: a seed hiccup must not block the request.
+    // Cost: a guarded index lookup per request — acceptable; gating it to first-provision
+    // would need ensureUserByEmail to report "created" (a wide signature change), deferred.
     if (seedName) {
       try {
         await deps.userModel.seedName(user.id, seedName);

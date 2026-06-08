@@ -292,7 +292,7 @@ extraction/retrieval flow → `companion-memory.md` §4.
 | `id` / `user_id` | uuid | cascade FK → `users.id` (tenancy — the user owns the fact) |
 | `source` | text `$type<UserFactSource>` | **origin** — `transcript` (learned in conversation, the usual case) \| `auth_seed` (the name from Google sign-in) \| `user_edit` (the user set/corrected it in the browser). Determines which provenance columns are set and informs default confidence |
 | `learned_by_companion_id` | uuid (FK → `companions.id`, **`ON DELETE SET NULL`**), **nullable** | which companion's conversation taught this — set only when `source='transcript'` (null for `auth_seed`/`user_edit`). The fact outlives the companion (it's the user's), so the link nulls rather than cascades |
-| `learned_from_seq` | bigint, **nullable** | **provenance** — the `seq` in `learned_by_companion`'s transcript this fact was learned from, set only when `source='transcript'` (stable, append-only; same pattern as `episodes.seq_start/seq_end`). Re-extraction rebuilds from the transcript, so no FK to the churning `episodes` |
+| `learned_from_seq` | bigint, **nullable** | **reserved provenance** — the transcript `seq` a fact was learned from. The Phase-11 inline-capture path does **not** populate it (the harness reads `MessageDto`, which omits `seq`) — it records the `learned_by_companion_id` link instead; pinning the exact turn is a Phase-12 reflector concern, so this is null on every fact today (no FK to the churning `episodes`; re-extraction rebuilds from the transcript) |
 | `fact_type` | text | the closed core set, validated at extraction (`ontology.md` §2) — identity is an `attribute`, a taste a `relation`/`attribute`, a life event an `event` |
 | `subject` / `predicate` / `object` | text (predicate nullable) | `subject` is the user entity; **polarity is carried by the predicate** (`prefers` vs `dislikes`), so likes/dislikes need no extra column. Denormalized strings, per `ontology.md` §5 |
 | `confidence` | real, nullable | (0–1), advisory; default tracks `source` — explicit `transcript` statement → high, inferred → low, `auth_seed` → modest (a guess from the account), `user_edit` → authoritative. Steers retrieval ranking, decay, and supersession precedence, never storage |
@@ -603,7 +603,9 @@ vegetarian"). It writes them (singular attributes upsert — a stated name is ju
 no special path); deeper inference, dedup, supersession, and Tier-3 synthesis are deferred to the
 **background reflection** pass that extends consolidation (`architecture.md` §4.3, §4.5). Both the
 extractor and the reflector are metered LLM calls; extraction quality is gated by the `user-extract`
-eval dataset (`howto-run-evals.md`). The registry's tool list is advertised to
+eval dataset (`howto-run-evals.md`). A chat turn therefore now has **two** post-turn perception reads
+— affect sensing and user-fact capture — each an independent, best-effort `stamina` debit (atomic, so
+neither can drive the wallet negative or void the turn). The registry's tool list is advertised to
 the gateway via `LlmStreamParams.tools` (not the prompt text); prior tool-call/result turns are
 replayed into the message array in the OpenAI wire shape.
 

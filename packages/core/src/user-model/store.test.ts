@@ -33,32 +33,32 @@ describe('DrizzleUserModelStore', () => {
     await close();
   });
 
-  function recordName(object: string, seq: number): Promise<{ id: string }> {
+  function recordName(object: string): Promise<{ id: string }> {
     return store.recordTranscriptFact({
       userId,
       predicate: 'name',
       object,
       learnedByCompanionId: companionId,
-      learnedFromSeq: seq,
       confidence: 0.9,
     });
   }
 
   describe('recordTranscriptFact', () => {
-    it('records a current fact carrying its transcript provenance', async () => {
-      const fact = await recordName('Sam', 7);
+    it('records a current fact with its companion provenance (seq stays null)', async () => {
+      const fact = await recordName('Sam');
       const current = await store.listCurrent(userId);
       expect(current).toHaveLength(1);
       expect(current[0]).toMatchObject({ predicate: 'name', object: 'Sam', source: 'transcript' });
-      // Provenance is server-side (not on the DTO) — assert via the row.
+      // Provenance is server-side (not on the DTO) — assert via the row. The inline
+      // capture records the companion link; the exact turn seq is reserved (Phase 12).
       const [row] = await db.select().from(userFacts).where(eq(userFacts.id, fact.id));
       expect(row?.learnedByCompanionId).toBe(companionId);
-      expect(row?.learnedFromSeq).toBe(7);
+      expect(row?.learnedFromSeq).toBeNull();
     });
 
     it('supersedes the prior value for the same predicate, keeping history', async () => {
-      const first = await recordName('Sam', 7);
-      const second = await recordName('Samuel', 9);
+      const first = await recordName('Sam');
+      const second = await recordName('Samuel');
       // Only the new value is current.
       const current = await store.listCurrent(userId);
       expect(current).toHaveLength(1);
@@ -70,13 +70,12 @@ describe('DrizzleUserModelStore', () => {
     });
 
     it('keeps distinct predicates as separate current facts', async () => {
-      await recordName('Sam', 7);
+      await recordName('Sam');
       await store.recordTranscriptFact({
         userId,
         predicate: 'livesIn',
         object: 'Berlin',
         learnedByCompanionId: companionId,
-        learnedFromSeq: 8,
       });
       const current = await store.listCurrent(userId);
       expect(current.map((f) => f.predicate).sort()).toEqual(['livesIn', 'name']);
@@ -104,7 +103,7 @@ describe('DrizzleUserModelStore', () => {
     });
 
     it('does not seed over a stated name (no resurrection)', async () => {
-      await recordName('Sam', 7);
+      await recordName('Sam');
       const seeded = await store.seedName(userId, 'Samuel Smith');
       expect(seeded).toBeNull();
       const current = await store.listCurrent(userId);
@@ -116,7 +115,7 @@ describe('DrizzleUserModelStore', () => {
       // Seed, then state a name (supersedes the seed); a later sign-in must not
       // resurrect a fresh auth_seed name over the stated one.
       await store.seedName(userId, 'Samuel Smith');
-      await recordName('Sam', 7);
+      await recordName('Sam');
       const reSeed = await store.seedName(userId, 'Samuel Smith');
       expect(reSeed).toBeNull();
       const current = await store.listCurrent(userId);
@@ -143,7 +142,7 @@ describe('DrizzleUserModelStore', () => {
 
     it('returns null for a fact the user does not own', async () => {
       const other = await identity.ensureUserByEmail('other@example.com');
-      const fact = await recordName('Sam', 7);
+      const fact = await recordName('Sam');
       const edited = await store.editFact(other.id, fact.id, 'Hacked');
       expect(edited).toBeNull();
       const current = await store.listCurrent(userId);
@@ -157,7 +156,7 @@ describe('DrizzleUserModelStore', () => {
 
   describe('forgetFact', () => {
     it('removes the fact from the current set and it does not resurface', async () => {
-      const fact = await recordName('Sam', 7);
+      const fact = await recordName('Sam');
       expect(await store.forgetFact(userId, fact.id)).toBe(true);
       expect(await store.listCurrent(userId)).toHaveLength(0);
       // Forgotten = superseded with no replacement (kept in history).
@@ -168,23 +167,14 @@ describe('DrizzleUserModelStore', () => {
 
     it('returns false for a fact the user does not own', async () => {
       const other = await identity.ensureUserByEmail('other@example.com');
-      const fact = await recordName('Sam', 7);
+      const fact = await recordName('Sam');
       expect(await store.forgetFact(other.id, fact.id)).toBe(false);
       expect(await store.listCurrent(userId)).toHaveLength(1);
     });
   });
 
-  describe('getFact', () => {
-    it('returns a fact scoped to its owner', async () => {
-      const fact = await recordName('Sam', 7);
-      expect(await store.getFact(userId, fact.id)).toMatchObject({ object: 'Sam' });
-      const other = await identity.ensureUserByEmail('other@example.com');
-      expect(await store.getFact(other.id, fact.id)).toBeNull();
-    });
-  });
-
   it('keeps the fact when the teaching companion is deleted (link nulls)', async () => {
-    const fact = await recordName('Sam', 7);
+    const fact = await recordName('Sam');
     await db.delete(companions).where(eq(companions.id, companionId));
     // The fact is the user's — it survives, with its companion link nulled.
     const current = await store.listCurrent(userId);

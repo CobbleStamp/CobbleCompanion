@@ -367,9 +367,9 @@ export const facts = pgTable(
  * companion the user owns); the synthesized Tier-3 understanding lives per-companion
  * in `companions.user_persona`.
  *
- * `source` is the fact's origin: `transcript` (learned in conversation — then
- * `learned_by_companion_id`/`learned_from_seq` pin the turn), `auth_seed` (the name
- * from Google sign-in), or `user_edit` (the user set it in the browser). A singular
+ * `source` is the fact's origin: `transcript` (learned in conversation — recording
+ * the teaching `learned_by_companion_id`), `auth_seed` (the name from Google sign-in),
+ * or `user_edit` (the user set it in the browser). A singular
  * identity attribute is revised by superseding (`superseded_at` set, `superseded_by`
  * pointing at the replacement), never overwritten, so history is kept (ontology.md §4).
  *
@@ -389,7 +389,10 @@ export const userFacts = pgTable(
     learnedByCompanionId: uuid('learned_by_companion_id').references(() => companions.id, {
       onDelete: 'set null',
     }),
-    // The transcript `seq` this was learned from; set only when source = 'transcript'.
+    // Reserved provenance: the transcript `seq` a fact was learned from. The inline
+    // capture path does NOT populate it (it reads MessageDto, which omits `seq`) —
+    // recording the companion link instead; pinning the exact turn is a Phase-12
+    // reflector concern. Nullable; null on every fact today.
     learnedFromSeq: bigint('learned_from_seq', { mode: 'number' }),
     factType: text('fact_type').notNull(),
     subject: text('subject').notNull(),

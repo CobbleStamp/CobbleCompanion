@@ -111,6 +111,8 @@ describe('Harness user-model wiring', () => {
       .where(and(eq(userFacts.userId, userId), isNull(userFacts.supersededAt)));
     expect(row).toMatchObject({ predicate: 'livesIn', object: 'Berlin', source: 'transcript' });
     expect(row?.learnedByCompanionId).toBe(companion.id);
+    // Inline capture records the companion link, not the exact turn seq (reserved, Phase 12).
+    expect(row?.learnedFromSeq).toBeNull();
 
     // The NEXT turn's persona now reflects what was learned.
     await drainTurn(harness.runTurn({ companion, userContent: 'tell me more', ownerId: userId }));
