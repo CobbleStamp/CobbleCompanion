@@ -165,6 +165,33 @@ describe('LlmUserModelReflector', () => {
     expect(current[0]?.salience).toBeCloseTo(0.6);
   });
 
+  it('gates a low-confidence sensitive inference — never persisted (Phase 13)', async () => {
+    await seedTurns(6, 'work has been heavy lately');
+    const gateway = new FakeLlmGateway([
+      extract([{ attribute: 'believes', value: 'struggles with depression', confidence: 0.4 }]),
+      reconcile([{ index: 0, op: 'add' }]),
+    ]);
+
+    await reflector(gateway).reflect(companionId);
+
+    // The companion holds no shaky guess about a protected matter.
+    expect(await store.listCurrentBeliefs(userId)).toHaveLength(0);
+  });
+
+  it('persists an explicit (high-confidence) sensitive belief, flagged', async () => {
+    await seedTurns(6, 'I want you to know I am Catholic');
+    const gateway = new FakeLlmGateway([
+      extract([{ attribute: 'believes', value: 'is Catholic', confidence: 0.9 }]),
+      reconcile([{ index: 0, op: 'add' }]),
+    ]);
+
+    await reflector(gateway).reflect(companionId);
+
+    const beliefs = await store.listCurrentBeliefs(userId);
+    expect(beliefs).toHaveLength(1);
+    expect(beliefs[0]?.sensitive).toBe(true);
+  });
+
   it('falls back to a fresh add when a reconcile target is stale', async () => {
     await seedTurns(6, 'I love hiking');
     const gateway = new FakeLlmGateway([

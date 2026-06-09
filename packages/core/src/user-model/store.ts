@@ -24,6 +24,7 @@ import { type Database, userFacts } from '@cobble/db';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { reciprocalRankFusion } from '../memory/rrf.js';
 import { effectiveSalience, isStale } from './decay.js';
+import { isSensitiveMatter } from './sensitive.js';
 
 /** The privileged entity every user-fact is about (ontology.md §1). */
 const USER_SUBJECT = 'user';
@@ -250,6 +251,7 @@ export class DrizzleUserModelStore implements UserModelStore {
           predicate: input.predicate,
           object: input.object,
           confidence: input.confidence ?? null,
+          sensitive: isSensitiveMatter(input.predicate, input.object),
         })
         .returning();
       if (!created) {
@@ -328,6 +330,7 @@ export class DrizzleUserModelStore implements UserModelStore {
           object: trimmed,
           source: 'user_edit',
           confidence: USER_EDIT_CONFIDENCE,
+          sensitive: isSensitiveMatter(target.predicate, trimmed),
           updatedAt: new Date(),
         })
         .where(eq(userFacts.id, target.id))
@@ -427,6 +430,7 @@ export class DrizzleUserModelStore implements UserModelStore {
           confidence: input.confidence ?? null,
           salience: input.salience ?? DEFAULT_BELIEF_SALIENCE,
           embedding: input.embedding ? [...input.embedding] : null,
+          sensitive: isSensitiveMatter(input.predicate, input.object),
         })
         .returning();
       if (!created) {
@@ -555,6 +559,7 @@ export class DrizzleUserModelStore implements UserModelStore {
           confidence: replacement.confidence ?? null,
           salience: replacement.salience ?? DEFAULT_BELIEF_SALIENCE,
           embedding: replacement.embedding ? [...replacement.embedding] : null,
+          sensitive: isSensitiveMatter(replacement.predicate, replacement.object),
           updatedAt: new Date(),
         })
         .where(eq(userFacts.id, target.id))
