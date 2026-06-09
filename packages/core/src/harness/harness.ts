@@ -605,6 +605,7 @@ export class Harness {
       const { blocks: history, usage: retrievalUsage } = await this.retrieveContext({
         companionId: companion.id,
         userContent,
+        ...(ownerId ? { ownerId } : {}),
       });
       // Fast-loop attunement (Phase 4.2): the prior rolling read of the user's mood
       // is fed forward so this reply adjusts tone/detail to where they are.

@@ -65,6 +65,12 @@ export interface Block {
 export interface RetrieveParams {
   readonly companionId: string;
   readonly userContent: string;
+  /**
+   * The owning user, when the turn is owner-scoped. Per-user arms (the Tier-2
+   * user-model belief arm, Phase 12) need it to scope `user_facts`; per-companion
+   * arms ignore it. Absent on unowned turns → those arms contribute nothing.
+   */
+  readonly ownerId?: string;
 }
 
 /** What the retrieval hook returns: the context blocks plus any token usage it

@@ -374,6 +374,11 @@ export {
   type ProceduralRetrieveOptions,
 } from './harness/procedural-retrieve.js';
 export {
+  createUserModelRetrieveContext,
+  toBeliefsBlock,
+  type UserModelRetrieveOptions,
+} from './harness/user-model-retrieve.js';
+export {
   createEquippedSummaryContext,
   type EquippedSummaryOptions,
 } from './acquisition/equipped-summary.js';

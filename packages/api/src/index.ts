@@ -19,6 +19,7 @@ import {
   createMemorySearchTool,
   createProceduralRetrieveContext,
   createSemanticRetrieveContext,
+  createUserModelRetrieveContext,
   createSourceParser,
   createWebFetchTool,
   DrizzleEpisodicMemoryStore,
@@ -228,6 +229,15 @@ async function main(): Promise<void> {
     // Phase 9: list the companion's currently-equipped tools (grounding-only),
     // before the semantic arm, which appends the recency window last.
     ...(acquisitionWiring ? [acquisitionWiring.equippedArm] : []),
+    // Phase 12: the Tier-2 user-model arm — relevant learned beliefs about the user as a
+    // "what I know about you" grounding block. Grounding-only (no recency), before semantic.
+    createUserModelRetrieveContext({
+      store: userModel,
+      embeddings: retrievalEmbeddings,
+      embeddingModel: config.embeddingModel,
+      embeddingDimensions: config.embeddingDimensions,
+      logger: consoleLogger,
+    }),
     createSemanticRetrieveContext({
       memory,
       semantic,
