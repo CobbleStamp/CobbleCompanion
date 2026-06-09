@@ -22,6 +22,7 @@ function fact(id: string, predicate: string, object: string): UserFactDto {
     object,
     confidence: 0.9,
     salience: null,
+    sensitive: false,
     createdAt: new Date(0).toISOString(),
     updatedAt: new Date(0).toISOString(),
   };

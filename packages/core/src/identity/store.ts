@@ -31,6 +31,10 @@ export interface CompanionRecord {
   readonly consolidatedThroughSeq: number;
   /** Phase 12 — the User-Model Reflector's belief-extraction cursor (independent). */
   readonly userFactsThroughSeq: number;
+  /** Phase 13 — Tier-3 synthesized user persona ("who this person is to you"); null until first synthesis. */
+  readonly userPersona: string | null;
+  /** Phase 13 — the Tier-3 synthesis cursor (independent; mirrors `personaUpdatedThroughSeq`). */
+  readonly userModelUpdatedThroughSeq: number;
   // Phase 4 — proactivity state the motivation engine reads (companion-motivation.md).
   readonly proactivityDial: ProactivityDial;
   /** Null until personalized via onboarding (PoC uses default constants). */
@@ -217,6 +221,7 @@ function toCompanionDto(row: typeof companions.$inferSelect): CompanionDto {
     form: row.form,
     temperament: row.temperament,
     evolvedPersona: row.evolvedPersona,
+    userPersona: row.userPersona,
     proactivityDial: row.proactivityDial,
     createdAt: row.createdAt.toISOString(),
   };
@@ -233,6 +238,8 @@ function toCompanionRecord(row: typeof companions.$inferSelect): CompanionRecord
     personaUpdatedThroughSeq: row.personaUpdatedThroughSeq,
     consolidatedThroughSeq: row.consolidatedThroughSeq,
     userFactsThroughSeq: row.userFactsThroughSeq,
+    userPersona: row.userPersona,
+    userModelUpdatedThroughSeq: row.userModelUpdatedThroughSeq,
     proactivityDial: row.proactivityDial,
     personalityKnobs: row.personalityKnobs,
     driveWeights: row.driveWeights,

@@ -72,7 +72,7 @@ interface BeliefCandidate {
   readonly confidence?: number;
 }
 
-type ReconcileOp = 'add' | 'reinforce' | 'supersede';
+type ReconcileOp = 'add' | 'reinforce' | 'replace';
 interface ReconcileDecision {
   readonly index: number;
   readonly op: ReconcileOp;
@@ -226,8 +226,8 @@ export class LlmUserModelReflector implements UserModelReflector {
         if (updated) {
           continue;
         }
-      } else if (decision.op === 'supersede' && target) {
-        const replaced = await this.options.store.supersedeBelief(userId, target, {
+      } else if (decision.op === 'replace' && target) {
+        const replaced = await this.options.store.replaceBelief(userId, target, {
           userId,
           ...this.beliefValues(candidate, companionId, throughSeq, vectors[i]),
         });
@@ -235,7 +235,7 @@ export class LlmUserModelReflector implements UserModelReflector {
           continue;
         }
       }
-      // add, or a reinforce/supersede whose target was stale (returned null).
+      // add, or a reinforce/replace whose target was stale (returned null).
       await this.options.store.recordBelief({
         userId,
         ...this.beliefValues(candidate, companionId, throughSeq, vectors[i]),
@@ -358,7 +358,7 @@ export function coerceDecisions(args: Record<string, unknown>): readonly Reconci
     if (typeof index !== 'number' || !Number.isInteger(index)) {
       continue;
     }
-    if (op !== 'add' && op !== 'reinforce' && op !== 'supersede') {
+    if (op !== 'add' && op !== 'reinforce' && op !== 'replace') {
       continue;
     }
     out.push({

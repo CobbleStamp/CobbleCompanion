@@ -51,6 +51,12 @@ export interface CompanionDto {
    * shown on the identity card. Null until the first evolution pass runs.
    */
   readonly evolvedPersona: string | null;
+  /**
+   * Phase 13 — Tier-3 "who this person is to you": a synthesized understanding of the
+   * USER, re-synthesized from the user's facts + this companion's episodes and blended
+   * additively into the persona prompt beside `evolvedPersona`. Null until first synthesis.
+   */
+  readonly userPersona: string | null;
   /** The proactivity dial (Phase 4) — how readily the companion self-initiates. */
   readonly proactivityDial: ProactivityDial;
   readonly createdAt: string;
@@ -660,6 +666,13 @@ export interface UserFactDto {
   readonly object: string;
   readonly confidence: number | null;
   readonly salience: number | null;
+  /**
+   * Phase 13 — true when the fact concerns a protected matter (gender/age/health/…). A
+   * low-confidence inference about such a matter is gated at write (never stored); an
+   * explicit statement is stored, flagged here so the browser can surface it for scrutiny
+   * and a true purge.
+   */
+  readonly sensitive: boolean;
   readonly createdAt: string;
   readonly updatedAt: string;
 }

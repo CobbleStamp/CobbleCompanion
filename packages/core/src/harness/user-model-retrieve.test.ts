@@ -136,9 +136,9 @@ describe('createUserModelRetrieveContext', () => {
     expect(onTopic.blocks[0]?.content).toContain('the user is interested in jazz');
   });
 
-  it('reflects current state only — a superseded belief never resurfaces', async () => {
+  it('reflects current state only — a replaced belief never resurfaces', async () => {
     const lovesId = await seedBelief('prefers', 'loves coffee');
-    await store.supersedeBelief(userId, lovesId, {
+    await store.replaceBelief(userId, lovesId, {
       userId,
       predicate: 'prefers',
       object: 'quit coffee',

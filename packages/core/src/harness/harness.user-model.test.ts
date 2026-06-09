@@ -7,7 +7,7 @@
 
 import { type Database, EMBEDDING_DIMENSIONS, userFacts } from '@cobble/db';
 import { createTestDatabase } from '@cobble/db/testing';
-import { and, eq, isNull } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FakeEmbeddingGateway } from '../embedding/fake.js';
 import { FakeLlmGateway, type FakeTurn } from '../llm/fake.js';
@@ -106,10 +106,7 @@ describe('Harness user-model wiring', () => {
     await harness.whenIdle(); // let the background capture settle
 
     // The stated fact was persisted as a current, transcript-sourced fact.
-    const [row] = await db
-      .select()
-      .from(userFacts)
-      .where(and(eq(userFacts.userId, userId), isNull(userFacts.supersededAt)));
+    const [row] = await db.select().from(userFacts).where(eq(userFacts.userId, userId));
     expect(row).toMatchObject({ predicate: 'livesIn', object: 'Berlin', source: 'transcript' });
     expect(row?.learnedByCompanionId).toBe(companion.id);
     // Inline capture records the companion link, not the exact turn seq (reserved, Phase 12).

@@ -56,17 +56,16 @@ describe('DrizzleUserModelStore', () => {
       expect(row?.learnedFromSeq).toBeNull();
     });
 
-    it('supersedes the prior value for the same predicate, keeping history', async () => {
+    it('replaces the prior value for the same predicate (current-state, no history row)', async () => {
       const first = await recordName('Sam');
-      const second = await recordName('Samuel');
+      await recordName('Samuel');
       // Only the new value is current.
       const current = await store.listCurrent(userId);
       expect(current).toHaveLength(1);
       expect(current[0]?.object).toBe('Samuel');
-      // The old row is kept and points at its replacement (not deleted).
-      const [old] = await db.select().from(userFacts).where(eq(userFacts.id, first.id));
-      expect(old?.supersededAt).not.toBeNull();
-      expect(old?.supersededBy).toBe(second.id);
+      // Current-state overlay: the old row is gone (the timeline lives in episodic memory).
+      const old = await db.select().from(userFacts).where(eq(userFacts.id, first.id));
+      expect(old).toHaveLength(0);
     });
 
     it('keeps distinct predicates as separate current facts', async () => {
@@ -102,13 +101,12 @@ describe('DrizzleUserModelStore', () => {
     it('collapses an identical restatement of a multi-valued predicate (idempotent)', async () => {
       const first = await recordLanguage('French');
       const second = await recordLanguage('French');
-      // The exact repeat supersedes the prior — one current "French", history kept.
+      // The exact repeat replaces the prior — one current "French", the old row gone.
       const current = await store.listCurrent(userId);
       expect(current).toHaveLength(1);
       expect(current[0]?.id).toBe(second.id);
-      const [old] = await db.select().from(userFacts).where(eq(userFacts.id, first.id));
-      expect(old?.supersededAt).not.toBeNull();
-      expect(old?.supersededBy).toBe(second.id);
+      const old = await db.select().from(userFacts).where(eq(userFacts.id, first.id));
+      expect(old).toHaveLength(0);
     });
 
     it('does not let a multi-valued value supersede a singular predicate', async () => {
@@ -204,10 +202,16 @@ describe('DrizzleUserModelStore', () => {
   });
 
   describe('editFact', () => {
-    it('supersedes the target and inserts an authoritative user_edit replacement', async () => {
+    it('replaces the value in place with an authoritative user_edit', async () => {
       const seeded = await store.seedName(userId, 'Samuel Smith');
       const edited = await store.editFact(userId, seeded!.id, 'Sam');
-      expect(edited).toMatchObject({ object: 'Sam', source: 'user_edit', predicate: 'name' });
+      // Current-state overlay: the same row is updated in place (no new id, no chain).
+      expect(edited).toMatchObject({
+        id: seeded!.id,
+        object: 'Sam',
+        source: 'user_edit',
+        predicate: 'name',
+      });
       expect(edited?.confidence).toBe(1);
       const current = await store.listCurrent(userId);
       expect(current).toHaveLength(1);
@@ -237,14 +241,13 @@ describe('DrizzleUserModelStore', () => {
   });
 
   describe('forgetFact', () => {
-    it('removes the fact from the current set and it does not resurface', async () => {
+    it('hard-deletes the fact so it does not resurface', async () => {
       const fact = await recordName('Sam');
       expect(await store.forgetFact(userId, fact.id)).toBe(true);
       expect(await store.listCurrent(userId)).toHaveLength(0);
-      // Forgotten = superseded with no replacement (kept in history).
-      const [row] = await db.select().from(userFacts).where(eq(userFacts.id, fact.id));
-      expect(row?.supersededAt).not.toBeNull();
-      expect(row?.supersededBy).toBeNull();
+      // Current-state overlay: the row is deleted outright (no history chain to keep).
+      const rows = await db.select().from(userFacts).where(eq(userFacts.id, fact.id));
+      expect(rows).toHaveLength(0);
     });
 
     it('returns false for a fact the user does not own', async () => {
@@ -444,27 +447,29 @@ describe('DrizzleUserModelStore', () => {
       expect(hits.map((h) => h.belief.id)).toEqual([far.id, near.id]);
     });
 
-    it('supersedes a same-matter newer state, retaining the old as history', async () => {
+    it('replaces a same-matter newer state in place (no history row)', async () => {
       const loves = await store.recordBelief({
         userId,
         predicate: 'prefers',
         object: 'loves coffee',
         embedding: basisVector(0),
       });
-      const quit = await store.supersedeBelief(userId, loves.id, {
+      const quit = await store.replaceBelief(userId, loves.id, {
         userId,
         predicate: 'prefers',
         object: 'quit coffee',
         embedding: basisVector(0),
       });
 
+      // Current-state overlay: the same row is overwritten (same id), not chained.
+      expect(quit?.id).toBe(loves.id);
       expect(quit?.object).toBe('quit coffee');
-      // Only the newer state is current; the old row is retained, marked superseded_by.
       const current = await store.listCurrentBeliefs(userId);
       expect(current.map((b) => b.object)).toEqual(['quit coffee']);
-      const [oldRow] = await db.select().from(userFacts).where(eq(userFacts.id, loves.id));
-      expect(oldRow?.supersededAt).not.toBeNull();
-      expect(oldRow?.supersededBy).toBe(quit?.id);
+      // No retained history — only the one current row for this matter exists.
+      const rows = await db.select().from(userFacts).where(eq(userFacts.id, loves.id));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.object).toBe('quit coffee');
     });
 
     it('adjusts salience (clamped) and refuses a non-owned belief', async () => {

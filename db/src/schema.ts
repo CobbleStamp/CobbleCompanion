@@ -18,9 +18,9 @@ import type {
 } from '@cobble/shared';
 import { sql } from 'drizzle-orm';
 import {
-  type AnyPgColumn,
   bigint,
   bigserial,
+  boolean,
   customType,
   index,
   integer,
@@ -118,6 +118,18 @@ export const companions = pgTable(
     // extraction has processed. Independent of `consolidated_through_seq` so a failed
     // reflection never advances past an unprocessed window (mirrors the evolution cursor).
     userFactsThroughSeq: bigint('user_facts_through_seq', { mode: 'number' }).notNull().default(0),
+    // Phase 13 — Tier-3 User Persona. The synthesized "who this person is to you",
+    // the mirror of `evolved_persona` pointed at the USER: re-synthesized by a sibling
+    // of the Personality Evolver from the per-user `user_facts` + this companion's
+    // episodes, and blended ADDITIVELY into the persona prompt (Tier-1 identity facts
+    // still render verbatim). Null until the first synthesis (companion-memory.md §4).
+    userPersona: text('user_persona'),
+    // Phase 13 — Tier-3 synthesis cursor: the highest transcript `seq` the user persona
+    // was last synthesized from. Independent of the other cursors (mirrors
+    // `persona_updated_through_seq`) so synthesis re-runs only when facts/episodes advanced.
+    userModelUpdatedThroughSeq: bigint('user_model_updated_through_seq', { mode: 'number' })
+      .notNull()
+      .default(0),
     // Phase 4 — proactivity. The user-facing intensity dial (off/gentle/active):
     // scales how readily the motivation engine initiates and how much energy it
     // spends; `off` never initiates (companion-motivation.md §5).
@@ -373,15 +385,19 @@ export const facts = pgTable(
  *
  * `source` is the fact's origin: `transcript` (learned in conversation — recording
  * the teaching `learned_by_companion_id`), `auth_seed` (the name from Google sign-in),
- * or `user_edit` (the user set it in the browser). A singular
- * identity attribute is revised by superseding (`superseded_at` set, `superseded_by`
- * pointing at the replacement), never overwritten, so history is kept (ontology.md §4).
+ * or `user_edit` (the user set it in the browser).
  *
  * Phase 12 adds the Tier-2 learned-belief overlay in the same table: the
  * `embedding`/`fts` hybrid-retrieval columns (mirroring `sections`/`episodes`) so the
- * Tier-2 arm can recall the top-K relevant *current* beliefs per turn, and `salience`,
- * an event-driven strength weight (bumped on a reflector `reinforce` and on the
- * belief-learning loop's reward; passive time-decay is Phase 13 — implementation.md §1).
+ * Tier-2 arm can recall the top-K relevant beliefs per turn, and `salience`, an
+ * event-driven strength weight (bumped on a reflector `reinforce` and on the
+ * belief-learning loop's reward).
+ *
+ * Phase 13 makes `user_facts` a CURRENT-STATE overlay (it holds what's true *now*; the
+ * timeline of the self lives in episodic memory). A revision REPLACES the prior value
+ * rather than stacking a superseded chain — the Phase-12 `superseded_at`/`superseded_by`
+ * columns are removed (ontology.md §4). `salience` decays lazily at read time; `sensitive`
+ * flags a fact about a protected matter (gated at write — companion-memory.md §4).
  */
 export const userFacts = pgTable(
   'user_facts',
@@ -410,39 +426,42 @@ export const userFacts = pgTable(
     confidence: real('confidence'),
     // Tier-2 (Phase 12) event-driven strength weight: bumped on a reflector `reinforce`
     // and on a positive belief-driven proactive reaction, cut on a negative one. Steers
-    // retrieval ranking. Passive time-decay is Phase 13. Null on Tier-1 identity rows.
+    // retrieval ranking. Phase 13 decays it lazily at read time (effective = stored ×
+    // decay(now − updated_at)); the stored value stays = true reinforced strength. Null
+    // on Tier-1 identity rows (identity does not decay).
     salience: real('salience'),
+    // Phase 13 — flags a fact about a protected matter (gender/age/health/religion/
+    // sexuality/ethnicity/political — the closed SENSITIVE_MATTERS set). A low-confidence
+    // *inference* about such a matter is gated at write (not persisted); an explicit user
+    // statement passes and is flagged here for UI scrutiny + true purge (companion-memory.md §4).
+    sensitive: boolean('sensitive').notNull().default(false),
     // Tier-2 hybrid recall (Phase 12), mirroring sections/episodes. Nullable until the
     // writer's embedding pass completes; a null-embedding belief still recalls via `fts`.
     embedding: vector('embedding', { dimensions: EMBEDDING_DIMENSIONS }),
     fts: tsvector('fts').generatedAlwaysAs(
       sql`to_tsvector('english', coalesce(subject, '') || ' ' || coalesce(predicate, '') || ' ' || coalesce(object, ''))`,
     ),
-    // Null = current; set when a singular attribute is revised, a multi-valued one is
-    // restated identically, or a belief's same matter takes a newer state (current-state
-    // last-wins; the prior row is retained as history — ontology.md §4).
-    supersededAt: timestamp('superseded_at', { withTimezone: true }),
-    // The fact that replaced this one (null when forgotten with no replacement).
-    supersededBy: uuid('superseded_by').references((): AnyPgColumn => userFacts.id),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    // The current-facts scan (superseded_at IS NULL) + supersede-by-predicate lookup.
-    index('user_facts_user_current_idx').on(table.userId, table.supersededAt),
+    // The by-user / by-predicate scan (Phase 13: every row is current — a revision
+    // replaces, so there is no superseded_at to filter on).
+    index('user_facts_user_predicate_idx').on(table.userId, table.predicate),
     // Tier-2 hybrid recall over current beliefs (Phase 12).
     index('user_facts_embedding_hnsw_idx').using('hnsw', table.embedding.op('vector_cosine_ops')),
     index('user_facts_fts_idx').using('gin', table.fts),
-    // Enforce one current `name` per user at the DB level. seedName runs on every
-    // authenticated request, outside the harness per-user serialization, so a fresh
-    // user's parallel first-load requests can both pass seedName's read-then-insert
-    // guard under READ COMMITTED and double-insert. This partial unique index makes the
-    // loser conflict instead (seedName handles it via ON CONFLICT DO NOTHING). Scoped to
-    // `name` only — multi-valued predicates (languages, relationships) keep many current
-    // rows by design, so a general (user_id, predicate) uniqueness would be wrong.
+    // Enforce one `name` per user at the DB level. seedName runs on every authenticated
+    // request, outside the harness per-user serialization, so a fresh user's parallel
+    // first-load requests can both pass seedName's read-then-insert guard under READ
+    // COMMITTED and double-insert. This partial unique index makes the loser conflict
+    // instead (seedName handles it via ON CONFLICT DO NOTHING). Scoped to `name` only —
+    // multi-valued predicates (languages, relationships) keep many rows by design, so a
+    // general (user_id, predicate) uniqueness would be wrong. (Phase 13: no superseded_at
+    // clause — every row is current under replace-on-revision.)
     uniqueIndex('user_facts_one_current_name_uniq')
       .on(table.userId, table.predicate)
-      .where(sql`${table.predicate} = 'name' AND ${table.supersededAt} IS NULL`),
+      .where(sql`${table.predicate} = 'name'`),
   ],
 );
 

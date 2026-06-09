@@ -47,8 +47,8 @@ exports[`prompt registry > locks prompt versions against accidental drift 1`] = 
     "semver": "1.0.0",
   },
   "user-beliefs-reconcile": {
-    "contentHash": "a008645d9320d26a",
-    "semver": "1.0.0",
+    "contentHash": "c69ba1e90976d9ad",
+    "semver": "1.1.0",
   },
   "user-beliefs-reflect": {
     "contentHash": "654714dfb73aa667",
