@@ -46,8 +46,8 @@ being is proven, because they add platform cost without changing whether the cor
 | **9** | Tool acquisition — MCP | Web / server-host | Whitelisted HTTP MCP servers discovered, loaded & used at runtime, no redeploy | ✅ **Done** (PR #10) |
 | **10** | Tool acquisition — CLI | Web / server-host | Whitelisted host CLIs discovered, loaded & driven at runtime, no redeploy | ✅ **Done** (PR #11) |
 | **11** | User Model — core profile | Web | Cobble captures & uses the user's identity facts (name, pronouns, age, …) ⭐ | ✅ **Done** (§4c) |
-| **12** | User Model — learned beliefs | Web | Continuously learns preferences/interests/opinions; surfaces them unprompted | Planned (§4c) |
-| **13** | User Model — understanding & hygiene | Web | Synthesized user-persona; supersession/decay; full edit/forget UI | Planned (§4c) |
+| **12** | User Model — learned beliefs | Web | Learns preferences/interests/opinions (explicit + implicit); surfaces them unprompted **and acts on them**, refining from reactions ⭐ | Planned (§4c) |
+| **13** | User Model — understanding & hygiene | Web | Synthesized user-persona; decay & sensitive attributes; full edit/forget UI | Planned (§4c) |
 
 ⭐ = the differentiators the web PoC exists to prove. **Phases 0–5 are the PoC.**
 
@@ -495,8 +495,14 @@ transcript turns; extraction is **hybrid** —
 inline salient capture (post-turn perception) + **background reflection** (extends consolidation);
 **full trust, no approval gate** for memory writes (everything legible/editable/forgettable
 instead); and an **eval dataset (`user-extract`)** is the quality gate so extraction can be
-iterated. Canonical mechanism end-to-end → `companion-memory.md` §4; components → `architecture.md`
-§3, §4.3, §4.5.
+iterated. **Phase 12 additions (locked):** the reflector reads the **raw transcript window** (not the
+lossy episode summaries — the implicit signal is in the un-summarized record); revision is
+**current-state supersession** (last-wins on the current row, prior retained as history — *not*
+contradiction-deletion); the Tier-2 belief set is **closed** (`prefers`/`dislikes`/`interestedIn`/`believes`);
+and the **belief-learning loop is in-scope** — beliefs drive the motivation engine *and* the engine's
+reinforcement refines belief salience (decay deferred to Phase 13). Canonical mechanism end-to-end →
+`companion-memory.md` §4; components → `architecture.md` §3, §4.3, §4.5; reinforcement →
+`companion-motivation.md` §7.
 
 ### Phase 11 — User Model: core profile ⭐
 **Goal:** the companion knows the user's stable identity and uses it naturally.
@@ -519,22 +525,51 @@ iterated. Canonical mechanism end-to-end → `companion-memory.md` §4; componen
 is captured, carried into subsequent turns' context, and the user can correct or delete it; the
 `user-extract` eval passes on the explicit cases.
 
-### Phase 12 — User Model: learned beliefs
-**Goal:** the companion continuously learns the user's preferences, interests, and opinions, and
-brings them to bear unprompted.
+### Phase 12 — User Model: learned beliefs ⭐
+**Goal:** the companion continuously learns the user's preferences, interests, and opinions, brings
+them to bear unprompted in conversation, **and acts on them** — refining them from how the user
+reacts when it does.
 
 **Scope**
-- **Background reflection** (the User-Model Reflector, extending the consolidation pass): derives
-  typed beliefs (`prefers`/`interestedIn`/`believes`) from cross-turn patterns — including
-  **implicit** ones no single message states — with provenance, confidence, and salience.
-- **Write hygiene** centralized in reflection: embedding **dedup**, **supersession** of contradicted
-  beliefs, confidence/decay (`ontology.md` §4).
-- **Tier-2 retrieval arm** in `composeRetrieveContext` (hybrid over current `user_facts`), surfacing
-  the top-K relevant beliefs per turn (`architecture.md` §4.3).
-- `user-extract` extended with belief/preference cases (LLM-judge for fuzzy matches).
+- **Hybrid extraction, both paths widened to beliefs.** *Inline salient capture* expands from Tier-1
+  identity to **explicit** Tier-2 beliefs ("I'm vegetarian", "I love jazz") — captured and usable the
+  next turn, closing the Phase-11 leak that silently dropped non-identity statements. *Background
+  reflection* (the **User-Model Reflector**) does the heavy lifting off-request: it reads the **raw
+  transcript window** (the same window consolidation reads — un-lossy, where the implicit signal
+  lives, not the filler-dropped episode summaries), deriving **implicit** beliefs no single message
+  states ("keeps circling back to Rust → `interestedIn: Rust`"), with provenance (`learned_from_seq`),
+  confidence, and salience. Its **own cursor** (`user_facts_through_seq`) makes it independently
+  idempotent. Closed predicate set `TIER2_PREDICATES` = `prefers`/`dislikes`/`interestedIn`/`believes`,
+  validated at extraction; polarity rides the predicate.
+- **Write hygiene centralized in the reflector** (so it lives in one place): embedding **dedup** of
+  restatements, and **current-state supersession** — when new evidence updates the *same matter*, the
+  latest becomes the current row and the prior is retained as **superseded history**, not deleted.
+  Last-wins for *now*; the timeline of the self lives in episodic memory + the superseded chain (it is
+  **not** a contradiction — "loved coffee, then quit" are both true across time; `ontology.md` §4).
+  Salience here is an **event-driven** strength weight (bumped on reinforcement); **time-decay and the
+  stale-drop cutoff are Phase 13**.
+- **Tier-2 retrieval arm** in `composeRetrieveContext`: hybrid (vector + FTS, RRF) over the *current*
+  (non-superseded) Tier-2 `user_facts`, surfacing the top-K relevant beliefs per turn as a fenced
+  block, composed ahead of the semantic arm so recency stays last (`architecture.md` §4.3). Adds
+  `embedding`/`fts`/`salience` columns + HNSW/GIN indexes to `user_facts` (`implementation.md` §1).
+- **Belief-learning loop — beliefs drive the will, and the will refines beliefs** (`architecture.md`
+  §4.5, `companion-motivation.md` §7). The motivation engine's curiosity/interest drive **sources its
+  candidate topics from the explicit Tier-2 belief set** instead of scraping episodes; a belief-driven
+  burst records the originating belief (`proactive_outcomes.driven_by_user_fact_id`); and the existing
+  change-in-mood reward, when the act was belief-driven, **also adjusts that belief's salience** —
+  reinforced when the user appreciated it, weakened when ignored. Beliefs are thus learned from what
+  the user *says* (reflection) **and** from how they *react to the companion acting on them*. *(Active
+  probing for unknown interests is deferred.)*
+- **Eval gate:** a **reflector eval** — seed a multi-turn window, run the reflector, judge (LLM-judge)
+  that the implicit belief was derived and a same-matter newer state superseded rather than duplicated;
+  plus a **deterministic DoD test** for the loop (a belief drives a burst → the report note carries the
+  link → a positive reaction bumps the belief's salience, a flat one doesn't). `user-extract` also
+  gains a few explicit-belief cases.
 
 **Done when:** a preference the user expressed earlier resurfaces, unprompted and correctly, in a
-later turn where it's relevant; a contradicted belief is superseded rather than duplicated.
+later relevant turn; a same-matter newer state supersedes the prior current belief (history retained),
+not duplicated; and the engine **acts on a learned interest on its own, with the user's reaction
+refining that belief** — reinforced when appreciated, weakened when ignored.
 
 ### Phase 13 — User Model: understanding & hygiene
 **Goal:** isolated facts become a coherent, current understanding the user fully controls.

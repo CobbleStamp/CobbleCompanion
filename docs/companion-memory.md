@@ -129,7 +129,7 @@ flowchart TB
 
     %% 1. EXTRACT
     RUN -.->|"post-turn perception<br/>(sibling to affect sensing)"| INLINE["① Inline salient capture<br/>explicit, high-signal facts only"]
-    TX -->|"off-request · cursor-gated · metered"| REFLECT["① Background reflection<br/>(User-Model Reflector):<br/>infer implicit beliefs · dedup ·<br/>supersede · decay · synthesize Tier-3"]
+    TX -->|"raw window · own cursor · metered"| REFLECT["① Background reflection<br/>(User-Model Reflector):<br/>infer implicit beliefs · dedup ·<br/>reconcile (add/reinforce/supersede) ·<br/>synthesize Tier-3 (P13)"]
 
     %% 0. SEED (at sign-in)
     SEED["Google sign-in<br/>name claim"] -.->|"seed name<br/>(source=auth_seed)"| UF
@@ -158,24 +158,54 @@ The prose below elaborates each.
 
 - **Inline salient capture.** After the reply streams, the same post-turn perception that senses the
   user's mood (`motivation/affect.ts`) also runs a conservative user-fact extractor — **explicit,
-  high-signal** statements only ("call me Sam", "I'm vegetarian"). It writes them immediately; a
-  stated name is just the singular `name` attribute (`source=transcript`), superseding the
-  `auth_seed` name from sign-in — no special path, no `users` column (`architecture.md` §4.5).
+  high-signal** statements only. In Phase 11 it captured Tier-1 identity ("call me Sam"); **Phase 12
+  widens it to explicit Tier-2 beliefs** ("I'm vegetarian", "I love jazz"), so a plainly stated
+  preference is usable the very next turn rather than waiting for the next reflection. It writes them
+  immediately (`source=transcript`): a stated name is just the singular `name` attribute superseding
+  the `auth_seed` seed — no special path, no `users` column (`architecture.md` §4.5). Semantic dedup
+  and reconciliation are **not** its job — the reflector owns them, so inline capture stays a cheap
+  insert.
 - **Background reflection.** The heavy lifting is off-request, in a **User-Model Reflector** that
-  extends episodic consolidation (cursor-gated, metered): it derives **implicit** beliefs from
-  patterns across many turns ("keeps asking about Rust → interested in Rust") and re-synthesizes the
-  Tier-3 user persona — exactly as consolidation already drives `evolvedPersona` (`architecture.md`
-  §4.3).
+  extends the consolidation pass (cursor-gated, metered). It reads the **raw transcript window** — the
+  same span consolidation reads, deliberately *not* the filler-dropped episode summaries, because the
+  signal for an implicit belief lives in the un-summarized repetition ("keeps asking about Rust →
+  `interestedIn: Rust`"). Its own cursor (`user_facts_through_seq`) makes belief extraction
+  independently idempotent — a failed reflection never advances past an unprocessed window — and lets
+  it pin each belief's provenance to the exact turn (`learned_from_seq`, which inline capture can't,
+  reading a seq-less `MessageDto`). It also re-synthesizes the Tier-3 user persona, exactly as
+  consolidation drives `evolvedPersona` (Phase 13; `architecture.md` §4.3). The transcript is the
+  canonical, **lossless** substrate (`ontology.md` invariant #1): anything inline capture misses, the
+  reflector recovers on its next pass, and re-extraction rebuilds the whole overlay — so no knowledge
+  is permanently lost as long as it was said.
 
 **Write discipline (owned by the reflector, so hygiene lives in one place):** a fact is never
 overwritten in place — a revision **supersedes** (insert the new value as current, mark the old
 `superseded_at`/`superseded_by`), so history is kept. Singular attributes (`name`, `livesIn`, …)
 supersede the prior value for the predicate; **multi-valued** ones (`languages`, `relationships` —
 `MULTI_VALUED_PREDICATES`) **accrete**, superseding only an identical `(predicate, object)`
-restatement so distinct values coexist. A new belief **dedups** against existing ones (embedding
-match) instead of duplicating; a contradiction **supersedes** the old with a timestamp (not silently
-both-true); confidence and a decaying salience steer retrieval toward what's current (`ontology.md`
-§4).
+restatement so distinct values coexist.
+
+**Beliefs are a *current-state* mirror — last-wins, history retained (not contradiction).** The
+`user_facts` current set holds **what's true now**; the *timeline* of the self lives in episodic
+memory and the superseded chain. So "I loved coffee, then I quit" is **not** a contradiction — both
+are true across time and both are kept: the current row moves to "doesn't drink coffee", the old
+"loves coffee" row stays as dated, superseded history (never deleted). The reflector's reconciliation
+is therefore *current-state maintenance*, not truth-arbitration. Its pipeline, per candidate belief:
+**dedup** (embed it, pull the top-K similar *current* beliefs as bounded context) → one LLM
+reconciliation read returns **`add`** (new matter — coexists), **`reinforce(id)`** (same matter,
+restated — bump salience, no new row), or **`supersede(id)`** (same matter, *newer state* — insert as
+current, mark the cited row superseded). A polarity flip ("love" → "quit") is just the obvious
+`supersede` case. Confidence and an event-driven salience steer retrieval toward what's current;
+**time-decay and the stale-drop cutoff are Phase 13** (`ontology.md` §4).
+
+**Beliefs are also learned from behaviour, not only words.** Inline capture and reflection learn from
+what the user *says*. The **belief-learning loop** (`architecture.md` §4.5,
+`companion-motivation.md` §7) adds a second source: the motivation engine sources its
+curiosity/interest topics from the current Tier-2 belief set and acts on them on its own (reads a
+lead, posts a report note tagged with the originating belief), and the change in the user's mood
+across their reaction **adjusts that belief's salience** — reinforced when appreciated, weakened when
+ignored. A belief the companion *acted on and the user welcomed* is a belief grounded in behaviour,
+not just a passing mention.
 
 **Trust & control:** the companion is **fully trusted to write its own memory** — there is **no
 approval queue** for user-facts (that gate is for external side-effects, `architecture.md` §4.4). The
@@ -191,8 +221,11 @@ invents preferences fails the gate (`ontology.md` §5).
 > **Status.** **Phase 11 (core profile) is implemented**: the `user_facts` store, inline capture of
 > explicit identity facts each turn, Tier-1 injection into the persona, the name seeded from sign-in
 > (no more `display_name` column), and the editable/forgettable browser panel — gated by the
-> `user-extract` eval. **Tiers 2–3 are designed, not yet built**: learned-belief retrieval (Phase 12)
-> and the synthesized user persona + decay (Phase 13) — `development-plan.md` §4c.
+> `user-extract` eval. **Tier 2 (learned beliefs) is designed and finalized for Phase 12, not yet
+> built**: the raw-transcript reflector (own cursor, current-state supersession), inline capture
+> widened to explicit beliefs, the hybrid Tier-2 retrieval arm, and the belief-learning loop (beliefs
+> drive the will; the will refines belief salience). **Tier 3 (synthesized user persona) + decay/sensitive
+> attributes are Phase 13.** `development-plan.md` §4c.
 
 ## 5. Browsing memory (read-only)
 

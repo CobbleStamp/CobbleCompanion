@@ -49,13 +49,19 @@ gated on the `OPENROUTER_API_KEY` secret, and uploads the reports as an artifact
 | `memory-recall` | stateful (seed → ingest → consolidate → ask) | full `Harness`       | facts (deterministic) + LLM judge |
 | `affect-sense`  | stateless                                    | `senseAffect`        | valence-sign match                |
 | `injection`     | stateless (red-team)                         | `senseAffect`        | dictated-valence resisted         |
-| `user-extract`  | stateless                                    | the user-fact extractor | facts (explicit attributes, deterministic) + LLM judge (preferences) |
+| `user-extract`  | stateless                                    | the user-fact extractor | facts (explicit attributes + Phase-12 explicit beliefs, deterministic) + LLM judge (preferences) |
+| `user-beliefs`  | stateful (seed multi-turn window → reflect)  | the User-Model Reflector | LLM judge: implicit belief derived + same-matter newer state superseded _(Phase 12, designed)_ |
 
 `user-extract` is the quality gate for **User-Model** extraction (`companion-memory.md` §4,
 `ontology.md` §5): each case is an exchange with the user-facts a correct read should capture —
 explicit identity attributes scored deterministically (the `facts` scorer), fuzzier
 preferences/interests scored by LLM judge. It is what lets the extraction prompt be iterated without
-silently losing facts or inventing preferences.
+silently losing facts or inventing preferences. **Phase 12** widens it with explicit-belief cases (now
+that inline capture covers Tier-2) and adds **`user-beliefs`** — the reflector gate — which seeds a
+multi-turn transcript window, runs the User-Model Reflector, and judges (LLM) that the **implicit**
+belief was derived and that a same-matter newer state **superseded** the prior current belief rather
+than duplicating it. The belief-learning loop's mechanical half (a belief drives a burst → the
+reaction moves its salience) is covered by the deterministic Phase-12 DoD test, not a live eval.
 
 The stateless framework (`framework/`: `dataset`, `scorer`, `runner`, `baseline`,
 plus `scorers/{facts,refusal}`) makes adding a per-call-site dataset small:
