@@ -246,16 +246,20 @@ originating transcript turn too). (A user-facing "don't infer X about me" toggle
 deterministically, fuzzier preferences by LLM judge. A prompt change that loses identity facts or
 invents preferences fails the gate (`ontology.md` §5).
 
-> **Status.** **Phases 11–12 are implemented.** Phase 11 (core profile): the `user_facts` store,
+> **Status.** **Phases 11–13 are implemented.** Phase 11 (core profile): the `user_facts` store,
 > inline capture of explicit identity facts, Tier-1 injection into the persona, the name seeded from
 > sign-in, and the editable/forgettable browser panel. **Phase 12 (learned beliefs): built** — the
 > `embedding`/`fts`/`salience` Tier-2 columns; inline capture widened to explicit beliefs (embedded at
-> capture); the raw-transcript **reflector** (own cursor, `add`/`reinforce`/`supersede` reconciliation,
-> current-state supersession) fired by consolidation; the hybrid **Tier-2 retrieval arm**; and the
-> **belief-learning loop** (beliefs drive the motivation engine; the reaction reward refines belief
-> salience). Read-only beliefs panel in the browser. Gated by the deterministic Phase-12 DoD test plus
-> the live `user-extract` (explicit-belief cases) and `user-beliefs` (reflector) evals. **Tier 3
-> (synthesized user persona) + decay/sensitive attributes are Phase 13.** `development-plan.md` §4c.
+> capture); the raw-transcript **reflector** (own cursor, `add`/`reinforce`/`replace` reconciliation)
+> fired by consolidation; the hybrid **Tier-2 retrieval arm**; and the **belief-learning loop** (beliefs
+> drive the motivation engine; the reaction reward refines belief salience). **Phase 13 (understanding &
+> hygiene): built** — `user_facts` is now a **current-state overlay** (`replace`, the superseded chain
+> dropped); **lazy decay** (`effectiveSalience`) + **uncertainty-aware recall** make forgetting graceful;
+> the **sensitive write-gate** keeps shaky guesses about protected matters out; the **Tier-3
+> `LlmUserPersonaSynthesizer`** writes `companions.user_persona` (additive blend); and the browser gained
+> full **edit/delete** on both tiers, a `sensitive` badge, the read-only persona, and the `deleteFact`
+> purge. Gated by the deterministic Phase-12 + Phase-13 DoD tests plus the live `user-extract`,
+> `user-beliefs`, and `user-persona` evals. `development-plan.md` §4c.
 
 ## 5. Browsing memory (read-only)
 

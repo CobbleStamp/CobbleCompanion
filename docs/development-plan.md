@@ -47,7 +47,7 @@ being is proven, because they add platform cost without changing whether the cor
 | **10** | Tool acquisition — CLI | Web / server-host | Whitelisted host CLIs discovered, loaded & driven at runtime, no redeploy | ✅ **Done** (PR #11) |
 | **11** | User Model — core profile | Web | Cobble captures & uses the user's identity facts (name, pronouns, age, …) ⭐ | ✅ **Done** (§4c) |
 | **12** | User Model — learned beliefs | Web | Learns preferences/interests/opinions (explicit + implicit); surfaces them unprompted **and acts on them**, refining from reactions ⭐ | ✅ **Done** (§4c) |
-| **13** | User Model — understanding & hygiene | Web | Synthesized user-persona; decay & sensitive attributes; full edit/forget UI | Planned (§4c) |
+| **13** | User Model — understanding & hygiene | Web | Synthesized user-persona; decay & sensitive attributes; full edit/forget UI | ✅ **Done** (§4c) |
 
 ⭐ = the differentiators the web PoC exists to prove. **Phases 0–5 are the PoC.**
 
@@ -668,6 +668,23 @@ explicit one is purgeable).
 **Deferred (designed here, built later):** a user-facing "don't infer X about me" consent toggle; an active
 conflict-detection engine (Phase 13 ships the cheap ask-when-unsure, not a contradiction scanner);
 per-predicate decay rates (v1 is one uniform half-life).
+
+**Implemented** (this branch): `user_facts` became a **current-state overlay** — the reflector's
+`supersede` is now a **`replace`** and the Phase-12 superseded chain was dropped (the timeline lives in
+episodic memory). Forgetting is the **tail of lazy decay**: one pure `effectiveSalience` view (uniform
+half-life) in the Tier-2 arm + the engine's interest-sourcing fades an un-reinforced belief out of recall
+on its own, and the arm renders by **certainty** (a faded/low-confidence belief reads `(uncertain)` and
+invites the companion to confirm — conversational self-repair). Sensitive inferences are **gated at write**
+(a closed `SENSITIVE_MATTERS` heuristic + a higher confidence bar; explicit statements pass, flagged). The
+**Tier-3 `LlmUserPersonaSynthesizer`** (mirror of the Personality Evolver) re-synthesizes
+`companions.user_persona` on its own cursor after the reflector, blended **additively** beside
+`evolvedPersona`. The browser gained full **edit/delete** on Tier-1 *and* Tier-2, a `sensitive` badge, and
+the read-only Tier-3 persona; the user's **`deleteFact`** is a true row delete (the sensitive purge). **Gate
+passed** (offline, deterministic — like P3/P5): the Phase-13 DoD test proves decay fades a stale belief from
+recall (row kept), `deleteFact` removes a fact via the API, and a low-confidence sensitive inference is
+refused at write while an explicit one is flagged + purgeable; a live **`user-persona`** judge eval covers
+the persona-shapes-tone claim. Full monorepo green at ≥80% coverage. Canonical mechanism:
+`docs/companion-memory.md` §4.
 
 ## 5. Open Questions to Resolve (owned here)
 Owned here (single-source). Each is assigned a decision point:
