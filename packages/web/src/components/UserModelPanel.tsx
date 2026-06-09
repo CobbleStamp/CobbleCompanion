@@ -15,9 +15,22 @@ const LABELS: Readonly<Record<string, string>> = {
   relationships: 'Relationships',
 };
 
+/** Human labels for the Tier-2 belief predicates (Phase 12). */
+const BELIEF_LABELS: Readonly<Record<string, string>> = {
+  prefers: 'Prefers',
+  dislikes: 'Dislikes',
+  interestedIn: 'Interested in',
+  believes: 'Believes',
+};
+
 function labelFor(predicate: string | null): string {
   if (!predicate) return 'Fact';
   return LABELS[predicate] ?? predicate;
+}
+
+function beliefLabelFor(predicate: string | null): string {
+  if (!predicate) return 'Believes';
+  return BELIEF_LABELS[predicate] ?? predicate;
 }
 
 /**
@@ -27,12 +40,15 @@ function labelFor(predicate: string | null): string {
  */
 export function UserModelPanel(): JSX.Element {
   const [facts, setFacts] = useState<readonly UserFactDto[] | null>(null);
+  const [beliefs, setBeliefs] = useState<readonly UserFactDto[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
       try {
-        setFacts(await getUserFacts());
+        const model = await getUserFacts();
+        setFacts(model.facts);
+        setBeliefs(model.beliefs);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load your profile');
       }
@@ -75,6 +91,23 @@ export function UserModelPanel(): JSX.Element {
             <UserFactRow key={fact.id} fact={fact} onEdit={onEdit} onForget={onForget} />
           ))}
         </ul>
+      )}
+
+      {beliefs.length > 0 && (
+        <div className="beliefs">
+          <h3>What you seem to like &amp; care about</h3>
+          <p className="who">
+            Cobble picks these up as you talk — preferences, interests, opinions.
+          </p>
+          <ul className="memory-list">
+            {beliefs.map((belief) => (
+              <li key={belief.id}>
+                <span className="who">{beliefLabelFor(belief.predicate)}</span>
+                <span className="content">{belief.object}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </section>
   );

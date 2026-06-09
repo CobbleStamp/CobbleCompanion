@@ -131,9 +131,9 @@ flowchart TB
 | **Episodic Store** | Consolidated, time-anchored episodes (vector + FTS) + the consolidation cursor | Derived from the transcript (rebuildable); hybrid recall by topic (§4.3) |
 | **Consolidation Service + Runner** | Off-request reflection: transcript window → consolidated episodes, filler dropped | Mirrors the ingestion runner — coalesced, serial, quota-gated; post-turn trigger + startup/periodic sweep |
 | **Personality Evolver** | Re-synthesizes `evolvedPersona` from episodes after consolidation | Cursor-gated, metered; blended into the persona prompt beside the seed |
-| **User-Model Store** | The companion's structured + synthesized understanding of its user — `user_facts` (Tier-1 core profile, **incl. the name**; Tier-2 belief overlay + `companions.user_persona` Tier-3 are _designed, not built_) | Behind the MemoryStore seam (invariant #2); **one ontology, the user is a privileged entity** (`ontology.md`); `user_facts` is **per-user** (objective truths, shared across the user's companions), Tier-3 is per-companion. Tier-1 facts supersede on revision, except `languages`/`relationships` which accrete (`MULTI_VALUED_PREDICATES`). Hybrid recall (§4.3) arrives with Tier-2. **Built: Phase 11 Tier-1 only** — see `companion-memory.md` §4 Status. Schema → `implementation.md` §1; mechanism → `companion-memory.md` §4 |
+| **User-Model Store** | The companion's structured + synthesized understanding of its user — `user_facts` (Tier-1 core profile **incl. the name** + the Tier-2 learned-belief overlay; `companions.user_persona` Tier-3 is _designed, not built_) | Behind the MemoryStore seam (invariant #2); **one ontology, the user is a privileged entity** (`ontology.md`); `user_facts` is **per-user** (objective truths, shared across the user's companions), Tier-3 is per-companion. Tier-1 facts supersede on revision, except `languages`/`relationships` which accrete (`MULTI_VALUED_PREDICATES`); Tier-2 beliefs hybrid-recalled (§4.3), reconciled current-state-last-wins. **Built: Phases 11–12 (Tier-1 + Tier-2)** — see `companion-memory.md` §4 Status. Schema → `implementation.md` §1; mechanism → `companion-memory.md` §4 |
 | **User-Fact Extractor** | Inline salient capture: a post-turn perception step that writes explicit, high-signal user-facts (sibling to affect sensing) | Conservative — explicit statements only; metered. Dedup/inference/hygiene deferred to the reflector (§4.3, §4.5); gated by the `user-extract` eval (`howto-run-evals.md`) |
-| **User-Model Reflector** _(designed, not built — Phase 12–13)_ | Background reflection over the transcript → inferred beliefs, dedup + supersession, and the Tier-3 `user_persona` synthesis | Extends the Consolidation Service pattern (off-request, cursor-gated, metered); the mirror of the Personality Evolver, modelling the user instead of the self. Not yet implemented (`companion-memory.md` §4 Status) |
+| **User-Model Reflector** _(Phase 12 beliefs built · Phase 13 persona designed)_ | Background reflection over the **raw transcript window** → inferred Tier-2 beliefs (`add`/`reinforce`/`supersede` reconciliation, embedding dedup); the Tier-3 `user_persona` synthesis is Phase 13 | Extends the Consolidation Service pattern (off-request, **own cursor `user_facts_through_seq`**, metered); reads the un-summarized transcript (not episodes) so implicit-belief signal survives; the mirror of the Personality Evolver, modelling the user instead of the self (`companion-memory.md` §4 Status) |
 | **Identity Store** | Companion "home" record (incl. `evolvedPersona` + evolution/consolidation cursors; `user_persona` + the user-model cursor are _designed, not built_ — Phase 13) | Source of truth surfaces load from |
 | **Stamina Wallet** (`VitalityStore`) | The user-initiated half of a companion's vitality — a per-companion token balance (§4.8) | Postgres-backed (`companions.stamina_balance_tokens`); spend decrements (floor 0), feeding adds; routes 429 at the boundary when empty |
 | **Persistence** | Relational + vector storage | Postgres + `pgvector`; schemas → `implementation.md` |
@@ -280,14 +280,23 @@ flowchart LR
 > "who you are to me" — is blended into that same persona beside `evolvedPersona`, the symmetric
 > self-model. **Tier-2 (learned beliefs)** — `prefers`/`interestedIn`/`believes` user-facts, too many
 > for context — is a **retrieval arm**: it embeds the user's turn and hybrid-searches the *current*
-> (non-superseded) `user_facts` (vector + FTS, RRF — the semantic/episodic pattern), prepending the
-> top-K as a fenced "what I know about you" block. Composed ahead of the semantic arm so the recency
-> window still appends last; degrades independently (recall never breaks the conversation). The facts
-> themselves are written by **inline salient capture** (post-turn perception, §4.5) and refined by
-> **background reflection** (the User-Model Reflector, an extension of consolidation that also
-> synthesizes Tier-3 — same cursor-gated, off-request, quota-gated shape as the Personality Evolver).
-> One ontology, the user a privileged entity (`ontology.md`); mechanism end-to-end →
-> `companion-memory.md` §4.
+> (non-superseded) Tier-2 `user_facts` (vector + FTS, RRF — the semantic/episodic pattern), prepending
+> the top-K as a fenced "what I know about you" block. The vector arm carries a **relevance floor** (a
+> max cosine distance, `implementation.md` §1): a belief farther than the floor is dropped, not pulled in
+> to fill the top-K — so the block is what's *relevant now*, not every belief while the user has ≤ topK of
+> them. **Unlike** the semantic/episodic arms (which rank
+> by fused relevance alone), the belief arm then tilts the fused score by `salience` (`1 + 0.5·salience`,
+> `implementation.md` §1) — a gentle prior, so a reinforced belief rises and a cut one sinks among
+> comparably-relevant hits, without dragging in beliefs no arm found relevant. Reads **current rows only**, so it reflects the
+> latest state (the "I quit coffee" supersedes the dated "loves coffee" history — last-wins for *now*,
+> the timeline staying in episodic memory). Composed ahead of the semantic arm so the recency window
+> still appends last; degrades independently (recall never breaks the conversation). The facts
+> themselves are written by **inline salient capture** (post-turn perception widened in Phase 12 to
+> explicit beliefs, §4.5) and refined by **background reflection** (the User-Model Reflector, which
+> reads the **raw transcript window** under its own cursor `user_facts_through_seq`, reconciles
+> `add`/`reinforce`/`supersede`, and later synthesizes Tier-3 — same off-request, quota-gated shape as
+> the Personality Evolver). One ontology, the user a privileged entity (`ontology.md`); mechanism
+> end-to-end → `companion-memory.md` §4.
 
 ### 4.4 Human-in-the-loop & propose→approve
 
@@ -405,11 +414,12 @@ The engine's parts (each additive, no loop change):
   user, don't wander into solo work unasked; away/absent → do solo work that surfaces on return; and
   **idle is always allowed**. Other environment inputs: available tools, the lead frontier, and
   remaining energy (below).
-- **Drives (what it wants)** — **learned** user interests (read out of semantic/episodic memory, not
-  a configured setting) + understanding-the-user + the companion's personality (seed temperament +
-  evolved persona, §4.3) + pending **leads** (the inventory) + bond maintenance (time since last
-  contact) + pending work/opportunities + an **approval/reinforcement** drive learned from feedback
-  (below) (`product-overview.md` §5.4).
+- **Drives (what it wants)** — **learned** user interests (from Phase 12, sourced from the explicit
+  **Tier-2 `interestedIn`/`prefers` belief set** rather than scraped out of episodic memory — a sharp,
+  typed signal of what the user actually cares about) + understanding-the-user + the companion's
+  personality (seed temperament + evolved persona, §4.3) + pending **leads** (the inventory) + bond
+  maintenance (time since last contact) + pending work/opportunities + an **approval/reinforcement**
+  drive learned from feedback (below) (`product-overview.md` §5.4).
 - **Arbitration (cheap gate, then a burst)** — a **token-free heuristic gate** scores candidate
   actions by drive × salience (against presence, the dial, and remaining energy) and decides
   *whether* to act — so **"idle" is a valid, free outcome**. Only when it commits does the burst run
@@ -432,10 +442,16 @@ The engine's parts (each additive, no loop change):
   signal and how it moves weights → `companion-motivation.md` §7; a zero change is a no-op, so
   neutrality needs no threshold). No critic
   call, no approve/reject button. Learning fires on such a drive-serving act; ordinary chat senses but
-  does not move weights. Weights are interpretable and seed the relationship-growth axis.
+  does not move weights. Weights are interpretable and seed the relationship-growth axis. **From Phase
+  12 the reward also targets the *belief* that drove the act:** when the burst was belief-driven, the
+  same mood-change reward adjusts that Tier-2 belief's **salience** — reinforced when appreciated,
+  weakened when unwelcome (a flat reaction moves nothing) — so beliefs are learned from how the user *reacts to the companion acting on
+  them*, not only from what they say (the belief-learning loop, `companion-motivation.md` §7).
 - **Output** — the engine **reads** the next leads into the companion's own memory
   **with no approval** (autonomy is autonomy, §4.4), then posts **one in-character report note** to
-  the transcript. Outward/irreversible acts (none exist yet) would still pass the §4.4 gate.
+  the transcript; a belief-driven burst tags the note with its originating belief
+  (`proactive_outcomes.driven_by_user_fact_id`) so the reaction can be credited back to it. Outward/irreversible
+  acts (none exist yet) would still pass the §4.4 gate.
 - **Tunability** — a per-companion **frequency/intensity dial** (off / gentle / active) scaling
   initiation rate and energy spend.
 
@@ -713,7 +729,7 @@ flowchart TB
       embedding/       provider-agnostic embedding gateway (request-path memoizing wrapper)
       ingestion/       parse → segment → enrich → embed pipeline + runner + deferred-job sweeper (§4.8)
       memory/          MemoryStore (transcript) + SemanticMemoryStore + EpisodicMemoryStore + consolidation service/runner
-      user-model/      UserModelStore (user_facts: Tier-1 profile + Tier-2 beliefs) + inline User-Fact Extractor + background User-Model Reflector (Tier-3 user_persona) (§4.3/§4.5)
+      user-model/      UserModelStore (user_facts: Tier-1 profile + Tier-2 beliefs) + inline User-Fact Extractor + background User-Model Reflector (Tier-2 beliefs + reconciliation; Tier-3 user_persona) (§4.3/§4.5)
       tools/           tool framework + registry, the three tools, the approval gate, proposal/tool-call/lead/procedural stores (§4.2/§4.4)
       personality/     evolvedPersona synthesis from episodes
       identity/        companion "home" model + store

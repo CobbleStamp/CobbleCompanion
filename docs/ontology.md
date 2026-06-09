@@ -83,11 +83,17 @@ Within a core type, extraction may qualify facts with finer-grained **leaf subty
 - **Confidence is advisory.** `confidence` (0–1, extraction self-reported) ranks and filters; it
   never gates storage by itself. For user-facts an explicit statement extracts at high confidence,
   an inferred preference at low — but confidence steers retrieval ranking and decay, never storage.
-- **Supersession over deletion (user-facts).** Because the user changes, a user-fact is **revised
-  by superseding**, not silently duplicated: a singular attribute (`name`, `bornOn`) upserts; a
-  contradicted belief ("quit coffee" vs "loves coffee") is marked superseded with a timestamp.
-  Reconciliation is owned by the background reflection pass (`companion-memory.md` §4), not the
-  inline writer — so write hygiene lives in one place.
+- **Supersession over deletion (user-facts) — a current-state mirror.** Because the user changes, a
+  user-fact is **revised by superseding**, not silently duplicated: a singular attribute (`name`,
+  `bornOn`) upserts; a belief whose *same matter* takes a newer state has the old row marked
+  superseded with a timestamp and the new value inserted as current. This is **last-wins for the
+  current state, with history retained** — *not* a claim the past was false. "Loved coffee, then quit"
+  are **both true across time**: the current set says "doesn't drink coffee", the superseded "loves
+  coffee" row is kept as dated history. The timeline of the self lives in episodic memory + the
+  superseded chain; `user_facts` current rows are the *now* view, surfaced by retrieval (which reads
+  current rows only). Reconciliation — `add` / `reinforce` / `supersede` — is owned by the background
+  reflection pass (`companion-memory.md` §4), not the inline writer, so write hygiene lives in one
+  place.
 - **Tenancy.** Source-facts are scoped by `companion_id` and cascade-delete with their companion,
   source, and section. **User-facts are scoped by `user_id`** — they are objective truths about the
   *person*, shared across any companion the user owns, learned *by* a companion (a

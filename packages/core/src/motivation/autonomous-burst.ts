@@ -79,6 +79,11 @@ export interface AutonomousBurstParams {
   readonly weights: DriveWeights;
   /** Max leads to read this burst (energy-scaled by the engine). */
   readonly limit: number;
+  /**
+   * The Tier-2 belief that drove this burst (Phase 12). Recorded on the outcome so the
+   * reaction reward also refines that belief's salience. Undefined for a non-belief act.
+   */
+  readonly drivenByUserFactId?: string;
 }
 
 export interface AutonomousBurstResult {
@@ -100,7 +105,7 @@ export async function runAutonomousBurst(
   params: AutonomousBurstParams,
 ): Promise<AutonomousBurstResult> {
   const { leads, semantic, pipeline, energy, memory, rewards, logger } = deps;
-  const { companionId, companion, drive, weights, limit } = params;
+  const { companionId, companion, drive, weights, limit, drivenByUserFactId } = params;
   if (limit <= 0) {
     return NOTHING;
   }
@@ -194,6 +199,7 @@ export async function runAutonomousBurst(
       drive,
       driveSnapshot: weights,
       noteMessageId: message.id,
+      ...(drivenByUserFactId !== undefined ? { drivenByUserFactId } : {}),
     });
   } catch (error) {
     logger.error('failed to record proactive outcome', {

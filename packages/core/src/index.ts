@@ -114,9 +114,12 @@ export {
   type UserRecord,
 } from './identity/store.js';
 
-// User Model (Phase 11)
+// User Model (Phase 11 — core profile; Phase 12 — learned beliefs)
 export {
+  type BeliefHit,
+  type BeliefSearchParams,
   DrizzleUserModelStore,
+  type RecordBeliefInput,
   type RecordTranscriptFactInput,
   type UserModelStore,
 } from './user-model/store.js';
@@ -127,6 +130,14 @@ export {
   type UserFactCaptureDeps,
   type UserFactCaptureParams,
 } from './user-model/extractor.js';
+export { beliefPhrase } from './user-model/phrasing.js';
+export {
+  coerceBeliefs,
+  coerceDecisions,
+  LlmUserModelReflector,
+  type UserModelReflector,
+  type UserModelReflectorOptions,
+} from './user-model/reflector.js';
 
 // Memory
 export { TranscriptMemoryStore, type MemoryStore, type TranscriptEntry } from './memory/store.js';
@@ -370,6 +381,11 @@ export {
   createProceduralRetrieveContext,
   type ProceduralRetrieveOptions,
 } from './harness/procedural-retrieve.js';
+export {
+  createUserModelRetrieveContext,
+  toBeliefsBlock,
+  type UserModelRetrieveOptions,
+} from './harness/user-model-retrieve.js';
 export {
   createEquippedSummaryContext,
   type EquippedSummaryOptions,

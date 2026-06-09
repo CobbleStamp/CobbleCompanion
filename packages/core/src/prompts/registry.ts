@@ -16,6 +16,10 @@ import { personaEvolveTemplate } from './catalog/persona-evolve.js';
 import { personaTemplate } from './catalog/persona.js';
 import { segmenterTemplate } from './catalog/segmenter.js';
 import { toolSearchTemplate } from './catalog/tool-search.js';
+import {
+  userBeliefsReconcileTemplate,
+  userBeliefsReflectTemplate,
+} from './catalog/user-beliefs.js';
 import { userExtractTemplate } from './catalog/user-extract.js';
 import { versionOf } from './render.js';
 import type { PromptId, PromptTemplate, PromptVersion } from './types.js';
@@ -51,6 +55,8 @@ const ENTRIES: readonly PromptEntry[] = [
   toEntry(judgeTemplate),
   toEntry(toolSearchTemplate),
   toEntry(userExtractTemplate),
+  toEntry(userBeliefsReflectTemplate),
+  toEntry(userBeliefsReconcileTemplate),
 ];
 
 const REGISTRY: ReadonlyMap<PromptId, PromptEntry> = new Map(

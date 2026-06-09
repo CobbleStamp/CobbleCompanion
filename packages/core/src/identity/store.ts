@@ -29,6 +29,8 @@ export interface CompanionRecord {
   readonly evolvedPersona: string | null;
   readonly personaUpdatedThroughSeq: number;
   readonly consolidatedThroughSeq: number;
+  /** Phase 12 — the User-Model Reflector's belief-extraction cursor (independent). */
+  readonly userFactsThroughSeq: number;
   // Phase 4 — proactivity state the motivation engine reads (companion-motivation.md).
   readonly proactivityDial: ProactivityDial;
   /** Null until personalized via onboarding (PoC uses default constants). */
@@ -74,6 +76,12 @@ export interface IdentityStore {
     evolvedPersona: string,
     personaUpdatedThroughSeq: number,
   ): Promise<void>;
+  /**
+   * Advance the User-Model Reflector's belief-extraction cursor
+   * (`userFactsThroughSeq`) — a BACKGROUND write from the reflector, keyed by
+   * companionId. Independent of the consolidation/evolution cursors (Phase 12).
+   */
+  advanceUserFactsThroughSeq(companionId: string, throughSeq: number): Promise<void>;
   /** Set the proactivity dial (Phase 4 tunability). Keyed by companionId. */
   setProactivityDial(companionId: string, dial: ProactivityDial): Promise<void>;
   /** Persist learned drive weights (Phase 4 reinforcement). Keyed by companionId. */
@@ -175,6 +183,13 @@ export class DrizzleIdentityStore implements IdentityStore {
       .where(eq(companions.id, companionId));
   }
 
+  async advanceUserFactsThroughSeq(companionId: string, throughSeq: number): Promise<void> {
+    await this.db
+      .update(companions)
+      .set({ userFactsThroughSeq: throughSeq })
+      .where(eq(companions.id, companionId));
+  }
+
   async setProactivityDial(companionId: string, dial: ProactivityDial): Promise<void> {
     await this.db
       .update(companions)
@@ -217,6 +232,7 @@ function toCompanionRecord(row: typeof companions.$inferSelect): CompanionRecord
     evolvedPersona: row.evolvedPersona,
     personaUpdatedThroughSeq: row.personaUpdatedThroughSeq,
     consolidatedThroughSeq: row.consolidatedThroughSeq,
+    userFactsThroughSeq: row.userFactsThroughSeq,
     proactivityDial: row.proactivityDial,
     personalityKnobs: row.personalityKnobs,
     driveWeights: row.driveWeights,

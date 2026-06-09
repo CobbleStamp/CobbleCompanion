@@ -1,4 +1,4 @@
-import { companions, type Database, userFacts } from '@cobble/db';
+import { companions, type Database, EMBEDDING_DIMENSIONS, userFacts } from '@cobble/db';
 import { createTestDatabase } from '@cobble/db/testing';
 import { and, eq, isNull } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -226,6 +226,14 @@ describe('DrizzleUserModelStore', () => {
     it('returns null for an unknown fact', async () => {
       expect(await store.editFact(userId, '00000000-0000-0000-0000-000000000000', 'X')).toBeNull();
     });
+
+    it('refuses a Tier-2 belief (read-only until Phase 13) and leaves it intact', async () => {
+      const belief = await store.recordBelief({ userId, predicate: 'prefers', object: 'oat milk' });
+      expect(await store.editFact(userId, belief.id, 'soy milk')).toBeNull();
+      const beliefs = await store.listCurrentBeliefs(userId);
+      expect(beliefs).toHaveLength(1);
+      expect(beliefs[0]).toMatchObject({ id: belief.id, object: 'oat milk' });
+    });
   });
 
   describe('forgetFact', () => {
@@ -245,6 +253,12 @@ describe('DrizzleUserModelStore', () => {
       expect(await store.forgetFact(other.id, fact.id)).toBe(false);
       expect(await store.listCurrent(userId)).toHaveLength(1);
     });
+
+    it('refuses a Tier-2 belief (read-only until Phase 13) and leaves it intact', async () => {
+      const belief = await store.recordBelief({ userId, predicate: 'prefers', object: 'oat milk' });
+      expect(await store.forgetFact(userId, belief.id)).toBe(false);
+      expect(await store.listCurrentBeliefs(userId)).toHaveLength(1);
+    });
   });
 
   it('keeps the fact when the teaching companion is deleted (link nulls)', async () => {
@@ -258,5 +272,233 @@ describe('DrizzleUserModelStore', () => {
       .from(userFacts)
       .where(and(eq(userFacts.id, fact.id), isNull(userFacts.learnedByCompanionId)));
     expect(row?.object).toBe('Sam');
+  });
+
+  describe('Tier-2 beliefs (Phase 12)', () => {
+    /** A unit vector with a single 1 at `hot`, so cosine distance is 0 to itself. */
+    function basisVector(hot: number): number[] {
+      const v: number[] = new Array<number>(EMBEDDING_DIMENSIONS).fill(0);
+      v[hot] = 1;
+      return v;
+    }
+
+    it('records a belief and lists it, excluding Tier-1 facts', async () => {
+      await recordName('Sam'); // a Tier-1 identity fact — must not appear among beliefs
+      const belief = await store.recordBelief({
+        userId,
+        predicate: 'interestedIn',
+        object: 'Rust',
+        learnedByCompanionId: companionId,
+        confidence: 0.6,
+        embedding: basisVector(0),
+      });
+
+      expect(belief).toMatchObject({ predicate: 'interestedIn', object: 'Rust', salience: 0.5 });
+      const beliefs = await store.listCurrentBeliefs(userId);
+      expect(beliefs).toHaveLength(1);
+      expect(beliefs[0]?.object).toBe('Rust');
+      // Tier-1 still lives in the plain current set, not the belief set.
+      expect(await store.listCurrent(userId)).toHaveLength(2);
+    });
+
+    it('reinforces an identical restatement instead of duplicating it', async () => {
+      const first = await store.recordBelief({ userId, predicate: 'prefers', object: 'oat milk' });
+      const again = await store.recordBelief({ userId, predicate: 'prefers', object: 'oat milk' });
+
+      expect(again.id).toBe(first.id);
+      expect(again.salience).toBeCloseTo(0.6); // 0.5 + one reinforce step
+      expect(await store.listCurrentBeliefs(userId)).toHaveLength(1);
+    });
+
+    it('back-fills a missing embedding when an FTS-only belief is reinforced', async () => {
+      // A belief first stored without an embedding (embeddings unconfigured, or an embed
+      // hiccup — harness/reflector store FTS-only) is invisible to the vector arm. Under the
+      // vector relevance floor that arm is the primary recall path, so the belief is quietly
+      // demoted forever unless reinforcement back-fills the embedding it now has in hand.
+      const first = await store.recordBelief({ userId, predicate: 'prefers', object: 'oat milk' });
+      const [before] = await db.select().from(userFacts).where(eq(userFacts.id, first.id));
+      expect(before?.embedding).toBeNull(); // stored FTS-only
+      // Not yet vector-recallable.
+      expect(await store.findSimilarBeliefs(userId, basisVector(0), 5)).toHaveLength(0);
+
+      // A later identical restatement now carries an embedding.
+      const again = await store.recordBelief({
+        userId,
+        predicate: 'prefers',
+        object: 'oat milk',
+        embedding: basisVector(0),
+      });
+      expect(again.id).toBe(first.id); // reinforced, not duplicated
+
+      // The embedding is back-filled onto the existing row, so it joins the vector arm.
+      const [after] = await db.select().from(userFacts).where(eq(userFacts.id, first.id));
+      expect(after?.embedding).not.toBeNull();
+      const similar = await store.findSimilarBeliefs(userId, basisVector(0), 5);
+      expect(similar.map((b) => b.id)).toEqual([first.id]);
+    });
+
+    it('does not overwrite an existing embedding on reinforcement', async () => {
+      // Back-fill fills a gap; it must never clobber a good embedding with a later one.
+      const first = await store.recordBelief({
+        userId,
+        predicate: 'prefers',
+        object: 'oat milk',
+        embedding: basisVector(0),
+      });
+      await store.recordBelief({
+        userId,
+        predicate: 'prefers',
+        object: 'oat milk',
+        embedding: basisVector(1), // a different vector on the restatement
+      });
+      const [row] = await db.select().from(userFacts).where(eq(userFacts.id, first.id));
+      expect(row?.embedding?.[0]).toBe(1); // original basisVector(0) preserved
+      expect(row?.embedding?.[1]).toBe(0);
+    });
+
+    it('recalls beliefs by vector nearest-neighbour and by full-text', async () => {
+      const rust = await store.recordBelief({
+        userId,
+        predicate: 'interestedIn',
+        object: 'Rust programming',
+        embedding: basisVector(0),
+      });
+      await store.recordBelief({
+        userId,
+        predicate: 'prefers',
+        object: 'oat milk lattes',
+        embedding: basisVector(1),
+      });
+
+      const byVector = await store.searchBeliefs(userId, {
+        queryEmbedding: basisVector(0),
+        queryText: 'nonsense-token',
+        topK: 1,
+      });
+      expect(byVector[0]?.belief.id).toBe(rust.id);
+
+      const byText = await store.searchBeliefs(userId, {
+        queryEmbedding: [],
+        queryText: 'Rust',
+        topK: 5,
+      });
+      expect(byText.map((h) => h.belief.object)).toEqual(['Rust programming']);
+    });
+
+    it('applies a vector relevance floor — a far belief is dropped, not pulled in to fill top-K', async () => {
+      const near = await store.recordBelief({
+        userId,
+        predicate: 'interestedIn',
+        object: 'Rust programming',
+        embedding: basisVector(0), // distance 0 to the query
+      });
+      await store.recordBelief({
+        userId,
+        predicate: 'prefers',
+        object: 'oat milk lattes',
+        embedding: basisVector(1), // orthogonal → distance 1.0, beyond the floor
+      });
+
+      // Floored: only the on-topic belief survives, even though topK would fit both.
+      const floored = await store.searchBeliefs(userId, {
+        queryEmbedding: basisVector(0),
+        queryText: 'nonsense-token', // no FTS arm — isolate the vector floor
+        topK: 5,
+        maxVectorDistance: 0.8,
+      });
+      expect(floored.map((h) => h.belief.id)).toEqual([near.id]);
+
+      // Without a floor (omitted), the legacy behaviour stands — both come back.
+      const unfloored = await store.searchBeliefs(userId, {
+        queryEmbedding: basisVector(0),
+        queryText: 'nonsense-token',
+        topK: 5,
+      });
+      expect(unfloored).toHaveLength(2);
+    });
+
+    it('lets salience tilt recall — a reinforced belief outranks a more-relevant weaker one', async () => {
+      // `near` is the vector-nearest to the query (distance 0); `far` is one rank behind.
+      // With equal salience, relevance wins (see the NN test). Here `far` is reinforced to
+      // max and `near` cut to the floor, so the salience prior lifts `far` above it.
+      const near = await store.recordBelief({
+        userId,
+        predicate: 'interestedIn',
+        object: 'alpha topic',
+        embedding: basisVector(0),
+      });
+      const far = await store.recordBelief({
+        userId,
+        predicate: 'interestedIn',
+        object: 'beta topic',
+        embedding: basisVector(1),
+      });
+      await store.adjustBeliefSalience(userId, near.id, -1); // → 0 (clamped floor)
+      await store.adjustBeliefSalience(userId, far.id, 1); // → 1 (clamped ceil)
+
+      const hits = await store.searchBeliefs(userId, {
+        queryEmbedding: basisVector(0), // nearest is `near`
+        queryText: 'nonsense-token', // no FTS arm — vector relevance only
+        topK: 2,
+      });
+      expect(hits.map((h) => h.belief.id)).toEqual([far.id, near.id]);
+    });
+
+    it('supersedes a same-matter newer state, retaining the old as history', async () => {
+      const loves = await store.recordBelief({
+        userId,
+        predicate: 'prefers',
+        object: 'loves coffee',
+        embedding: basisVector(0),
+      });
+      const quit = await store.supersedeBelief(userId, loves.id, {
+        userId,
+        predicate: 'prefers',
+        object: 'quit coffee',
+        embedding: basisVector(0),
+      });
+
+      expect(quit?.object).toBe('quit coffee');
+      // Only the newer state is current; the old row is retained, marked superseded_by.
+      const current = await store.listCurrentBeliefs(userId);
+      expect(current.map((b) => b.object)).toEqual(['quit coffee']);
+      const [oldRow] = await db.select().from(userFacts).where(eq(userFacts.id, loves.id));
+      expect(oldRow?.supersededAt).not.toBeNull();
+      expect(oldRow?.supersededBy).toBe(quit?.id);
+    });
+
+    it('adjusts salience (clamped) and refuses a non-owned belief', async () => {
+      const belief = await store.recordBelief({
+        userId,
+        predicate: 'interestedIn',
+        object: 'jazz',
+      });
+      const up = await store.adjustBeliefSalience(userId, belief.id, 0.3);
+      expect(up?.salience).toBeCloseTo(0.8);
+      const clamped = await store.adjustBeliefSalience(userId, belief.id, 5);
+      expect(clamped?.salience).toBe(1);
+
+      const other = await identity.ensureUserByEmail('intruder@example.com');
+      expect(await store.adjustBeliefSalience(other.id, belief.id, 0.1)).toBeNull();
+    });
+
+    it('returns the nearest current beliefs for reconciliation context', async () => {
+      const a = await store.recordBelief({
+        userId,
+        predicate: 'interestedIn',
+        object: 'Rust',
+        embedding: basisVector(0),
+      });
+      await store.recordBelief({
+        userId,
+        predicate: 'interestedIn',
+        object: 'gardening',
+        embedding: basisVector(7),
+      });
+
+      const similar = await store.findSimilarBeliefs(userId, basisVector(0), 1);
+      expect(similar).toHaveLength(1);
+      expect(similar[0]?.id).toBe(a.id);
+    });
   });
 });

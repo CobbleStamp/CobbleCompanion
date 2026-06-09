@@ -1,11 +1,14 @@
 /**
  * User-fact extraction quality dataset (companion-memory.md §4, ontology.md §5):
- * does the inline extractor capture the identity facts a user EXPLICITLY states,
- * and only those? Each case is a user message with the facts a correct read should
- * capture (empty for messages that state nothing about the user). The dataset runs
- * the real `captureUserFacts` call site against OpenRouter and scores recall of the
- * expected facts plus the absence of spurious captures. Stateless (no DB) — the
- * extractor returns candidates without persisting, so this isolates prompt quality.
+ * does the inline extractor capture the facts a user EXPLICITLY states, and only those?
+ * Covers Tier-1 identity attributes and (Phase 12) explicit Tier-2 beliefs (preferences/
+ * interests/opinions whose predicate the verb makes unambiguous). Each case is a user
+ * message with the facts a correct read should capture (empty for messages that state
+ * nothing about the user). The dataset runs the real `captureUserFacts` call site against
+ * OpenRouter and scores recall of the expected facts plus the absence of spurious
+ * captures. Stateless (no DB) — the extractor returns candidates without persisting, so
+ * this isolates prompt quality. (Implicit-belief inference is the reflector's job — see
+ * the `user-beliefs` dataset.)
  */
 
 import { captureUserFacts, type UserFactCandidate } from '@cobble/core';
@@ -66,6 +69,25 @@ const CASES: readonly UserExtractCase[] = [
     recentContext: '',
     userText: 'My friend Tom lives in Paris and loves it there.',
     expectedFacts: [],
+  },
+  // Phase 12 — explicit Tier-2 beliefs (predicate strongly signalled by the verb).
+  {
+    id: 'preference-stated',
+    recentContext: '',
+    userText: 'I prefer oat milk in my coffee.',
+    expectedFacts: [{ predicate: 'prefers', object: 'oat milk' }],
+  },
+  {
+    id: 'interest-stated',
+    recentContext: '',
+    userText: "I've really gotten into astronomy lately.",
+    expectedFacts: [{ predicate: 'interestedIn', object: 'astronomy' }],
+  },
+  {
+    id: 'dislike-stated',
+    recentContext: '',
+    userText: "I can't stand cilantro.",
+    expectedFacts: [{ predicate: 'dislikes', object: 'cilantro' }],
   },
 ];
 

@@ -67,7 +67,7 @@ at is always read live from memory — never seeded.
 
 | Drive | Wants | Level rises with | Example behaviours |
 |---|---|---|---|
-| **Curiosity / learning** | discover & understand the world | unread **leads**, new interest signals, knowledge gaps | explore a lead, share a finding, propose an ingest |
+| **Curiosity / learning** | discover & understand the world | unread **leads**, the user's **Tier-2 `interestedIn`/`prefers` beliefs** (Phase 12 — a typed interest signal, not scraped from episodes), knowledge gaps | explore a lead on a known interest, share a finding, propose an ingest |
 | **Bond / connection** | closeness & continuity | time since last contact, emotional cues in recent turns | check in, recall a shared memory, ask about the day |
 | **Understanding-the-user** | reduce uncertainty about the user | low-confidence / unknown preference areas, upcoming decisions | ask a preference question, confirm an inference |
 | **Approval / competence** *(RL-coupled)* | be useful & appreciated | low recent approval, a high-confidence chance to help | offer a high-value tip, finish a pending task |
@@ -255,10 +255,23 @@ assignment across **bond / understanding-the-user / persona** is out of scope (�
 well-attributed and, as a side effect, naturally **bounds reward-hacking** — weights only move on acts
 the companion *chose*, not on every pleasant exchange.
 
+**Belief-learning loop (Phase 12) — the same reward also refines the belief that drove the act.** From
+Phase 12 the curiosity drive sources its candidate topics from the user's **Tier-2 `interestedIn`/`prefers`
+beliefs** (§3), and a belief-driven burst tags its report note with the originating belief
+(`proactive_outcomes.driven_by_user_fact_id`, `implementation.md` §1). When that note's reaction
+resolves, the **same `delta`** that nudges the served drive weight **also adjusts that belief's
+`salience`** — an additive bump on a positive delta, a cut on a negative one. So a belief the companion
+*acted on and the user welcomed* strengthens (rises in retrieval and as a proactive target); one it
+acted on that proved unwelcome weakens (a flat reaction moves nothing). Beliefs are thus learned from two sources — what the user
+**says** (inline capture + the reflector, `companion-memory.md` §4) and how they **react to the
+companion acting on them** (here). This salience move is **event-driven** (a discrete reaction);
+passive **time-decay** of belief salience is Phase 13. *(Probing tangential topics to discover *new*
+interests is deferred — Phase 12 exploits and refines known beliefs.)*
+
 **Seam — body senses, will learns.** Perception lives in the agent loop (the body); the weight update
 lives in the motivation layer (the will). The two stay separated; one affect signal connects them.
 The harness produces "the user's mood changed by `delta`"; the will decides what, if anything, that
-teaches.
+teaches — for a belief-driven act, both a drive weight and the belief's salience.
 
 **Guards:** additive nudge at a small rate (slow drift, not whiplash); an exploration floor so a
 drive never dies to zero; change-as-reward so it can't fish for raw "thanks"; the energy budget + dial
@@ -322,6 +335,10 @@ tokens. The companion is content to rest.
    every turn (attunement + rolling read) but does not move weights. **Sycophancy is not guarded** by
    decision — it's a personality divergence the per-companion learning policy would own (§10 below),
    and the drive-serving gate bounds it meanwhile.
+9. **Belief-learning loop (Phase 12)** — the curiosity drive sources its targets from the user's
+   Tier-2 beliefs, and the same drive-serving reward that nudges a drive weight **also adjusts the
+   originating belief's salience** (§7). The will both *consumes* beliefs (what to do) and *refines*
+   them (whether the hunch was right). Event-driven only; passive time-decay of salience is Phase 13.
 
 ### Beyond the PoC
 

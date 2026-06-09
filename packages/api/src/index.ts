@@ -19,6 +19,7 @@ import {
   createMemorySearchTool,
   createProceduralRetrieveContext,
   createSemanticRetrieveContext,
+  createUserModelRetrieveContext,
   createSourceParser,
   createWebFetchTool,
   DrizzleEpisodicMemoryStore,
@@ -44,6 +45,7 @@ import {
   IngestionRunner,
   LlmIngestionAnnouncer,
   LlmPersonalityEvolver,
+  LlmUserModelReflector,
   MotivationEngine,
   MotivationRunner,
   OpenRouterEmbeddingGateway,
@@ -228,6 +230,15 @@ async function main(): Promise<void> {
     // Phase 9: list the companion's currently-equipped tools (grounding-only),
     // before the semantic arm, which appends the recency window last.
     ...(acquisitionWiring ? [acquisitionWiring.equippedArm] : []),
+    // Phase 12: the Tier-2 user-model arm — relevant learned beliefs about the user as a
+    // "what I know about you" grounding block. Grounding-only (no recency), before semantic.
+    createUserModelRetrieveContext({
+      store: userModel,
+      embeddings: retrievalEmbeddings,
+      embeddingModel: config.embeddingModel,
+      embeddingDimensions: config.embeddingDimensions,
+      logger: consoleLogger,
+    }),
     createSemanticRetrieveContext({
       memory,
       semantic,
@@ -255,11 +266,22 @@ async function main(): Promise<void> {
       store: affectStore,
       model: config.ingestionModel,
       reinforce: (companionId, delta) =>
-        reinforceFromDelta({ rewards, identity, logger: consoleLogger }, companionId, delta),
+        reinforceFromDelta(
+          { rewards, identity, userModel, logger: consoleLogger },
+          companionId,
+          delta,
+        ),
     },
     // Phase 11: read the user's Tier-1 core profile into the persona each turn and
-    // capture explicit identity facts they state (cheap ingestion model, billed to stamina).
-    userModel: { store: userModel, model: config.ingestionModel },
+    // capture explicit identity facts they state (cheap ingestion model, billed to
+    // stamina). Phase 12: also capture explicit Tier-2 beliefs, embedded for hybrid recall.
+    userModel: {
+      store: userModel,
+      model: config.ingestionModel,
+      embeddings: retrievalEmbeddings,
+      embeddingModel: config.embeddingModel,
+      embeddingDimensions: config.embeddingDimensions,
+    },
     // P3: the tools the model may call, the propose→approve gate (effectful calls
     // are held for approval), and the audit log (every call is logged).
     registry: tools,
@@ -287,6 +309,21 @@ async function main(): Promise<void> {
     quota,
     logger: consoleLogger,
   });
+  // Phase 12: the User-Model Reflector derives the user's Tier-2 beliefs from the same
+  // transcript on its own cursor, reconciling against what's known. Fired by the
+  // consolidation service after each run; self-gating + metered + never throws.
+  const userModelReflector = new LlmUserModelReflector({
+    identity,
+    memory,
+    store: userModel,
+    llm: llmGateway,
+    embeddings,
+    model: config.ingestionModel,
+    embeddingModel: config.embeddingModel,
+    embeddingDimensions: config.embeddingDimensions,
+    quota,
+    logger: consoleLogger,
+  });
   const consolidationService = new ConsolidationService({
     episodic,
     memory,
@@ -299,6 +336,7 @@ async function main(): Promise<void> {
     quota,
     logger: consoleLogger,
     evolver,
+    reflector: userModelReflector,
   });
   const consolidation = new ConsolidationRunner(consolidationService, consoleLogger);
 
@@ -316,6 +354,8 @@ async function main(): Promise<void> {
     pipeline: ingestionPipeline,
     memory,
     rewards,
+    // Phase 12: curiosity sources its topics from the user's Tier-2 interest beliefs.
+    userModel,
     llm: llmGateway,
     model: config.ingestionModel,
     logger: consoleLogger,

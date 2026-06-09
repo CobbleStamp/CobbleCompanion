@@ -114,7 +114,8 @@ erDiagram
 | `persona_updated_through_seq` | bigint, default 0 | transcript `seq` the evolved persona was last synthesized from (evolution cursor) |
 | `consolidated_through_seq` | bigint, default 0 | highest transcript `seq` already rolled into episodes (consolidation cursor) |
 | `user_persona` | text, nullable | "who **you** are to me" — the User Model's **Tier-3** synthesized understanding of the user, re-synthesized from `user_facts` + episodes by the background reflection pass and blended into the persona prompt beside `evolved_persona` (the symmetric self-model); null until the first synthesis (`companion-memory.md` §4, `development-plan.md` §4c) |
-| `user_model_updated_through_seq` | bigint, default 0 | transcript `seq` the `user_persona` was last synthesized from (user-model cursor, mirrors the evolution cursor) |
+| `user_facts_through_seq` | bigint, default 0 | _(Phase 12)_ highest transcript `seq` the **User-Model Reflector** has extracted Tier-2 beliefs through — the **belief-extraction cursor**, independent of `consolidated_through_seq` so a failed reflection never advances past an unprocessed window (mirrors the evolution cursor's independence) |
+| `user_model_updated_through_seq` | bigint, default 0 | transcript `seq` the `user_persona` was last synthesized from (Tier-3 user-model cursor, mirrors the evolution cursor; Phase 13) |
 | `created_at` | timestamptz | |
 
 ### `messages` — transcript (episodic-memory substrate)
@@ -280,7 +281,7 @@ training set and fits incremental ingestion; GIN on `fts`; btree on `(companion_
 
 The companion's structured understanding of its user — the same typed-fact contract as `facts`
 (`ontology.md`), but the **subject is the privileged user entity**. A separate table because the
-lifecycle differs: identity attributes supersede on revision (most singular; `languages`/`relationships` are multi-valued and accrete), beliefs accrete, all editable and decay.
+lifecycle differs: identity attributes supersede on revision (most singular; `languages`/`relationships` are multi-valued and accrete) and are editable/forgettable today (Phase 11); beliefs accrete and are read-only until Phase 13, when they gain user editing and decay (the `editFact`/`forgetFact` path refuses belief predicates until then).
 **Keyed by `user_id`, not `companion_id`** — facts are objective truths about the *person* (name, age,
 "vegetarian"), so they are shared across any companion the user owns; only the *synthesized
 understanding* of the user (Tier-3 `companions.user_persona`) is per-companion (`development-plan.md`
@@ -296,17 +297,30 @@ extraction/retrieval flow → `companion-memory.md` §4.
 | `fact_type` | text | the closed core set, validated at extraction (`ontology.md` §2) — identity is an `attribute`, a taste a `relation`/`attribute`, a life event an `event` |
 | `subject` / `predicate` / `object` | text (predicate nullable) | `subject` is the user entity; **polarity is carried by the predicate** (`prefers` vs `dislikes`), so likes/dislikes need no extra column. Denormalized strings, per `ontology.md` §5 |
 | `confidence` | real, nullable | (0–1), advisory; default tracks `source` — explicit `transcript` statement → high, inferred → low, `auth_seed` → modest (a guess from the account), `user_edit` → authoritative. Steers retrieval ranking, decay, and supersession precedence, never storage |
-| `salience` | real, nullable | recency/strength weight; decays so retrieval favours current beliefs (Tier-2 ranking) |
-| `superseded_at` | timestamptz, nullable | null = current; set when a singular attribute is revised, a multi-valued one (`languages`/`relationships`) is restated identically, or a belief is contradicted (`ontology.md` §4). Superseded rows are kept (history), excluded from retrieval |
+| `salience` | real, nullable | event-driven strength weight (Tier-2); multiplies a belief's fused hybrid-recall score (`1 + 0.5·salience`), so a reinforced belief rises and a cut one sinks among comparably-relevant hits — a gentle prior over relevance, never an injector. Bumped/cut on reinforce + proactive reaction; **passive time-decay is Phase 13** (see the Tier-2 note below) |
+| `superseded_at` | timestamptz, nullable | null = current; set when a singular attribute is revised, a multi-valued one (`languages`/`relationships`) is restated identically, or a belief's **same matter takes a newer state** (current-state last-wins — `ontology.md` §4). Superseded rows are kept (history — the timeline of the self), excluded from retrieval |
 | `superseded_by` | uuid, nullable (FK → `user_facts.id`) | the fact that replaced this one, when applicable |
 | `created_at` / `updated_at` | timestamptz | |
 
-> **Phase 12 columns (not yet in the table).** Tier-2 belief **retrieval** adds `salience` (real,
-> nullable — recency/strength weight that decays so recall favours current beliefs), `embedding`
-> (`vector(1024)`, HNSW `vector_cosine_ops`), and `fts` (tsvector generated from
-> `subject`+`predicate`+`object`, GIN-indexed) — the hybrid-recall machinery (`architecture.md` §4.3).
-> Phase 11 (core profile) ships the columns above only; these three + their HNSW/GIN indexes land in
-> Phase 12 (`development-plan.md` §4c).
+> **Tier-2 belief columns (Phase 12, in the table).** The same `user_facts` table carries the Tier-2
+> overlay: `embedding` (`vector(1024)`, HNSW `vector_cosine_ops`), `fts` (tsvector generated from
+> `subject`+`predicate`+`object`, GIN-indexed) — the hybrid-recall machinery (`architecture.md` §4.3) —
+> and `salience` (real, nullable). `salience` is an **event-driven strength weight**: the reflector
+> bumps it on a `reinforce` (restatement), and the belief-learning loop bumps/cuts it on the user's
+> reaction to a belief-driven proactive act (`companion-motivation.md` §7). **Passive time-decay** of
+> salience and the **stale-drop retrieval cutoff** are Phase 13. Both writers (inline capture, reflector)
+> compute the embedding at write; a null-embedding row degrades gracefully to FTS-only retrieval (the
+> `fts` column is generated, so always present) (`development-plan.md` §4c). Both writers embed the
+> belief under its **natural-language rendering** (`beliefPhrase`, e.g. `interestedIn jazz` →
+> "the user is interested in jazz") — the *same* phrasing the recall block surfaces — so the stored
+> vector lives in the same register as the natural-language turn it is recalled against. This symmetry
+> is what makes the floor meaningful: a terse `predicate object` tag sits in a different register from a
+> full query sentence, inflating cosine distance and risking the floor dropping a genuinely relevant
+> belief. The vector arm carries a **relevance floor** (`BeliefSearchParams.maxVectorDistance`, default
+> `0.8` cosine distance in the retrieval arm): a belief farther than this is dropped rather than pulled
+> in to fill the top-K, so the "what I know about you" block is what's *relevant now*, not every belief
+> while the user has ≤ topK of them. The FTS arm self-gates (a term match is a relevance gate); the
+> floor is a starting value, tuned against the `user-extract`/`user-beliefs` evals as belief volume grows.
 
 > **The three tiers are a rule, not a column** (mirrors leaf types, `ontology.md` §3). **Tier 1 —
 > core profile**: the subset whose predicate is an identity attribute (`name`, `bornOn`, `livesIn`,
@@ -315,8 +329,10 @@ extraction/retrieval flow → `companion-memory.md` §4.
 > (seeded from Google at sign-in, then refined in conversation), no longer a `users` column. Assembled
 > into the persona block and carried every turn (§2.2) — the persona renders **Tier-1 only**, filtering
 > out any non-Tier-1 predicate so a Phase-12 belief sharing the table cannot leak in. **Tier 2 —
-> learned beliefs**: everything else (`prefers`, `interestedIn`, `believes`, …); too many for context,
-> surfaced by the retrieval arm (`architecture.md` §4.3) — added in Phase 12. **Tier 3 — user persona**:
+> learned beliefs**: a **closed** predicate set `TIER2_PREDICATES` = `prefers`/`dislikes`/`interestedIn`/`believes`
+> (validated at extraction, mirroring `TIER1_PREDICATES`; polarity rides the predicate); too many for
+> context, so surfaced by the retrieval arm over *current* Tier-2 rows only (`architecture.md` §4.3) —
+> added in Phase 12. **Tier 3 — user persona**:
 > the synthesized narrative in `companions.user_persona` (Phase 13). Indexes (Phase 11): btree on
 > `(user_id, superseded_at)` for the current-facts scan; plus a **partial unique index**
 > `user_facts_one_current_name_uniq` on `(user_id, predicate)` `WHERE predicate = 'name' AND
@@ -433,6 +449,7 @@ erDiagram
     companions  ||--o{ proactive_outcomes  : "reinforcement log"
     leads       |o--o{ proposals           : "explore-origin (SET NULL)"
     messages    |o--o| proactive_outcomes  : "report note reacted to"
+    user_facts  |o--o{ proactive_outcomes  : "belief that drove the act (SET NULL)"
 
     companions {
         uuid id PK
@@ -467,6 +484,7 @@ erDiagram
         uuid id PK
         uuid companion_id FK
         uuid note_message_id FK
+        uuid driven_by_user_fact_id FK
     }
 ```
 
@@ -504,7 +522,11 @@ erDiagram
   loop), applied as an additive nudge — not approve/reject. Doubles as the helpful-vs-annoying
   measurement. Resolution is an **atomic claim** — the reward write is conditioned on
   `reward IS NULL`, so two racing reactions can't both score one outcome; only the winning claim goes
-  on to nudge the drive weights (no lost update).
+  on to nudge the drive weights (no lost update). _(Phase 12)_ also carries
+  **`driven_by_user_fact_id`** (uuid, nullable, FK → `user_facts.id` `ON DELETE SET NULL`): the Tier-2
+  belief that drove a belief-driven burst (null for non-belief acts). On resolution the same `delta`
+  that nudges the drive weight also adjusts **that belief's `salience`** — the belief-learning loop
+  (`companion-motivation.md` §7).
 
 Presence is **not** a table — it is a volatile, heartbeat-fed in-memory signal (§4.5).
 

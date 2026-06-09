@@ -45,6 +45,16 @@ describe('user-model routes', () => {
     expect(facts[0]).toMatchObject({ predicate: 'name', object: 'Sam', source: 'transcript' });
   });
 
+  it('GET /user/facts partitions Tier-1 facts from Tier-2 beliefs (Phase 12)', async () => {
+    await recordName('Sam');
+    await ctx.deps.userModel.recordBelief({ userId, predicate: 'interestedIn', object: 'jazz' });
+    const res = await ctx.app.inject({ method: 'GET', url: '/user/facts', headers: auth });
+    const { facts, beliefs } = res.json();
+    expect(facts.map((f: { predicate: string }) => f.predicate)).toEqual(['name']);
+    expect(beliefs).toHaveLength(1);
+    expect(beliefs[0]).toMatchObject({ predicate: 'interestedIn', object: 'jazz' });
+  });
+
   it('GET /user/facts requires authentication', async () => {
     const res = await ctx.app.inject({ method: 'GET', url: '/user/facts' });
     expect(res.statusCode).toBe(401);
@@ -94,6 +104,33 @@ describe('user-model routes', () => {
     expect(deleted.statusCode).toBe(404);
     // The owner's fact is untouched.
     expect((await ctx.deps.userModel.listCurrent(userId))[0]?.object).toBe('Sam');
+  });
+
+  it('404s editing/forgetting a Tier-2 belief (read-only until Phase 13)', async () => {
+    // Beliefs are read-only via the UI, but the guarantee is enforced server-side —
+    // a direct API call cannot edit or forget a learned belief either.
+    const belief = await ctx.deps.userModel.recordBelief({
+      userId,
+      predicate: 'interestedIn',
+      object: 'jazz',
+    });
+    const patched = await ctx.app.inject({
+      method: 'PATCH',
+      url: `/user/facts/${belief.id}`,
+      headers: auth,
+      payload: { object: 'techno' },
+    });
+    expect(patched.statusCode).toBe(404);
+    const deleted = await ctx.app.inject({
+      method: 'DELETE',
+      url: `/user/facts/${belief.id}`,
+      headers: auth,
+    });
+    expect(deleted.statusCode).toBe(404);
+    // The belief is untouched by either attempt.
+    const beliefs = await ctx.deps.userModel.listCurrentBeliefs(userId);
+    expect(beliefs).toHaveLength(1);
+    expect(beliefs[0]).toMatchObject({ id: belief.id, object: 'jazz' });
   });
 
   it('404s an unknown fact and 400s an invalid body', async () => {

@@ -20,6 +20,7 @@ import { TranscriptMemoryStore } from '../memory/store.js';
 import { DrizzleSemanticMemoryStore } from '../memory/semantic-store.js';
 import { DrizzleVitalityStore, type VitalityStore } from '../quota/vitality-store.js';
 import { DrizzleLeadStore } from '../tools/lead-store.js';
+import { DrizzleUserModelStore } from '../user-model/store.js';
 import { MotivationEngine } from './engine.js';
 import { InMemoryPresenceStore } from './presence-store.js';
 import { DrizzleProactiveOutcomeStore } from './reward-store.js';
@@ -211,6 +212,43 @@ describe('MotivationEngine.tick', () => {
     const third = await engine.tick(companionId);
     expect(third.initiated).toBe(true);
     expect(await rewards.list(companionId, 10)).toHaveLength(2);
+  });
+
+  it('attributes a curiosity burst to the user’s top interest belief (Phase 12)', async () => {
+    const companion = await identity.getCompanionById(companionId);
+    const userModel = new DrizzleUserModelStore(db);
+    await userModel.recordBelief({
+      userId: companion!.ownerId,
+      predicate: 'interestedIn',
+      object: 'gardening',
+    });
+    const top = await userModel.recordBelief({
+      userId: companion!.ownerId,
+      predicate: 'interestedIn',
+      object: 'Rust',
+      salience: 0.9, // the strongest interest → the one the burst is attributed to
+    });
+    await seedLeads(2);
+
+    const withBeliefs = new MotivationEngine({
+      identity,
+      presence,
+      energy,
+      leads,
+      semantic,
+      pipeline: new FakeReadPipeline(semantic),
+      memory,
+      rewards,
+      userModel,
+      llm: new FakeLlmGateway(['Read ', 'things.']),
+      model: 'fake-model',
+      logger: silent,
+    });
+    const result = await withBeliefs.tick(companionId);
+
+    expect(result.initiated).toBe(true);
+    const [outcome] = await rewards.list(companionId, 1);
+    expect(outcome!.drivenByUserFactId).toBe(top.id);
   });
 
   it('stays idle when the dial is off', async () => {

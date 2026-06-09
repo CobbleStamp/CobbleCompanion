@@ -247,6 +247,28 @@ describe('ConsolidationService', () => {
     await service({ evolver }, new FakeLlmGateway(['{"episodes":[]}'])).consolidate(quiet.id);
     expect(evolver.evolve).toHaveBeenCalledTimes(1); // still only the first
   });
+
+  it('fires the user-model reflector after the run (Phase 12)', async () => {
+    const reflector = { reflect: vi.fn().mockResolvedValue(undefined) };
+
+    // Episodes formed → reflector still runs (on its own cursor, beside the episodes).
+    await seedTurns(8);
+    await service({ reflector }, new FakeLlmGateway([EPISODE_JSON])).consolidate(companionId);
+    expect(reflector.reflect).toHaveBeenCalledWith(companionId);
+
+    // Even a pure-filler span (no episodes) fires the reflector — beliefs are learned
+    // independently of episode formation.
+    const user = await identity.ensureUserByEmail('owner2@example.com');
+    const quiet = await identity.createCompanion(user.id, {
+      name: 'Quiet',
+      form: 'owl',
+      temperament: 'calm',
+    });
+    for (let i = 0; i < 8; i++) await memory.appendMessage(quiet.id, 'user', `m${i}`);
+    await service({ reflector }, new FakeLlmGateway(['{"episodes":[]}'])).consolidate(quiet.id);
+    expect(reflector.reflect).toHaveBeenCalledWith(quiet.id);
+    expect(reflector.reflect).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('sweepConsolidation', () => {

@@ -1,8 +1,9 @@
 /**
  * Inline user-fact capture — one cheap structured read turns the user's latest
- * message into explicit identity-fact candidates. The model reports via a
- * `report_user_facts` tool call; `coerceCandidates` is tolerant (drops non-Tier-1
- * attributes, blanks, malformed items) and capture meters its tokens to stamina.
+ * message into explicit fact candidates (Tier-1 identity + Tier-2 beliefs). The model
+ * reports via a `report_user_facts` tool call; `coerceCandidates` is tolerant (drops
+ * attributes outside Tier-1 ∪ Tier-2, blanks, malformed items) and capture meters its
+ * tokens to stamina.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -34,7 +35,7 @@ describe('coerceCandidates', () => {
     ]);
   });
 
-  it('drops attributes outside the Tier-1 set', () => {
+  it('drops attributes outside the Tier-1 ∪ Tier-2 set', () => {
     expect(
       coerceCandidates({
         facts: [
@@ -43,6 +44,39 @@ describe('coerceCandidates', () => {
         ],
       }),
     ).toEqual([{ predicate: 'name', object: 'Sam' }]);
+  });
+
+  it('keeps explicit Tier-2 beliefs alongside identity facts', () => {
+    expect(
+      coerceCandidates({
+        facts: [
+          { attribute: 'name', value: 'Sam' },
+          { attribute: 'prefers', value: 'oat milk' },
+          { attribute: 'interestedIn', value: 'jazz' },
+          { attribute: 'believes', value: 'remote work is better' },
+        ],
+      }),
+    ).toEqual([
+      { predicate: 'name', object: 'Sam' },
+      { predicate: 'prefers', object: 'oat milk' },
+      { predicate: 'interestedIn', object: 'jazz' },
+      { predicate: 'believes', object: 'remote work is better' },
+    ]);
+  });
+
+  it('accretes distinct Tier-2 values within one read, collapsing an exact repeat', () => {
+    expect(
+      coerceCandidates({
+        facts: [
+          { attribute: 'interestedIn', value: 'jazz' },
+          { attribute: 'interestedIn', value: 'Rust' },
+          { attribute: 'interestedIn', value: 'jazz' },
+        ],
+      }),
+    ).toEqual([
+      { predicate: 'interestedIn', object: 'jazz' },
+      { predicate: 'interestedIn', object: 'Rust' },
+    ]);
   });
 
   it('drops blank or malformed values and trims', () => {

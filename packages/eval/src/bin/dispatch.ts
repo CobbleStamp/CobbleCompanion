@@ -8,14 +8,20 @@
 import type { Logger } from '@cobble/core';
 import { affectSenseDataset } from '../datasets/affect-sense.js';
 import { injectionDataset } from '../datasets/injection.js';
+import { userBeliefsDataset } from '../datasets/user-beliefs.js';
 import { userExtractDataset } from '../datasets/user-extract.js';
 import type { Dataset, DatasetReport } from '../framework/dataset.js';
 
-/** The stateless datasets, by `--dataset` name (the generic-framework tier). */
+/**
+ * The framework datasets, by `--dataset` name. Most are stateless (a single call site);
+ * `user-beliefs` is self-contained but DB-backed (it spins up its own in-memory store to
+ * run the reflector), still fitting the same Dataset interface (companion-memory.md §4).
+ */
 export const STATELESS: Record<string, Dataset<{ readonly id: string }, unknown>> = {
   'affect-sense': affectSenseDataset as Dataset<{ readonly id: string }, unknown>,
   injection: injectionDataset as Dataset<{ readonly id: string }, unknown>,
   'user-extract': userExtractDataset as Dataset<{ readonly id: string }, unknown>,
+  'user-beliefs': userBeliefsDataset as Dataset<{ readonly id: string }, unknown>,
 };
 
 /** All accepted `--dataset` values, for arg validation + the usage message. */

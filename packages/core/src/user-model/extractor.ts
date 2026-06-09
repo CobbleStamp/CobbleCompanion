@@ -1,20 +1,28 @@
 /**
- * Inline salient capture (Phase 11, companion-memory.md §4) — the post-turn read
- * that extracts EXPLICIT identity facts the user stated about themselves, the
- * sibling of affect sensing (motivation/affect.ts). One cheap structured LLM read
- * yields a list of `{ predicate, object }` candidates (the user's name, where they
- * live, their job, …) via the `report_user_facts` tool channel — no free-text
- * parsing. This module is the perception only: it returns candidates and never
- * persists; the harness writes them through the UserModelStore (store.ts).
+ * Inline salient capture (companion-memory.md §4) — the post-turn read that extracts
+ * the EXPLICIT facts the user stated about themselves, the sibling of affect sensing
+ * (motivation/affect.ts). One cheap structured LLM read yields a list of
+ * `{ predicate, object }` candidates via the `report_user_facts` tool channel — no
+ * free-text parsing. Phase 11 captured Tier-1 identity (name, where they live, …);
+ * Phase 12 widens it to explicit Tier-2 beliefs (a plainly stated preference/interest/
+ * opinion). This module is the perception only: it returns candidates and never
+ * persists; the harness writes them through the UserModelStore, routing by tier
+ * (identity → recordTranscriptFact, belief → recordBelief).
  *
  * Pure-of-persistence by design, so it doubles as the `user-extract` eval call site
- * (howto-run-evals.md). Conservative: only Tier-1 identity predicates the model was
- * offered are kept; anything else is dropped, so a stray capture can't invent a
- * profile. Best-effort and never throws — a perception hiccup must not disrupt the
- * chat turn (logging.md). The read rides the chat turn, so it bills STAMINA.
+ * (howto-run-evals.md). Conservative: only predicates the model was offered (Tier-1 ∪
+ * Tier-2) are kept; anything else is dropped, so a stray capture can't invent a profile
+ * or a belief. Implicit beliefs (no single message states them) are the reflector's job.
+ * Best-effort and never throws — a perception hiccup must not disrupt the chat turn
+ * (logging.md). The read rides the chat turn, so it bills STAMINA.
  */
 
-import { isMultiValuedPredicate, TIER1_PREDICATES } from '@cobble/shared';
+import {
+  isMultiValuedPredicate,
+  isTier2Predicate,
+  TIER1_PREDICATES,
+  TIER2_PREDICATES,
+} from '@cobble/shared';
 import { drainStream } from '../llm/drain.js';
 import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
@@ -22,9 +30,12 @@ import { render, REPORT_USER_FACTS, userExtractTemplate } from '../prompts/index
 import type { VitalityStore } from '../quota/vitality-store.js';
 import { createUsageAccumulator, meteredLlmGateway } from '../usage.js';
 
-/** A singular identity fact the user explicitly stated, ready to persist. */
+/**
+ * A fact the user explicitly stated, ready to persist. The `predicate` is either a
+ * Tier-1 identity attribute (`name`, `livesIn`, …) or a Tier-2 belief
+ * (`prefers`/`interestedIn`/…); the harness routes by tier (companion-memory.md §4).
+ */
 export interface UserFactCandidate {
-  /** A Tier-1 singular identity attribute (`name`, `livesIn`, …). */
   readonly predicate: string;
   readonly object: string;
 }
@@ -47,8 +58,8 @@ export interface UserFactCaptureParams {
   readonly userText: string;
 }
 
-/** The Tier-1 predicates the extractor is allowed to emit (the tool's enum). */
-const TIER1_SET: ReadonlySet<string> = new Set(TIER1_PREDICATES);
+/** The predicates the extractor is allowed to emit (the tool's enum: Tier-1 ∪ Tier-2). */
+const ALLOWED_PREDICATES: ReadonlySet<string> = new Set([...TIER1_PREDICATES, ...TIER2_PREDICATES]);
 
 /**
  * Read the explicit identity facts in the user's latest message. Returns the
@@ -108,11 +119,12 @@ export async function captureUserFacts(
 
 /**
  * Build candidates from the tool's parsed args. Tolerant by construction: a
- * non-array `facts`, a malformed item, a non-Tier-1 attribute, or a blank value is
- * dropped rather than throwing. Deduped per read: a SINGULAR predicate keeps the last
- * value if the model emits it twice (supersession then keeps one current value); a
- * MULTI-VALUED predicate keeps each distinct value (so "French" and "German" in one
- * read both accrete), collapsing only an exact repeat.
+ * non-array `facts`, a malformed item, a disallowed attribute (not Tier-1 ∪ Tier-2), or
+ * a blank value is dropped rather than throwing. Deduped per read: a SINGULAR Tier-1
+ * predicate keeps the last value if the model emits it twice (supersession then keeps
+ * one current value); a MULTI-VALUED Tier-1 predicate AND every Tier-2 belief keep each
+ * distinct value (so "French"/"German", or "jazz"/"rust" in one read all accrete),
+ * collapsing only an exact repeat.
  */
 export function coerceCandidates(args: Record<string, unknown>): readonly UserFactCandidate[] {
   const rawFacts = (args as { facts?: unknown }).facts;
@@ -120,7 +132,8 @@ export function coerceCandidates(args: Record<string, unknown>): readonly UserFa
     return [];
   }
   // Keyed by predicate for singular attributes (last value wins), or by
-  // predicate+value for multi-valued ones (each distinct value survives).
+  // predicate+value for accreting ones — multi-valued Tier-1 and all Tier-2 beliefs —
+  // so each distinct value survives.
   const byKey = new Map<string, UserFactCandidate>();
   for (const item of rawFacts) {
     if (!item || typeof item !== 'object') {
@@ -128,7 +141,7 @@ export function coerceCandidates(args: Record<string, unknown>): readonly UserFa
     }
     const attribute = (item as { attribute?: unknown }).attribute;
     const value = (item as { value?: unknown }).value;
-    if (typeof attribute !== 'string' || !TIER1_SET.has(attribute)) {
+    if (typeof attribute !== 'string' || !ALLOWED_PREDICATES.has(attribute)) {
       continue;
     }
     if (typeof value !== 'string') {
@@ -138,9 +151,8 @@ export function coerceCandidates(args: Record<string, unknown>): readonly UserFa
     if (!trimmed) {
       continue;
     }
-    const key = isMultiValuedPredicate(attribute)
-      ? JSON.stringify([attribute, trimmed])
-      : attribute;
+    const accretes = isMultiValuedPredicate(attribute) || isTier2Predicate(attribute);
+    const key = accretes ? JSON.stringify([attribute, trimmed]) : attribute;
     byKey.set(key, { predicate: attribute, object: trimmed });
   }
   return [...byKey.values()];

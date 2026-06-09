@@ -49,16 +49,31 @@ export const DEFAULT_DRIVE_WEIGHTS: DriveWeights = {
 
 /** Number of unread leads at which curiosity saturates to 1. */
 const CURIOSITY_SATURATION = 5;
+/** Interest beliefs at which the belief-driven curiosity boost saturates. */
+const INTEREST_SATURATION = 3;
+/** How much known interests lift curiosity (leads stay the primary driver). */
+const INTEREST_BOOST = 0.3;
 
 /** The cheap signals drive levels are computed from (extended as drives grow). */
 export interface DriveContext {
   /** How many leads sit unread in the reading list. */
   readonly newLeadCount: number;
+  /**
+   * How many current Tier-2 interest beliefs (`interestedIn`/`prefers`) the user has
+   * (Phase 12). A companion that knows what the user cares about is a little more
+   * eager to go read — but leads remain the primary curiosity signal. Default 0.
+   */
+  readonly interestBeliefCount?: number;
 }
 
 /** Compute current drive levels from cheap signals. Pure; spends no tokens. */
 export function computeDrives(ctx: DriveContext): DriveLevels {
-  const curiosity = Math.min(1, Math.max(0, ctx.newLeadCount) / CURIOSITY_SATURATION);
+  const leadSignal = Math.max(0, ctx.newLeadCount) / CURIOSITY_SATURATION;
+  const interestSignal = Math.min(
+    1,
+    Math.max(0, ctx.interestBeliefCount ?? 0) / INTEREST_SATURATION,
+  );
+  const curiosity = Math.min(1, leadSignal + INTEREST_BOOST * interestSignal);
   return {
     curiosity,
     bond: 0,

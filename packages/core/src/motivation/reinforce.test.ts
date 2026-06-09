@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { DriveWeights } from '@cobble/shared';
 import { DrizzleIdentityStore, type IdentityStore } from '../identity/store.js';
 import type { Logger } from '../logging.js';
+import { DrizzleUserModelStore } from '../user-model/store.js';
 import {
   DrizzleProactiveOutcomeStore,
   type ProactiveOutcomeRecord,
@@ -41,8 +42,10 @@ describe('reinforceFromDelta', () => {
   let db: Database;
   let close: () => Promise<void>;
   let companionId: string;
+  let userId: string;
   let identity: DrizzleIdentityStore;
   let rewards: DrizzleProactiveOutcomeStore;
+  let userModel: DrizzleUserModelStore;
 
   function deps() {
     return { rewards, identity, logger: silent };
@@ -59,6 +62,7 @@ describe('reinforceFromDelta', () => {
     close = created.close;
     identity = new DrizzleIdentityStore(db);
     const user = await identity.ensureUserByEmail('owner@example.com');
+    userId = user.id;
     const companion = await identity.createCompanion(user.id, {
       name: 'Pip',
       form: 'fox',
@@ -66,6 +70,7 @@ describe('reinforceFromDelta', () => {
     });
     companionId = companion.id;
     rewards = new DrizzleProactiveOutcomeStore(db);
+    userModel = new DrizzleUserModelStore(db);
   });
   afterEach(async () => {
     await close();
@@ -111,6 +116,34 @@ describe('reinforceFromDelta', () => {
     expect(companion!.driveWeights).toBeNull();
   });
 
+  it('a welcomed belief-driven act strengthens the driving belief (Phase 12)', async () => {
+    const belief = await userModel.recordBelief({
+      userId,
+      predicate: 'interestedIn',
+      object: 'Rust',
+    });
+    await rewards.record(companionId, { drive: 'curiosity', drivenByUserFactId: belief.id });
+
+    await reinforceFromDelta({ rewards, identity, userModel, logger: silent }, companionId, 0.8);
+
+    const [current] = await userModel.listCurrentBeliefs(userId);
+    expect(current!.salience).toBeGreaterThan(0.5); // 0.5 + 0.1·0.8
+  });
+
+  it('an ignored belief-driven act weakens the driving belief (Phase 12)', async () => {
+    const belief = await userModel.recordBelief({
+      userId,
+      predicate: 'interestedIn',
+      object: 'Rust',
+    });
+    await rewards.record(companionId, { drive: 'curiosity', drivenByUserFactId: belief.id });
+
+    await reinforceFromDelta({ rewards, identity, userModel, logger: silent }, companionId, -0.8);
+
+    const [current] = await userModel.listCurrentBeliefs(userId);
+    expect(current!.salience).toBeLessThan(0.5);
+  });
+
   it('attributes the change to the drive the pending act served', async () => {
     await rewards.record(companionId, { drive: 'bond' });
     await reinforceFromDelta(deps(), companionId, 0.5);
@@ -133,6 +166,7 @@ describe('reinforceFromDelta — claim-loss, vanished companion, and swallowed e
     noteMessageId: 'note-1',
     proposalId: null,
     drive: 'curiosity',
+    drivenByUserFactId: null,
     reward: null,
     createdAt: new Date(),
     resolvedAt: null,

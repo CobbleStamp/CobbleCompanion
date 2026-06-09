@@ -22,6 +22,12 @@ export interface RecordOutcomeInput {
   readonly noteMessageId?: string;
   /** Legacy (pre-4.1): the proposal this initiation produced, if any. */
   readonly proposalId?: string;
+  /**
+   * The Tier-2 belief that drove this burst (Phase 12 belief-learning loop). When set,
+   * the reaction reward also adjusts that belief's salience (reinforce.ts). Null for a
+   * non-belief-driven burst.
+   */
+  readonly drivenByUserFactId?: string;
 }
 
 export interface ProactiveOutcomeRecord {
@@ -30,6 +36,7 @@ export interface ProactiveOutcomeRecord {
   readonly noteMessageId: string | null;
   readonly proposalId: string | null;
   readonly drive: Drive;
+  readonly drivenByUserFactId: string | null;
   readonly reward: number | null;
   readonly createdAt: Date;
   readonly resolvedAt: Date | null;
@@ -80,6 +87,9 @@ export class DrizzleProactiveOutcomeStore implements ProactiveOutcomeStore {
         ...(input.noteMessageId !== undefined ? { noteMessageId: input.noteMessageId } : {}),
         ...(input.proposalId !== undefined ? { proposalId: input.proposalId } : {}),
         ...(input.driveSnapshot !== undefined ? { driveSnapshot: input.driveSnapshot } : {}),
+        ...(input.drivenByUserFactId !== undefined
+          ? { drivenByUserFactId: input.drivenByUserFactId }
+          : {}),
       })
       .returning();
     if (!row) {
@@ -150,6 +160,7 @@ function toRecord(row: Row): ProactiveOutcomeRecord {
     noteMessageId: row.noteMessageId,
     proposalId: row.proposalId,
     drive: row.drive,
+    drivenByUserFactId: row.drivenByUserFactId,
     reward: row.reward,
     createdAt: row.createdAt,
     resolvedAt: row.resolvedAt,
