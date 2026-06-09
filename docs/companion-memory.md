@@ -172,8 +172,13 @@ The prose below elaborates each.
   `interestedIn: Rust`"). Its own cursor (`user_facts_through_seq`) makes belief extraction
   independently idempotent — a failed reflection never advances past an unprocessed window — and lets
   it pin each belief's provenance to the exact turn (`learned_from_seq`, which inline capture can't,
-  reading a seq-less `MessageDto`). It also re-synthesizes the Tier-3 user persona, exactly as
-  consolidation drives `evolvedPersona` (Phase 13; `architecture.md` §4.3). The transcript is the
+  reading a seq-less `MessageDto`). A sibling synthesizer (`LlmUserPersonaSynthesizer`) re-synthesizes
+  the **Tier-3 user persona** on its **own cursor** (`user_model_updated_through_seq`) right after the
+  reflector — the exact mirror of how consolidation drives `evolvedPersona`, re-running only when the
+  facts/episodes advanced — and the result is blended **additively** into the persona prompt: Tier-1
+  identity facts keep rendering verbatim (exact ground truth), the Tier-3 narrative is an extra paragraph
+  beside `evolvedPersona`, never paraphrasing the name/pronouns/location (Phase 13; `architecture.md`
+  §4.3). The transcript is the
   canonical, **lossless** substrate (`ontology.md` invariant #1): anything inline capture misses, the
   reflector recovers on its next pass, and re-extraction rebuilds the whole overlay — so no knowledge
   is permanently lost as long as it was said.
@@ -195,8 +200,14 @@ is therefore *current-state maintenance*, not truth-arbitration. Its pipeline, p
 reconciliation read returns **`add`** (new matter — coexists), **`reinforce(id)`** (same matter,
 restated — bump salience, no new row), or **`supersede(id)`** (same matter, *newer state* — insert as
 current, mark the cited row superseded). A polarity flip ("love" → "quit") is just the obvious
-`supersede` case. Confidence and an event-driven salience steer retrieval toward what's current;
-**time-decay and the stale-drop cutoff are Phase 13** (`ontology.md` §4).
+`supersede` case. Confidence and an event-driven salience steer retrieval toward what's current. In
+**Phase 13** that salience also **decays lazily**: rather than a sweeper rewriting rows, both read paths
+(the Tier-2 arm and the engine's interest-sourcing) score it through one pure function
+`effectiveSalience = stored × decay(now − updated_at)` with a uniform half-life, so a belief that hasn't
+been reinforced fades out of recall on its own. A belief below the retrieval floor drops out of the arm
+**and** the engine but is **never auto-deleted** — it stays visible and forgettable in the browser. The
+stored salience always reflects the last genuine reinforcement; decay is a *view*, not a write
+(`ontology.md` §4).
 
 **Beliefs are also learned from behaviour, not only words.** Inline capture and reflection learn from
 what the user *says*. The **belief-learning loop** (`architecture.md` §4.5,
@@ -213,8 +224,16 @@ safeguard is **legibility, not gating**: everything it believes about you is **v
 browser (§5) — the one place the otherwise read-only browser gains a write affordance. Tier-1 identity
 facts are **editable and forgettable** today (Phase 11); Tier-2 beliefs are **read-only until Phase
 13** — and that read-only guarantee is **enforced server-side** (the `editFact`/`forgetFact` store
-methods refuse belief predicates), not just by omitting UI controls. Sensitive inferences (gender, age,
-health) are held to a higher confidence bar.
+methods refuse belief predicates), not just by omitting UI controls. **Phase 13** opens read/edit/forget
+across the **whole** model and splits two verbs that look alike but mean opposite things: **supersede**
+(automatic, system-driven) keeps the history chain — the self-timeline ("loved coffee → quit") — while
+**Forget** (the user's explicit button) is a genuine **hard delete** of the entire matter chain, current
+*and* superseded (the right-to-be-forgotten promise; the Phase-11 Tier-1 forget moves from
+soft-supersede to this). **Sensitive inferences** (a closed set — gender, age, health, religion,
+sexuality, ethnicity, political leaning) are **gated at write**: a low-confidence *inference* about a
+protected matter is not persisted at all, so the companion never holds a shaky guess; an **explicit
+statement** ("I'm 34") always passes, and any persisted sensitive row is **flagged** so the browser can
+surface it for scrutiny. (A user-facing "don't infer X about me" toggle is deferred.)
 
 **Iterating extraction quality:** because extraction is the part most likely to drift, it has its own
 **eval dataset** — `user-extract` (`howto-run-evals.md`): explicit identity attributes scored
@@ -340,7 +359,8 @@ Out of scope for this release (roadmap → [`development-plan.md`](./development
   backed by deletes that cascade through the existing `onDelete: 'cascade'` foreign keys
   (`db/src/schema.ts`). The browser in §5 is deliberately **read-only** for now — **except the User
   Model** (§4), whose **Tier-1 identity facts are already editable/forgettable** (Phase 11) and whose
-  **Tier-2 beliefs become so in Phase 13** (`development-plan.md` §4c) — the first write affordance and
-  the template for broader forget controls later.
+  **Tier-2 beliefs become so in Phase 13**, where **Forget** is a true **hard delete** of the matter
+  chain (distinct from system supersession, which keeps history) (`development-plan.md` §4c) — the first
+  write affordance and the template for broader forget controls later.
 - **Full-history transcript paging.** The read path returns the most-recent N messages (§5); paging
   the full lifelong transcript is not built.

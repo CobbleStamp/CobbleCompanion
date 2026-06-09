@@ -281,7 +281,7 @@ training set and fits incremental ingestion; GIN on `fts`; btree on `(companion_
 
 The companion's structured understanding of its user — the same typed-fact contract as `facts`
 (`ontology.md`), but the **subject is the privileged user entity**. A separate table because the
-lifecycle differs: identity attributes supersede on revision (most singular; `languages`/`relationships` are multi-valued and accrete) and are editable/forgettable today (Phase 11); beliefs accrete and are read-only until Phase 13, when they gain user editing and decay (the `editFact`/`forgetFact` path refuses belief predicates until then).
+lifecycle differs: identity attributes supersede on revision (most singular; `languages`/`relationships` are multi-valued and accrete) and are editable/forgettable today (Phase 11); beliefs accrete and are read-only until Phase 13, when they gain user editing and decay (the `editFact`/`forgetFact` path refuses belief predicates until then). **Two distinct delete verbs (Phase 13):** the reflector's automatic **supersede** marks `superseded_at` and **keeps** the old row (history); the user's explicit **Forget** is a true **hard delete** via a new `deleteFactChain(userId, factId)` that removes the whole matter chain (current + every superseded ancestor/descendant), so the Phase-11 `forgetFact` (currently a soft supersede, Tier-1 only) is replaced by it and extended to Tier-2 beliefs.
 **Keyed by `user_id`, not `companion_id`** — facts are objective truths about the *person* (name, age,
 "vegetarian"), so they are shared across any companion the user owns; only the *synthesized
 understanding* of the user (Tier-3 `companions.user_persona`) is per-companion (`development-plan.md`
@@ -297,8 +297,9 @@ extraction/retrieval flow → `companion-memory.md` §4.
 | `fact_type` | text | the closed core set, validated at extraction (`ontology.md` §2) — identity is an `attribute`, a taste a `relation`/`attribute`, a life event an `event` |
 | `subject` / `predicate` / `object` | text (predicate nullable) | `subject` is the user entity; **polarity is carried by the predicate** (`prefers` vs `dislikes`), so likes/dislikes need no extra column. Denormalized strings, per `ontology.md` §5 |
 | `confidence` | real, nullable | (0–1), advisory; default tracks `source` — explicit `transcript` statement → high, inferred → low, `auth_seed` → modest (a guess from the account), `user_edit` → authoritative. Steers retrieval ranking, decay, and supersession precedence, never storage |
-| `salience` | real, nullable | event-driven strength weight (Tier-2); multiplies a belief's fused hybrid-recall score (`1 + 0.5·salience`), so a reinforced belief rises and a cut one sinks among comparably-relevant hits — a gentle prior over relevance, never an injector. Bumped/cut on reinforce + proactive reaction; **passive time-decay is Phase 13** (see the Tier-2 note below) |
-| `superseded_at` | timestamptz, nullable | null = current; set when a singular attribute is revised, a multi-valued one (`languages`/`relationships`) is restated identically, or a belief's **same matter takes a newer state** (current-state last-wins — `ontology.md` §4). Superseded rows are kept (history — the timeline of the self), excluded from retrieval |
+| `salience` | real, nullable | event-driven strength weight (Tier-2); multiplies a belief's fused hybrid-recall score (`1 + 0.5·salience`), so a reinforced belief rises and a cut one sinks among comparably-relevant hits — a gentle prior over relevance, never an injector. Bumped/cut on reinforce + proactive reaction. The **stored** value is the last genuine reinforcement; **Phase 13 decays it lazily at read time** (effective = `salience × decay(now − updated_at)`, see the Tier-2 note below) — no sweeper writes here |
+| `sensitive` | boolean, default `false` | _(Phase 13)_ marks a fact about a protected matter (gender, age, health, religion, sexuality, ethnicity, political leaning — the closed `SENSITIVE_MATTERS` set). Set when such a fact is persisted; a low-confidence **inference** about a sensitive matter is **gated at write** (not stored unless it clears a higher confidence bar — `ontology.md` §4), while an explicit user statement always passes. Surfaced/badged in the browser for scrutiny |
+| `superseded_at` | timestamptz, nullable | null = current; set when a singular attribute is revised, a multi-valued one (`languages`/`relationships`) is restated identically, or a belief's **same matter takes a newer state** (current-state last-wins — `ontology.md` §4). Superseded rows are kept (history — the timeline of the self), excluded from retrieval. A **system supersede keeps** this row; the user's **Forget hard-deletes** the whole chain (Phase 13, below) |
 | `superseded_by` | uuid, nullable (FK → `user_facts.id`) | the fact that replaced this one, when applicable |
 | `created_at` / `updated_at` | timestamptz | |
 
@@ -308,7 +309,15 @@ extraction/retrieval flow → `companion-memory.md` §4.
 > and `salience` (real, nullable). `salience` is an **event-driven strength weight**: the reflector
 > bumps it on a `reinforce` (restatement), and the belief-learning loop bumps/cuts it on the user's
 > reaction to a belief-driven proactive act (`companion-motivation.md` §7). **Passive time-decay** of
-> salience and the **stale-drop retrieval cutoff** are Phase 13. Both writers (inline capture, reflector)
+> salience and the **stale-drop retrieval cutoff** are Phase 13, and are **lazy** — no sweeper rewrites
+> rows. A single pure function `effectiveSalience(salience, updatedAt, now) = salience × exp(−ln2 ·
+> ageDays / HALF_LIFE_DAYS)` (uniform configurable half-life, `BELIEF_SALIENCE_HALF_LIFE_DAYS` in §3) is
+> applied in the **two** read paths that consult salience — the Tier-2 retrieval arm's `searchBeliefs`
+> tilt and the motivation engine's `topInterestBelief` — so a belief that hasn't been reinforced fades
+> from recall and from driving bursts on its own; one below a `STALE_SALIENCE_FLOOR` is excluded from
+> both but **never auto-deleted** (it stays in the browser, forgettable). The stored column is unchanged
+> by reads — decay is a computed *view*, keeping the stored value meaningful as "true reinforced
+> strength" so a later reinforce composes cleanly. Both writers (inline capture, reflector)
 > compute the embedding at write; a null-embedding row degrades gracefully to FTS-only retrieval (the
 > `fts` column is generated, so always present) (`development-plan.md` §4c). Both writers embed the
 > belief under its **natural-language rendering** (`beliefPhrase`, e.g. `interestedIn jazz` →
@@ -743,6 +752,13 @@ chars) and link-harvest cap (`MAX_HARVESTED_LINKS`, default 20), and the `/explo
 (`motivation/`). Both per-companion vitality wallets (**stamina** and **energy**) are seeded from
 `STARTING_VITALITY_TOKENS` (`api/src/index.ts`), and the post-turn **affect read** runs on
 `INGESTION_MODEL` (spent from the companion's stamina) — see §1 and `companion-motivation.md` §7–§8.
+
+**User-model decay constants** _(Phase 13)_ are also in-code: `BELIEF_SALIENCE_HALF_LIFE_DAYS` (the
+uniform half-life of the lazy `effectiveSalience` view) and `STALE_SALIENCE_FLOOR` (below which a decayed
+belief is excluded from the Tier-2 arm and the engine's interest-sourcing, but not deleted) — both
+starting values tuned against the `user-extract`/`user-beliefs` evals as belief volume grows (§1). The
+closed `SENSITIVE_MATTERS` set and the higher write-confidence bar for sensitive inferences live beside
+the extractor, not as env (`companion-memory.md` §4).
 
 ## 4. Error Handling
 

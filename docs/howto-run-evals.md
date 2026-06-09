@@ -51,6 +51,7 @@ gated on the `OPENROUTER_API_KEY` secret, and uploads the reports as an artifact
 | `injection`     | stateless (red-team)                         | `senseAffect`        | dictated-valence resisted         |
 | `user-extract`  | stateless                                    | the user-fact extractor | facts (explicit attributes + Phase-12 explicit beliefs, deterministic) + LLM judge (preferences) |
 | `user-beliefs`  | stateful (seed multi-turn window → reflect)  | the User-Model Reflector | LLM judge: implicit belief derived + same-matter newer state superseded |
+| `user-persona`  | stateful (seed facts/episodes → synthesize → A/B) | the Tier-3 synthesizer + persona prompt | LLM judge: persona-on vs persona-off replies measurably differ in tone/framing |
 
 `user-extract` is the quality gate for **User-Model** extraction (`companion-memory.md` §4,
 `ontology.md` §5): each case is an exchange with the user-facts a correct read should capture —
@@ -62,6 +63,13 @@ multi-turn transcript window, runs the User-Model Reflector, and judges (LLM) th
 belief was derived and that a same-matter newer state **superseded** the prior current belief rather
 than duplicating it. The belief-learning loop's mechanical half (a belief drives a burst → the
 reaction moves its salience) is covered by the deterministic Phase-12 DoD test, not a live eval.
+**Phase 13** adds **`user-persona`** — the Tier-3 gate: seed a user's facts + episodes, run the
+synthesizer, then have the companion answer the same prompt **with and without** the synthesized
+`user_persona` blended in, and judge (LLM) that the persona-on reply measurably shifts tone/framing
+toward that user (the Phase-13 "Done when"). Phase 13's other guarantees are mechanical, so they ride
+the deterministic DoD test, not a live eval: a belief past its half-life drops out of recall, **Forget**
+hard-deletes a fact from current *and* history, and a low-confidence sensitive inference is refused at
+write.
 
 The stateless framework (`framework/`: `dataset`, `scorer`, `runner`, `baseline`,
 plus `scorers/{facts,refusal}`) makes adding a per-call-site dataset small:

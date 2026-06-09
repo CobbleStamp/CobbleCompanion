@@ -83,6 +83,12 @@ Within a core type, extraction may qualify facts with finer-grained **leaf subty
 - **Confidence is advisory.** `confidence` (0–1, extraction self-reported) ranks and filters; it
   never gates storage by itself. For user-facts an explicit statement extracts at high confidence,
   an inferred preference at low — but confidence steers retrieval ranking and decay, never storage.
+  **One deliberate exception (Phase 13): sensitive matters.** A low-confidence *inference* about a
+  closed set of protected attributes (gender, age, health, religion, sexuality, ethnicity, political
+  leaning) is **gated at write** — not persisted unless it clears a higher confidence bar; an explicit
+  user statement always passes. Data-minimization for protected attributes outranks the
+  "confidence never gates storage" default; a persisted sensitive fact carries a `sensitive` flag
+  (`implementation.md` §1, `companion-memory.md` §4).
 - **Supersession over deletion (user-facts) — a current-state mirror.** Because the user changes, a
   user-fact is **revised by superseding**, not silently duplicated: a singular attribute (`name`,
   `bornOn`) upserts; a belief whose *same matter* takes a newer state has the old row marked
@@ -93,7 +99,11 @@ Within a core type, extraction may qualify facts with finer-grained **leaf subty
   superseded chain; `user_facts` current rows are the *now* view, surfaced by retrieval (which reads
   current rows only). Reconciliation — `add` / `reinforce` / `supersede` — is owned by the background
   reflection pass (`companion-memory.md` §4), not the inline writer, so write hygiene lives in one
-  place.
+  place. **Supersession is system revision and is distinct from user Forget (Phase 13):** the reflector
+  *supersedes* automatically and **keeps** the prior row as history; the user's explicit **Forget** is a
+  genuine **hard delete** of the whole matter chain (current + superseded), because the
+  right-to-be-forgotten is a stronger promise than the self-timeline — the two verbs look alike but mean
+  opposite things for the data (`companion-memory.md` §4, `implementation.md` §1).
 - **Tenancy.** Source-facts are scoped by `companion_id` and cascade-delete with their companion,
   source, and section. **User-facts are scoped by `user_id`** — they are objective truths about the
   *person*, shared across any companion the user owns, learned *by* a companion (a

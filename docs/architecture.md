@@ -133,7 +133,7 @@ flowchart TB
 | **Personality Evolver** | Re-synthesizes `evolvedPersona` from episodes after consolidation | Cursor-gated, metered; blended into the persona prompt beside the seed |
 | **User-Model Store** | The companion's structured + synthesized understanding of its user — `user_facts` (Tier-1 core profile **incl. the name** + the Tier-2 learned-belief overlay; `companions.user_persona` Tier-3 is _designed, not built_) | Behind the MemoryStore seam (invariant #2); **one ontology, the user is a privileged entity** (`ontology.md`); `user_facts` is **per-user** (objective truths, shared across the user's companions), Tier-3 is per-companion. Tier-1 facts supersede on revision, except `languages`/`relationships` which accrete (`MULTI_VALUED_PREDICATES`); Tier-2 beliefs hybrid-recalled (§4.3), reconciled current-state-last-wins. **Built: Phases 11–12 (Tier-1 + Tier-2)** — see `companion-memory.md` §4 Status. Schema → `implementation.md` §1; mechanism → `companion-memory.md` §4 |
 | **User-Fact Extractor** | Inline salient capture: a post-turn perception step that writes explicit, high-signal user-facts (sibling to affect sensing) | Conservative — explicit statements only; metered. Dedup/inference/hygiene deferred to the reflector (§4.3, §4.5); gated by the `user-extract` eval (`howto-run-evals.md`) |
-| **User-Model Reflector** _(Phase 12 beliefs built · Phase 13 persona designed)_ | Background reflection over the **raw transcript window** → inferred Tier-2 beliefs (`add`/`reinforce`/`supersede` reconciliation, embedding dedup); the Tier-3 `user_persona` synthesis is Phase 13 | Extends the Consolidation Service pattern (off-request, **own cursor `user_facts_through_seq`**, metered); reads the un-summarized transcript (not episodes) so implicit-belief signal survives; the mirror of the Personality Evolver, modelling the user instead of the self (`companion-memory.md` §4 Status) |
+| **User-Model Reflector** _(Phase 12 beliefs built · Phase 13 persona designed)_ | Background reflection over the **raw transcript window** → inferred Tier-2 beliefs (`add`/`reinforce`/`supersede` reconciliation, embedding dedup); a sibling **`LlmUserPersonaSynthesizer`** synthesizes the Tier-3 `user_persona` on its **own cursor** (`user_model_updated_through_seq`), additively blended beside `evolvedPersona` (Phase 13) | Extends the Consolidation Service pattern (off-request, **own cursor `user_facts_through_seq`**, metered); reads the un-summarized transcript (not episodes) so implicit-belief signal survives; the mirror of the Personality Evolver, modelling the user instead of the self (`companion-memory.md` §4 Status) |
 | **Identity Store** | Companion "home" record (incl. `evolvedPersona` + evolution/consolidation cursors; `user_persona` + the user-model cursor are _designed, not built_ — Phase 13) | Source of truth surfaces load from |
 | **Stamina Wallet** (`VitalityStore`) | The user-initiated half of a companion's vitality — a per-companion token balance (§4.8) | Postgres-backed (`companions.stamina_balance_tokens`); spend decrements (floor 0), feeding adds; routes 429 at the boundary when empty |
 | **Persistence** | Relational + vector storage | Postgres + `pgvector`; schemas → `implementation.md` |
@@ -287,7 +287,11 @@ flowchart LR
 > them. **Unlike** the semantic/episodic arms (which rank
 > by fused relevance alone), the belief arm then tilts the fused score by `salience` (`1 + 0.5·salience`,
 > `implementation.md` §1) — a gentle prior, so a reinforced belief rises and a cut one sinks among
-> comparably-relevant hits, without dragging in beliefs no arm found relevant. Reads **current rows only**, so it reflects the
+> comparably-relevant hits, without dragging in beliefs no arm found relevant. **From Phase 13 the
+> salience used here is the *effective* (lazily-decayed) value** — `salience × decay(now − updated_at)`,
+> a uniform half-life computed at read time (no sweeper) — so a belief that hasn't been reinforced fades
+> from the block on its own, and below a floor drops out entirely (`implementation.md` §1). Reads
+> **current rows only**, so it reflects the
 > latest state (the "I quit coffee" supersedes the dated "loves coffee" history — last-wins for *now*,
 > the timeline staying in episodic memory). Composed ahead of the semantic arm so the recency window
 > still appends last; degrades independently (recall never breaks the conversation). The facts
@@ -416,7 +420,9 @@ The engine's parts (each additive, no loop change):
   remaining energy (below).
 - **Drives (what it wants)** — **learned** user interests (from Phase 12, sourced from the explicit
   **Tier-2 `interestedIn`/`prefers` belief set** rather than scraped out of episodic memory — a sharp,
-  typed signal of what the user actually cares about) + understanding-the-user + the companion's
+  typed signal of what the user actually cares about; **Phase 13 ranks these candidates by *effective*
+  (lazily-decayed) salience**, so a stale interest stops driving bursts — §4.3) +
+  understanding-the-user + the companion's
   personality (seed temperament + evolved persona, §4.3) + pending **leads** (the inventory) + bond
   maintenance (time since last contact) + pending work/opportunities + an **approval/reinforcement**
   drive learned from feedback (below) (`product-overview.md` §5.4).
