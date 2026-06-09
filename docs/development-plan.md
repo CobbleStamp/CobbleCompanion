@@ -45,6 +45,9 @@ being is proven, because they add platform cost without changing whether the cor
 | **8** | Hardening & launch readiness | All | Security, scale, privacy controls, monetization | Planned |
 | **9** | Tool acquisition — MCP | Web / server-host | Whitelisted HTTP MCP servers discovered, loaded & used at runtime, no redeploy | ✅ **Done** (PR #10) |
 | **10** | Tool acquisition — CLI | Web / server-host | Whitelisted host CLIs discovered, loaded & driven at runtime, no redeploy | ✅ **Done** (PR #11) |
+| **11** | User Model — core profile | Web | Cobble captures & uses the user's identity facts (name, pronouns, age, …) ⭐ | ✅ **Done** (§4c) |
+| **12** | User Model — learned beliefs | Web | Continuously learns preferences/interests/opinions; surfaces them unprompted | Planned (§4c) |
+| **13** | User Model — understanding & hygiene | Web | Synthesized user-persona; supersession/decay; full edit/forget UI | Planned (§4c) |
 
 ⭐ = the differentiators the web PoC exists to prove. **Phases 0–5 are the PoC.**
 
@@ -470,6 +473,83 @@ coverage. Canonical mechanism: `docs/companion-tools.md`. **Deferred** (Beyond t
 ingestion into semantic memory, an experimentation/probe harness, and OS-level sandbox + network
 isolation.
 
+## 4c. User-Model Workstream (knowing & understanding the user)
+
+The PoC (Phases 0–5) makes the companion know the *world* (semantic memory) and remember its
+*shared history* (episodic) — but it holds almost nothing structured about **the user**: only a
+set-once display name, with preferences living as un-queryable episode narrative
+(`companion-memory.md` §4 documents the gap). This workstream closes it: the companion builds an
+explicit, legible **User Model** — the symmetric mirror of the `evolvedPersona` it already grows
+for *itself*. Like the tool-acquisition workstream (§4b), the numbering is a label, not a strict
+ordering after Phase 10; it extends the existing web surface and depends only on the PoC memory
+spine.
+
+**Design decisions (locked):** one ontology, the **user is a privileged entity** (`ontology.md`);
+a **separate, per-user `user_facts` table** (keyed by `user_id` — facts are objective truths about
+the person, shared across the user's companions; only the Tier-3 synthesized persona is
+per-companion) (`implementation.md` §1); the user's **name is a Tier-1 user-fact, not a `users`
+column** (the old `display_name` + `setUserDisplayName` are retired) — seeded from Google's `name`
+claim at sign-in (`source=auth_seed`) and refined in conversation; user-facts carry a **`source`**
+origin (`transcript` \| `auth_seed` \| `user_edit`) so provenance covers seeds and edits, not just
+transcript turns; extraction is **hybrid** —
+inline salient capture (post-turn perception) + **background reflection** (extends consolidation);
+**full trust, no approval gate** for memory writes (everything legible/editable/forgettable
+instead); and an **eval dataset (`user-extract`)** is the quality gate so extraction can be
+iterated. Canonical mechanism end-to-end → `companion-memory.md` §4; components → `architecture.md`
+§3, §4.3, §4.5.
+
+### Phase 11 — User Model: core profile ⭐
+**Goal:** the companion knows the user's stable identity and uses it naturally.
+
+**Scope**
+- The per-user `user_facts` table (with the `source` origin column) + `UserModelStore` behind the
+  MemoryStore seam (`implementation.md` §1). Retire the `users.display_name` column and the
+  `setUserDisplayName` stub — the name becomes a Tier-1 `user_fact`, **seeded from Google's `name`
+  claim at provision** (`source=auth_seed`, modest confidence).
+- **Inline salient capture**: post-turn perception (sibling to affect sensing) extracts **explicit**
+  identity facts; a stated name is captured as the singular `name` attribute (`source=transcript`),
+  superseding the seed; the persona asks for a name only when Google supplied none.
+- **Tier-1 core profile** assembled into the persona prompt every turn (name + singular identity
+  attributes), so replies address a known person.
+- Memory browser shows the profile and makes each fact **editable / forgettable** (the read-only
+  browser gains its first write affordance, scoped to the user model).
+- `user-extract` eval dataset (explicit-attribute cases) — the extraction quality gate.
+
+**Done when:** the user states an identity fact ("call me Sam", "I'm in Berlin") in conversation, it
+is captured, carried into subsequent turns' context, and the user can correct or delete it; the
+`user-extract` eval passes on the explicit cases.
+
+### Phase 12 — User Model: learned beliefs
+**Goal:** the companion continuously learns the user's preferences, interests, and opinions, and
+brings them to bear unprompted.
+
+**Scope**
+- **Background reflection** (the User-Model Reflector, extending the consolidation pass): derives
+  typed beliefs (`prefers`/`interestedIn`/`believes`) from cross-turn patterns — including
+  **implicit** ones no single message states — with provenance, confidence, and salience.
+- **Write hygiene** centralized in reflection: embedding **dedup**, **supersession** of contradicted
+  beliefs, confidence/decay (`ontology.md` §4).
+- **Tier-2 retrieval arm** in `composeRetrieveContext` (hybrid over current `user_facts`), surfacing
+  the top-K relevant beliefs per turn (`architecture.md` §4.3).
+- `user-extract` extended with belief/preference cases (LLM-judge for fuzzy matches).
+
+**Done when:** a preference the user expressed earlier resurfaces, unprompted and correctly, in a
+later turn where it's relevant; a contradicted belief is superseded rather than duplicated.
+
+### Phase 13 — User Model: understanding & hygiene
+**Goal:** isolated facts become a coherent, current understanding the user fully controls.
+
+**Scope**
+- **Tier-3 user persona**: `companions.user_persona` synthesized by reflection from `user_facts` +
+  episodes (the mirror of `evolvedPersona`), blended into the persona prompt.
+- **Decay & sensitive attributes**: stale beliefs fall out of retrieval; sensitive inferences
+  (gender, age, health) held to a higher confidence bar.
+- **Full management UI**: read / edit / forget across the whole user model in the memory browser.
+
+**Done when:** the synthesized user-persona measurably shapes tone/framing (eval/judge), stale or
+contradicted beliefs no longer resurface, and the user can inspect and forget anything the companion
+holds about them.
+
 ## 5. Open Questions to Resolve (owned here)
 Owned here (single-source). Each is assigned a decision point:
 
@@ -486,6 +566,7 @@ Owned here (single-source). Each is assigned a decision point:
 | ~~Tool whitelist governance — where the CLI/MCP whitelist lives (config vs DB) and the operator flow to admit a tool~~ | **Decided (Phases 9–10):** both whitelists live in deployment config (not the DB), admit-by-deploy, no per-call approval. Trust model + the exact config surface → `companion-tools.md` §6 |
 | User-addable tools (vs developer-whitelisted only) | Deferred — after the tool-acquisition workstream (`companion-tools.md` §9) |
 | External-tool cost metering (the monetary cost of CLI/MCP calls, beyond LLM tokens) | Deferred — revisit with the workstream / Phase 8 |
+| ~~User-model ownership: `user_facts` keyed by `companion_id` vs `user_id`~~ | **Decided (§4c): `user_id` (per-user).** Facts are objective truths about the person, shared across the user's companions; learned *by* a companion (`learned_by_companion_id`, nulls on delete). Only the Tier-3 synthesized persona is per-companion. The name is one such per-user fact (no `display_name` column) |
 
 ## 6. Out of Scope (this plan)
 - Internal implementation detail and data schemas → `architecture.md`,

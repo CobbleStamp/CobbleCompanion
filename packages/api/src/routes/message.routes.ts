@@ -104,6 +104,8 @@ export function registerMessageRoutes(
       // is streamed in place (`reflection` event) so it's felt now, not on the
       // next transcript fetch. The recompute is token-free and runs after `done`,
       // so it never delays the reply — only the stream's close. Idempotent.
+      // The owner is the user — the harness reads their Tier-1 core profile into the
+      // persona and captures any identity facts they state this turn (Phase 11).
       await streamSse(
         reply,
         withGrowthReflections(

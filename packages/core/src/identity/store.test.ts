@@ -68,6 +68,9 @@ describe('DrizzleIdentityStore', () => {
     expect(second.id).toBe(first.id);
   });
 
+  // The user's NAME moved out of `users` to a Tier-1 `user_fact` — its seed/set-once/
+  // resurrection behaviour is now covered by user-model/store.test.ts (`seedName`).
+
   it('scopes getCompanion by owner (tenancy)', async () => {
     const owner = await identity.ensureUserByEmail('owner@example.com');
     const other = await identity.ensureUserByEmail('other@example.com');

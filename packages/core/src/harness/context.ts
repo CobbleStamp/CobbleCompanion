@@ -1,4 +1,4 @@
-import type { CompanionDto } from '@cobble/shared';
+import { TIER1_PREDICATES, type CompanionDto, type UserFactDto } from '@cobble/shared';
 import type { LlmMessage } from '../llm/gateway.js';
 import type { AffectReading } from '../motivation/affect.js';
 import {
@@ -69,16 +69,62 @@ export function affectAttunementLine(affect: AffectReading | null | undefined): 
 }
 
 /**
- * Build the persona system prompt from the companion "home" identity row
- * (architecture.md §4.3 input #1).
+ * Human labels for the Tier-1 core-profile predicates the persona renders. Keeps
+ * the prompt readable ("lives in: Berlin") without leaking the predicate vocabulary;
+ * an unmapped predicate falls back to itself, so a new attribute still renders.
  */
-export function buildPersona(companion: CompanionDto): string {
+/**
+ * The persona carries the Tier-1 core profile ONLY. Phase 12 stores Tier-2 beliefs
+ * (`prefers`, `interestedIn`, …) in the same `user_facts` table; those reach the turn
+ * via the retrieval arm, never the always-carried persona (companion-memory.md §4).
+ * Enforce that contract here so a non-Tier-1 fact can't leak into every prompt.
+ */
+const TIER1_SET: ReadonlySet<string> = new Set(TIER1_PREDICATES);
+
+const PROFILE_LABELS: Readonly<Record<string, string>> = {
+  pronouns: 'pronouns',
+  gender: 'gender',
+  bornOn: 'born on',
+  age: 'age',
+  livesIn: 'lives in',
+  worksAs: 'works as',
+  languages: 'speaks',
+  relationships: 'relationships',
+};
+
+/**
+ * Build the persona system prompt from the companion "home" identity row
+ * (architecture.md §4.3 input #1) and the user's Tier-1 core profile — the current
+ * `user_facts` (companion-memory.md §4). The `name` fact becomes how the companion
+ * addresses the user (absent → the persona prompts it to find out); the rest render
+ * as a compact "what I know about you" line.
+ */
+export function buildPersona(companion: CompanionDto, profile: readonly UserFactDto[]): string {
+  const nameFact = profile.find((fact) => fact.predicate === 'name');
+  // Group by predicate so a multi-valued attribute (several `languages` rows) renders as
+  // one line — "speaks: French, German" — rather than repeating the label per value.
+  const byPredicate = new Map<string, string[]>();
+  for (const fact of profile) {
+    // Tier-1 only, minus `name` (rendered separately as `userName`). A non-Tier-1
+    // predicate (a Phase-12 belief) is dropped so it can't leak into the persona.
+    if (fact.predicate === null || fact.predicate === 'name' || !TIER1_SET.has(fact.predicate)) {
+      continue;
+    }
+    const values = byPredicate.get(fact.predicate) ?? [];
+    byPredicate.set(fact.predicate, [...values, fact.object]);
+  }
+  const userProfile = [...byPredicate].map(([predicate, values]) => ({
+    label: PROFILE_LABELS[predicate] ?? predicate,
+    value: values.join(', '),
+  }));
   return singleContent(
     render(personaTemplate, {
       name: companion.name,
       form: companion.form,
       temperament: companion.temperament,
       evolvedPersona: companion.evolvedPersona,
+      userName: nameFact?.object ?? null,
+      userProfile,
     }),
   );
 }
@@ -93,8 +139,9 @@ export function assembleContext(
   companion: CompanionDto,
   history: readonly ContextBlock[],
   affect?: AffectReading | null,
+  profile: readonly UserFactDto[] = [],
 ): LlmMessage[] {
-  const messages: LlmMessage[] = [{ role: 'system', content: buildPersona(companion) }];
+  const messages: LlmMessage[] = [{ role: 'system', content: buildPersona(companion, profile) }];
   const attunement = affectAttunementLine(affect);
   if (attunement) {
     messages.push({ role: 'system', content: attunement });

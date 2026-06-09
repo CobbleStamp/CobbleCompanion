@@ -19,6 +19,7 @@ import {
   searchMemory,
 } from '../api/client.js';
 import { UsageBadge } from '../components/UsageBadge.js';
+import { UserModelPanel } from '../components/UserModelPanel.js';
 
 interface MemoryBrowserProps {
   readonly companion: CompanionDto;
@@ -90,6 +91,8 @@ export function MemoryBrowser({ companion, onBack }: MemoryBrowserProps): JSX.El
             )}
             <p className="who">Since {formatDate(snapshot.identity.createdAt)}</p>
           </section>
+
+          <UserModelPanel />
 
           <section className="memory-section">
             <h2>Episodic — conversation</h2>

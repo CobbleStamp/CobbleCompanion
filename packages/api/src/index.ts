@@ -33,6 +33,7 @@ import {
   DrizzleFoodStore,
   DrizzleToolCallLog,
   DrizzleGrowthStore,
+  DrizzleUserModelStore,
   FakeEmbeddingGateway,
   FakeLlmGateway,
   GrowthService,
@@ -104,6 +105,9 @@ async function main(): Promise<void> {
   const identity = new DrizzleIdentityStore(db, {
     startingVitalityTokens: config.startingVitalityTokens,
   });
+  // The User Model (Phase 11) — seeds the name on sign-in, feeds the persona, and
+  // captures stated identity facts post-turn (companion-memory.md §4).
+  const userModel = new DrizzleUserModelStore(db);
   const memory = new TranscriptMemoryStore(db);
   // Reinforcement log + the rolling affect read — built early so the harness can
   // sense the user's mood each turn (Phase 4.2) and the will can learn from it.
@@ -253,6 +257,9 @@ async function main(): Promise<void> {
       reinforce: (companionId, delta) =>
         reinforceFromDelta({ rewards, identity, logger: consoleLogger }, companionId, delta),
     },
+    // Phase 11: read the user's Tier-1 core profile into the persona each turn and
+    // capture explicit identity facts they state (cheap ingestion model, billed to stamina).
+    userModel: { store: userModel, model: config.ingestionModel },
     // P3: the tools the model may call, the propose→approve gate (effectful calls
     // are held for approval), and the audit log (every call is logged).
     registry: tools,
@@ -336,6 +343,7 @@ async function main(): Promise<void> {
 
   const app = await buildApp({
     identity,
+    userModel,
     memory,
     semantic,
     episodic,

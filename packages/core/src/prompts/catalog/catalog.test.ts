@@ -39,6 +39,8 @@ describe('personaTemplate.build', () => {
       form: 'a small fox',
       temperament: 'curious',
       evolvedPersona: 'You have grown more playful with them.',
+      userName: null,
+      userProfile: [],
     });
     const system = built.messages[0]?.content ?? '';
     expect(system).toContain('Through your history together, you have grown:');
@@ -51,9 +53,51 @@ describe('personaTemplate.build', () => {
       form: 'a small fox',
       temperament: 'curious',
       evolvedPersona: '   ',
+      userName: null,
+      userProfile: [],
     });
     const system = built.messages[0]?.content ?? '';
     expect(system).not.toContain('you have grown');
+  });
+
+  it('names the user when known and prompts to ask when not', () => {
+    const named = personaTemplate.build({
+      name: 'Pebble',
+      form: 'a small fox',
+      temperament: 'curious',
+      evolvedPersona: null,
+      userName: 'Ada',
+      userProfile: [],
+    });
+    expect(named.messages[0]?.content ?? '').toContain('called Ada');
+
+    const unknown = personaTemplate.build({
+      name: 'Pebble',
+      form: 'a small fox',
+      temperament: 'curious',
+      evolvedPersona: null,
+      userName: null,
+      userProfile: [],
+    });
+    expect(unknown.messages[0]?.content ?? '').toContain("do not yet know the user's name");
+  });
+
+  it('renders the Tier-1 profile line when attributes are present (sample is empty)', () => {
+    const built = personaTemplate.build({
+      name: 'Pebble',
+      form: 'a small fox',
+      temperament: 'curious',
+      evolvedPersona: null,
+      userName: 'Ada',
+      userProfile: [
+        { label: 'lives in', value: 'Berlin' },
+        { label: 'works as', value: 'an analyst' },
+      ],
+    });
+    const system = built.messages[0]?.content ?? '';
+    expect(system).toContain('Some things you know about them');
+    expect(system).toContain('lives in: Berlin');
+    expect(system).toContain('works as: an analyst');
   });
 });
 

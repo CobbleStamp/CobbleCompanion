@@ -26,6 +26,7 @@ import {
   DrizzleProceduralStore,
   DrizzleProposalStore,
   DrizzleSemanticMemoryStore,
+  DrizzleUserModelStore,
   DrizzleCompanionAffectStore,
   DrizzleVitalityStore,
   DrizzleFoodStore,
@@ -178,6 +179,7 @@ export async function makeTestApp(
   const identity = new DrizzleIdentityStore(db, {
     startingVitalityTokens: config.startingVitalityTokens,
   });
+  const userModel = new DrizzleUserModelStore(db);
   const memory = new TranscriptMemoryStore(db);
   const semantic = new DrizzleSemanticMemoryStore(db);
   const episodic = new DrizzleEpisodicMemoryStore(db);
@@ -303,6 +305,7 @@ export async function makeTestApp(
   );
   const deps: AppDeps = {
     identity,
+    userModel,
     memory,
     semantic,
     episodic,
@@ -338,6 +341,8 @@ export async function makeTestApp(
                 reinforceFromDelta({ rewards, identity, logger: silentLogger }, companionId, delta),
             },
           }),
+      // Phase 11: Tier-1 persona injection + post-turn identity-fact capture.
+      userModel: { store: userModel, model: config.ingestionModel },
       registry: tools,
       ...(acquisitionWiring ? { resolveRegistry: acquisitionWiring.resolveRegistry } : {}),
       beforeToolCall: createApprovalGate(proposals, tools, silentLogger),

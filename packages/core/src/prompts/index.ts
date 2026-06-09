@@ -44,3 +44,9 @@ export {
   SELECT_TOOLS,
   SELECT_TOOLS_TOOL,
 } from './catalog/tool-search.js';
+export {
+  userExtractTemplate,
+  type UserExtractInput,
+  REPORT_USER_FACTS,
+  REPORT_USER_FACTS_TOOL,
+} from './catalog/user-extract.js';

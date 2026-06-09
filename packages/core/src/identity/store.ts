@@ -43,6 +43,12 @@ export interface CompanionRecord {
  * invariant #4). All companion reads are scoped by `ownerId` (invariant #5).
  */
 export interface IdentityStore {
+  /**
+   * JIT-provision the user for a verified email, returning the row. Idempotent — a
+   * later sign-in returns the existing row. The user's NAME is not stored here: it is
+   * a Tier-1 `user_fact` (seeded from the Google name claim by the auth boundary,
+   * then refined in conversation — companion-memory.md §4, user-model/store.ts).
+   */
   ensureUserByEmail(email: string): Promise<UserRecord>;
   getUserById(id: string): Promise<UserRecord | null>;
   createCompanion(ownerId: string, input: CreateCompanionInput): Promise<CompanionDto>;
@@ -102,6 +108,8 @@ export class DrizzleIdentityStore implements IdentityStore {
   }
 
   async ensureUserByEmail(email: string): Promise<UserRecord> {
+    // `onConflictDoNothing` makes provisioning idempotent: an existing user is left
+    // untouched and re-read below. The name lives in `user_facts`, not here.
     await this.db.insert(users).values({ email }).onConflictDoNothing();
     const [row] = await this.db.select().from(users).where(eq(users.email, email)).limit(1);
     if (!row) {

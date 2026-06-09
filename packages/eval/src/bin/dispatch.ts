@@ -8,12 +8,14 @@
 import type { Logger } from '@cobble/core';
 import { affectSenseDataset } from '../datasets/affect-sense.js';
 import { injectionDataset } from '../datasets/injection.js';
+import { userExtractDataset } from '../datasets/user-extract.js';
 import type { Dataset, DatasetReport } from '../framework/dataset.js';
 
 /** The stateless datasets, by `--dataset` name (the generic-framework tier). */
 export const STATELESS: Record<string, Dataset<{ readonly id: string }, unknown>> = {
   'affect-sense': affectSenseDataset as Dataset<{ readonly id: string }, unknown>,
   injection: injectionDataset as Dataset<{ readonly id: string }, unknown>,
+  'user-extract': userExtractDataset as Dataset<{ readonly id: string }, unknown>,
 };
 
 /** All accepted `--dataset` values, for arg validation + the usage message. */

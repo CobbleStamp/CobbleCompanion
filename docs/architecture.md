@@ -131,7 +131,10 @@ flowchart TB
 | **Episodic Store** | Consolidated, time-anchored episodes (vector + FTS) + the consolidation cursor | Derived from the transcript (rebuildable); hybrid recall by topic (§4.3) |
 | **Consolidation Service + Runner** | Off-request reflection: transcript window → consolidated episodes, filler dropped | Mirrors the ingestion runner — coalesced, serial, quota-gated; post-turn trigger + startup/periodic sweep |
 | **Personality Evolver** | Re-synthesizes `evolvedPersona` from episodes after consolidation | Cursor-gated, metered; blended into the persona prompt beside the seed |
-| **Identity Store** | Companion "home" record (incl. `evolvedPersona` + evolution/consolidation cursors) | Source of truth surfaces load from |
+| **User-Model Store** | The companion's structured + synthesized understanding of its user — `user_facts` (Tier-1 core profile, **incl. the name**; Tier-2 belief overlay + `companions.user_persona` Tier-3 are _designed, not built_) | Behind the MemoryStore seam (invariant #2); **one ontology, the user is a privileged entity** (`ontology.md`); `user_facts` is **per-user** (objective truths, shared across the user's companions), Tier-3 is per-companion. Tier-1 facts supersede on revision, except `languages`/`relationships` which accrete (`MULTI_VALUED_PREDICATES`). Hybrid recall (§4.3) arrives with Tier-2. **Built: Phase 11 Tier-1 only** — see `companion-memory.md` §4 Status. Schema → `implementation.md` §1; mechanism → `companion-memory.md` §4 |
+| **User-Fact Extractor** | Inline salient capture: a post-turn perception step that writes explicit, high-signal user-facts (sibling to affect sensing) | Conservative — explicit statements only; metered. Dedup/inference/hygiene deferred to the reflector (§4.3, §4.5); gated by the `user-extract` eval (`howto-run-evals.md`) |
+| **User-Model Reflector** _(designed, not built — Phase 12–13)_ | Background reflection over the transcript → inferred beliefs, dedup + supersession, and the Tier-3 `user_persona` synthesis | Extends the Consolidation Service pattern (off-request, cursor-gated, metered); the mirror of the Personality Evolver, modelling the user instead of the self. Not yet implemented (`companion-memory.md` §4 Status) |
+| **Identity Store** | Companion "home" record (incl. `evolvedPersona` + evolution/consolidation cursors; `user_persona` + the user-model cursor are _designed, not built_ — Phase 13) | Source of truth surfaces load from |
 | **Stamina Wallet** (`VitalityStore`) | The user-initiated half of a companion's vitality — a per-companion token balance (§4.8) | Postgres-backed (`companions.stamina_balance_tokens`); spend decrements (floor 0), feeding adds; routes 429 at the boundary when empty |
 | **Persistence** | Relational + vector storage | Postgres + `pgvector`; schemas → `implementation.md` |
 | **Eval Harness** | Offline dataset/scorer/runner eval framework (`packages/eval`) | Not on the serving path; live OpenRouter. memory-recall + stateless + injection datasets. See `companion-memory.md` §5, `howto-run-evals.md` |
@@ -223,9 +226,10 @@ Each turn rebuilds context from the companion's "home" + its memory. The dashed 
 ```mermaid
 flowchart LR
     ID["companion identity<br/>name · form · temperament"] --> P[["assembled prompt → LLM"]]
-    SYS["system prompt / persona"] --> P
+    SYS["system prompt / persona<br/>+ user Tier-1 profile · Tier-3 user-persona"] --> P
     SEM["semantic recall<br/>top-K verbatim sections + provenance"] --> P
     EPI["episodic recall<br/>(recent transcript · consolidated episodes)"] --> P
+    USR["user-model recall<br/>(Tier-2 beliefs about the user)"] --> P
     TOOLS["available tools"] -.-> P
 ```
 
@@ -264,6 +268,26 @@ flowchart LR
 > the **capabilities** checklist *functional* rather than only observed: a learned workflow resurfaces
 > and can be reused. Degrades to no hint on failure (recall never breaks the conversation). No loop
 > change — another arm in the one memory hook (invariant #3).
+
+> **User-model arms (knowing the user).** The companion's understanding of its user enters a turn in
+> three ways, two of them here. **Tier-1 (core profile)** — the current identity attributes from
+> `user_facts` (`name`, pronouns, `bornOn`, `livesIn`, `worksAs`, …; the name is just one such fact,
+> not a `users` column) — is rendered into the **persona system prompt** (input #1), small enough to
+> carry every turn (no retrieval). Most are singular (a new value supersedes); `languages` and
+> `relationships` are multi-valued and accrete. The persona renders **Tier-1 only** — a non-Tier-1
+> predicate (a future Tier-2 belief sharing the table) is filtered out, never leaking into the
+> every-turn prompt. **Tier-3 (user persona)** — `companions.user_persona`, the synthesized
+> "who you are to me" — is blended into that same persona beside `evolvedPersona`, the symmetric
+> self-model. **Tier-2 (learned beliefs)** — `prefers`/`interestedIn`/`believes` user-facts, too many
+> for context — is a **retrieval arm**: it embeds the user's turn and hybrid-searches the *current*
+> (non-superseded) `user_facts` (vector + FTS, RRF — the semantic/episodic pattern), prepending the
+> top-K as a fenced "what I know about you" block. Composed ahead of the semantic arm so the recency
+> window still appends last; degrades independently (recall never breaks the conversation). The facts
+> themselves are written by **inline salient capture** (post-turn perception, §4.5) and refined by
+> **background reflection** (the User-Model Reflector, an extension of consolidation that also
+> synthesizes Tier-3 — same cursor-gated, off-request, quota-gated shape as the Personality Evolver).
+> One ontology, the user a privileged entity (`ontology.md`); mechanism end-to-end →
+> `companion-memory.md` §4.
 
 ### 4.4 Human-in-the-loop & propose→approve
 
@@ -355,7 +379,10 @@ flowchart LR
 > the user's mood on **every** turn (`perceiveAndLearn`); when a note is awaiting a reaction, the
 > **change** in mood across that reaction is the reward that nudges the served drive's weight
 > (reinforcement mechanism → `companion-motivation.md` §7) — no separate critic call, no
-> approve/reject button. There is no approval round-trip
+> approve/reject button. **The same per-turn perception also runs the User-Fact Extractor** (§4.3):
+> alongside reading mood, it conservatively captures explicit user-facts from the exchange (sibling
+> call site, also stamina-metered) — inline salient capture, with inference and hygiene left to the
+> background reflector. There is no approval round-trip
 > for autonomous work to "continue" from — the engine sees the **full** updated state on its own
 > cadence and decides the next move itself. (The confirm route still re-enters for `chat`-origin
 > approvals — a present partner to reply to, §4.4.)
@@ -630,7 +657,7 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
 | Data access | Type-safe query layer (Drizzle) | Explicit types end-to-end; no raw SQL by default |
 | LLM access | **Provider-agnostic gateway, default OpenRouter** | Swap models/providers without touching the harness |
 | Embeddings | **Provider-agnostic gateway, OpenRouter `/embeddings`** — default `perplexity/pplx-embed-v1-0.6b` | Single vendor with the LLM gateway; dimensions pinned to the vector column (`implementation.md` §3) |
-| Auth | **Google Sign-In (OIDC)** | No auth service to run, no tenant, no extra Pulumi stack — the SPA gets a Google ID token and the API verifies it then JIT-provisions users by email. Token verification, client persistence, and expiry handling → `implementation.md` §5. `dev_bypass` mode for local/tests |
+| Auth | **Google Sign-In (OIDC)** | No auth service to run, no tenant, no extra Pulumi stack — the SPA gets a Google ID token and the API verifies it then JIT-provisions users by email. The token's unverified `name` claim **seeds a Tier-1 `name` `user_fact`** (`source = auth_seed`, modest confidence — `implementation.md` §1), so first contact has a name; a name the user states or edits later supersedes it. There is no `display_name` column — the name lives in `user_facts` like every other identity fact. Token verification, client persistence, and expiry handling → `implementation.md` §5. `dev_bypass` mode for local/tests |
 
 ## 6. Interactions, Boundary & State
 
@@ -686,6 +713,7 @@ flowchart TB
       embedding/       provider-agnostic embedding gateway (request-path memoizing wrapper)
       ingestion/       parse → segment → enrich → embed pipeline + runner + deferred-job sweeper (§4.8)
       memory/          MemoryStore (transcript) + SemanticMemoryStore + EpisodicMemoryStore + consolidation service/runner
+      user-model/      UserModelStore (user_facts: Tier-1 profile + Tier-2 beliefs) + inline User-Fact Extractor + background User-Model Reflector (Tier-3 user_persona) (§4.3/§4.5)
       tools/           tool framework + registry, the three tools, the approval gate, proposal/tool-call/lead/procedural stores (§4.2/§4.4)
       personality/     evolvedPersona synthesis from episodes
       identity/        companion "home" model + store
@@ -694,9 +722,9 @@ flowchart TB
       quota/           per-companion vitality wallets (stamina + energy) (§4.8)
     api/               BFF / surface boundary (Fastify); memory + source + usage + proposal/inventory routes; presence + proactivity (dial/energy) routes; growth + feed routes
       tracing/         Langfuse Cloud TraceSink adapter (fetch-based; sampling + redaction before export) — runbook-tracing.md
-    web/               React web client; chat w/ citations + ingestion-status panel + approval cards, sources page, memory browser, usage badge; vitality meter + proactivity dial; growth view + kitchen
+    web/               React web client; chat w/ citations + ingestion-status panel + approval cards, sources page, memory browser (incl. editable user-model profile/beliefs panel), usage badge; vitality meter + proactivity dial; growth view + kitchen
     shared/            shared TS types / contracts
-    eval/              dataset/scorer/runner offline eval framework: memory-recall + stateless (affect-sense) + injection red-team (→ companion-memory.md §5)
+    eval/              dataset/scorer/runner offline eval framework: memory-recall + stateless (affect-sense, user-extract) + injection red-team (→ companion-memory.md §5)
   db/                  migrations & schema (→ implementation.md)
   scripts/             dev / seed / ops scripts
 ```

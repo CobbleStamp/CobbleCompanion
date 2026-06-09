@@ -21,6 +21,7 @@ import type {
   SemanticMemoryStore,
   ToolCallLog,
   ToolRegistry,
+  UserModelStore,
   VitalityStore,
 } from '@cobble/core';
 import cors from '@fastify/cors';
@@ -38,6 +39,7 @@ import { registerCompanionRoutes } from './routes/companion.routes.js';
 import { registerEpisodeRoutes } from './routes/episode.routes.js';
 import { registerGrowthRoutes } from './routes/growth.routes.js';
 import { registerMemoryRoutes } from './routes/memory.routes.js';
+import { registerUserModelRoutes } from './routes/user-model.routes.js';
 import { registerMessageRoutes } from './routes/message.routes.js';
 import { registerInventoryRoutes } from './routes/inventory.routes.js';
 import { registerPresenceRoutes } from './routes/presence.routes.js';
@@ -56,6 +58,9 @@ declare module 'fastify' {
 /** Everything the API needs, injected so tests can supply fakes/in-memory deps. */
 export interface AppDeps {
   readonly identity: IdentityStore;
+  /** The User Model — per-user identity facts (Phase 11). Seeds the name on sign-in
+   *  and backs the user-model routes; the harness reads/writes it during a turn. */
+  readonly userModel: UserModelStore;
   readonly memory: MemoryStore;
   readonly semantic: SemanticMemoryStore;
   readonly episodic: EpisodicMemoryStore;
@@ -185,6 +190,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerCompanionRoutes(app, deps, requireAuth);
   registerMessageRoutes(app, deps, requireAuth);
   registerMemoryRoutes(app, deps, requireAuth);
+  registerUserModelRoutes(app, deps, requireAuth);
   registerEpisodeRoutes(app, deps, requireAuth);
   registerSourceRoutes(app, deps, requireAuth);
   registerProposalRoutes(app, deps, requireAuth);

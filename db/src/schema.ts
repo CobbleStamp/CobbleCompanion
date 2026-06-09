@@ -14,9 +14,11 @@ import type {
   ProposalStatus,
   SourceKind,
   ToolSource,
+  UserFactSource,
 } from '@cobble/shared';
 import { sql } from 'drizzle-orm';
 import {
+  type AnyPgColumn,
   bigint,
   bigserial,
   customType,
@@ -78,6 +80,9 @@ const tsvector = customType<{ data: string }>({
 export const users = pgTable('users', {
   id: uuid('id').defaultRandom().primaryKey(),
   email: text('email').notNull().unique(),
+  // The user's NAME is not stored here — it is a Tier-1 `user_fact` (seeded from the
+  // Google name claim at the auth boundary, then refined in conversation; see
+  // `user_facts` below and docs/companion-memory.md §4).
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -351,6 +356,71 @@ export const facts = pgTable(
   (table) => [
     index('facts_companion_idx').on(table.companionId, table.factType),
     index('facts_section_idx').on(table.sectionId),
+  ],
+);
+
+/**
+ * The User Model (Phase 11, docs/companion-memory.md §4) — the companion's typed
+ * knowledge about its USER, the same fact contract as `facts` but the subject is
+ * the privileged user entity and the provenance substrate is the transcript, not a
+ * source section. Keyed by `user_id` (per-user: objective truths shared across any
+ * companion the user owns); the synthesized Tier-3 understanding lives per-companion
+ * in `companions.user_persona`.
+ *
+ * `source` is the fact's origin: `transcript` (learned in conversation — recording
+ * the teaching `learned_by_companion_id`), `auth_seed` (the name from Google sign-in),
+ * or `user_edit` (the user set it in the browser). A singular
+ * identity attribute is revised by superseding (`superseded_at` set, `superseded_by`
+ * pointing at the replacement), never overwritten, so history is kept (ontology.md §4).
+ *
+ * Phase 11 stores the core profile only; the Tier-2 retrieval columns (`embedding`,
+ * `fts`, `salience`) + their HNSW/GIN indexes land in Phase 12 (implementation.md §1).
+ */
+export const userFacts = pgTable(
+  'user_facts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    source: text('source').$type<UserFactSource>().notNull(),
+    // Which companion's conversation taught this; null for auth_seed/user_edit. The
+    // fact is the USER's, so it outlives the companion — the link nulls, not cascades.
+    learnedByCompanionId: uuid('learned_by_companion_id').references(() => companions.id, {
+      onDelete: 'set null',
+    }),
+    // Reserved provenance: the transcript `seq` a fact was learned from. The inline
+    // capture path does NOT populate it (it reads MessageDto, which omits `seq`) —
+    // recording the companion link instead; pinning the exact turn is a Phase-12
+    // reflector concern. Nullable; null on every fact today.
+    learnedFromSeq: bigint('learned_from_seq', { mode: 'number' }),
+    factType: text('fact_type').notNull(),
+    subject: text('subject').notNull(),
+    predicate: text('predicate'),
+    object: text('object').notNull(),
+    // 0–1, advisory; default tracks source (explicit transcript → high, auth_seed →
+    // modest, user_edit → authoritative). Steers ranking/supersession, never storage.
+    confidence: real('confidence'),
+    // Null = current; set when a singular attribute is revised or a belief contradicted.
+    supersededAt: timestamp('superseded_at', { withTimezone: true }),
+    // The fact that replaced this one (null when forgotten with no replacement).
+    supersededBy: uuid('superseded_by').references((): AnyPgColumn => userFacts.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // The current-facts scan (superseded_at IS NULL) + supersede-by-predicate lookup.
+    index('user_facts_user_current_idx').on(table.userId, table.supersededAt),
+    // Enforce one current `name` per user at the DB level. seedName runs on every
+    // authenticated request, outside the harness per-user serialization, so a fresh
+    // user's parallel first-load requests can both pass seedName's read-then-insert
+    // guard under READ COMMITTED and double-insert. This partial unique index makes the
+    // loser conflict instead (seedName handles it via ON CONFLICT DO NOTHING). Scoped to
+    // `name` only — multi-valued predicates (languages, relationships) keep many current
+    // rows by design, so a general (user_id, predicate) uniqueness would be wrong.
+    uniqueIndex('user_facts_one_current_name_uniq')
+      .on(table.userId, table.predicate)
+      .where(sql`${table.predicate} = 'name' AND ${table.supersededAt} IS NULL`),
   ],
 );
 
@@ -640,6 +710,7 @@ export const schema = {
   ingestionJobs,
   sections,
   facts,
+  userFacts,
   proposals,
   toolCalls,
   leads,

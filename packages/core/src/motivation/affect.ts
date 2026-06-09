@@ -20,7 +20,8 @@
  * The read rides the chat turn, so its tokens bill the user's STAMINA, not energy.
  */
 
-import type { LlmGateway, StreamResult } from '../llm/gateway.js';
+import { drainStream } from '../llm/drain.js';
+import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import { affectSenseTemplate, render, REPORT_AFFECT } from '../prompts/index.js';
 import type { VitalityStore } from '../quota/vitality-store.js';
@@ -77,7 +78,7 @@ export async function senseAffect(
       recentContext: params.recentContext,
       userText: params.userText,
     });
-    const result = await drain(
+    const result = await drainStream(
       llm.stream({
         model: deps.model,
         messages: prompt.messages,
@@ -117,15 +118,6 @@ export async function senseAffect(
       }
     }
   }
-}
-
-/** Run a stream to completion, discarding text deltas, and return its result. */
-async function drain(stream: AsyncGenerator<string, StreamResult, void>): Promise<StreamResult> {
-  let step = await stream.next();
-  while (!step.done) {
-    step = await stream.next();
-  }
-  return step.value;
 }
 
 /**
