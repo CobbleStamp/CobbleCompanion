@@ -25,7 +25,9 @@ export type PromptId =
   | 'autonomous-note'
   | 'judge'
   | 'tool-search'
-  | 'user-extract';
+  | 'user-extract'
+  | 'user-beliefs-reflect'
+  | 'user-beliefs-reconcile';
 
 /**
  * A prompt's version: the author-declared `semver` (the human change-intent and

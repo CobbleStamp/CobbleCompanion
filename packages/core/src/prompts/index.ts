@@ -50,3 +50,13 @@ export {
   REPORT_USER_FACTS,
   REPORT_USER_FACTS_TOOL,
 } from './catalog/user-extract.js';
+export {
+  userBeliefsReflectTemplate,
+  type UserBeliefsReflectInput,
+  REPORT_USER_BELIEFS,
+  REPORT_USER_BELIEFS_TOOL,
+  userBeliefsReconcileTemplate,
+  type UserBeliefsReconcileInput,
+  REPORT_RECONCILIATION,
+  REPORT_RECONCILIATION_TOOL,
+} from './catalog/user-beliefs.js';

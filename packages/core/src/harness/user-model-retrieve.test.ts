@@ -34,14 +34,24 @@ describe('createUserModelRetrieveContext', () => {
     });
   }
 
-  /** Record a belief embedded by the same fake gateway, so recall can match it. */
-  async function seedBelief(predicate: string, object: string): Promise<string> {
+  /** Embed a belief's text with the same fake gateway, so recall can match it. */
+  async function embed(predicate: string, object: string): Promise<readonly number[]> {
     const { vectors } = await embeddings.embed({
       input: [`${predicate} ${object}`],
       model: 'embed',
       dimensions: EMBEDDING_DIMENSIONS,
     });
-    const belief = await store.recordBelief({ userId, predicate, object, embedding: vectors[0] });
+    const [vector] = vectors;
+    if (!vector) {
+      throw new Error('fake embedding returned no vector');
+    }
+    return vector;
+  }
+
+  /** Record a belief embedded by the same fake gateway, so recall can match it. */
+  async function seedBelief(predicate: string, object: string): Promise<string> {
+    const embedding = await embed(predicate, object);
+    const belief = await store.recordBelief({ userId, predicate, object, embedding });
     return belief.id;
   }
 
@@ -78,16 +88,11 @@ describe('createUserModelRetrieveContext', () => {
 
   it('reflects current state only — a superseded belief never resurfaces', async () => {
     const lovesId = await seedBelief('prefers', 'loves coffee');
-    const { vectors } = await embeddings.embed({
-      input: ['prefers quit coffee'],
-      model: 'embed',
-      dimensions: EMBEDDING_DIMENSIONS,
-    });
     await store.supersedeBelief(userId, lovesId, {
       userId,
       predicate: 'prefers',
       object: 'quit coffee',
-      embedding: vectors[0],
+      embedding: await embed('prefers', 'quit coffee'),
     });
 
     const { blocks } = await arm()({

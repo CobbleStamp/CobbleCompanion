@@ -17,6 +17,7 @@ import type { Logger } from '../logging.js';
 import { createUsageAccumulator, meteredLlmGateway, type UsageSink } from '../usage.js';
 import type { VitalityStore } from '../quota/vitality-store.js';
 import type { PersonalityEvolver } from '../personality/evolve.js';
+import type { UserModelReflector } from '../user-model/reflector.js';
 import { consolidateWindow, type ConsolidationCandidate } from './consolidation.js';
 import type { ConsolidationTarget } from './consolidation-runner.js';
 import type { EpisodicMemoryStore, NewEpisode } from './episodic-store.js';
@@ -41,6 +42,12 @@ export interface ConsolidationServiceOptions {
    * Omitted = consolidation without personality evolution (e.g. tests).
    */
   readonly evolver?: PersonalityEvolver;
+  /**
+   * Derives the user's Tier-2 beliefs from the same transcript on its OWN cursor
+   * (Phase 12). Fired after each run regardless of whether episodes formed — it gates
+   * itself; self-meters + never throws. Omitted = consolidation without belief learning.
+   */
+  readonly reflector?: UserModelReflector;
   /** Don't reflect until at least this many un-consolidated turns have accrued. */
   readonly minTurns?: number;
   /** Max turns reflected in one run (keeps the prompt + run bounded). */
@@ -63,8 +70,21 @@ export class ConsolidationService implements ConsolidationTarget {
     this.maxWindow = options.maxWindow ?? DEFAULT_MAX_WINDOW;
   }
 
-  /** Reflect one companion's pending transcript tail into episodes; never throws. */
+  /**
+   * Run a companion's background reflection: roll the pending transcript tail into
+   * episodes, then (Phase 12) derive its Tier-2 beliefs. Both steps are independent,
+   * self-gating, and never throw — the belief reflector runs on its own cursor whether
+   * or not episodes formed this pass, so neither blocks the other.
+   */
   async consolidate(companionId: string): Promise<void> {
+    await this.consolidateEpisodes(companionId);
+    if (this.options.reflector) {
+      await this.options.reflector.reflect(companionId);
+    }
+  }
+
+  /** Reflect one companion's pending transcript tail into episodes; never throws. */
+  private async consolidateEpisodes(companionId: string): Promise<void> {
     const { episodic, memory, identity, logger } = this.options;
     try {
       const cursor = await episodic.consolidatedThroughSeq(companionId);

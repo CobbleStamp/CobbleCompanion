@@ -130,6 +130,13 @@ export {
   type UserFactCaptureDeps,
   type UserFactCaptureParams,
 } from './user-model/extractor.js';
+export {
+  coerceBeliefs,
+  coerceDecisions,
+  LlmUserModelReflector,
+  type UserModelReflector,
+  type UserModelReflectorOptions,
+} from './user-model/reflector.js';
 
 // Memory
 export { TranscriptMemoryStore, type MemoryStore, type TranscriptEntry } from './memory/store.js';

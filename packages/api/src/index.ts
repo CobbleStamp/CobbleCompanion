@@ -45,6 +45,7 @@ import {
   IngestionRunner,
   LlmIngestionAnnouncer,
   LlmPersonalityEvolver,
+  LlmUserModelReflector,
   MotivationEngine,
   MotivationRunner,
   OpenRouterEmbeddingGateway,
@@ -304,6 +305,21 @@ async function main(): Promise<void> {
     quota,
     logger: consoleLogger,
   });
+  // Phase 12: the User-Model Reflector derives the user's Tier-2 beliefs from the same
+  // transcript on its own cursor, reconciling against what's known. Fired by the
+  // consolidation service after each run; self-gating + metered + never throws.
+  const userModelReflector = new LlmUserModelReflector({
+    identity,
+    memory,
+    store: userModel,
+    llm: llmGateway,
+    embeddings,
+    model: config.ingestionModel,
+    embeddingModel: config.embeddingModel,
+    embeddingDimensions: config.embeddingDimensions,
+    quota,
+    logger: consoleLogger,
+  });
   const consolidationService = new ConsolidationService({
     episodic,
     memory,
@@ -316,6 +332,7 @@ async function main(): Promise<void> {
     quota,
     logger: consoleLogger,
     evolver,
+    reflector: userModelReflector,
   });
   const consolidation = new ConsolidationRunner(consolidationService, consoleLogger);
 

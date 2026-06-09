@@ -18,6 +18,8 @@ const ALL_IDS: readonly PromptId[] = [
   'judge',
   'tool-search',
   'user-extract',
+  'user-beliefs-reflect',
+  'user-beliefs-reconcile',
 ];
 
 describe('prompt registry', () => {
