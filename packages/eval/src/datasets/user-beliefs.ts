@@ -14,6 +14,7 @@
  */
 
 import {
+  beliefPhrase,
   DrizzleIdentityStore,
   DrizzleUserModelStore,
   FakeEmbeddingGateway,
@@ -149,7 +150,8 @@ async function runReflector(
 
     for (const seed of evalCase.seedBeliefs ?? []) {
       const { vectors } = await embeddings.embed({
-        input: [`${seed.predicate} ${seed.object}`],
+        // Same natural-language rendering the production writers embed under.
+        input: [beliefPhrase(seed.predicate, seed.object)],
         model: 'fake',
         dimensions: EMBEDDING_DIMENSIONS,
       });
@@ -176,9 +178,20 @@ async function runReflector(
       logger: runtime.logger,
     });
     await reflector.reflect(companion.id);
-    return store.listCurrentBeliefs(user.id);
+    return await store.listCurrentBeliefs(user.id);
   } finally {
-    await close();
+    // PGlite's WASM `_pg_shutdown` can fault on close even after a clean run; a
+    // teardown crash must not discard an already-computed result (logging.md — log,
+    // don't silently swallow). The result is resolved above before `finally` runs.
+    try {
+      await close();
+    } catch (error) {
+      runtime.logger.error('user-beliefs: PGlite teardown faulted after reflection', {
+        operation: 'eval.userBeliefs.close',
+        caseId: evalCase.id,
+        error,
+      });
+    }
   }
 }
 

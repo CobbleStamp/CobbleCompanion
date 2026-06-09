@@ -130,6 +130,7 @@ export {
   type UserFactCaptureDeps,
   type UserFactCaptureParams,
 } from './user-model/extractor.js';
+export { beliefPhrase } from './user-model/phrasing.js';
 export {
   coerceBeliefs,
   coerceDecisions,
