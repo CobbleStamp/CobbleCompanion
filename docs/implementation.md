@@ -114,7 +114,7 @@ erDiagram
 | `persona_updated_through_seq` | bigint, default 0 | transcript `seq` the evolved persona was last synthesized from (evolution cursor) |
 | `consolidated_through_seq` | bigint, default 0 | highest transcript `seq` already rolled into episodes (consolidation cursor) |
 | `user_persona` | text, nullable | "who **you** are to me" — the User Model's **Tier-3** synthesized understanding of the user, re-synthesized from `user_facts` + episodes by the background reflection pass and blended into the persona prompt beside `evolved_persona` (the symmetric self-model); null until the first synthesis (`companion-memory.md` §4, `development-plan.md` §4c) |
-| `user_facts_through_seq` | bigint, default 0 | _(Phase 12, designed)_ highest transcript `seq` the **User-Model Reflector** has extracted Tier-2 beliefs through — the **belief-extraction cursor**, independent of `consolidated_through_seq` so a failed reflection never advances past an unprocessed window (mirrors the evolution cursor's independence) |
+| `user_facts_through_seq` | bigint, default 0 | _(Phase 12)_ highest transcript `seq` the **User-Model Reflector** has extracted Tier-2 beliefs through — the **belief-extraction cursor**, independent of `consolidated_through_seq` so a failed reflection never advances past an unprocessed window (mirrors the evolution cursor's independence) |
 | `user_model_updated_through_seq` | bigint, default 0 | transcript `seq` the `user_persona` was last synthesized from (Tier-3 user-model cursor, mirrors the evolution cursor; Phase 13) |
 | `created_at` | timestamptz | |
 
@@ -302,17 +302,15 @@ extraction/retrieval flow → `companion-memory.md` §4.
 | `superseded_by` | uuid, nullable (FK → `user_facts.id`) | the fact that replaced this one, when applicable |
 | `created_at` / `updated_at` | timestamptz | |
 
-> **Phase 12 columns (designed, not yet in the table).** Tier-2 belief **retrieval** adds `embedding`
-> (`vector(1024)`, HNSW `vector_cosine_ops`), `fts` (tsvector generated from
+> **Tier-2 belief columns (Phase 12, in the table).** The same `user_facts` table carries the Tier-2
+> overlay: `embedding` (`vector(1024)`, HNSW `vector_cosine_ops`), `fts` (tsvector generated from
 > `subject`+`predicate`+`object`, GIN-indexed) — the hybrid-recall machinery (`architecture.md` §4.3) —
-> and `salience` (real, nullable). In Phase 12 `salience` is an **event-driven strength weight**: the
-> reflector bumps it on a `reinforce` (restatement), and the belief-learning loop bumps/cuts it on the
-> user's reaction to a belief-driven proactive act (`companion-motivation.md` §7). **Passive
-> time-decay** of salience and the **stale-drop retrieval cutoff** are Phase 13. Both writers (inline
-> capture, reflector) compute the embedding at write; a null-embedding row degrades gracefully to
-> FTS-only retrieval (the `fts` column is generated, so always present). Phase 11 (core profile) ships
-> the columns above only; these three + their HNSW/GIN indexes land in Phase 12
-> (`development-plan.md` §4c).
+> and `salience` (real, nullable). `salience` is an **event-driven strength weight**: the reflector
+> bumps it on a `reinforce` (restatement), and the belief-learning loop bumps/cuts it on the user's
+> reaction to a belief-driven proactive act (`companion-motivation.md` §7). **Passive time-decay** of
+> salience and the **stale-drop retrieval cutoff** are Phase 13. Both writers (inline capture, reflector)
+> compute the embedding at write; a null-embedding row degrades gracefully to FTS-only retrieval (the
+> `fts` column is generated, so always present) (`development-plan.md` §4c).
 
 > **The three tiers are a rule, not a column** (mirrors leaf types, `ontology.md` §3). **Tier 1 —
 > core profile**: the subset whose predicate is an identity attribute (`name`, `bornOn`, `livesIn`,

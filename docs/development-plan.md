@@ -46,7 +46,7 @@ being is proven, because they add platform cost without changing whether the cor
 | **9** | Tool acquisition — MCP | Web / server-host | Whitelisted HTTP MCP servers discovered, loaded & used at runtime, no redeploy | ✅ **Done** (PR #10) |
 | **10** | Tool acquisition — CLI | Web / server-host | Whitelisted host CLIs discovered, loaded & driven at runtime, no redeploy | ✅ **Done** (PR #11) |
 | **11** | User Model — core profile | Web | Cobble captures & uses the user's identity facts (name, pronouns, age, …) ⭐ | ✅ **Done** (§4c) |
-| **12** | User Model — learned beliefs | Web | Learns preferences/interests/opinions (explicit + implicit); surfaces them unprompted **and acts on them**, refining from reactions ⭐ | Planned (§4c) |
+| **12** | User Model — learned beliefs | Web | Learns preferences/interests/opinions (explicit + implicit); surfaces them unprompted **and acts on them**, refining from reactions ⭐ | ✅ **Done** (§4c) |
 | **13** | User Model — understanding & hygiene | Web | Synthesized user-persona; decay & sensitive attributes; full edit/forget UI | Planned (§4c) |
 
 ⭐ = the differentiators the web PoC exists to prove. **Phases 0–5 are the PoC.**
@@ -570,6 +570,24 @@ reacts when it does.
 later relevant turn; a same-matter newer state supersedes the prior current belief (history retained),
 not duplicated; and the engine **acts on a learned interest on its own, with the user's reaction
 refining that belief** — reinforced when appreciated, weakened when ignored.
+
+**Implemented** (this branch): the Tier-2 learned-belief overlay on the existing `user_facts` table
+(`embedding`/`fts` hybrid-recall columns + an event-driven `salience`). **Inline capture** widened
+from Tier-1 identity to also grab **explicit** beliefs, embedded at capture. A background
+**User-Model Reflector** — the mirror of the Personality Evolver, fired by the consolidation pass on
+its **own cursor** (`user_facts_through_seq`) — reads the **raw transcript window**, infers **implicit**
+beliefs, and reconciles each against the nearest current beliefs (`add`/`reinforce`/`supersede`;
+current-state last-wins, history retained). A **Tier-2 retrieval arm** surfaces the relevant current
+beliefs as a fenced "what I know about you" block, ahead of the semantic arm. The **belief-learning
+loop** closes it: the motivation engine's curiosity sources its topics from the user's interest
+beliefs and attributes a burst to the one it served (`proactive_outcomes.driven_by_user_fact_id`); the
+existing change-in-mood reward then also moves that belief's salience — strengthened when welcomed,
+weakened when ignored. Web shows the beliefs read-only in the memory browser. **Gate passed** (offline,
+deterministic — like P3/P5, the differentiator is *mechanical*): the Phase 12 DoD test drives all three
+Done-when criteria through the real app wiring (capture → resurface; reflector supersedes-not-duplicates;
+belief drives a burst → a welcomed reaction raises its salience). The live `user-extract` eval gained
+explicit-belief cases and a new `user-beliefs` reflector eval covers implicit inference + supersession.
+Full suite green at ≥80% coverage. Canonical mechanism: `docs/companion-memory.md` §4.
 
 ### Phase 13 — User Model: understanding & hygiene
 **Goal:** isolated facts become a coherent, current understanding the user fully controls.

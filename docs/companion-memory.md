@@ -218,14 +218,16 @@ affordance. Sensitive inferences (gender, age, health) are held to a higher conf
 deterministically, fuzzier preferences by LLM judge. A prompt change that loses identity facts or
 invents preferences fails the gate (`ontology.md` §5).
 
-> **Status.** **Phase 11 (core profile) is implemented**: the `user_facts` store, inline capture of
-> explicit identity facts each turn, Tier-1 injection into the persona, the name seeded from sign-in
-> (no more `display_name` column), and the editable/forgettable browser panel — gated by the
-> `user-extract` eval. **Tier 2 (learned beliefs) is designed and finalized for Phase 12, not yet
-> built**: the raw-transcript reflector (own cursor, current-state supersession), inline capture
-> widened to explicit beliefs, the hybrid Tier-2 retrieval arm, and the belief-learning loop (beliefs
-> drive the will; the will refines belief salience). **Tier 3 (synthesized user persona) + decay/sensitive
-> attributes are Phase 13.** `development-plan.md` §4c.
+> **Status.** **Phases 11–12 are implemented.** Phase 11 (core profile): the `user_facts` store,
+> inline capture of explicit identity facts, Tier-1 injection into the persona, the name seeded from
+> sign-in, and the editable/forgettable browser panel. **Phase 12 (learned beliefs): built** — the
+> `embedding`/`fts`/`salience` Tier-2 columns; inline capture widened to explicit beliefs (embedded at
+> capture); the raw-transcript **reflector** (own cursor, `add`/`reinforce`/`supersede` reconciliation,
+> current-state supersession) fired by consolidation; the hybrid **Tier-2 retrieval arm**; and the
+> **belief-learning loop** (beliefs drive the motivation engine; the reaction reward refines belief
+> salience). Read-only beliefs panel in the browser. Gated by the deterministic Phase-12 DoD test plus
+> the live `user-extract` (explicit-belief cases) and `user-beliefs` (reflector) evals. **Tier 3
+> (synthesized user persona) + decay/sensitive attributes are Phase 13.** `development-plan.md` §4c.
 
 ## 5. Browsing memory (read-only)
 
