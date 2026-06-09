@@ -16,6 +16,7 @@ import type { LlmGateway } from '../llm/gateway.js';
 import { DrizzleIdentityStore } from '../identity/store.js';
 import type { Logger } from '../logging.js';
 import { TranscriptMemoryStore } from '../memory/store.js';
+import { beliefPhrase } from './phrasing.js';
 import { coerceBeliefs, coerceDecisions, LlmUserModelReflector } from './reflector.js';
 import { DrizzleUserModelStore } from './store.js';
 
@@ -41,7 +42,7 @@ describe('LlmUserModelReflector', () => {
   let userId: string;
   let companionId: string;
 
-  function reflector(gateway: LlmGateway): LlmUserModelReflector {
+  function reflector(gateway: LlmGateway, similarK?: number): LlmUserModelReflector {
     return new LlmUserModelReflector({
       identity,
       memory,
@@ -52,6 +53,7 @@ describe('LlmUserModelReflector', () => {
       embeddingModel: 'embed',
       embeddingDimensions: EMBEDDING_DIMENSIONS,
       logger: silent,
+      ...(similarK !== undefined ? { similarK } : {}),
     });
   }
 
@@ -172,6 +174,52 @@ describe('LlmUserModelReflector', () => {
     await reflector(gateway).reflect(companionId);
 
     expect((await store.listCurrentBeliefs(userId)).map((b) => b.object)).toEqual(['hiking']);
+  });
+
+  it('rejects a reconcile target shown only for a DIFFERENT candidate', async () => {
+    // Two distinct beliefs, each the sole neighbour of its matching candidate (similarK=1):
+    // A is shown only for candidate 0, B only for candidate 1. Embed each under the same
+    // beliefPhrase text the reflector uses, so the candidate's vector lands on its own
+    // belief (distance 0) and nothing else.
+    const tea = await store.recordBelief({
+      userId,
+      predicate: 'interestedIn',
+      object: 'tea',
+      embedding: await embed(beliefPhrase('interestedIn', 'tea'), ''),
+    });
+    const mornings = await store.recordBelief({
+      userId,
+      predicate: 'dislikes',
+      object: 'mornings',
+      embedding: await embed(beliefPhrase('dislikes', 'mornings'), ''),
+    });
+    await seedTurns(6, 'tea and early starts');
+    // Candidate 0 (tea) cross-wires its supersede onto B (mornings) — a belief it was
+    // never shown. The union-based check would have honoured it; per-candidate scoping
+    // must reject it and fall back to a fresh add.
+    const gateway = new FakeLlmGateway([
+      extract([
+        { attribute: 'interestedIn', value: 'tea' },
+        { attribute: 'dislikes', value: 'mornings' },
+      ]),
+      reconcile([
+        { index: 0, op: 'supersede', targetId: mornings.id },
+        { index: 1, op: 'reinforce', targetId: mornings.id },
+      ]),
+    ]);
+
+    await reflector(gateway, 1).reflect(companionId);
+
+    // B survives untouched (not superseded by candidate 0's cross-wired target)...
+    const [morningsRow] = await db.select().from(userFacts).where(eq(userFacts.id, mornings.id));
+    expect(morningsRow?.supersededAt).toBeNull();
+    // ...and candidate 1's in-scope reinforce of B still lands.
+    expect(morningsRow?.salience).toBeCloseTo(0.6);
+    // Candidate 0's rejected supersede degraded to an add, which idempotently reinforces
+    // the existing A (no duplicate, no new content written over B).
+    const teaBeliefs = (await store.listCurrentBeliefs(userId)).filter((b) => b.object === 'tea');
+    expect(teaBeliefs.map((b) => b.id)).toEqual([tea.id]);
+    expect(teaBeliefs[0]?.salience).toBeCloseTo(0.6);
   });
 
   it('advances the cursor and writes nothing when no belief is inferred', async () => {

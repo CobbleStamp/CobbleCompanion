@@ -126,18 +126,7 @@ export class LlmUserModelReflector implements UserModelReflector {
         ),
       );
       const decisions = await this.reconcile(llm, candidates, neighbours);
-      // Only a target the model was actually shown is honoured — a hallucinated or
-      // malformed id falls back to a fresh add (and never reaches the DB as a bad uuid).
-      const validTargets = new Set(neighbours.flat().map((belief) => belief.id));
-      await this.apply(
-        userId,
-        companionId,
-        throughSeq,
-        candidates,
-        vectors,
-        decisions,
-        validTargets,
-      );
+      await this.apply(userId, companionId, throughSeq, candidates, vectors, decisions, neighbours);
 
       await identity.advanceUserFactsThroughSeq(companionId, throughSeq);
       await this.debit(companionId, usage.total().totalTokens);
@@ -204,7 +193,13 @@ export class LlmUserModelReflector implements UserModelReflector {
     return map;
   }
 
-  /** Apply each candidate's decision; an invalid target falls back to a fresh add. */
+  /**
+   * Apply each candidate's decision; an invalid target falls back to a fresh add.
+   * A reinforce/supersede target is honoured only if it was among the neighbours
+   * shown FOR THAT candidate — not the union across candidates — so a cross-wired or
+   * hallucinated id can't touch a belief candidate `i` was never shown (and never
+   * reaches the DB as a bad uuid).
+   */
   private async apply(
     userId: string,
     companionId: string,
@@ -212,13 +207,16 @@ export class LlmUserModelReflector implements UserModelReflector {
     candidates: readonly BeliefCandidate[],
     vectors: readonly (readonly number[] | undefined)[],
     decisions: ReadonlyMap<number, ReconcileDecision>,
-    validTargets: ReadonlySet<string>,
+    neighbours: readonly (readonly UserFactDto[])[],
   ): Promise<void> {
     for (let i = 0; i < candidates.length; i++) {
       const candidate = candidates[i]!;
       const decision = decisions.get(i) ?? { index: i, op: 'add' as const };
+      const shown = neighbours[i] ?? [];
       const target =
-        decision.targetId && validTargets.has(decision.targetId) ? decision.targetId : undefined;
+        decision.targetId && shown.some((belief) => belief.id === decision.targetId)
+          ? decision.targetId
+          : undefined;
       if (decision.op === 'reinforce' && target) {
         const updated = await this.options.store.adjustBeliefSalience(
           userId,
