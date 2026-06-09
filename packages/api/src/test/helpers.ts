@@ -18,6 +18,7 @@ import {
   createMemorySearchTool,
   createProceduralRetrieveContext,
   createSemanticRetrieveContext,
+  createUserModelRetrieveContext,
   DEFAULT_GROWTH_CONFIG,
   DrizzleEpisodicMemoryStore,
   DrizzleGrowthStore,
@@ -46,6 +47,7 @@ import {
   DrizzleProactiveOutcomeStore,
   LlmIngestionAnnouncer,
   type McpGateway,
+  LlmUserModelReflector,
   MotivationEngine,
   MotivationRunner,
   reinforceFromDelta,
@@ -118,6 +120,9 @@ export interface TestApp {
   readonly app: FastifyInstance;
   readonly deps: AppDeps;
   readonly tokenVerifier: FakeTokenVerifier;
+  /** The shared fake LLM gateway — `gateway.calls` lets a test assert what context a
+   *  turn was given (e.g. that a learned belief reached a later turn's prompt). */
+  readonly gateway: FakeLlmGateway;
   /** Build the Authorization headers for `address`, registering its fake token. */
   readonly bearerFor: (address: string) => { authorization: string };
   readonly close: () => Promise<void>;
@@ -213,6 +218,20 @@ export async function makeTestApp(
   const ingestion =
     options.ingestion ??
     new IngestionRunner(ingestionPipeline, silentLogger, config.ingestionQueueMax);
+  // Phase 12: the User-Model Reflector derives Tier-2 beliefs from the transcript on
+  // its own cursor; the consolidation service fires it after each run.
+  const userModelReflector = new LlmUserModelReflector({
+    identity,
+    memory,
+    store: userModel,
+    llm: llmGateway,
+    embeddings,
+    model: config.ingestionModel,
+    embeddingModel: config.embeddingModel,
+    embeddingDimensions: config.embeddingDimensions,
+    quota,
+    logger: silentLogger,
+  });
   const consolidation = new ConsolidationRunner(
     new ConsolidationService({
       episodic,
@@ -225,6 +244,7 @@ export async function makeTestApp(
       embeddingDimensions: config.embeddingDimensions,
       quota,
       logger: silentLogger,
+      reflector: userModelReflector,
     }),
     silentLogger,
   );
@@ -295,6 +315,8 @@ export async function makeTestApp(
         pipeline: options.motivationPipeline ?? ingestionPipeline,
         memory,
         rewards,
+        // Phase 12: curiosity sources its topics from the user's interest beliefs.
+        userModel,
         llm: llmGateway,
         model: config.ingestionModel,
         logger: silentLogger,
@@ -338,11 +360,22 @@ export async function makeTestApp(
               store: affectStore,
               model: config.ingestionModel,
               reinforce: (companionId, delta) =>
-                reinforceFromDelta({ rewards, identity, logger: silentLogger }, companionId, delta),
+                reinforceFromDelta(
+                  { rewards, identity, userModel, logger: silentLogger },
+                  companionId,
+                  delta,
+                ),
             },
           }),
       // Phase 11: Tier-1 persona injection + post-turn identity-fact capture.
-      userModel: { store: userModel, model: config.ingestionModel },
+      // Phase 12: also capture explicit Tier-2 beliefs, embedded for hybrid recall.
+      userModel: {
+        store: userModel,
+        model: config.ingestionModel,
+        embeddings: retrievalEmbeddings,
+        embeddingModel: config.embeddingModel,
+        embeddingDimensions: config.embeddingDimensions,
+      },
       registry: tools,
       ...(acquisitionWiring ? { resolveRegistry: acquisitionWiring.resolveRegistry } : {}),
       beforeToolCall: createApprovalGate(proposals, tools, silentLogger),
@@ -363,6 +396,14 @@ export async function makeTestApp(
             ...(acquisitionWiring ? { loadAdvisor: acquisitionWiring.loadAdvisor } : {}),
           }),
           ...(acquisitionWiring ? [acquisitionWiring.equippedArm] : []),
+          // Phase 12: the Tier-2 belief arm, before the semantic arm (recency last).
+          createUserModelRetrieveContext({
+            store: userModel,
+            embeddings: retrievalEmbeddings,
+            embeddingModel: config.embeddingModel,
+            embeddingDimensions: config.embeddingDimensions,
+            logger: silentLogger,
+          }),
           createSemanticRetrieveContext({
             memory,
             semantic,
@@ -393,6 +434,7 @@ export async function makeTestApp(
     app,
     deps,
     tokenVerifier,
+    gateway: llmGateway,
     bearerFor,
     close: async () => {
       await ingestion.whenIdle();
