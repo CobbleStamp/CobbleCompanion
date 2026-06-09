@@ -443,7 +443,17 @@ export class DrizzleUserModelStore implements UserModelStore {
         );
         const [bumped] = await tx
           .update(userFacts)
-          .set({ salience: next, updatedAt: new Date() })
+          .set({
+            salience: next,
+            updatedAt: new Date(),
+            // Back-fill a missing embedding so a belief first stored FTS-only (embeddings
+            // unconfigured, or an embed hiccup) joins the vector arm once an embedding is in
+            // hand. Recall is vector-primary under the relevance floor, so without this an
+            // FTS-only belief is permanently demoted. Fill only — never clobber a good vector.
+            ...(existing.embedding == null && input.embedding
+              ? { embedding: [...input.embedding] }
+              : {}),
+          })
           .where(eq(userFacts.id, existing.id))
           .returning();
         return toUserFactDto(bumped ?? existing);

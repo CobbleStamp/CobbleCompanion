@@ -310,6 +310,52 @@ describe('DrizzleUserModelStore', () => {
       expect(await store.listCurrentBeliefs(userId)).toHaveLength(1);
     });
 
+    it('back-fills a missing embedding when an FTS-only belief is reinforced', async () => {
+      // A belief first stored without an embedding (embeddings unconfigured, or an embed
+      // hiccup — harness/reflector store FTS-only) is invisible to the vector arm. Under the
+      // vector relevance floor that arm is the primary recall path, so the belief is quietly
+      // demoted forever unless reinforcement back-fills the embedding it now has in hand.
+      const first = await store.recordBelief({ userId, predicate: 'prefers', object: 'oat milk' });
+      const [before] = await db.select().from(userFacts).where(eq(userFacts.id, first.id));
+      expect(before?.embedding).toBeNull(); // stored FTS-only
+      // Not yet vector-recallable.
+      expect(await store.findSimilarBeliefs(userId, basisVector(0), 5)).toHaveLength(0);
+
+      // A later identical restatement now carries an embedding.
+      const again = await store.recordBelief({
+        userId,
+        predicate: 'prefers',
+        object: 'oat milk',
+        embedding: basisVector(0),
+      });
+      expect(again.id).toBe(first.id); // reinforced, not duplicated
+
+      // The embedding is back-filled onto the existing row, so it joins the vector arm.
+      const [after] = await db.select().from(userFacts).where(eq(userFacts.id, first.id));
+      expect(after?.embedding).not.toBeNull();
+      const similar = await store.findSimilarBeliefs(userId, basisVector(0), 5);
+      expect(similar.map((b) => b.id)).toEqual([first.id]);
+    });
+
+    it('does not overwrite an existing embedding on reinforcement', async () => {
+      // Back-fill fills a gap; it must never clobber a good embedding with a later one.
+      const first = await store.recordBelief({
+        userId,
+        predicate: 'prefers',
+        object: 'oat milk',
+        embedding: basisVector(0),
+      });
+      await store.recordBelief({
+        userId,
+        predicate: 'prefers',
+        object: 'oat milk',
+        embedding: basisVector(1), // a different vector on the restatement
+      });
+      const [row] = await db.select().from(userFacts).where(eq(userFacts.id, first.id));
+      expect(row?.embedding?.[0]).toBe(1); // original basisVector(0) preserved
+      expect(row?.embedding?.[1]).toBe(0);
+    });
+
     it('recalls beliefs by vector nearest-neighbour and by full-text', async () => {
       const rust = await store.recordBelief({
         userId,
