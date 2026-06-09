@@ -16,11 +16,40 @@
  * order-independent.
  */
 
-import { FakeLlmGateway, LlmUserModelReflector, type IngestionRunParams } from '@cobble/core';
+import {
+  FakeEmbeddingGateway,
+  FakeLlmGateway,
+  LlmUserModelReflector,
+  type EmbeddingParams,
+  type EmbeddingResult,
+  type IngestionRunParams,
+} from '@cobble/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { makeTestApp, type TestApp } from '../test/helpers.js';
 
 const TOKENS_PER_READ = 120;
+
+/**
+ * The hash fake embeds every distinct string near-orthogonal, so it can't model
+ * the topical adjacency real embeddings have — and the recall arm's vector floor
+ * (cosine distance ≤ 0.8) then drops a belief on any lexically-different turn.
+ * Real embeddings place "what should we get into next" near "the user is
+ * interested in jazz" (both about the user's interests), within the floor, so the
+ * belief resurfaces. This gateway models that one adjacency by embedding the named
+ * phrases to a shared vector; everything else hashes as usual.
+ */
+class TopicalEmbeddingGateway extends FakeEmbeddingGateway {
+  constructor(private readonly cluster: ReadonlyMap<string, string>) {
+    super();
+  }
+
+  override embed(params: EmbeddingParams): Promise<EmbeddingResult> {
+    return super.embed({
+      ...params,
+      input: params.input.map((text) => this.cluster.get(text) ?? text),
+    });
+  }
+}
 
 describe('Phase 12 DoD — learned beliefs', () => {
   let ctx: TestApp;
@@ -75,7 +104,14 @@ describe('Phase 12 DoD — learned beliefs', () => {
         { chunks: ['Let me think about that.'] },
         { toolCalls: [{ name: 'report_user_facts', args: { facts: [] } }] },
       ],
-      { disableAffect: true },
+      {
+        disableAffect: true,
+        // Model the topical adjacency the hash fake can't: the later, unrelated-
+        // wording turn embeds near the captured belief, as real embeddings would.
+        embeddings: new TopicalEmbeddingGateway(
+          new Map([['What should we get into next?', 'the user is interested in jazz']]),
+        ),
+      },
     );
 
     await sendMessage('I love jazz.');
@@ -84,7 +120,13 @@ describe('Phase 12 DoD — learned beliefs', () => {
     const beliefs = await ctx.deps.userModel.listCurrentBeliefs(userId);
     expect(beliefs.map((b) => b.object)).toEqual(['jazz']);
 
-    // A later, unrelated-wording turn carries the belief into the model's context.
+    // A later, unrelated-wording turn carries the belief back into the model's context,
+    // unprompted — the Tier-2 retrieval arm injects it; the user never asks the companion
+    // to recall. This exercises the production recall path, the *vector* arm: the turn
+    // shares no lexeme with the belief ("jazz"), so FTS cannot save it — recall depends
+    // entirely on the turn embedding sitting near the belief's, within the relevance floor,
+    // as real embeddings place "what should we get into next" near "the user is interested
+    // in jazz" (the TopicalEmbeddingGateway models that one adjacency).
     await sendMessage('What should we get into next?');
     const carried = ctx.gateway.calls.some((call) =>
       call.messages.some((m) => m.content.includes('the user is interested in jazz')),
@@ -95,9 +137,10 @@ describe('Phase 12 DoD — learned beliefs', () => {
   it('supersedes a same-matter newer state, retaining history, not duplicating (DoD 2)', async () => {
     await setup(['ok'], { disableAffect: true });
 
-    // The user once loved coffee (embedded so reconciliation can find it as a neighbour).
+    // The user once loved coffee (embedded — same natural rendering the harness stores
+    // under — so reconciliation can find it as a neighbour).
     const { vectors } = await ctx.deps.embeddings.embed({
-      input: ['prefers loves coffee'],
+      input: ['the user prefers loves coffee'],
       model: ctx.deps.config.embeddingModel,
       dimensions: ctx.deps.config.embeddingDimensions,
     });

@@ -12,6 +12,7 @@ import { FakeEmbeddingGateway } from '../embedding/fake.js';
 import type { EmbeddingGateway } from '../embedding/gateway.js';
 import { DrizzleIdentityStore } from '../identity/store.js';
 import type { Logger } from '../logging.js';
+import { beliefPhrase } from '../user-model/phrasing.js';
 import { DrizzleUserModelStore } from '../user-model/store.js';
 import { createUserModelRetrieveContext } from './user-model-retrieve.js';
 
@@ -54,10 +55,11 @@ describe('createUserModelRetrieveContext', () => {
     };
   }
 
-  /** Embed a belief's text with the same fake gateway, so recall can match it. */
+  /** Embed a belief's text with the same fake gateway (same natural-language rendering the
+   *  harness stores under), so recall can match it. */
   async function embed(predicate: string, object: string): Promise<readonly number[]> {
     const { vectors } = await embeddings.embed({
-      input: [`${predicate} ${object}`],
+      input: [beliefPhrase(predicate, object)],
       model: 'embed',
       dimensions: EMBEDDING_DIMENSIONS,
     });
@@ -96,7 +98,7 @@ describe('createUserModelRetrieveContext', () => {
 
     const { blocks } = await arm()({
       companionId: 'c1',
-      userContent: 'interestedIn jazz',
+      userContent: 'the user is interested in jazz',
       ownerId: userId,
     });
 

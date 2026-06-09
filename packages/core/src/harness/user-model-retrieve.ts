@@ -13,6 +13,7 @@
  */
 
 import { MAX_INGESTION_PROMPT_CHARS, stripSentinels } from '../ingestion/untrusted.js';
+import { beliefPhrase } from '../user-model/phrasing.js';
 import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from './semantic-retrieve.js';
 import type { EmbeddingGateway } from '../embedding/gateway.js';
 import type { Logger } from '../logging.js';
@@ -47,14 +48,6 @@ const DEFAULT_TOP_K = 5;
  * volume grows, rather than by hand.
  */
 const DEFAULT_MAX_VECTOR_DISTANCE = 0.8;
-
-/** Natural phrasing for each Tier-2 predicate; falls back to the predicate itself. */
-const BELIEF_PHRASING: Readonly<Record<string, string>> = {
-  prefers: 'prefers',
-  dislikes: 'dislikes',
-  interestedIn: 'is interested in',
-  believes: 'believes',
-};
 
 /** Build the Tier-2 user-model arm: relevant learned beliefs as one grounding block. */
 export function createUserModelRetrieveContext(options: UserModelRetrieveOptions): RetrieveContext {
@@ -102,9 +95,8 @@ export function createUserModelRetrieveContext(options: UserModelRetrieveOptions
 export function toBeliefsBlock(hits: readonly BeliefHit[]): ContextBlock {
   const lines = hits
     .map((hit) => {
-      const phrase = BELIEF_PHRASING[hit.belief.predicate ?? ''] ?? hit.belief.predicate ?? 'about';
       const object = stripSentinels(hit.belief.object).slice(0, MAX_INGESTION_PROMPT_CHARS);
-      return `- the user ${phrase} ${object}`;
+      return `- ${beliefPhrase(hit.belief.predicate, object)}`;
     })
     .join('\n');
   return {

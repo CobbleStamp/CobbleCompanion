@@ -34,6 +34,7 @@ import {
   DrizzleToolCallLog,
   type CliToolStore,
   type CommandSandbox,
+  type EmbeddingGateway,
   FakeEmbeddingGateway,
   FakeLlmGateway,
   FakeMcpGateway,
@@ -169,6 +170,14 @@ export interface TestAppOptions {
    * db lifecycle: the returned `close()` tears down the app but leaves the db open.
    */
   readonly database?: Awaited<ReturnType<typeof createTestDatabase>>;
+  /**
+   * Replace the embedding gateway (default: a fresh {@link FakeEmbeddingGateway}).
+   * The hash fake makes every distinct string near-orthogonal, which can't model
+   * the topical adjacency real embeddings have (e.g. "what should we get into
+   * next" sitting near "the user is interested in jazz"). A test that exercises
+   * vector-arm recall across such a turn injects a fake that models that adjacency.
+   */
+  readonly embeddings?: EmbeddingGateway;
 }
 
 export async function makeTestApp(
@@ -189,7 +198,7 @@ export async function makeTestApp(
   const semantic = new DrizzleSemanticMemoryStore(db);
   const episodic = new DrizzleEpisodicMemoryStore(db);
   const quota = new DrizzleVitalityStore(db, 'stamina');
-  const embeddings = new FakeEmbeddingGateway();
+  const embeddings = options.embeddings ?? new FakeEmbeddingGateway();
   // Retrieval arms share a memoizing gateway (mirrors index.ts); ingestion and
   // consolidation use the raw fake.
   const retrievalEmbeddings = createMemoizingEmbeddingGateway(embeddings);

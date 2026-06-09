@@ -30,6 +30,7 @@ import {
 } from '../prompts/index.js';
 import type { VitalityStore } from '../quota/vitality-store.js';
 import { createUsageAccumulator, meteredLlmGateway, type UsageSink } from '../usage.js';
+import { beliefPhrase } from './phrasing.js';
 import type { UserModelStore } from './store.js';
 
 export interface UserModelReflectorOptions {
@@ -269,7 +270,9 @@ export class LlmUserModelReflector implements UserModelReflector {
   ): Promise<readonly (readonly number[] | undefined)[]> {
     try {
       const { vectors, usage } = await this.options.embeddings.embed({
-        input: candidates.map((c) => `${c.predicate} ${c.object}`),
+        // Same natural-language rendering used at chat-capture and recall, so a candidate
+        // and the current beliefs it reconciles against share an embedding register.
+        input: candidates.map((c) => beliefPhrase(c.predicate, c.object)),
         model: this.options.embeddingModel,
         dimensions: this.options.embeddingDimensions,
       });

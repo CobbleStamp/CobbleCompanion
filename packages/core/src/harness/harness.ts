@@ -17,6 +17,7 @@ import { senseAffect, type AffectReading } from '../motivation/affect.js';
 import type { CompanionAffectStore } from '../motivation/affect-store.js';
 import type { VitalityStore } from '../quota/vitality-store.js';
 import { captureUserFacts } from '../user-model/extractor.js';
+import { beliefPhrase } from '../user-model/phrasing.js';
 import type { UserModelStore } from '../user-model/store.js';
 import { dispatchTool } from '../tools/dispatch.js';
 import { ToolRegistry } from '../tools/registry.js';
@@ -544,7 +545,9 @@ export class Harness {
     }
     try {
       const { vectors } = await cfg.embeddings.embed({
-        input: beliefs.map((b) => `${b.predicate} ${b.object}`),
+        // Embed the natural-language rendering (not a terse `predicate object` tag) so the
+        // stored vector lives in the same register as the recall query — see beliefPhrase.
+        input: beliefs.map((b) => beliefPhrase(b.predicate, b.object)),
         model: cfg.embeddingModel,
         dimensions: cfg.embeddingDimensions,
       });
