@@ -89,21 +89,21 @@ Within a core type, extraction may qualify facts with finer-grained **leaf subty
   user statement always passes. Data-minimization for protected attributes outranks the
   "confidence never gates storage" default; a persisted sensitive fact carries a `sensitive` flag
   (`implementation.md` §1, `companion-memory.md` §4).
-- **Supersession over deletion (user-facts) — a current-state mirror.** Because the user changes, a
-  user-fact is **revised by superseding**, not silently duplicated: a singular attribute (`name`,
-  `bornOn`) upserts; a belief whose *same matter* takes a newer state has the old row marked
-  superseded with a timestamp and the new value inserted as current. This is **last-wins for the
-  current state, with history retained** — *not* a claim the past was false. "Loved coffee, then quit"
-  are **both true across time**: the current set says "doesn't drink coffee", the superseded "loves
-  coffee" row is kept as dated history. The timeline of the self lives in episodic memory + the
-  superseded chain; `user_facts` current rows are the *now* view, surfaced by retrieval (which reads
-  current rows only). Reconciliation — `add` / `reinforce` / `supersede` — is owned by the background
-  reflection pass (`companion-memory.md` §4), not the inline writer, so write hygiene lives in one
-  place. **Supersession is system revision and is distinct from user Forget (Phase 13):** the reflector
-  *supersedes* automatically and **keeps** the prior row as history; the user's explicit **Forget** is a
-  genuine **hard delete** of the whole matter chain (current + superseded), because the
-  right-to-be-forgotten is a stronger promise than the self-timeline — the two verbs look alike but mean
-  opposite things for the data (`companion-memory.md` §4, `implementation.md` §1).
+- **Current-state overlay, not a timeline (user-facts).** Because the user changes, a user-fact is
+  **revised by the latest evidence**, not duplicated: a singular attribute (`name`, `bornOn`) upserts; a
+  belief whose *same matter* takes a newer state is **replaced** — the new value becomes current and the
+  old is dropped. `user_facts` is the semantic-style **"what's true now"** overlay; it is **not** a second
+  home for history. The *timeline* of the self ("loved coffee, then quit" — both true across time) lives
+  where it belongs, in **episodic memory** (the lossless transcript + consolidated episodes); retrieval
+  reads the current overlay, the timeline is recovered from episodic. Reconciliation — `add` /
+  `reinforce` / `replace` — is owned by the background reflection pass (`companion-memory.md` §4), not the
+  inline writer, so write hygiene lives in one place. *(Phase 12 retained a superseded chain in this
+  table; **Phase 13 drops it** — `superseded_at`/`superseded_by` removed — since the timeline is episodic
+  memory's job, `development-plan.md` §4c.)* **Forgetting is graceful, not binary:** a Tier-2 belief fades
+  as its salience decays and eventually stops surfacing — no delete needed; Tier-1 identity, which does
+  **not** decay, is removed only by an explicit user **`deleteFact`** (a true purge for sensitive rows).
+  There is **no tombstone** — a forgotten belief the transcript still supports may be re-learned, which is
+  natural self-correction, not corruption (`companion-memory.md` §4, `implementation.md` §1).
 - **Tenancy.** Source-facts are scoped by `companion_id` and cascade-delete with their companion,
   source, and section. **User-facts are scoped by `user_id`** — they are objective truths about the
   *person*, shared across any companion the user owns, learned *by* a companion (a

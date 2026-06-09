@@ -281,7 +281,7 @@ training set and fits incremental ingestion; GIN on `fts`; btree on `(companion_
 
 The companion's structured understanding of its user — the same typed-fact contract as `facts`
 (`ontology.md`), but the **subject is the privileged user entity**. A separate table because the
-lifecycle differs: identity attributes supersede on revision (most singular; `languages`/`relationships` are multi-valued and accrete) and are editable/forgettable today (Phase 11); beliefs accrete and are read-only until Phase 13, when they gain user editing and decay (the `editFact`/`forgetFact` path refuses belief predicates until then). **Two distinct delete verbs (Phase 13):** the reflector's automatic **supersede** marks `superseded_at` and **keeps** the old row (history); the user's explicit **Forget** is a true **hard delete** via a new `deleteFactChain(userId, factId)` that removes the whole matter chain (current + every superseded ancestor/descendant), so the Phase-11 `forgetFact` (currently a soft supersede, Tier-1 only) is replaced by it and extended to Tier-2 beliefs.
+lifecycle differs: identity attributes are revised on a new value (most singular; `languages`/`relationships` are multi-valued and accrete) and are editable/forgettable today (Phase 11); beliefs accrete, decay, and are read-only until Phase 13 (the `editFact`/`forgetFact` path refuses belief predicates until then). **Revision is replace, not a chain (Phase 13):** the reflector reconciles by **replacing** the current value (latest wins) — Phase 12's superseded chain is **removed** (no `superseded_*` rows), the timeline living in episodic memory (`ontology.md` §4). **Forgetting:** Tier-2 beliefs fade by salience decay (the everyday forgetting); the explicit control is **`deleteFact(userId, factId)`** — a single-row delete (replacing the Phase-11 soft-supersede `forgetFact`), **necessary** for non-decaying Tier-1 and offered on Tier-2 for immediacy; **sensitive** rows get a true purge (optionally forgetting the source turn). **No tombstone** — re-derivation from the lossless transcript is accepted relearning, not a bug.
 **Keyed by `user_id`, not `companion_id`** — facts are objective truths about the *person* (name, age,
 "vegetarian"), so they are shared across any companion the user owns; only the *synthesized
 understanding* of the user (Tier-3 `companions.user_persona`) is per-companion (`development-plan.md`
@@ -299,8 +299,7 @@ extraction/retrieval flow → `companion-memory.md` §4.
 | `confidence` | real, nullable | (0–1), advisory; default tracks `source` — explicit `transcript` statement → high, inferred → low, `auth_seed` → modest (a guess from the account), `user_edit` → authoritative. Steers retrieval ranking, decay, and supersession precedence, never storage |
 | `salience` | real, nullable | event-driven strength weight (Tier-2); multiplies a belief's fused hybrid-recall score (`1 + 0.5·salience`), so a reinforced belief rises and a cut one sinks among comparably-relevant hits — a gentle prior over relevance, never an injector. Bumped/cut on reinforce + proactive reaction. The **stored** value is the last genuine reinforcement; **Phase 13 decays it lazily at read time** (effective = `salience × decay(now − updated_at)`, see the Tier-2 note below) — no sweeper writes here |
 | `sensitive` | boolean, default `false` | _(Phase 13)_ marks a fact about a protected matter (gender, age, health, religion, sexuality, ethnicity, political leaning — the closed `SENSITIVE_MATTERS` set). Set when such a fact is persisted; a low-confidence **inference** about a sensitive matter is **gated at write** (not stored unless it clears a higher confidence bar — `ontology.md` §4), while an explicit user statement always passes. Surfaced/badged in the browser for scrutiny |
-| `superseded_at` | timestamptz, nullable | null = current; set when a singular attribute is revised, a multi-valued one (`languages`/`relationships`) is restated identically, or a belief's **same matter takes a newer state** (current-state last-wins — `ontology.md` §4). Superseded rows are kept (history — the timeline of the self), excluded from retrieval. A **system supersede keeps** this row; the user's **Forget hard-deletes** the whole chain (Phase 13, below) |
-| `superseded_by` | uuid, nullable (FK → `user_facts.id`) | the fact that replaced this one, when applicable |
+| `superseded_at` · `superseded_by` | timestamptz · uuid, nullable | _(Phase 12 — **removed in Phase 13**)_ the superseded-chain columns: Phase 12 kept revised rows as dated history. Phase 13 switches to **replace** (current-state only; the timeline is episodic memory's job, `ontology.md` §4) and **drops both columns** along with the supersede-then-backfill store path |
 | `created_at` / `updated_at` | timestamptz | |
 
 > **Tier-2 belief columns (Phase 12, in the table).** The same `user_facts` table carries the Tier-2
@@ -345,7 +344,10 @@ extraction/retrieval flow → `companion-memory.md` §4.
 > the synthesized narrative in `companions.user_persona` (Phase 13). Indexes (Phase 11): btree on
 > `(user_id, superseded_at)` for the current-facts scan; plus a **partial unique index**
 > `user_facts_one_current_name_uniq` on `(user_id, predicate)` `WHERE predicate = 'name' AND
-> superseded_at IS NULL` — DB-enforced "one current `name` per user", since `seedName` runs on every
+> superseded_at IS NULL` — DB-enforced "one current `name` per user". _(Phase 13: with `superseded_at`
+> gone, the scan index becomes `(user_id, predicate)` and the unique index drops its `superseded_at`
+> clause — one `name` row per user, period, since every row is current.)_ The seed matters because
+> `seedName` runs on every
 > authed request outside the harness per-user serialization and parallel first-load seeds would
 > otherwise double-insert (`seedName` absorbs the conflict via `ON CONFLICT DO NOTHING`). Scoped to
 > `name`; multi-valued predicates (`languages`/`relationships`) keep many current rows by design.
@@ -639,9 +641,9 @@ blocks (verbatim sections with source/para preambles), then the most-recent N tr
 step that senses affect (`senseAffect`, §2.3 / `companion-motivation.md`) also runs a conservative
 **user-fact extractor** — a sibling call site that reads the just-finished exchange and emits
 *candidate* `user_facts` for **explicit, high-signal** statements only ("call me Sam", "I'm
-vegetarian"). It writes them (a revision **supersedes**, never overwrites — a stated name is just the `name`
+vegetarian"). It writes them (a revision **replaces** the current value — a stated name is just the `name`
 attribute, no special path; multi-valued `languages`/`relationships` accrete); deeper inference,
-dedup, supersession, and Tier-3 synthesis are deferred to the
+dedup, replace-reconciliation, and Tier-3 synthesis are deferred to the
 **background reflection** pass that extends consolidation (`architecture.md` §4.3, §4.5). Both the
 extractor and the reflector are metered LLM calls; extraction quality is gated by the `user-extract`
 eval dataset (`howto-run-evals.md`). A chat turn therefore now has **two** post-turn perception reads

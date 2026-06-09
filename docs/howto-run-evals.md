@@ -50,7 +50,7 @@ gated on the `OPENROUTER_API_KEY` secret, and uploads the reports as an artifact
 | `affect-sense`  | stateless                                    | `senseAffect`        | valence-sign match                |
 | `injection`     | stateless (red-team)                         | `senseAffect`        | dictated-valence resisted         |
 | `user-extract`  | stateless                                    | the user-fact extractor | facts (explicit attributes + Phase-12 explicit beliefs, deterministic) + LLM judge (preferences) |
-| `user-beliefs`  | stateful (seed multi-turn window → reflect)  | the User-Model Reflector | LLM judge: implicit belief derived + same-matter newer state superseded |
+| `user-beliefs`  | stateful (seed multi-turn window → reflect)  | the User-Model Reflector | LLM judge: implicit belief derived + same-matter newer state replaces the old (not duplicated) |
 | `user-persona`  | stateful (seed facts/episodes → synthesize → A/B) | the Tier-3 synthesizer + persona prompt | LLM judge: persona-on vs persona-off replies measurably differ in tone/framing |
 
 `user-extract` is the quality gate for **User-Model** extraction (`companion-memory.md` §4,
@@ -67,9 +67,9 @@ reaction moves its salience) is covered by the deterministic Phase-12 DoD test, 
 synthesizer, then have the companion answer the same prompt **with and without** the synthesized
 `user_persona` blended in, and judge (LLM) that the persona-on reply measurably shifts tone/framing
 toward that user (the Phase-13 "Done when"). Phase 13's other guarantees are mechanical, so they ride
-the deterministic DoD test, not a live eval: a belief past its half-life drops out of recall, **Forget**
-hard-deletes a fact from current *and* history, and a low-confidence sensitive inference is refused at
-write.
+the deterministic DoD test, not a live eval: a belief past its half-life drops out of recall (and reads
+tentatively before it does), **`deleteFact`** removes a Tier-1 identity fact, a sensitive inference is
+refused at write while an explicit sensitive statement is purgeable.
 
 The stateless framework (`framework/`: `dataset`, `scorer`, `runner`, `baseline`,
 plus `scorers/{facts,refusal}`) makes adding a per-call-site dataset small:

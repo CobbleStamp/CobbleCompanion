@@ -500,21 +500,39 @@ lossy episode summaries — the implicit signal is in the un-summarized record);
 **current-state supersession** (last-wins on the current row, prior retained as history — *not*
 contradiction-deletion); the Tier-2 belief set is **closed** (`prefers`/`dislikes`/`interestedIn`/`believes`);
 and the **belief-learning loop is in-scope** — beliefs drive the motivation engine *and* the engine's
-reinforcement refines belief salience (decay deferred to Phase 13). **Phase 13 additions (locked):**
-Tier-3 blend is **additive** (the synthesized `user_persona` is an extra persona paragraph; Tier-1
-identity facts stay rendered **verbatim** as exact ground truth, never paraphrased through the
-narrative), synthesized by a `LlmUserPersonaSynthesizer` that **mirrors the Personality Evolver**
-(own cursor, re-synthesize only when facts/episodes advanced, off-request); decay is **lazy /
-read-time** (`effective_salience = stored × decay(now − updated_at)`, uniform configurable half-life,
-computed in the two read paths — no sweeper, no write churn — a decayed belief drops out of retrieval +
-the engine but is **never auto-deleted**); sensitive attributes are **gated at write** (a low-confidence
-inference about a closed set of protected matters — gender/age/health/religion/sexuality/ethnicity/political —
-is not persisted; explicit user statements always pass; persisted sensitive rows carry a `sensitive`
-flag); and **Forget is a hard delete** distinct from supersede — **supersede** stays system-driven and
-retains the history chain (the self-timeline), **Forget** is the user's explicit button and genuinely
-deletes the whole matter chain (right-to-be-forgotten), extended to Tier-2 beliefs. Canonical mechanism
-end-to-end → `companion-memory.md` §4; components → `architecture.md` §3, §4.3, §4.5; reinforcement →
-`companion-motivation.md` §7.
+reinforcement refines belief salience (decay deferred to Phase 13). **Phase 13 additions (locked) —
+a memory that behaves like a memory:**
+- **Tier-3 blend is additive.** The synthesized `user_persona` is an extra persona paragraph; Tier-1
+  identity facts stay rendered **verbatim** as exact ground truth, never paraphrased through the
+  narrative. Synthesized by a `LlmUserPersonaSynthesizer` that **mirrors the Personality Evolver**
+  (own cursor, re-synthesize only when facts/episodes advanced, off-request).
+- **`user_facts` is current-state only.** Supersession becomes a **replace** (latest wins; the old value
+  is *not* kept in the table) — the **superseded chain is dropped** (`superseded_at`/`superseded_by`
+  removed). The *timeline* of the self ("loved coffee, then quit") lives where it belongs, in **episodic
+  memory** (the lossless transcript + episodes); `user_facts` is the semantic-style "what's true now"
+  overlay, not a second home for history.
+- **Forgetting is the tail of decay, not a binary delete.** Tier-2 belief `salience` **decays lazily**
+  (`effective = stored × decay(now − updated_at)`, uniform half-life, computed in the two read paths — no
+  sweeper); as it fades a belief is spoken more tentatively and below a floor stops surfacing — *that* is
+  forgetting (graceful, partial, like a person). **No tombstone:** if the transcript still supports a
+  forgotten belief the reflector may re-learn it — accepted as natural relearning, not a bug.
+- **A `deleteFact` control for what doesn't decay.** Tier-1 identity has **no salience and no decay**, so
+  the user removes it by hand — **edit** (replace) / **delete** (a single-row `deleteFact`, replacing the
+  Phase-11 soft-supersede). The same control is extended to Tier-2 for immediacy. **Sensitive** rows
+  (gated at write — see below) get a **true purge** (and optionally forgetting the originating transcript
+  turn) — the one place erasure must be complete.
+- **Uncertainty-aware recall + self-correction.** A belief is rendered by its **confidence × effective
+  salience**: fresh/reinforced → asserted, faded/low-confidence → hedged ("I have a vague sense you're
+  into jazz — or was it blues?"). The companion is **licensed to ask** when unsure; the answer reinforces
+  or replaces — closing a conversational self-repair loop. (No data is ever corrupted; "partial/wrong
+  memory" is an effect of *rendering* uncertainty, not storing falsehoods. A heavier conflict-detection
+  engine is deferred.)
+- **Sensitive attributes are gated at write.** A low-confidence inference about a closed set of protected
+  matters (gender/age/health/religion/sexuality/ethnicity/political) is **not persisted**; explicit user
+  statements always pass; persisted sensitive rows carry a `sensitive` flag.
+
+Canonical mechanism end-to-end → `companion-memory.md` §4; components → `architecture.md` §3, §4.3, §4.5;
+reinforcement → `companion-motivation.md` §7.
 
 ### Phase 11 — User Model: core profile ⭐
 **Goal:** the companion knows the user's stable identity and uses it naturally.
@@ -613,30 +631,42 @@ Full suite green at ≥80% coverage. Canonical mechanism: `docs/companion-memory
   rendering Tier-1 identity facts **verbatim** (name/pronouns/location are exact ground truth, never
   paraphrased) and appends the Tier-3 narrative as a distinct paragraph beside `evolvedPersona` — no loop
   change (`architecture.md` §4.3).
-- **Decay (lazy) & sensitive attributes (write-gate).** Decay is computed at read time — one pure
-  `effectiveSalience(salience, updatedAt, now) = salience × exp(−ln2 · age / halfLife)` (uniform
-  configurable half-life), applied in the **two** places salience is read: the Tier-2 retrieval arm
-  (`searchBeliefs` RRF weight) and the engine's `topInterestBelief`. No sweeper, no write churn,
-  deterministic. A belief below the retrieval floor drops out of recall + the engine but is **never
-  auto-deleted** (it stays visible/forgettable in the browser). Sensitive inferences are **gated at
-  write**: a low-confidence inference about a closed `SENSITIVE_MATTERS` set
-  (gender/age/health/religion/sexuality/ethnicity/political) is not persisted; an explicit user statement
+- **Current-state overlay (drop the chain).** `user_facts` becomes "what's true now," not a timeline: the
+  reflector's `supersede` becomes a **`replace`** (latest wins, old value gone), and the
+  `superseded_at`/`superseded_by` columns + supersede-then-backfill machinery built in Phase 12 are
+  **removed**. The self-timeline lives in **episodic memory** (lossless transcript + episodes), its proper
+  home — `user_facts` no longer duplicates it (`ontology.md` §4).
+- **Forgetting as the tail of decay (lazy).** One pure `effectiveSalience(salience, updatedAt, now) =
+  salience × exp(−ln2 · age / halfLife)` (uniform configurable half-life) is applied in the **two** places
+  Tier-2 salience is read — the retrieval arm (`searchBeliefs`) and the engine's `topInterestBelief`. No
+  sweeper, no write churn. As a belief fades it is spoken more tentatively and below a `STALE_SALIENCE_FLOOR`
+  stops surfacing — graceful, partial forgetting, like a person. **No tombstone:** a forgotten-then-restated
+  belief is re-learned (natural self-correction, not a bug). Tier-1 identity has no salience, so it does not
+  decay (below).
+- **Uncertainty-aware recall + ask-when-unsure.** The Tier-2 arm renders each belief by its **confidence ×
+  effective salience** — fresh/reinforced asserted, faded/low-confidence hedged — and the companion is
+  **licensed to ask** to confirm when unsure; the answer reinforces or replaces (a conversational self-repair
+  loop). No data is corrupted — "partial/wrong memory" is a *rendering* effect, not stored falsehood. (A
+  heavier active conflict-detection engine is deferred.)
+- **Sensitive attributes (write-gate).** A low-confidence inference about a closed `SENSITIVE_MATTERS` set
+  (gender/age/health/religion/sexuality/ethnicity/political) is **not persisted**; an explicit user statement
   always passes; a persisted sensitive row carries a `sensitive` flag for the UI.
-- **Full management UI + two verbs.** **Supersede** (system, automatic) keeps retaining history (the
-  self-timeline); **Forget** (the user's explicit button) becomes a genuine **hard delete** of the whole
-  matter chain (current + superseded) — the right-to-be-forgotten promise — implemented by a new
-  `deleteFactChain` store method, with the Phase-11 Tier-1 forget switched from soft-supersede to it.
-  Read / edit / forget is extended across the **whole** user model (Tier-2 beliefs, read-only since
-  Phase 12, gain edit/forget); superseded history is shown collapsed; the Tier-3 persona is shown
-  read-only (like `evolvedPersona`); sensitive rows are badged.
+- **Management UI + the controls that matter.** **Edit** (replace a value) and **delete** (a single-row
+  `deleteFact`, replacing the Phase-11 soft-supersede) cover the whole model — **necessary for Tier-1**
+  (nothing else removes a stable identity fact), available on Tier-2 for immediacy (decay would otherwise get
+  there). **Sensitive** rows get a **true purge** (and optionally forgetting the originating transcript turn)
+  — the one place erasure must be complete. The Tier-3 persona is shown read-only (like `evolvedPersona`);
+  sensitive rows are badged; a faded belief reads as faded.
 
 **Done when:** the synthesized user-persona measurably shapes tone/framing (the **`user-persona`** judge
-eval — persona-on vs persona-off A/B), a belief past its half-life no longer resurfaces in retrieval, and
-the user can inspect and **forget** (hard-delete) anything the companion holds about them — proven by a
-deterministic DoD test (decay drops a stale belief from recall; Forget removes a fact from current *and*
-history; a low-confidence sensitive inference is refused at write).
+eval — persona-on vs persona-off A/B); a belief past its half-life fades from retrieval (and reads
+tentatively before it goes); the user can inspect, **edit**, and **delete** anything the companion holds,
+with sensitive data truly purged — proven by a deterministic DoD test (decay drops a stale belief from
+recall; `deleteFact` removes a Tier-1 fact; a low-confidence sensitive inference is refused at write and an
+explicit one is purgeable).
 
-**Deferred (designed here, built later):** a user-facing "don't infer X about me" consent toggle;
+**Deferred (designed here, built later):** a user-facing "don't infer X about me" consent toggle; an active
+conflict-detection engine (Phase 13 ships the cheap ask-when-unsure, not a contradiction scanner);
 per-predicate decay rates (v1 is one uniform half-life).
 
 ## 5. Open Questions to Resolve (owned here)

@@ -98,8 +98,8 @@ tiers:
 
 | Tier | What it holds | Where it lives | How it enters a turn |
 | --- | --- | --- | --- |
-| **1 — Core profile** | Identity facts: name, pronouns/gender, `bornOn`/age, `livesIn`, `worksAs` (all **singular** — a new value supersedes); plus `languages` and key `relationships` (**multi-valued** — distinct values accrete as separate rows, see `MULTI_VALUED_PREDICATES`) | `user_facts` — the **name is just one such fact**, not a `users` column (`implementation.md` §1) | Rendered into the **persona prompt every turn** — small, always carried (no retrieval) |
-| **2 — Learned beliefs** | Preferences, interests, opinions, habits, goals (`prefers`/`dislikes`/`interestedIn`/`believes`) | `user_facts`, typed, with confidence · salience · provenance · supersession | A **retrieval arm**: hybrid-search the *current* beliefs, inject the top-K relevant ones (`architecture.md` §4.3) |
+| **1 — Core profile** | Identity facts: name, pronouns/gender, `bornOn`/age, `livesIn`, `worksAs` (all **singular** — a new value replaces the old; no decay); plus `languages` and key `relationships` (**multi-valued** — distinct values accrete as separate rows, see `MULTI_VALUED_PREDICATES`) | `user_facts` — the **name is just one such fact**, not a `users` column (`implementation.md` §1) | Rendered into the **persona prompt every turn** — small, always carried (no retrieval) |
+| **2 — Learned beliefs** | Preferences, interests, opinions, habits, goals (`prefers`/`dislikes`/`interestedIn`/`believes`) | `user_facts`, typed, with confidence · salience (decays) · provenance · current-state replace | A **retrieval arm**: hybrid-search the *current* beliefs, inject the top-K relevant ones, rendered by confidence × effective salience (`architecture.md` §4.3) |
 | **3 — User persona** | A synthesized narrative — "who you are to me" | `companions.user_persona` | Blended into the persona prompt beside `evolvedPersona` |
 
 **Shared truth vs. personal understanding (why the scoping differs).** The *facts* (Tiers 1–2) are
@@ -129,20 +129,20 @@ flowchart TB
 
     %% 1. EXTRACT
     RUN -.->|"post-turn perception<br/>(sibling to affect sensing)"| INLINE["① Inline salient capture<br/>explicit, high-signal facts only"]
-    TX -->|"raw window · own cursor · metered"| REFLECT["① Background reflection<br/>(User-Model Reflector):<br/>infer implicit beliefs · dedup ·<br/>reconcile (add/reinforce/supersede) ·<br/>synthesize Tier-3 (P13)"]
+    TX -->|"raw window · own cursor · metered"| REFLECT["① Background reflection<br/>(User-Model Reflector):<br/>infer implicit beliefs · dedup ·<br/>reconcile (add/reinforce/replace) ·<br/>synthesize Tier-3 (P13)"]
 
     %% 0. SEED (at sign-in)
     SEED["Google sign-in<br/>name claim"] -.->|"seed name<br/>(source=auth_seed)"| UF
 
     %% 2. PERSIST
-    INLINE -->|"record facts: supersede singular,<br/>accrete multi-valued (name: source=transcript)"| UF[("② user_facts (per-user)<br/>Tier-1 profile + Tier-2 beliefs")]
+    INLINE -->|"record facts: replace singular,<br/>accrete multi-valued (name: source=transcript)"| UF[("② user_facts (per-user)<br/>Tier-1 profile + Tier-2 beliefs")]
     REFLECT --> UF
     REFLECT -->|"synthesize narrative"| UP[("② companions.user_persona<br/>Tier-3, per-companion")]
 
     %% 3. RETRIEVE + 4. INJECT (next turn)
     UF -->|"Tier-1 core profile only (incl. name)"| PERSONA["④ persona system prompt"]
     UP -->|"beside evolvedPersona"| PERSONA
-    UF -->|"③ embed turn → hybrid-search<br/>current (non-superseded) facts"| ARM["③ user-model arm<br/>top-K beliefs (fenced)"]
+    UF -->|"③ embed turn → hybrid-search<br/>current facts"| ARM["③ user-model arm<br/>top-K beliefs (fenced)"]
     PERSONA --> PROMPT[["assembled prompt → LLM"]]
     ARM --> PROMPT
     PROMPT --> RUN
@@ -161,7 +161,7 @@ The prose below elaborates each.
   high-signal** statements only. In Phase 11 it captured Tier-1 identity ("call me Sam"); **Phase 12
   widens it to explicit Tier-2 beliefs** ("I'm vegetarian", "I love jazz"), so a plainly stated
   preference is usable the very next turn rather than waiting for the next reflection. It writes them
-  immediately (`source=transcript`): a stated name is just the singular `name` attribute superseding
+  immediately (`source=transcript`): a stated name is just the singular `name` attribute replacing
   the `auth_seed` seed — no special path, no `users` column (`architecture.md` §4.5). Semantic dedup
   and reconciliation are **not** its job — the reflector owns them, so inline capture stays a cheap
   insert.
@@ -183,31 +183,37 @@ The prose below elaborates each.
   reflector recovers on its next pass, and re-extraction rebuilds the whole overlay — so no knowledge
   is permanently lost as long as it was said.
 
-**Write discipline (owned by the reflector, so hygiene lives in one place):** a fact is never
-overwritten in place — a revision **supersedes** (insert the new value as current, mark the old
-`superseded_at`/`superseded_by`), so history is kept. Singular attributes (`name`, `livesIn`, …)
-supersede the prior value for the predicate; **multi-valued** ones (`languages`, `relationships` —
-`MULTI_VALUED_PREDICATES`) **accrete**, superseding only an identical `(predicate, object)`
-restatement so distinct values coexist.
+**Write discipline (owned by the reflector, so hygiene lives in one place):** `user_facts` is a
+**current-state overlay**, not a timeline — a revision **replaces** the prior value rather than stacking
+history. Singular attributes (`name`, `livesIn`, …) upsert the value for the predicate; **multi-valued**
+ones (`languages`, `relationships` — `MULTI_VALUED_PREDICATES`) **accrete**, replacing only an identical
+`(predicate, object)` restatement so distinct values coexist. *(Phase 12 kept a superseded chain in this
+table; **Phase 13 drops it** — the timeline lives in episodic memory, `ontology.md` §4.)*
 
-**Beliefs are a *current-state* mirror — last-wins, history retained (not contradiction).** The
-`user_facts` current set holds **what's true now**; the *timeline* of the self lives in episodic
-memory and the superseded chain. So "I loved coffee, then I quit" is **not** a contradiction — both
-are true across time and both are kept: the current row moves to "doesn't drink coffee", the old
-"loves coffee" row stays as dated, superseded history (never deleted). The reflector's reconciliation
-is therefore *current-state maintenance*, not truth-arbitration. Its pipeline, per candidate belief:
-**dedup** (embed it, pull the top-K similar *current* beliefs as bounded context) → one LLM
-reconciliation read returns **`add`** (new matter — coexists), **`reinforce(id)`** (same matter,
-restated — bump salience, no new row), or **`supersede(id)`** (same matter, *newer state* — insert as
-current, mark the cited row superseded). A polarity flip ("love" → "quit") is just the obvious
-`supersede` case. Confidence and an event-driven salience steer retrieval toward what's current. In
-**Phase 13** that salience also **decays lazily**: rather than a sweeper rewriting rows, both read paths
-(the Tier-2 arm and the engine's interest-sourcing) score it through one pure function
-`effectiveSalience = stored × decay(now − updated_at)` with a uniform half-life, so a belief that hasn't
-been reinforced fades out of recall on its own. A belief below the retrieval floor drops out of the arm
-**and** the engine but is **never auto-deleted** — it stays visible and forgettable in the browser. The
-stored salience always reflects the last genuine reinforcement; decay is a *view*, not a write
-(`ontology.md` §4).
+**Beliefs are a *current-state* view — last-wins; the timeline lives in episodic memory.** The
+`user_facts` current set holds **what's true now**; the *timeline* of the self lives in **episodic
+memory** (the lossless transcript + episodes), not here. So "I loved coffee, then I quit" is **not** a
+contradiction — both are true across time and both are recoverable from episodic memory; `user_facts`
+simply moves to "doesn't drink coffee." The reflector's reconciliation is *current-state maintenance*,
+not truth-arbitration. Its pipeline, per candidate belief: **dedup** (embed it, pull the top-K similar
+*current* beliefs as bounded context) → one LLM reconciliation read returns **`add`** (new matter —
+coexists), **`reinforce(id)`** (same matter, restated — bump salience, no new row), or **`replace(id)`**
+(same matter, *newer state* — overwrite the current value). A polarity flip ("love" → "quit") is the
+obvious `replace` case.
+
+**Forgetting is the tail of decay (Phase 13), not a delete.** A Tier-2 belief's salience **decays
+lazily**: rather than a sweeper rewriting rows, both read paths (the Tier-2 arm and the engine's
+interest-sourcing) score it through one pure `effectiveSalience = stored × decay(now − updated_at)` with
+a uniform half-life. As a belief fades it is **rendered more tentatively** — recall speaks a confident,
+reinforced belief as known ("you're vegetarian") and a faint one as a hunch ("I have a vague sense you're
+into jazz — or was it blues?") — and below a `STALE_SALIENCE_FLOOR` it stops surfacing entirely. *That* is
+forgetting: graceful and partial, the way a person forgets, not a binary erase. The stored salience always
+reflects the last genuine reinforcement (a `reinforce` revives a fading belief); decay is a *view*, never
+a write (`ontology.md` §4). **No tombstone:** a belief the user lets fade but keeps mentioning is simply
+**re-learned** by the reflector — self-correction, not a bug. And because faded beliefs are spoken as
+hunches, the companion is **licensed to ask** to confirm ("Remind me — coffee or tea?"); the answer
+reinforces or replaces, closing a conversational self-repair loop. **Tier-1 identity carries no salience
+and so does not decay** — it changes only by the user's hand (below).
 
 **Beliefs are also learned from behaviour, not only words.** Inline capture and reflection learn from
 what the user *says*. The **belief-learning loop** (`architecture.md` §4.5,
@@ -224,16 +230,16 @@ safeguard is **legibility, not gating**: everything it believes about you is **v
 browser (§5) — the one place the otherwise read-only browser gains a write affordance. Tier-1 identity
 facts are **editable and forgettable** today (Phase 11); Tier-2 beliefs are **read-only until Phase
 13** — and that read-only guarantee is **enforced server-side** (the `editFact`/`forgetFact` store
-methods refuse belief predicates), not just by omitting UI controls. **Phase 13** opens read/edit/forget
-across the **whole** model and splits two verbs that look alike but mean opposite things: **supersede**
-(automatic, system-driven) keeps the history chain — the self-timeline ("loved coffee → quit") — while
-**Forget** (the user's explicit button) is a genuine **hard delete** of the entire matter chain, current
-*and* superseded (the right-to-be-forgotten promise; the Phase-11 Tier-1 forget moves from
-soft-supersede to this). **Sensitive inferences** (a closed set — gender, age, health, religion,
-sexuality, ethnicity, political leaning) are **gated at write**: a low-confidence *inference* about a
-protected matter is not persisted at all, so the companion never holds a shaky guess; an **explicit
-statement** ("I'm 34") always passes, and any persisted sensitive row is **flagged** so the browser can
-surface it for scrutiny. (A user-facing "don't infer X about me" toggle is deferred.)
+methods refuse belief predicates), not just by omitting UI controls. **Phase 13** opens read/edit/delete
+across the **whole** model. Because Tier-2 beliefs **fade on their own**, the everyday "forgetting" is
+decay (above); the explicit controls are **edit** (replace a value) and **`deleteFact`** (remove a single
+current row — replacing the Phase-11 soft-supersede). Delete is **necessary for Tier-1** (identity does
+not decay, so nothing else removes it) and offered on Tier-2 for immediacy. **Sensitive inferences** (a
+closed set — gender, age, health, religion, sexuality, ethnicity, political leaning) are **gated at
+write**: a low-confidence *inference* about a protected matter is not persisted at all, so the companion
+never holds a shaky guess; an **explicit statement** ("I'm 34") always passes, is **flagged** in the
+browser, and can be **truly purged** — the one place erasure must be complete (optionally forgetting the
+originating transcript turn too). (A user-facing "don't infer X about me" toggle is deferred.)
 
 **Iterating extraction quality:** because extraction is the part most likely to drift, it has its own
 **eval dataset** — `user-extract` (`howto-run-evals.md`): explicit identity attributes scored
@@ -359,8 +365,9 @@ Out of scope for this release (roadmap → [`development-plan.md`](./development
   backed by deletes that cascade through the existing `onDelete: 'cascade'` foreign keys
   (`db/src/schema.ts`). The browser in §5 is deliberately **read-only** for now — **except the User
   Model** (§4), whose **Tier-1 identity facts are already editable/forgettable** (Phase 11) and whose
-  **Tier-2 beliefs become so in Phase 13**, where **Forget** is a true **hard delete** of the matter
-  chain (distinct from system supersession, which keeps history) (`development-plan.md` §4c) — the first
-  write affordance and the template for broader forget controls later.
+  **Tier-2 beliefs gain edit/delete in Phase 13**, where the everyday "forgetting" is **salience decay**
+  and the explicit control is a single-row **`deleteFact`** (sensitive rows truly purged)
+  (`development-plan.md` §4c) — the first write affordance and the template for broader forget controls
+  later.
 - **Full-history transcript paging.** The read path returns the most-recent N messages (§5); paging
   the full lifelong transcript is not built.
