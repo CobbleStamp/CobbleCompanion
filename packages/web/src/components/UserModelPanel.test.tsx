@@ -1,6 +1,6 @@
 /** UserModelPanel: lists the user-model facts and lets the user edit/forget them. */
 
-import type { UserFactDto } from '@cobble/shared';
+import type { UserFactDto, UserFactsDto } from '@cobble/shared';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { forgetUserFact, getUserFacts, updateUserFact } from '../api/client.js';
@@ -27,6 +27,11 @@ function fact(id: string, predicate: string, object: string): UserFactDto {
   };
 }
 
+/** Build a user-model response from its Tier-1 facts and Tier-2 beliefs. */
+function model(facts: readonly UserFactDto[], beliefs: readonly UserFactDto[] = []): UserFactsDto {
+  return { facts, beliefs };
+}
+
 describe('UserModelPanel', () => {
   beforeEach(() => {
     vi.mocked(getUserFacts).mockReset();
@@ -35,10 +40,9 @@ describe('UserModelPanel', () => {
   });
 
   it('renders each fact with a friendly label and value', async () => {
-    vi.mocked(getUserFacts).mockResolvedValue([
-      fact('f1', 'name', 'Sam'),
-      fact('f2', 'livesIn', 'Berlin'),
-    ]);
+    vi.mocked(getUserFacts).mockResolvedValue(
+      model([fact('f1', 'name', 'Sam'), fact('f2', 'livesIn', 'Berlin')]),
+    );
     render(<UserModelPanel />);
     await waitFor(() => expect(screen.getByText('Sam')).toBeTruthy());
     expect(screen.getByText('Name')).toBeTruthy();
@@ -47,13 +51,13 @@ describe('UserModelPanel', () => {
   });
 
   it('shows an empty state when nothing is known yet', async () => {
-    vi.mocked(getUserFacts).mockResolvedValue([]);
+    vi.mocked(getUserFacts).mockResolvedValue(model([]));
     render(<UserModelPanel />);
     await waitFor(() => expect(screen.getByText(/learn about you as you chat/)).toBeTruthy());
   });
 
   it('edits a fact and reflects the authoritative new value', async () => {
-    vi.mocked(getUserFacts).mockResolvedValue([fact('f1', 'name', 'Sam')]);
+    vi.mocked(getUserFacts).mockResolvedValue(model([fact('f1', 'name', 'Sam')]));
     vi.mocked(updateUserFact).mockResolvedValue({
       ...fact('f1', 'name', 'Samuel'),
       source: 'user_edit',
@@ -70,7 +74,7 @@ describe('UserModelPanel', () => {
   });
 
   it('forgets a fact so it leaves the list', async () => {
-    vi.mocked(getUserFacts).mockResolvedValue([fact('f1', 'name', 'Sam')]);
+    vi.mocked(getUserFacts).mockResolvedValue(model([fact('f1', 'name', 'Sam')]));
     vi.mocked(forgetUserFact).mockResolvedValue();
     render(<UserModelPanel />);
     await waitFor(() => expect(screen.getByText('Sam')).toBeTruthy());
@@ -78,6 +82,18 @@ describe('UserModelPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Forget' }));
     await waitFor(() => expect(screen.queryByText('Sam')).toBeNull());
     expect(forgetUserFact).toHaveBeenCalledWith('f1');
+  });
+
+  it('renders Tier-2 beliefs read-only (no edit/forget controls)', async () => {
+    vi.mocked(getUserFacts).mockResolvedValue(
+      model([fact('f1', 'name', 'Sam')], [fact('b1', 'interestedIn', 'jazz')]),
+    );
+    render(<UserModelPanel />);
+    await waitFor(() => expect(screen.getByText('jazz')).toBeTruthy());
+    expect(screen.getByText('Interested in')).toBeTruthy();
+    // The belief has no edit/forget affordance — only the Tier-1 fact does (one each).
+    expect(screen.getAllByRole('button', { name: 'Edit' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Forget' })).toHaveLength(1);
   });
 
   it('surfaces a load error', async () => {

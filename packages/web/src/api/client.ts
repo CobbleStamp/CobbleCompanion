@@ -121,10 +121,12 @@ export async function getCompanionMemory(companionId: string): Promise<MemorySna
   return body.memory;
 }
 
-/** The current facts the companion knows about the user (per-user; Phase 11). */
-export async function getUserFacts(): Promise<readonly UserFactDto[]> {
-  const body = await request<UserFactsDto>('/user/facts');
-  return body.facts;
+/**
+ * The current user-model: the Tier-1 core `facts` (editable) and the Tier-2 learned
+ * `beliefs` (read-only) the companion holds about the user (per-user).
+ */
+export async function getUserFacts(): Promise<UserFactsDto> {
+  return request<UserFactsDto>('/user/facts');
 }
 
 /** Correct a fact the companion holds about the user (authoritative user edit). */

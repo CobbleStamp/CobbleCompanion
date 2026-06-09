@@ -665,11 +665,13 @@ export interface UserFactDto {
 }
 
 /**
- * The current user-model facts, as returned by `GET /user/facts`. Phase 12 adds the
- * read-only Tier-2 learned `beliefs` alongside the Tier-1 `facts`.
+ * The current user-model, as returned by `GET /user/facts`: the Tier-1 core `facts`
+ * (editable/forgettable) and the Tier-2 learned `beliefs` (read-only until Phase 13).
+ * Split so the surface renders and gates them separately.
  */
 export interface UserFactsDto {
   readonly facts: readonly UserFactDto[];
+  readonly beliefs: readonly UserFactDto[];
 }
 
 /** Body for editing a user-fact's value in the browser (`PATCH /user/facts/:id`). */

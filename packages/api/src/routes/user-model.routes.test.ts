@@ -45,6 +45,16 @@ describe('user-model routes', () => {
     expect(facts[0]).toMatchObject({ predicate: 'name', object: 'Sam', source: 'transcript' });
   });
 
+  it('GET /user/facts partitions Tier-1 facts from Tier-2 beliefs (Phase 12)', async () => {
+    await recordName('Sam');
+    await ctx.deps.userModel.recordBelief({ userId, predicate: 'interestedIn', object: 'jazz' });
+    const res = await ctx.app.inject({ method: 'GET', url: '/user/facts', headers: auth });
+    const { facts, beliefs } = res.json();
+    expect(facts.map((f: { predicate: string }) => f.predicate)).toEqual(['name']);
+    expect(beliefs).toHaveLength(1);
+    expect(beliefs[0]).toMatchObject({ predicate: 'interestedIn', object: 'jazz' });
+  });
+
   it('GET /user/facts requires authentication', async () => {
     const res = await ctx.app.inject({ method: 'GET', url: '/user/facts' });
     expect(res.statusCode).toBe(401);

@@ -6,13 +6,18 @@
  * writable — read the profile, edit a fact, or forget it.
  */
 
-import { type UserFactsDto, userFactEditSchema } from '@cobble/shared';
+import { isTier2Predicate, type UserFactsDto, userFactEditSchema } from '@cobble/shared';
 import type { FastifyInstance } from 'fastify';
 import type { AppDeps } from '../app.js';
 import type { RequireAuth } from '../auth-guard.js';
 
 interface FactParams {
   readonly factId: string;
+}
+
+/** A Tier-2 belief (vs a Tier-1 identity attribute); null predicate is never a belief. */
+function isBelief(predicate: string | null): boolean {
+  return predicate !== null && isTier2Predicate(predicate);
 }
 
 export function registerUserModelRoutes(
@@ -22,10 +27,13 @@ export function registerUserModelRoutes(
 ): void {
   const { userModel } = deps;
 
-  // The current user-model facts (Tier-1 core profile; Tier-2 beliefs from Phase 12).
+  // The current user-model: Tier-1 core profile (editable) + Tier-2 learned beliefs
+  // (read-only until Phase 13). One scan, partitioned by tier.
   app.get('/user/facts', { preHandler: requireAuth }, async (request, reply) => {
-    const facts = await userModel.listCurrent(request.userId!);
-    const body: UserFactsDto = { facts };
+    const current = await userModel.listCurrent(request.userId!);
+    const facts = current.filter((fact) => !isBelief(fact.predicate));
+    const beliefs = current.filter((fact) => isBelief(fact.predicate));
+    const body: UserFactsDto = { facts, beliefs };
     return reply.send(body);
   });
 
