@@ -266,7 +266,11 @@ async function main(): Promise<void> {
       store: affectStore,
       model: config.ingestionModel,
       reinforce: (companionId, delta) =>
-        reinforceFromDelta({ rewards, identity, logger: consoleLogger }, companionId, delta),
+        reinforceFromDelta(
+          { rewards, identity, userModel, logger: consoleLogger },
+          companionId,
+          delta,
+        ),
     },
     // Phase 11: read the user's Tier-1 core profile into the persona each turn and
     // capture explicit identity facts they state (cheap ingestion model, billed to
@@ -350,6 +354,8 @@ async function main(): Promise<void> {
     pipeline: ingestionPipeline,
     memory,
     rewards,
+    // Phase 12: curiosity sources its topics from the user's Tier-2 interest beliefs.
+    userModel,
     llm: llmGateway,
     model: config.ingestionModel,
     logger: consoleLogger,

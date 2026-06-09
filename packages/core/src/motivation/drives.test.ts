@@ -23,6 +23,16 @@ describe('computeDrives', () => {
   it('treats a negative count as zero', () => {
     expect(computeDrives({ newLeadCount: -3 }).curiosity).toBe(0);
   });
+
+  it('lifts curiosity with known interest beliefs, leads still primary (Phase 12)', () => {
+    // Beliefs alone add a modest boost (saturating)…
+    expect(computeDrives({ newLeadCount: 0, interestBeliefCount: 0 }).curiosity).toBe(0);
+    expect(computeDrives({ newLeadCount: 0, interestBeliefCount: 3 }).curiosity).toBeCloseTo(0.3);
+    expect(computeDrives({ newLeadCount: 0, interestBeliefCount: 9 }).curiosity).toBeCloseTo(0.3);
+    // …and stack with leads, clamped at 1.
+    expect(computeDrives({ newLeadCount: 1, interestBeliefCount: 3 }).curiosity).toBeCloseTo(0.5);
+    expect(computeDrives({ newLeadCount: 5, interestBeliefCount: 3 }).curiosity).toBe(1);
+  });
 });
 
 describe('resolveWeights', () => {

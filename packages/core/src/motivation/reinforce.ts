@@ -14,13 +14,23 @@
 
 import type { IdentityStore } from '../identity/store.js';
 import type { Logger } from '../logging.js';
+import type { UserModelStore } from '../user-model/store.js';
 import { resolveWeights } from './drives.js';
 import type { ProactiveOutcomeStore } from './reward-store.js';
 import { nudgeDriveWeight } from './weights.js';
 
+/** How strongly a reaction's mood change moves the driving belief's salience. */
+const BELIEF_REWARD_RATE = 0.1;
+
 export interface ReinforceDeps {
   readonly rewards: ProactiveOutcomeStore;
   readonly identity: IdentityStore;
+  /**
+   * The user model (Phase 12). When present, a belief-driven act's reward also adjusts
+   * the originating belief's salience — beliefs refined by how the user reacts to the
+   * companion acting on them. Omitted = drive-weight reinforcement only.
+   */
+  readonly userModel?: UserModelStore;
   readonly logger: Logger;
 }
 
@@ -57,6 +67,26 @@ export async function reinforceFromDelta(
     }
     const next = nudgeDriveWeight(resolveWeights(companion.driveWeights), outcome.drive, delta);
     await deps.identity.updateDriveWeights(companionId, next);
+
+    // Phase 12 belief-learning loop: when this act was driven by a Tier-2 belief, the
+    // same mood change also moves that belief's salience — reinforced if the user
+    // welcomed it, weakened if they didn't. Best-effort; a belief hiccup must not undo
+    // the weight nudge already applied.
+    if (deps.userModel && outcome.drivenByUserFactId) {
+      try {
+        await deps.userModel.adjustBeliefSalience(
+          companion.ownerId,
+          outcome.drivenByUserFactId,
+          BELIEF_REWARD_RATE * delta,
+        );
+      } catch (error) {
+        deps.logger.error('failed to adjust driving belief salience', {
+          operation: 'motivation.reinforceFromDelta.belief',
+          companionId,
+          error,
+        });
+      }
+    }
   } catch (error) {
     deps.logger.error('failed to reinforce from affect delta', {
       operation: 'motivation.reinforceFromDelta',

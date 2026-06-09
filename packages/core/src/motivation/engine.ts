@@ -18,6 +18,7 @@ import type { VitalityStore } from '../quota/vitality-store.js';
 import type { IdentityStore } from '../identity/store.js';
 import type { IngestionTarget } from '../ingestion/runner.js';
 import type { LeadStore } from '../tools/lead-store.js';
+import type { UserModelStore } from '../user-model/store.js';
 import { DEFAULT_KNOBS, decideMove, type Move } from './arbitration.js';
 import { computeDrives, resolveWeights } from './drives.js';
 import type { ProactiveOutcomeStore } from './reward-store.js';
@@ -38,6 +39,12 @@ export interface MotivationEngineDeps {
   readonly memory: MemoryStore;
   /** Reinforcement log — one outcome per initiation, reward filled on reaction. */
   readonly rewards: ProactiveOutcomeStore;
+  /**
+   * The user model (Phase 12). When present, the curiosity drive sources its candidate
+   * topics from the user's current Tier-2 interest beliefs, and a belief-driven burst is
+   * attributed to the belief it served. Omitted = no belief-driven curiosity.
+   */
+  readonly userModel?: UserModelStore;
   /** Voices the report note; billed to energy. */
   readonly llm: LlmGateway;
   /** Cheap model for the report note (reuse the ingestion model). */
@@ -96,7 +103,13 @@ export class MotivationEngine {
         ? classifyPresence(signal, this.now(), this.thresholds)
         : 'absent_long';
       const newLeads = await leads.listByStatus(companionId, ['new']);
-      const levels = computeDrives({ newLeadCount: newLeads.length });
+      // Phase 12: the user's current interest beliefs lift curiosity and name the belief
+      // a curiosity burst serves. A cheap DB read (no tokens), like the leads read above.
+      const topInterest = await this.topInterestBelief(companion.ownerId);
+      const levels = computeDrives({
+        newLeadCount: newLeads.length,
+        interestBeliefCount: topInterest.count,
+      });
       const energyRemaining = await energy.getBalance(companionId);
       const weights = resolveWeights(companion.driveWeights);
 
@@ -156,6 +169,11 @@ export class MotivationEngine {
           drive: move.drive,
           weights,
           limit: move.limit,
+          // Attribute a curiosity burst to the interest belief it serves, so the
+          // user's reaction refines that belief's salience (the belief-learning loop).
+          ...(move.drive === 'curiosity' && topInterest.id
+            ? { drivenByUserFactId: topInterest.id }
+            : {}),
         },
       );
       // Spend = the drop in balance across the burst (a wallet only goes down with
@@ -179,6 +197,34 @@ export class MotivationEngine {
     } catch (error) {
       logger.error('motivation tick failed', { companionId, error });
       return IDLE;
+    }
+  }
+
+  /**
+   * The user's strongest current interest belief (`interestedIn`/`prefers`, highest
+   * salience) and how many they hold — the curiosity drive's belief signal (Phase 12).
+   * Best-effort: a store hiccup just yields no belief signal, never breaks the tick.
+   */
+  private async topInterestBelief(
+    ownerId: string,
+  ): Promise<{ readonly id: string | undefined; readonly count: number }> {
+    if (!this.deps.userModel) {
+      return { id: undefined, count: 0 };
+    }
+    try {
+      const beliefs = await this.deps.userModel.listCurrentBeliefs(ownerId);
+      const interests = beliefs.filter(
+        (belief) => belief.predicate === 'interestedIn' || belief.predicate === 'prefers',
+      );
+      const top = [...interests].sort((a, b) => (b.salience ?? 0) - (a.salience ?? 0))[0];
+      return { id: top?.id, count: interests.length };
+    } catch (error) {
+      this.deps.logger.error('failed to read interest beliefs; no belief signal this tick', {
+        operation: 'motivation.topInterestBelief',
+        ownerId,
+        error,
+      });
+      return { id: undefined, count: 0 };
     }
   }
 }
