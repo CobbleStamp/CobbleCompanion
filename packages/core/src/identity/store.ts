@@ -86,6 +86,16 @@ export interface IdentityStore {
    * companionId. Independent of the consolidation/evolution cursors (Phase 12).
    */
   advanceUserFactsThroughSeq(companionId: string, throughSeq: number): Promise<void>;
+  /**
+   * Persist the synthesized Tier-3 user persona and advance its cursor
+   * (`userModelUpdatedThroughSeq`) — a BACKGROUND write from the user-persona
+   * synthesizer, keyed by companionId. Independent of the other cursors (Phase 13).
+   */
+  updateUserPersona(
+    companionId: string,
+    userPersona: string,
+    userModelUpdatedThroughSeq: number,
+  ): Promise<void>;
   /** Set the proactivity dial (Phase 4 tunability). Keyed by companionId. */
   setProactivityDial(companionId: string, dial: ProactivityDial): Promise<void>;
   /** Persist learned drive weights (Phase 4 reinforcement). Keyed by companionId. */
@@ -191,6 +201,17 @@ export class DrizzleIdentityStore implements IdentityStore {
     await this.db
       .update(companions)
       .set({ userFactsThroughSeq: throughSeq })
+      .where(eq(companions.id, companionId));
+  }
+
+  async updateUserPersona(
+    companionId: string,
+    userPersona: string,
+    userModelUpdatedThroughSeq: number,
+  ): Promise<void> {
+    await this.db
+      .update(companions)
+      .set({ userPersona, userModelUpdatedThroughSeq })
       .where(eq(companions.id, companionId));
   }
 

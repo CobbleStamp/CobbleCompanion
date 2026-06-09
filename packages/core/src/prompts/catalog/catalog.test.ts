@@ -39,6 +39,7 @@ describe('personaTemplate.build', () => {
       form: 'a small fox',
       temperament: 'curious',
       evolvedPersona: 'You have grown more playful with them.',
+      userPersona: null,
       userName: null,
       userProfile: [],
     });
@@ -53,6 +54,7 @@ describe('personaTemplate.build', () => {
       form: 'a small fox',
       temperament: 'curious',
       evolvedPersona: '   ',
+      userPersona: null,
       userName: null,
       userProfile: [],
     });
@@ -66,6 +68,7 @@ describe('personaTemplate.build', () => {
       form: 'a small fox',
       temperament: 'curious',
       evolvedPersona: null,
+      userPersona: null,
       userName: 'Ada',
       userProfile: [],
     });
@@ -76,6 +79,7 @@ describe('personaTemplate.build', () => {
       form: 'a small fox',
       temperament: 'curious',
       evolvedPersona: null,
+      userPersona: null,
       userName: null,
       userProfile: [],
     });
@@ -88,6 +92,7 @@ describe('personaTemplate.build', () => {
       form: 'a small fox',
       temperament: 'curious',
       evolvedPersona: null,
+      userPersona: null,
       userName: 'Ada',
       userProfile: [
         { label: 'lives in', value: 'Berlin' },

@@ -21,6 +21,7 @@ import {
   userBeliefsReflectTemplate,
 } from './catalog/user-beliefs.js';
 import { userExtractTemplate } from './catalog/user-extract.js';
+import { userPersonaTemplate } from './catalog/user-persona.js';
 import { versionOf } from './render.js';
 import type { PromptId, PromptTemplate, PromptVersion } from './types.js';
 
@@ -57,6 +58,7 @@ const ENTRIES: readonly PromptEntry[] = [
   toEntry(userExtractTemplate),
   toEntry(userBeliefsReflectTemplate),
   toEntry(userBeliefsReconcileTemplate),
+  toEntry(userPersonaTemplate),
 ];
 
 const REGISTRY: ReadonlyMap<PromptId, PromptEntry> = new Map(

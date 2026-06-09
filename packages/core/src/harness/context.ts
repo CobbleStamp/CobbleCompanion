@@ -123,6 +123,7 @@ export function buildPersona(companion: CompanionDto, profile: readonly UserFact
       form: companion.form,
       temperament: companion.temperament,
       evolvedPersona: companion.evolvedPersona,
+      userPersona: companion.userPersona,
       userName: nameFact?.object ?? null,
       userProfile,
     }),
