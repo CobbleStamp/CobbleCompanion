@@ -156,6 +156,30 @@ describe('createUserModelRetrieveContext', () => {
     expect(content).toContain('quit coffee');
   });
 
+  it('renders a low-certainty belief tentatively (Phase 13 ask-when-unsure)', async () => {
+    // A low-confidence inference → low certainty → rendered as a hunch the companion may
+    // confirm, rather than asserted as known.
+    const faint = await embed('interestedIn', 'opera');
+    await store.recordBelief({
+      userId,
+      predicate: 'interestedIn',
+      object: 'opera',
+      confidence: 0.1,
+      embedding: faint,
+    });
+
+    const { blocks } = await arm(fixedGateway(faint))({
+      companionId: 'c1',
+      userContent: 'tell me about opera',
+      ownerId: userId,
+    });
+
+    const content = blocks[0]?.content ?? '';
+    expect(content).toContain('(uncertain');
+    expect(content).toContain('the user is interested in opera');
+    expect(content).toContain('fine to gently confirm');
+  });
+
   it('contributes nothing when the turn has no owner', async () => {
     await seedBelief('interestedIn', 'jazz');
     const { blocks } = await arm()({ companionId: 'c1', userContent: 'jazz' });

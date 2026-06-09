@@ -19,6 +19,7 @@ import type { IdentityStore } from '../identity/store.js';
 import type { IngestionTarget } from '../ingestion/runner.js';
 import type { LeadStore } from '../tools/lead-store.js';
 import type { UserModelStore } from '../user-model/store.js';
+import { effectiveSalience, isStale } from '../user-model/decay.js';
 import { DEFAULT_KNOBS, decideMove, type Move } from './arbitration.js';
 import { computeDrives, resolveWeights } from './drives.js';
 import type { ProactiveOutcomeStore } from './reward-store.js';
@@ -213,11 +214,19 @@ export class MotivationEngine {
     }
     try {
       const beliefs = await this.deps.userModel.listCurrentBeliefs(ownerId);
-      const interests = beliefs.filter(
-        (belief) => belief.predicate === 'interestedIn' || belief.predicate === 'prefers',
-      );
-      const top = [...interests].sort((a, b) => (b.salience ?? 0) - (a.salience ?? 0))[0];
-      return { id: top?.id, count: interests.length };
+      // Lazy decay (Phase 13): rank by *effective* (decayed) salience and drop beliefs that
+      // have faded below the stale floor, so a once-hot interest the user has gone quiet on
+      // stops driving bursts (companion-memory.md §4, user-model/decay.ts).
+      const now = new Date();
+      const interests = beliefs
+        .filter((belief) => belief.predicate === 'interestedIn' || belief.predicate === 'prefers')
+        .map((belief) => ({
+          belief,
+          effective: effectiveSalience(belief.salience, new Date(belief.updatedAt), now),
+        }))
+        .filter(({ effective }) => !isStale(effective));
+      const top = [...interests].sort((a, b) => b.effective - a.effective)[0];
+      return { id: top?.belief.id, count: interests.length };
     } catch (error) {
       this.deps.logger.error('failed to read interest beliefs; no belief signal this tick', {
         operation: 'motivation.topInterestBelief',

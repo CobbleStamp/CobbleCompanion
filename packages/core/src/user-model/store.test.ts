@@ -436,7 +436,7 @@ describe('DrizzleUserModelStore', () => {
         object: 'beta topic',
         embedding: basisVector(1),
       });
-      await store.adjustBeliefSalience(userId, near.id, -1); // → 0 (clamped floor)
+      await store.adjustBeliefSalience(userId, near.id, -0.4); // → 0.1 (low, but above the stale floor)
       await store.adjustBeliefSalience(userId, far.id, 1); // → 1 (clamped ceil)
 
       const hits = await store.searchBeliefs(userId, {
@@ -445,6 +445,38 @@ describe('DrizzleUserModelStore', () => {
         topK: 2,
       });
       expect(hits.map((h) => h.belief.id)).toEqual([far.id, near.id]);
+    });
+
+    it('drops a belief whose salience has decayed below the stale floor (Phase 13)', async () => {
+      const fresh = await store.recordBelief({
+        userId,
+        predicate: 'interestedIn',
+        object: 'alpha topic',
+        embedding: basisVector(0),
+      });
+      const stale = await store.recordBelief({
+        userId,
+        predicate: 'interestedIn',
+        object: 'beta topic',
+        embedding: basisVector(1),
+      });
+      // Reinforce `fresh` to full strength, then read ~110 days out (≈3.7 half-lives at 30d):
+      // a 1.0 belief decays to ~0.079 (above the 0.05 floor → survives), while `stale` at the
+      // default 0.5 decays to ~0.039 (below the floor → dropped).
+      await store.adjustBeliefSalience(userId, fresh.id, 1); // → 1.0
+      const future = new Date(Date.now() + 110 * 86_400_000);
+
+      // Both objects share the term "topic", so the FTS arm surfaces both as candidates;
+      // the stale-drop then removes the decayed one (plainto_tsquery ANDs terms, so query
+      // the shared word, not the full phrase).
+      const hits = await store.searchBeliefs(userId, {
+        queryEmbedding: [],
+        queryText: 'topic',
+        topK: 5,
+        now: future,
+      });
+      expect(hits.map((h) => h.belief.id)).toEqual([fresh.id]);
+      expect(hits.map((h) => h.belief.id)).not.toContain(stale.id);
     });
 
     it('replaces a same-matter newer state in place (no history row)', async () => {

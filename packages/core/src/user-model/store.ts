@@ -23,6 +23,7 @@ import {
 import { type Database, userFacts } from '@cobble/db';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { reciprocalRankFusion } from '../memory/rrf.js';
+import { effectiveSalience, isStale } from './decay.js';
 
 /** The privileged entity every user-fact is about (ontology.md §1). */
 const USER_SUBJECT = 'user';
@@ -117,6 +118,12 @@ export interface BeliefSearchParams {
    * The FTS arm self-gates (term match), so the floor applies only to the vector arm.
    */
   readonly maxVectorDistance?: number;
+  /**
+   * "Now", for the lazy salience decay (Phase 13). Injected so tests are deterministic;
+   * production omits it and the store reads the wall clock. A belief whose salience has
+   * decayed below the stale floor is dropped from recall (see `decay.ts`).
+   */
+  readonly now?: Date;
 }
 
 /**
@@ -462,16 +469,21 @@ export class DrizzleUserModelStore implements UserModelStore {
       .where(and(filter, sql`${userFacts.fts} @@ plainto_tsquery('english', ${params.queryText})`))
       .orderBy(sql`ts_rank(${userFacts.fts}, plainto_tsquery('english', ${params.queryText})) DESC`)
       .limit(params.topK);
-    // Salience tilts the fused relevance ranking (a reinforced belief rises, a cut one
-    // sinks) without injecting beliefs no relevance arm surfaced — see the helper's
-    // `weightOf` contract and SALIENCE_RANK_WEIGHT. Beliefs always carry salience
-    // (DEFAULT_BELIEF_SALIENCE on write), but coalesce defensively for a null row.
+    // Lazy time-decay (Phase 13): score each belief's *effective* salience (stored ×
+    // decay(now − updated_at)). A belief that has faded below the stale floor stops
+    // surfacing entirely — dropped from both arms before fusion — while the rest have the
+    // decayed value tilt the fused ranking (a reinforced belief rises, a faded one sinks).
+    const now = params.now ?? new Date();
+    const effective = (row: typeof userFacts.$inferSelect): number =>
+      effectiveSalience(row.salience, row.updatedAt, now);
+    const live = (rows: readonly (typeof userFacts.$inferSelect)[]) =>
+      rows.filter((row) => !isStale(effective(row)));
     return reciprocalRankFusion(
-      [vectorRows, lexicalRows],
+      [live(vectorRows), live(lexicalRows)],
       (row) => row.id,
       params.topK,
       undefined,
-      (row) => 1 + SALIENCE_RANK_WEIGHT * (row.salience ?? DEFAULT_BELIEF_SALIENCE),
+      (row) => 1 + SALIENCE_RANK_WEIGHT * effective(row),
     ).map(({ item, score }) => ({ belief: toUserFactDto(item), score }));
   }
 
