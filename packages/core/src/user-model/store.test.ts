@@ -231,19 +231,25 @@ describe('DrizzleUserModelStore', () => {
       expect(await store.editFact(userId, '00000000-0000-0000-0000-000000000000', 'X')).toBeNull();
     });
 
-    it('refuses a Tier-2 belief (read-only until Phase 13) and leaves it intact', async () => {
+    it('edits a Tier-2 belief in place, re-embedding when given a vector (Phase 13)', async () => {
       const belief = await store.recordBelief({ userId, predicate: 'prefers', object: 'oat milk' });
-      expect(await store.editFact(userId, belief.id, 'soy milk')).toBeNull();
+      const newVec = new Array<number>(EMBEDDING_DIMENSIONS).fill(0);
+      newVec[3] = 1;
+      const edited = await store.editFact(userId, belief.id, 'soy milk', newVec);
+      expect(edited).toMatchObject({ id: belief.id, object: 'soy milk', source: 'user_edit' });
       const beliefs = await store.listCurrentBeliefs(userId);
       expect(beliefs).toHaveLength(1);
-      expect(beliefs[0]).toMatchObject({ id: belief.id, object: 'oat milk' });
+      expect(beliefs[0]).toMatchObject({ id: belief.id, object: 'soy milk' });
+      // The new embedding landed, so the corrected belief stays vector-recallable.
+      const [row] = await db.select().from(userFacts).where(eq(userFacts.id, belief.id));
+      expect(row?.embedding?.[3]).toBe(1);
     });
   });
 
-  describe('forgetFact', () => {
+  describe('deleteFact', () => {
     it('hard-deletes the fact so it does not resurface', async () => {
       const fact = await recordName('Sam');
-      expect(await store.forgetFact(userId, fact.id)).toBe(true);
+      expect(await store.deleteFact(userId, fact.id)).toBe(true);
       expect(await store.listCurrent(userId)).toHaveLength(0);
       // Current-state overlay: the row is deleted outright (no history chain to keep).
       const rows = await db.select().from(userFacts).where(eq(userFacts.id, fact.id));
@@ -253,14 +259,14 @@ describe('DrizzleUserModelStore', () => {
     it('returns false for a fact the user does not own', async () => {
       const other = await identity.ensureUserByEmail('other@example.com');
       const fact = await recordName('Sam');
-      expect(await store.forgetFact(other.id, fact.id)).toBe(false);
+      expect(await store.deleteFact(other.id, fact.id)).toBe(false);
       expect(await store.listCurrent(userId)).toHaveLength(1);
     });
 
-    it('refuses a Tier-2 belief (read-only until Phase 13) and leaves it intact', async () => {
+    it('deletes a Tier-2 belief too — the sensitive purge / explicit forget (Phase 13)', async () => {
       const belief = await store.recordBelief({ userId, predicate: 'prefers', object: 'oat milk' });
-      expect(await store.forgetFact(userId, belief.id)).toBe(false);
-      expect(await store.listCurrentBeliefs(userId)).toHaveLength(1);
+      expect(await store.deleteFact(userId, belief.id)).toBe(true);
+      expect(await store.listCurrentBeliefs(userId)).toHaveLength(0);
     });
   });
 

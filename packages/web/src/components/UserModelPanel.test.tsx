@@ -85,16 +85,40 @@ describe('UserModelPanel', () => {
     expect(forgetUserFact).toHaveBeenCalledWith('f1');
   });
 
-  it('renders Tier-2 beliefs read-only (no edit/forget controls)', async () => {
+  it('renders Tier-2 beliefs as editable/forgettable too (Phase 13)', async () => {
     vi.mocked(getUserFacts).mockResolvedValue(
       model([fact('f1', 'name', 'Sam')], [fact('b1', 'interestedIn', 'jazz')]),
     );
     render(<UserModelPanel />);
     await waitFor(() => expect(screen.getByText('jazz')).toBeTruthy());
     expect(screen.getByText('Interested in')).toBeTruthy();
-    // The belief has no edit/forget affordance — only the Tier-1 fact does (one each).
-    expect(screen.getAllByRole('button', { name: 'Edit' })).toHaveLength(1);
-    expect(screen.getAllByRole('button', { name: 'Forget' })).toHaveLength(1);
+    // Both the Tier-1 fact and the Tier-2 belief now have edit/forget controls (one each → two).
+    expect(screen.getAllByRole('button', { name: 'Edit' })).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: 'Forget' })).toHaveLength(2);
+  });
+
+  it('forgets a belief so it leaves the list', async () => {
+    vi.mocked(getUserFacts).mockResolvedValue(
+      model([fact('f1', 'name', 'Sam')], [fact('b1', 'interestedIn', 'jazz')]),
+    );
+    vi.mocked(forgetUserFact).mockResolvedValue();
+    render(<UserModelPanel />);
+    await waitFor(() => expect(screen.getByText('jazz')).toBeTruthy());
+
+    // The belief's Forget is the second one (after the Tier-1 fact's).
+    fireEvent.click(screen.getAllByRole('button', { name: 'Forget' })[1]!);
+    await waitFor(() => expect(screen.queryByText('jazz')).toBeNull());
+    expect(forgetUserFact).toHaveBeenCalledWith('b1');
+  });
+
+  it('shows the Tier-3 user persona and a sensitive badge', async () => {
+    vi.mocked(getUserFacts).mockResolvedValue(
+      model([{ ...fact('f1', 'bornOn', '1990-05-01'), sensitive: true }]),
+    );
+    render(<UserModelPanel userPersona="They value candour and think out loud with you." />);
+    await waitFor(() => expect(screen.getByText(/How Cobble understands you/)).toBeTruthy());
+    expect(screen.getByText(/think out loud/)).toBeTruthy();
+    expect(screen.getByText('sensitive')).toBeTruthy();
   });
 
   it('surfaces a load error', async () => {

@@ -394,3 +394,17 @@ button:disabled {
   gap: 0.5rem;
   flex-wrap: wrap;
 }
+
+/* Phase 13 — a small badge flagging a sensitive user-model fact (gender/age/health/…). */
+.sensitive-badge {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0 0.4rem;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #8a5a00;
+  background: #fff3d6;
+  border-radius: 0.5rem;
+  vertical-align: middle;
+}

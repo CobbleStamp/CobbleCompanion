@@ -15,7 +15,6 @@
  */
 import {
   isMultiValuedPredicate,
-  isTier2Predicate,
   TIER2_PREDICATES,
   type UserFactDto,
   type UserFactSource,
@@ -157,16 +156,23 @@ export interface UserModelStore {
    */
   seedName(userId: string, name: string): Promise<UserFactDto | null>;
   /**
-   * Apply a user edit to one of their facts: replace its value in place with an
-   * authoritative `user_edit` value. Returns the updated fact, or null if the fact is not
-   * found or not owned by the user.
+   * Apply a user edit to one of their facts/beliefs: replace its value in place with an
+   * authoritative `user_edit` value. For a Tier-2 belief the caller re-embeds the new value
+   * and passes the vector (so it stays vector-recallable); Tier-1 facts carry no embedding.
+   * Returns the updated fact, or null if it is not found or not owned by the user.
    */
-  editFact(userId: string, factId: string, object: string): Promise<UserFactDto | null>;
+  editFact(
+    userId: string,
+    factId: string,
+    object: string,
+    embedding?: readonly number[],
+  ): Promise<UserFactDto | null>;
   /**
-   * Forget a fact — delete the row outright (current-state overlay, no chain to keep).
-   * Returns false if the fact is not a fact owned by the user.
+   * Delete a fact/belief outright — the user's explicit "forget" (and the sensitive purge),
+   * any tier (current-state overlay, no chain to keep). Returns false if it is not a fact
+   * owned by the user.
    */
-  forgetFact(userId: string, factId: string): Promise<boolean>;
+  deleteFact(userId: string, factId: string): Promise<boolean>;
 
   // --- Tier-2 learned beliefs (Phase 12) ---
 
@@ -300,7 +306,12 @@ export class DrizzleUserModelStore implements UserModelStore {
     });
   }
 
-  async editFact(userId: string, factId: string, object: string): Promise<UserFactDto | null> {
+  async editFact(
+    userId: string,
+    factId: string,
+    object: string,
+    embedding?: readonly number[],
+  ): Promise<UserFactDto | null> {
     const trimmed = object.trim();
     if (!trimmed) {
       return null;
@@ -314,16 +325,9 @@ export class DrizzleUserModelStore implements UserModelStore {
       if (!target) {
         return null;
       }
-      // Tier-1 only: editFact rewrites object but not salience/embedding, so it cannot
-      // correctly revise a Tier-2 belief (the value would fall out of vector recall) — and
-      // beliefs gain their own belief-aware edit path in Phase 13 Stage 4 (re-embed). Refuse
-      // here, at the store chokepoint, so the invariant holds for every caller; routes
-      // surface it as a 404.
-      if (target.predicate !== null && isTier2Predicate(target.predicate)) {
-        return null;
-      }
       // Current-state overlay: replace the value IN PLACE (no chain to stack). The edit is
-      // authoritative, so it raises confidence and stamps the `user_edit` origin.
+      // authoritative, so it raises confidence and stamps the `user_edit` origin. For a Tier-2
+      // belief the caller passes a re-embedding of the new value so it stays vector-recallable.
       const [updated] = await tx
         .update(userFacts)
         .set({
@@ -331,6 +335,7 @@ export class DrizzleUserModelStore implements UserModelStore {
           source: 'user_edit',
           confidence: USER_EDIT_CONFIDENCE,
           sensitive: isSensitiveMatter(target.predicate, trimmed),
+          ...(embedding ? { embedding: [...embedding] } : {}),
           updatedAt: new Date(),
         })
         .where(eq(userFacts.id, target.id))
@@ -339,25 +344,19 @@ export class DrizzleUserModelStore implements UserModelStore {
     });
   }
 
-  async forgetFact(userId: string, factId: string): Promise<boolean> {
+  async deleteFact(userId: string, factId: string): Promise<boolean> {
     return this.db.transaction(async (tx) => {
       const [target] = await tx
-        .select({ id: userFacts.id, predicate: userFacts.predicate })
+        .select({ id: userFacts.id })
         .from(userFacts)
         .where(and(eq(userFacts.id, factId), eq(userFacts.userId, userId)))
         .limit(1);
       if (!target) {
         return false;
       }
-      // Tier-1 only: beliefs gain edit/delete in Phase 13 Stage 4 (with a sensitive purge).
-      // Refuse here, at the store chokepoint, so no caller can forget a learned belief; routes
-      // surface it as a 404. (A SQL `NOT IN (tier2)` clause would mis-handle a null predicate,
-      // so guard in code.)
-      if (target.predicate !== null && isTier2Predicate(target.predicate)) {
-        return false;
-      }
-      // Hard delete — the current-state overlay keeps no history (the timeline is episodic
-      // memory's job, ontology.md §4).
+      // Hard delete, any tier — the current-state overlay keeps no history (the timeline is
+      // episodic memory's job, ontology.md §4). This is the user's explicit forget + the
+      // sensitive purge.
       await tx.delete(userFacts).where(eq(userFacts.id, target.id));
       return true;
     });

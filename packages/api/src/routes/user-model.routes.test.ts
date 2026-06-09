@@ -106,31 +106,31 @@ describe('user-model routes', () => {
     expect((await ctx.deps.userModel.listCurrent(userId))[0]?.object).toBe('Sam');
   });
 
-  it('404s editing/forgetting a Tier-2 belief (read-only until Phase 13)', async () => {
-    // Beliefs are read-only via the UI, but the guarantee is enforced server-side —
-    // a direct API call cannot edit or forget a learned belief either.
+  it('edits a Tier-2 belief (re-embedded) and deletes it (Phase 13 — full management)', async () => {
     const belief = await ctx.deps.userModel.recordBelief({
       userId,
       predicate: 'interestedIn',
       object: 'jazz',
     });
+    // Edit: a belief is now correctable via the API; the route re-embeds the new value.
     const patched = await ctx.app.inject({
       method: 'PATCH',
       url: `/user/facts/${belief.id}`,
       headers: auth,
       payload: { object: 'techno' },
     });
-    expect(patched.statusCode).toBe(404);
+    expect(patched.statusCode).toBe(200);
+    expect(await ctx.deps.userModel.listCurrentBeliefs(userId)).toMatchObject([
+      { object: 'techno' },
+    ]);
+    // Delete: the explicit forget / sensitive purge removes the belief outright.
     const deleted = await ctx.app.inject({
       method: 'DELETE',
       url: `/user/facts/${belief.id}`,
       headers: auth,
     });
-    expect(deleted.statusCode).toBe(404);
-    // The belief is untouched by either attempt.
-    const beliefs = await ctx.deps.userModel.listCurrentBeliefs(userId);
-    expect(beliefs).toHaveLength(1);
-    expect(beliefs[0]).toMatchObject({ id: belief.id, object: 'jazz' });
+    expect(deleted.statusCode).toBe(204);
+    expect(await ctx.deps.userModel.listCurrentBeliefs(userId)).toHaveLength(0);
   });
 
   it('404s an unknown fact and 400s an invalid body', async () => {
