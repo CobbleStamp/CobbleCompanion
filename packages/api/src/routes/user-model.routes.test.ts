@@ -106,6 +106,33 @@ describe('user-model routes', () => {
     expect((await ctx.deps.userModel.listCurrent(userId))[0]?.object).toBe('Sam');
   });
 
+  it('404s editing/forgetting a Tier-2 belief (read-only until Phase 13)', async () => {
+    // Beliefs are read-only via the UI, but the guarantee is enforced server-side —
+    // a direct API call cannot edit or forget a learned belief either.
+    const belief = await ctx.deps.userModel.recordBelief({
+      userId,
+      predicate: 'interestedIn',
+      object: 'jazz',
+    });
+    const patched = await ctx.app.inject({
+      method: 'PATCH',
+      url: `/user/facts/${belief.id}`,
+      headers: auth,
+      payload: { object: 'techno' },
+    });
+    expect(patched.statusCode).toBe(404);
+    const deleted = await ctx.app.inject({
+      method: 'DELETE',
+      url: `/user/facts/${belief.id}`,
+      headers: auth,
+    });
+    expect(deleted.statusCode).toBe(404);
+    // The belief is untouched by either attempt.
+    const beliefs = await ctx.deps.userModel.listCurrentBeliefs(userId);
+    expect(beliefs).toHaveLength(1);
+    expect(beliefs[0]).toMatchObject({ id: belief.id, object: 'jazz' });
+  });
+
   it('404s an unknown fact and 400s an invalid body', async () => {
     const unknown = await ctx.app.inject({
       method: 'PATCH',

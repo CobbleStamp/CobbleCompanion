@@ -281,7 +281,7 @@ training set and fits incremental ingestion; GIN on `fts`; btree on `(companion_
 
 The companion's structured understanding of its user — the same typed-fact contract as `facts`
 (`ontology.md`), but the **subject is the privileged user entity**. A separate table because the
-lifecycle differs: identity attributes supersede on revision (most singular; `languages`/`relationships` are multi-valued and accrete), beliefs accrete, all editable and decay.
+lifecycle differs: identity attributes supersede on revision (most singular; `languages`/`relationships` are multi-valued and accrete) and are editable/forgettable today (Phase 11); beliefs accrete and are read-only until Phase 13, when they gain user editing and decay (the `editFact`/`forgetFact` path refuses belief predicates until then).
 **Keyed by `user_id`, not `companion_id`** — facts are objective truths about the *person* (name, age,
 "vegetarian"), so they are shared across any companion the user owns; only the *synthesized
 understanding* of the user (Tier-3 `companions.user_persona`) is per-companion (`development-plan.md`

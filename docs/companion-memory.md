@@ -209,9 +209,12 @@ not just a passing mention.
 
 **Trust & control:** the companion is **fully trusted to write its own memory** — there is **no
 approval queue** for user-facts (that gate is for external side-effects, `architecture.md` §4.4). The
-safeguard is **legibility, not gating**: everything it believes about you is visible, **editable, and
-forgettable** in the memory browser (§5) — the one place the otherwise read-only browser gains a write
-affordance. Sensitive inferences (gender, age, health) are held to a higher confidence bar.
+safeguard is **legibility, not gating**: everything it believes about you is **visible** in the memory
+browser (§5) — the one place the otherwise read-only browser gains a write affordance. Tier-1 identity
+facts are **editable and forgettable** today (Phase 11); Tier-2 beliefs are **read-only until Phase
+13** — and that read-only guarantee is **enforced server-side** (the `editFact`/`forgetFact` store
+methods refuse belief predicates), not just by omitting UI controls. Sensitive inferences (gender, age,
+health) are held to a higher confidence bar.
 
 **Iterating extraction quality:** because extraction is the part most likely to drift, it has its own
 **eval dataset** — `user-extract` (`howto-run-evals.md`): explicit identity attributes scored
@@ -336,7 +339,8 @@ Out of scope for this release (roadmap → [`development-plan.md`](./development
   design: per-item "forget" actions (forget a stretch of the transcript, later a fact or skill)
   backed by deletes that cascade through the existing `onDelete: 'cascade'` foreign keys
   (`db/src/schema.ts`). The browser in §5 is deliberately **read-only** for now — **except the User
-  Model** (§4), whose facts become editable/forgettable in Phase 13 (`development-plan.md` §4c), the
-  first write affordance and the template for broader forget controls later.
+  Model** (§4), whose **Tier-1 identity facts are already editable/forgettable** (Phase 11) and whose
+  **Tier-2 beliefs become so in Phase 13** (`development-plan.md` §4c) — the first write affordance and
+  the template for broader forget controls later.
 - **Full-history transcript paging.** The read path returns the most-recent N messages (§5); paging
   the full lifelong transcript is not built.

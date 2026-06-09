@@ -226,6 +226,14 @@ describe('DrizzleUserModelStore', () => {
     it('returns null for an unknown fact', async () => {
       expect(await store.editFact(userId, '00000000-0000-0000-0000-000000000000', 'X')).toBeNull();
     });
+
+    it('refuses a Tier-2 belief (read-only until Phase 13) and leaves it intact', async () => {
+      const belief = await store.recordBelief({ userId, predicate: 'prefers', object: 'oat milk' });
+      expect(await store.editFact(userId, belief.id, 'soy milk')).toBeNull();
+      const beliefs = await store.listCurrentBeliefs(userId);
+      expect(beliefs).toHaveLength(1);
+      expect(beliefs[0]).toMatchObject({ id: belief.id, object: 'oat milk' });
+    });
   });
 
   describe('forgetFact', () => {
@@ -244,6 +252,12 @@ describe('DrizzleUserModelStore', () => {
       const fact = await recordName('Sam');
       expect(await store.forgetFact(other.id, fact.id)).toBe(false);
       expect(await store.listCurrent(userId)).toHaveLength(1);
+    });
+
+    it('refuses a Tier-2 belief (read-only until Phase 13) and leaves it intact', async () => {
+      const belief = await store.recordBelief({ userId, predicate: 'prefers', object: 'oat milk' });
+      expect(await store.forgetFact(userId, belief.id)).toBe(false);
+      expect(await store.listCurrentBeliefs(userId)).toHaveLength(1);
     });
   });
 

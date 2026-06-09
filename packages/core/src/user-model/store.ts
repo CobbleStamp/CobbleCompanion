@@ -15,6 +15,7 @@
  */
 import {
   isMultiValuedPredicate,
+  isTier2Predicate,
   TIER2_PREDICATES,
   type UserFactDto,
   type UserFactSource,
@@ -321,6 +322,14 @@ export class DrizzleUserModelStore implements UserModelStore {
       if (!target) {
         return null;
       }
+      // Tier-1 only: editFact copies object/predicate but not salience/embedding, so it
+      // cannot correctly revise a Tier-2 belief (the replacement would drop out of vector
+      // recall) — and beliefs are read-only until Phase 13 regardless. Refuse here, at the
+      // store chokepoint, so the invariant holds for every caller; routes surface it as a
+      // 404. A belief edit needs a belief-aware path (re-embed + salience), not this one.
+      if (target.predicate !== null && isTier2Predicate(target.predicate)) {
+        return null;
+      }
       // Supersede the target first so it leaves the `name` partial unique index before
       // the replacement is inserted (one current `name` per user, enforced even within a
       // transaction); `superseded_by` is back-filled after the insert since it
@@ -353,14 +362,33 @@ export class DrizzleUserModelStore implements UserModelStore {
   }
 
   async forgetFact(userId: string, factId: string): Promise<boolean> {
-    const forgotten = await this.db
-      .update(userFacts)
-      .set({ supersededAt: new Date(), updatedAt: new Date() })
-      .where(
-        and(eq(userFacts.id, factId), eq(userFacts.userId, userId), isNull(userFacts.supersededAt)),
-      )
-      .returning({ id: userFacts.id });
-    return forgotten.length > 0;
+    return this.db.transaction(async (tx) => {
+      const [target] = await tx
+        .select({ id: userFacts.id, predicate: userFacts.predicate })
+        .from(userFacts)
+        .where(
+          and(
+            eq(userFacts.id, factId),
+            eq(userFacts.userId, userId),
+            isNull(userFacts.supersededAt),
+          ),
+        )
+        .limit(1);
+      if (!target) {
+        return false;
+      }
+      // Tier-1 only: beliefs are read-only until Phase 13. Refuse here, at the store
+      // chokepoint, so no caller can forget a learned belief; routes surface it as a 404.
+      // (A SQL `NOT IN (tier2)` clause would mis-handle a null predicate, so guard in code.)
+      if (target.predicate !== null && isTier2Predicate(target.predicate)) {
+        return false;
+      }
+      await tx
+        .update(userFacts)
+        .set({ supersededAt: new Date(), updatedAt: new Date() })
+        .where(eq(userFacts.id, target.id));
+      return true;
+    });
   }
 
   // --- Tier-2 learned beliefs (Phase 12) ---
