@@ -325,6 +325,33 @@ describe('DrizzleUserModelStore', () => {
       expect(byText.map((h) => h.belief.object)).toEqual(['Rust programming']);
     });
 
+    it('lets salience tilt recall — a reinforced belief outranks a more-relevant weaker one', async () => {
+      // `near` is the vector-nearest to the query (distance 0); `far` is one rank behind.
+      // With equal salience, relevance wins (see the NN test). Here `far` is reinforced to
+      // max and `near` cut to the floor, so the salience prior lifts `far` above it.
+      const near = await store.recordBelief({
+        userId,
+        predicate: 'interestedIn',
+        object: 'alpha topic',
+        embedding: basisVector(0),
+      });
+      const far = await store.recordBelief({
+        userId,
+        predicate: 'interestedIn',
+        object: 'beta topic',
+        embedding: basisVector(1),
+      });
+      await store.adjustBeliefSalience(userId, near.id, -1); // → 0 (clamped floor)
+      await store.adjustBeliefSalience(userId, far.id, 1); // → 1 (clamped ceil)
+
+      const hits = await store.searchBeliefs(userId, {
+        queryEmbedding: basisVector(0), // nearest is `near`
+        queryText: 'nonsense-token', // no FTS arm — vector relevance only
+        topK: 2,
+      });
+      expect(hits.map((h) => h.belief.id)).toEqual([far.id, near.id]);
+    });
+
     it('supersedes a same-matter newer state, retaining the old as history', async () => {
       const loves = await store.recordBelief({
         userId,

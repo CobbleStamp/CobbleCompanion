@@ -37,6 +37,14 @@ const USER_EDIT_CONFIDENCE = 1;
 const DEFAULT_BELIEF_SALIENCE = 0.5;
 /** Salience bump when an identical belief is restated (idempotent reinforcement). */
 const BELIEF_REINFORCE_STEP = 0.1;
+/**
+ * How strongly `salience` tilts hybrid recall ranking (Phase 12). A belief's fused
+ * relevance score is multiplied by `1 + WEIGHT * salience`, so salience ∈ [0, 1] maps
+ * to a [1, 1 + WEIGHT]× boost. Kept gentle so relevance dominates — salience reorders
+ * comparably-relevant hits and breaks near-ties (a reinforced belief rises, a cut one
+ * sinks) rather than dragging in beliefs no arm found relevant. Tunable.
+ */
+const SALIENCE_RANK_WEIGHT = 0.5;
 /** Beliefs are `attribute` facts in the closed core set (ontology.md §2). */
 const BELIEF_FACT_TYPE = 'attribute';
 
@@ -447,9 +455,17 @@ export class DrizzleUserModelStore implements UserModelStore {
       .where(and(filter, sql`${userFacts.fts} @@ plainto_tsquery('english', ${params.queryText})`))
       .orderBy(sql`ts_rank(${userFacts.fts}, plainto_tsquery('english', ${params.queryText})) DESC`)
       .limit(params.topK);
-    return reciprocalRankFusion([vectorRows, lexicalRows], (row) => row.id, params.topK).map(
-      ({ item, score }) => ({ belief: toUserFactDto(item), score }),
-    );
+    // Salience tilts the fused relevance ranking (a reinforced belief rises, a cut one
+    // sinks) without injecting beliefs no relevance arm surfaced — see the helper's
+    // `weightOf` contract and SALIENCE_RANK_WEIGHT. Beliefs always carry salience
+    // (DEFAULT_BELIEF_SALIENCE on write), but coalesce defensively for a null row.
+    return reciprocalRankFusion(
+      [vectorRows, lexicalRows],
+      (row) => row.id,
+      params.topK,
+      undefined,
+      (row) => 1 + SALIENCE_RANK_WEIGHT * (row.salience ?? DEFAULT_BELIEF_SALIENCE),
+    ).map(({ item, score }) => ({ belief: toUserFactDto(item), score }));
   }
 
   async findSimilarBeliefs(

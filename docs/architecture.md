@@ -281,7 +281,10 @@ flowchart LR
 > self-model. **Tier-2 (learned beliefs)** — `prefers`/`interestedIn`/`believes` user-facts, too many
 > for context — is a **retrieval arm**: it embeds the user's turn and hybrid-searches the *current*
 > (non-superseded) Tier-2 `user_facts` (vector + FTS, RRF — the semantic/episodic pattern), prepending
-> the top-K as a fenced "what I know about you" block. Reads **current rows only**, so it reflects the
+> the top-K as a fenced "what I know about you" block. **Unlike** the semantic/episodic arms (which rank
+> by fused relevance alone), the belief arm then tilts the fused score by `salience` (`1 + 0.5·salience`,
+> `implementation.md` §1) — a gentle prior, so a reinforced belief rises and a cut one sinks among
+> comparably-relevant hits, without dragging in beliefs no arm found relevant. Reads **current rows only**, so it reflects the
 > latest state (the "I quit coffee" supersedes the dated "loves coffee" history — last-wins for *now*,
 > the timeline staying in episodic memory). Composed ahead of the semantic arm so the recency window
 > still appends last; degrades independently (recall never breaks the conversation). The facts

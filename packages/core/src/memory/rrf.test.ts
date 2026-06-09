@@ -70,4 +70,16 @@ describe('reciprocalRankFusion', () => {
     const fused = reciprocalRankFusion([[{ id: 'a' }], [{ id: 'b' }], [{ id: 'c' }]], keyOf, 2);
     expect(fused.map((h) => h.item.id)).toEqual(['a', 'b']);
   });
+
+  it('applies weightOf as a multiplicative prior, re-ranking without injecting items', () => {
+    // `a` is rank 0 (1/61) and `b` rank 1 (1/62) in the same arm — `a` wins on
+    // relevance alone. A 2× weight on `b` (1/62·2 ≈ 0.0323 > 1/61 ≈ 0.0164) flips
+    // the order. The weight only scales items the arm surfaced — it can't add new
+    // ones — so the result set is still {a, b}.
+    const lists = [[{ id: 'a' }, { id: 'b' }]];
+    const weights: Record<string, number> = { a: 1, b: 2 };
+    const fused = reciprocalRankFusion(lists, keyOf, 5, undefined, (i) => weights[i.id] ?? 1);
+    expect(fused.map((h) => h.item.id)).toEqual(['b', 'a']);
+    expect(fused[0]?.score).toBeCloseTo((1 / 62) * 2, 12);
+  });
 });
