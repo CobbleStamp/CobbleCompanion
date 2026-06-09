@@ -1,12 +1,14 @@
-import type {
-  ChatStreamEvent,
-  Citation,
-  CompanionDto,
-  MessageDto,
-  ProposalDto,
-  UserFactDto,
+import {
+  isTier2Predicate,
+  type ChatStreamEvent,
+  type Citation,
+  type CompanionDto,
+  type MessageDto,
+  type ProposalDto,
+  type UserFactDto,
 } from '@cobble/shared';
 import { randomUUID } from 'node:crypto';
+import type { EmbeddingGateway } from '../embedding/gateway.js';
 import type { LlmGateway, LlmMessage, StreamResult } from '../llm/gateway.js';
 import { toolStepSummary } from '../tools/tool.js';
 import { consoleLogger, type Logger } from '../logging.js';
@@ -87,6 +89,14 @@ export interface HarnessUserModel {
   readonly store: UserModelStore;
   /** Cheap model for the one-shot capture read (reuse the ingestion model). */
   readonly model: string;
+  /**
+   * Embeds explicit Tier-2 beliefs at capture so they recall by vector immediately
+   * (Phase 12). Omit → beliefs are stored embedding-less and recall via FTS only until
+   * the reflector back-fills them. All three must be present to embed.
+   */
+  readonly embeddings?: EmbeddingGateway;
+  readonly embeddingModel?: string;
+  readonly embeddingDimensions?: number;
 }
 
 export interface HarnessOptions {
@@ -448,10 +458,12 @@ export class Harness {
   }
 
   /**
-   * Capture the explicit identity facts in this turn and persist them (Phase 11,
-   * companion-memory.md §4). The extractor reads; the store writes (supersede-per-
-   * predicate). Best-effort throughout — a capture hiccup must never disrupt the turn
-   * that carried it (logging.md); the reply has already streamed.
+   * Capture the explicit facts in this turn and persist them (companion-memory.md §4).
+   * The extractor reads; the store writes. Tier-1 identity attributes supersede per
+   * predicate; Tier-2 beliefs (Phase 12) are embedded for hybrid recall and recorded as
+   * beliefs (an identical restatement reinforces, never duplicates). Best-effort
+   * throughout — a capture hiccup must never disrupt the turn that carried it
+   * (logging.md); the reply has already streamed.
    */
   private async captureAndStore(
     userId: string,
@@ -475,7 +487,10 @@ export class Harness {
       if (!candidates || candidates.length === 0) {
         return;
       }
-      for (const candidate of candidates) {
+      const beliefs = candidates.filter((c) => isTier2Predicate(c.predicate));
+      const identity = candidates.filter((c) => !isTier2Predicate(c.predicate));
+
+      for (const candidate of identity) {
         await this.userModel.store.recordTranscriptFact({
           userId,
           predicate: candidate.predicate,
@@ -484,12 +499,63 @@ export class Harness {
           confidence: CAPTURED_FACT_CONFIDENCE,
         });
       }
+
+      // Embed all beliefs in one call (best-effort — a null embedding still recalls via
+      // FTS, so an embedding hiccup degrades rather than dropping the belief).
+      const embeddings = await this.embedBeliefs(companionId, beliefs);
+      for (let i = 0; i < beliefs.length; i++) {
+        const candidate = beliefs[i]!;
+        await this.userModel.store.recordBelief({
+          userId,
+          predicate: candidate.predicate,
+          object: candidate.object,
+          source: 'transcript',
+          learnedByCompanionId: companionId,
+          confidence: CAPTURED_FACT_CONFIDENCE,
+          ...(embeddings?.[i] ? { embedding: embeddings[i]! } : {}),
+        });
+      }
     } catch (error) {
       this.logger.error('failed to capture/store user facts', {
         operation: 'harness.captureUserFacts',
         companionId,
         error,
       });
+    }
+  }
+
+  /**
+   * Embed each belief's text for hybrid recall, returning vectors aligned to `beliefs`
+   * (or null when embedding is unconfigured or fails — beliefs then recall via FTS).
+   * Best-effort: an embedding failure must not drop the captured beliefs.
+   */
+  private async embedBeliefs(
+    companionId: string,
+    beliefs: readonly { predicate: string; object: string }[],
+  ): Promise<readonly (readonly number[] | undefined)[] | null> {
+    const cfg = this.userModel;
+    if (
+      !cfg?.embeddings ||
+      !cfg.embeddingModel ||
+      cfg.embeddingDimensions === undefined ||
+      beliefs.length === 0
+    ) {
+      return null;
+    }
+    try {
+      const { vectors } = await cfg.embeddings.embed({
+        input: beliefs.map((b) => `${b.predicate} ${b.object}`),
+        model: cfg.embeddingModel,
+        dimensions: cfg.embeddingDimensions,
+      });
+      return beliefs.map((_, i) => vectors[i]);
+    } catch (error) {
+      this.logger.error('failed to embed captured beliefs; storing FTS-only', {
+        operation: 'harness.embedBeliefs',
+        companionId,
+        error,
+      });
+      return null;
     }
   }
 

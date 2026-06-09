@@ -5,10 +5,11 @@
  * stated this turn is persisted and shapes the NEXT turn's persona (the DoD).
  */
 
-import { type Database, userFacts } from '@cobble/db';
+import { type Database, EMBEDDING_DIMENSIONS, userFacts } from '@cobble/db';
 import { createTestDatabase } from '@cobble/db/testing';
 import { and, eq, isNull } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { FakeEmbeddingGateway } from '../embedding/fake.js';
 import { FakeLlmGateway, type FakeTurn } from '../llm/fake.js';
 import type { Logger } from '../logging.js';
 import { TranscriptMemoryStore } from '../memory/store.js';
@@ -23,7 +24,7 @@ function reply(text: string): FakeTurn {
   return { chunks: [text] };
 }
 
-/** Script a capture turn reporting one identity fact via report_user_facts. */
+/** Script a capture turn reporting one fact (identity or belief) via report_user_facts. */
 function capture(attribute: string, value: string): FakeTurn {
   return { toolCalls: [{ name: 'report_user_facts', args: { facts: [{ attribute, value }] } }] };
 }
@@ -117,6 +118,49 @@ describe('Harness user-model wiring', () => {
     // The NEXT turn's persona now reflects what was learned.
     await drainTurn(harness.runTurn({ companion, userContent: 'tell me more', ownerId: userId }));
     expect(gateway.calls[2]?.messages[0]?.content).toContain('lives in: Berlin');
+  });
+
+  it('captures an explicit belief as a Tier-2 belief, embedded, not into the persona', async () => {
+    const embeddings = new FakeEmbeddingGateway();
+    const companion = await identity.createCompanion(userId, {
+      name: 'Pebble',
+      form: 'fox',
+      temperament: 'curious',
+    });
+    const gateway = new FakeLlmGateway([
+      reply('Jazz is wonderful!'),
+      capture('interestedIn', 'jazz'),
+      reply('More jazz.'),
+      { toolCalls: [{ name: 'report_user_facts', args: { facts: [] } }] },
+    ]);
+    const harness = new Harness({
+      gateway,
+      memory,
+      model: 'main',
+      userModel: {
+        store: userModel,
+        model: 'cheap',
+        embeddings,
+        embeddingModel: 'embed',
+        embeddingDimensions: EMBEDDING_DIMENSIONS,
+      },
+      logger: silent,
+    });
+
+    await drainTurn(harness.runTurn({ companion, userContent: 'I love jazz', ownerId: userId }));
+    await harness.whenIdle();
+
+    // Recorded as a current Tier-2 belief (not a Tier-1 identity fact), embedded.
+    const beliefs = await userModel.listCurrentBeliefs(userId);
+    expect(beliefs.map((b) => b.object)).toEqual(['jazz']);
+    expect(beliefs[0]?.predicate).toBe('interestedIn');
+    const [row] = await db.select().from(userFacts).where(eq(userFacts.id, beliefs[0]!.id));
+    expect(row?.embedding).not.toBeNull();
+    expect(embeddings.calls).toBe(1);
+
+    // A belief never leaks into the every-turn persona (Tier-1 only).
+    await drainTurn(harness.runTurn({ companion, userContent: 'hello', ownerId: userId }));
+    expect(gateway.calls[2]?.messages[0]?.content).not.toContain('jazz');
   });
 
   it('does not capture or read the profile when no owner is provided', async () => {

@@ -258,8 +258,15 @@ async function main(): Promise<void> {
         reinforceFromDelta({ rewards, identity, logger: consoleLogger }, companionId, delta),
     },
     // Phase 11: read the user's Tier-1 core profile into the persona each turn and
-    // capture explicit identity facts they state (cheap ingestion model, billed to stamina).
-    userModel: { store: userModel, model: config.ingestionModel },
+    // capture explicit identity facts they state (cheap ingestion model, billed to
+    // stamina). Phase 12: also capture explicit Tier-2 beliefs, embedded for hybrid recall.
+    userModel: {
+      store: userModel,
+      model: config.ingestionModel,
+      embeddings: retrievalEmbeddings,
+      embeddingModel: config.embeddingModel,
+      embeddingDimensions: config.embeddingDimensions,
+    },
     // P3: the tools the model may call, the propose→approve gate (effectful calls
     // are held for approval), and the audit log (every call is logged).
     registry: tools,
