@@ -136,9 +136,9 @@ describe('createUserModelRetrieveContext', () => {
     expect(onTopic.blocks[0]?.content).toContain('the user is interested in jazz');
   });
 
-  it('reflects current state only — a superseded belief never resurfaces', async () => {
+  it('reflects current state only — a replaced belief never resurfaces', async () => {
     const lovesId = await seedBelief('prefers', 'loves coffee');
-    await store.supersedeBelief(userId, lovesId, {
+    await store.replaceBelief(userId, lovesId, {
       userId,
       predicate: 'prefers',
       object: 'quit coffee',
@@ -154,6 +154,30 @@ describe('createUserModelRetrieveContext', () => {
     const content = blocks[0]?.content ?? '';
     expect(content).not.toContain('loves coffee');
     expect(content).toContain('quit coffee');
+  });
+
+  it('renders a low-certainty belief tentatively (Phase 13 ask-when-unsure)', async () => {
+    // A low-confidence inference → low certainty → rendered as a hunch the companion may
+    // confirm, rather than asserted as known.
+    const faint = await embed('interestedIn', 'opera');
+    await store.recordBelief({
+      userId,
+      predicate: 'interestedIn',
+      object: 'opera',
+      confidence: 0.1,
+      embedding: faint,
+    });
+
+    const { blocks } = await arm(fixedGateway(faint))({
+      companionId: 'c1',
+      userContent: 'tell me about opera',
+      ownerId: userId,
+    });
+
+    const content = blocks[0]?.content ?? '';
+    expect(content).toContain('(uncertain');
+    expect(content).toContain('the user is interested in opera');
+    expect(content).toContain('fine to gently confirm');
   });
 
   it('contributes nothing when the turn has no owner', async () => {

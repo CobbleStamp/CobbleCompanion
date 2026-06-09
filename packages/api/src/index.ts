@@ -46,6 +46,7 @@ import {
   LlmIngestionAnnouncer,
   LlmPersonalityEvolver,
   LlmUserModelReflector,
+  LlmUserPersonaSynthesizer,
   MotivationEngine,
   MotivationRunner,
   OpenRouterEmbeddingGateway,
@@ -324,6 +325,17 @@ async function main(): Promise<void> {
     quota,
     logger: consoleLogger,
   });
+  // Phase 13: the Tier-3 user-persona synthesizer — mirror of the Personality Evolver,
+  // pointed at the user. Fired after the reflector on its own cursor; self-gating + metered.
+  const userPersonaSynthesizer = new LlmUserPersonaSynthesizer({
+    identity,
+    episodic,
+    store: userModel,
+    llm: llmGateway,
+    model: config.ingestionModel,
+    quota,
+    logger: consoleLogger,
+  });
   const consolidationService = new ConsolidationService({
     episodic,
     memory,
@@ -337,6 +349,7 @@ async function main(): Promise<void> {
     logger: consoleLogger,
     evolver,
     reflector: userModelReflector,
+    userPersonaSynthesizer,
   });
   const consolidation = new ConsolidationRunner(consolidationService, consoleLogger);
 

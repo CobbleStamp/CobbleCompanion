@@ -4,7 +4,7 @@
  * engine through the app's stores and asserts the three "Done when" criteria:
  *   1. A preference stated in chat is captured and RESURFACES, unprompted, in a later
  *      turn's context (the Tier-2 retrieval arm injects it).
- *   2. A same-matter NEWER STATE supersedes the prior current belief (history retained),
+ *   2. A same-matter NEWER STATE replaces the prior current belief in place (not duplicated),
  *      rather than duplicating it (the reflector's reconciliation).
  *   3. The engine ACTS on a learned interest on its own, and the user's reaction refines
  *      that belief — a welcomed act strengthens it (the belief-learning loop).
@@ -134,7 +134,7 @@ describe('Phase 12 DoD — learned beliefs', () => {
     expect(carried).toBe(true);
   });
 
-  it('supersedes a same-matter newer state, retaining history, not duplicating (DoD 2)', async () => {
+  it('replaces a same-matter newer state in place, not duplicating (DoD 2)', async () => {
     await setup(['ok'], { disableAffect: true });
 
     // The user once loved coffee (embedded — same natural rendering the harness stores
@@ -172,7 +172,7 @@ describe('Phase 12 DoD — learned beliefs', () => {
         toolCalls: [
           {
             name: 'report_reconciliation',
-            args: { decisions: [{ index: 0, op: 'supersede', targetId: loves.id }] },
+            args: { decisions: [{ index: 0, op: 'replace', targetId: loves.id }] },
           },
         ],
       },
@@ -191,7 +191,8 @@ describe('Phase 12 DoD — learned beliefs', () => {
 
     await reflector.reflect(companionId);
 
-    // Current state is the newer one only; the old row is retained as history.
+    // Current-state overlay: the newer state replaces the old in place (no duplicate,
+    // no history row — the timeline lives in episodic memory).
     const current = await ctx.deps.userModel.listCurrentBeliefs(userId);
     expect(current.map((b) => b.object)).toEqual(['quit coffee']);
   });

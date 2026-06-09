@@ -8,6 +8,7 @@ const companion: CompanionDto = {
   form: 'fox',
   temperament: 'curious and gentle',
   evolvedPersona: null,
+  userPersona: null,
   proactivityDial: 'gentle',
   createdAt: new Date(0).toISOString(),
 };
@@ -23,6 +24,7 @@ function userFact(predicate: string, object: string): UserFactDto {
     object,
     confidence: 0.9,
     salience: null,
+    sensitive: false,
     createdAt: new Date(0).toISOString(),
     updatedAt: new Date(0).toISOString(),
   };

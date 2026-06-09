@@ -123,7 +123,7 @@ describe('LlmUserModelReflector', () => {
     expect(row?.learnedFromSeq).toBeGreaterThan(0);
   });
 
-  it('supersedes a same-matter newer state rather than duplicating it', async () => {
+  it('replaces a same-matter newer state in place rather than duplicating it', async () => {
     const loves = await store.recordBelief({
       userId,
       predicate: 'prefers',
@@ -133,15 +133,16 @@ describe('LlmUserModelReflector', () => {
     await seedTurns(6, 'I quit coffee for good');
     const gateway = new FakeLlmGateway([
       extract([{ attribute: 'prefers', value: 'quit coffee' }]),
-      reconcile([{ index: 0, op: 'supersede', targetId: loves.id }]),
+      reconcile([{ index: 0, op: 'replace', targetId: loves.id }]),
     ]);
 
     await reflector(gateway).reflect(companionId);
 
     const current = await store.listCurrentBeliefs(userId);
     expect(current.map((b) => b.object)).toEqual(['quit coffee']);
-    const [old] = await db.select().from(userFacts).where(eq(userFacts.id, loves.id));
-    expect(old?.supersededAt).not.toBeNull();
+    // Current-state overlay: the same row is overwritten in place (no superseded chain).
+    const [row] = await db.select().from(userFacts).where(eq(userFacts.id, loves.id));
+    expect(row?.object).toBe('quit coffee');
   });
 
   it('reinforces an existing belief (salience bump, no new row)', async () => {
@@ -164,11 +165,38 @@ describe('LlmUserModelReflector', () => {
     expect(current[0]?.salience).toBeCloseTo(0.6);
   });
 
+  it('gates a low-confidence sensitive inference — never persisted (Phase 13)', async () => {
+    await seedTurns(6, 'work has been heavy lately');
+    const gateway = new FakeLlmGateway([
+      extract([{ attribute: 'believes', value: 'struggles with depression', confidence: 0.4 }]),
+      reconcile([{ index: 0, op: 'add' }]),
+    ]);
+
+    await reflector(gateway).reflect(companionId);
+
+    // The companion holds no shaky guess about a protected matter.
+    expect(await store.listCurrentBeliefs(userId)).toHaveLength(0);
+  });
+
+  it('persists an explicit (high-confidence) sensitive belief, flagged', async () => {
+    await seedTurns(6, 'I want you to know I am Catholic');
+    const gateway = new FakeLlmGateway([
+      extract([{ attribute: 'believes', value: 'is Catholic', confidence: 0.9 }]),
+      reconcile([{ index: 0, op: 'add' }]),
+    ]);
+
+    await reflector(gateway).reflect(companionId);
+
+    const beliefs = await store.listCurrentBeliefs(userId);
+    expect(beliefs).toHaveLength(1);
+    expect(beliefs[0]?.sensitive).toBe(true);
+  });
+
   it('falls back to a fresh add when a reconcile target is stale', async () => {
     await seedTurns(6, 'I love hiking');
     const gateway = new FakeLlmGateway([
       extract([{ attribute: 'interestedIn', value: 'hiking' }]),
-      reconcile([{ index: 0, op: 'supersede', targetId: 'does-not-exist' }]),
+      reconcile([{ index: 0, op: 'replace', targetId: 'does-not-exist' }]),
     ]);
 
     await reflector(gateway).reflect(companionId);
@@ -194,7 +222,7 @@ describe('LlmUserModelReflector', () => {
       embedding: await embed(beliefPhrase('dislikes', 'mornings'), ''),
     });
     await seedTurns(6, 'tea and early starts');
-    // Candidate 0 (tea) cross-wires its supersede onto B (mornings) — a belief it was
+    // Candidate 0 (tea) cross-wires its replace onto B (mornings) — a belief it was
     // never shown. The union-based check would have honoured it; per-candidate scoping
     // must reject it and fall back to a fresh add.
     const gateway = new FakeLlmGateway([
@@ -203,16 +231,16 @@ describe('LlmUserModelReflector', () => {
         { attribute: 'dislikes', value: 'mornings' },
       ]),
       reconcile([
-        { index: 0, op: 'supersede', targetId: mornings.id },
+        { index: 0, op: 'replace', targetId: mornings.id },
         { index: 1, op: 'reinforce', targetId: mornings.id },
       ]),
     ]);
 
     await reflector(gateway, 1).reflect(companionId);
 
-    // B survives untouched (not superseded by candidate 0's cross-wired target)...
+    // B survives untouched (not overwritten by candidate 0's cross-wired target)...
     const [morningsRow] = await db.select().from(userFacts).where(eq(userFacts.id, mornings.id));
-    expect(morningsRow?.supersededAt).toBeNull();
+    expect(morningsRow?.object).toBe('mornings');
     // ...and candidate 1's in-scope reinforce of B still lands.
     expect(morningsRow?.salience).toBeCloseTo(0.6);
     // Candidate 0's rejected supersede degraded to an add, which idempotently reinforces
@@ -287,14 +315,14 @@ describe('coerceDecisions', () => {
       coerceDecisions({
         decisions: [
           { index: 0, op: 'add' },
-          { index: 1, op: 'supersede', targetId: 'b1' },
+          { index: 1, op: 'replace', targetId: 'b1' },
           { index: 2, op: 'frobnicate' }, // invalid op → dropped
           { op: 'add' }, // no index → dropped
         ],
       }),
     ).toEqual([
       { index: 0, op: 'add' },
-      { index: 1, op: 'supersede', targetId: 'b1' },
+      { index: 1, op: 'replace', targetId: 'b1' },
     ]);
   });
 });

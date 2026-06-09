@@ -27,7 +27,8 @@ export type PromptId =
   | 'tool-search'
   | 'user-extract'
   | 'user-beliefs-reflect'
-  | 'user-beliefs-reconcile';
+  | 'user-beliefs-reconcile'
+  | 'user-persona';
 
 /**
  * A prompt's version: the author-declared `semver` (the human change-intent and

@@ -92,7 +92,7 @@ export function MemoryBrowser({ companion, onBack }: MemoryBrowserProps): JSX.El
             <p className="who">Since {formatDate(snapshot.identity.createdAt)}</p>
           </section>
 
-          <UserModelPanel />
+          <UserModelPanel userPersona={snapshot.identity.userPersona} />
 
           <section className="memory-section">
             <h2>Episodic — conversation</h2>

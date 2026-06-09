@@ -24,6 +24,7 @@ const companion: CompanionDto = {
   form: 'fox',
   temperament: 'curious and warm',
   evolvedPersona: null,
+  userPersona: null,
   proactivityDial: 'gentle',
   createdAt: '2026-01-01T00:00:00.000Z',
 };

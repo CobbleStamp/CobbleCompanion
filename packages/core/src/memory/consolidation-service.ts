@@ -18,6 +18,7 @@ import { createUsageAccumulator, meteredLlmGateway, type UsageSink } from '../us
 import type { VitalityStore } from '../quota/vitality-store.js';
 import type { PersonalityEvolver } from '../personality/evolve.js';
 import type { UserModelReflector } from '../user-model/reflector.js';
+import type { UserPersonaSynthesizer } from '../user-model/synthesize.js';
 import { consolidateWindow, type ConsolidationCandidate } from './consolidation.js';
 import type { ConsolidationTarget } from './consolidation-runner.js';
 import type { EpisodicMemoryStore, NewEpisode } from './episodic-store.js';
@@ -48,6 +49,12 @@ export interface ConsolidationServiceOptions {
    * itself; self-meters + never throws. Omitted = consolidation without belief learning.
    */
   readonly reflector?: UserModelReflector;
+  /**
+   * Re-synthesizes the Tier-3 user persona after the reflector runs (Phase 13). Fired each
+   * pass on its OWN cursor (re-derives only when beliefs/episodes advanced); self-gates +
+   * meters + never throws. Omitted = consolidation without the user persona.
+   */
+  readonly userPersonaSynthesizer?: UserPersonaSynthesizer;
   /** Don't reflect until at least this many un-consolidated turns have accrued. */
   readonly minTurns?: number;
   /** Max turns reflected in one run (keeps the prompt + run bounded). */
@@ -80,6 +87,12 @@ export class ConsolidationService implements ConsolidationTarget {
     await this.consolidateEpisodes(companionId);
     if (this.options.reflector) {
       await this.options.reflector.reflect(companionId);
+    }
+    // Tier-3 (Phase 13): re-synthesize the user persona from the now-updated facts +
+    // episodes. Runs on its own cursor (re-derives only when something advanced), after the
+    // reflector so it reads the freshest beliefs. Self-gating, metered, never throws.
+    if (this.options.userPersonaSynthesizer) {
+      await this.options.userPersonaSynthesizer.synthesize(companionId);
     }
   }
 

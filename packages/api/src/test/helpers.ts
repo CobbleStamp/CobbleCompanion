@@ -49,6 +49,7 @@ import {
   LlmIngestionAnnouncer,
   type McpGateway,
   LlmUserModelReflector,
+  LlmUserPersonaSynthesizer,
   MotivationEngine,
   MotivationRunner,
   reinforceFromDelta,
@@ -241,6 +242,16 @@ export async function makeTestApp(
     quota,
     logger: silentLogger,
   });
+  // Phase 13: the Tier-3 user-persona synthesizer, fired after the reflector.
+  const userPersonaSynthesizer = new LlmUserPersonaSynthesizer({
+    identity,
+    episodic,
+    store: userModel,
+    llm: llmGateway,
+    model: config.ingestionModel,
+    quota,
+    logger: silentLogger,
+  });
   const consolidation = new ConsolidationRunner(
     new ConsolidationService({
       episodic,
@@ -254,6 +265,7 @@ export async function makeTestApp(
       quota,
       logger: silentLogger,
       reflector: userModelReflector,
+      userPersonaSynthesizer,
     }),
     silentLogger,
   );

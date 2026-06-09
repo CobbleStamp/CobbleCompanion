@@ -33,12 +33,18 @@ function beliefLabelFor(predicate: string | null): string {
   return BELIEF_LABELS[predicate] ?? predicate;
 }
 
+interface UserModelPanelProps {
+  /** The Tier-3 synthesized "how the companion understands you" (Phase 13), read-only. */
+  readonly userPersona?: string | null;
+}
+
 /**
  * The user-model panel (companion-memory.md §4): the legible, correctable view of
  * what the companion knows about its USER. Per-user (not per-companion) — and the one
- * place the otherwise read-only memory browser becomes writable: edit or forget a fact.
+ * place the otherwise read-only memory browser becomes writable: edit or delete any fact
+ * or belief. The Tier-3 user persona (per-companion) is shown read-only (Phase 13).
  */
-export function UserModelPanel(): JSX.Element {
+export function UserModelPanel({ userPersona }: UserModelPanelProps = {}): JSX.Element {
   const [facts, setFacts] = useState<readonly UserFactDto[] | null>(null);
   const [beliefs, setBeliefs] = useState<readonly UserFactDto[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -55,10 +61,14 @@ export function UserModelPanel(): JSX.Element {
     })();
   }, []);
 
+  // Edit/forget operate on whichever list holds the id (Tier-1 facts or Tier-2 beliefs).
   async function onEdit(factId: string, object: string): Promise<void> {
     try {
       const updated = await updateUserFact(factId, object);
-      setFacts((prev) => (prev ?? []).map((fact) => (fact.id === factId ? updated : fact)));
+      const apply = (list: readonly UserFactDto[]) =>
+        list.map((fact) => (fact.id === factId ? updated : fact));
+      setFacts((prev) => (prev ? apply(prev) : prev));
+      setBeliefs((prev) => apply(prev));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save');
     }
@@ -67,7 +77,9 @@ export function UserModelPanel(): JSX.Element {
   async function onForget(factId: string): Promise<void> {
     try {
       await forgetUserFact(factId);
-      setFacts((prev) => (prev ?? []).filter((fact) => fact.id !== factId));
+      const drop = (list: readonly UserFactDto[]) => list.filter((fact) => fact.id !== factId);
+      setFacts((prev) => (prev ? drop(prev) : prev));
+      setBeliefs((prev) => drop(prev));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to forget');
     }
@@ -80,6 +92,11 @@ export function UserModelPanel(): JSX.Element {
         What Cobble has learned about you — it learns as you talk, and you can edit or forget
         anything.
       </p>
+      {userPersona && userPersona.trim().length > 0 && (
+        <p className="evolved">
+          <strong>How Cobble understands you:</strong> {userPersona}
+        </p>
+      )}
       {error && <p className="error">{error}</p>}
       {facts === null && !error && <p className="who">Loading…</p>}
       {facts && facts.length === 0 && (
@@ -88,7 +105,13 @@ export function UserModelPanel(): JSX.Element {
       {facts && facts.length > 0 && (
         <ul className="memory-list">
           {facts.map((fact) => (
-            <UserFactRow key={fact.id} fact={fact} onEdit={onEdit} onForget={onForget} />
+            <UserFactRow
+              key={fact.id}
+              fact={fact}
+              label={labelFor(fact.predicate)}
+              onEdit={onEdit}
+              onForget={onForget}
+            />
           ))}
         </ul>
       )}
@@ -97,14 +120,18 @@ export function UserModelPanel(): JSX.Element {
         <div className="beliefs">
           <h3>What you seem to like &amp; care about</h3>
           <p className="who">
-            Cobble picks these up as you talk — preferences, interests, opinions.
+            Cobble picks these up as you talk — preferences, interests, opinions. Edit or forget
+            any.
           </p>
           <ul className="memory-list">
             {beliefs.map((belief) => (
-              <li key={belief.id}>
-                <span className="who">{beliefLabelFor(belief.predicate)}</span>
-                <span className="content">{belief.object}</span>
-              </li>
+              <UserFactRow
+                key={belief.id}
+                fact={belief}
+                label={beliefLabelFor(belief.predicate)}
+                onEdit={onEdit}
+                onForget={onForget}
+              />
             ))}
           </ul>
         </div>
@@ -115,12 +142,13 @@ export function UserModelPanel(): JSX.Element {
 
 interface UserFactRowProps {
   readonly fact: UserFactDto;
+  readonly label: string;
   readonly onEdit: (factId: string, object: string) => Promise<void>;
   readonly onForget: (factId: string) => Promise<void>;
 }
 
-/** One fact: its label + value, with inline edit and a forget control. */
-function UserFactRow({ fact, onEdit, onForget }: UserFactRowProps): JSX.Element {
+/** One fact/belief: its label + value, with inline edit and a forget control. */
+function UserFactRow({ fact, label, onEdit, onForget }: UserFactRowProps): JSX.Element {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(fact.object);
   const [busy, setBusy] = useState(false);
@@ -136,13 +164,18 @@ function UserFactRow({ fact, onEdit, onForget }: UserFactRowProps): JSX.Element 
 
   return (
     <li>
-      <span className="who">{labelFor(fact.predicate)}</span>
+      <span className="who">{label}</span>
+      {fact.sensitive && (
+        <span className="sensitive-badge" title="A sensitive detail — you can forget it any time.">
+          sensitive
+        </span>
+      )}
       {editing ? (
         <form onSubmit={(e) => void save(e)}>
           <input
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            aria-label={`Edit ${labelFor(fact.predicate)}`}
+            aria-label={`Edit ${label}`}
           />
           <button type="submit" disabled={busy}>
             Save

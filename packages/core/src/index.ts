@@ -138,6 +138,23 @@ export {
   type UserModelReflector,
   type UserModelReflectorOptions,
 } from './user-model/reflector.js';
+export {
+  LlmUserPersonaSynthesizer,
+  type UserPersonaSynthesizer,
+  type UserPersonaSynthesizerOptions,
+} from './user-model/synthesize.js';
+export {
+  effectiveSalience,
+  isStale,
+  BELIEF_SALIENCE_HALF_LIFE_DAYS,
+  STALE_SALIENCE_FLOOR,
+} from './user-model/decay.js';
+export {
+  isSensitiveMatter,
+  isGatedSensitive,
+  SENSITIVE_MATTERS,
+  SENSITIVE_WRITE_CONFIDENCE,
+} from './user-model/sensitive.js';
 
 // Memory
 export { TranscriptMemoryStore, type MemoryStore, type TranscriptEntry } from './memory/store.js';

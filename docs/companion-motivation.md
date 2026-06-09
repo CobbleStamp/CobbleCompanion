@@ -264,9 +264,14 @@ resolves, the **same `delta`** that nudges the served drive weight **also adjust
 *acted on and the user welcomed* strengthens (rises in retrieval and as a proactive target); one it
 acted on that proved unwelcome weakens (a flat reaction moves nothing). Beliefs are thus learned from two sources — what the user
 **says** (inline capture + the reflector, `companion-memory.md` §4) and how they **react to the
-companion acting on them** (here). This salience move is **event-driven** (a discrete reaction);
-passive **time-decay** of belief salience is Phase 13. *(Probing tangential topics to discover *new*
-interests is deferred — Phase 12 exploits and refines known beliefs.)*
+companion acting on them** (here). This salience move is **event-driven** (a discrete reaction). In
+**Phase 13** passive **time-decay** rides on top, **lazily**: when this drive sources its candidate
+interest (`topInterestBelief`), it ranks beliefs by *effective* salience — the stored value decayed by
+`decay(now − updated_at)` (a uniform half-life, `implementation.md` §1) — so a once-hot interest the
+user has gone quiet on fades as a proactive target without any sweeper touching the row, and one below
+the stale floor stops driving bursts entirely. A reinforcement still bumps the *stored* value, so acting
+on a belief the user welcomes revives it. *(Probing tangential topics to discover *new* interests is
+deferred — Phase 12 exploits and refines known beliefs.)*
 
 **Seam — body senses, will learns.** Perception lives in the agent loop (the body); the weight update
 lives in the motivation layer (the will). The two stay separated; one affect signal connects them.
@@ -338,7 +343,9 @@ tokens. The companion is content to rest.
 9. **Belief-learning loop (Phase 12)** — the curiosity drive sources its targets from the user's
    Tier-2 beliefs, and the same drive-serving reward that nudges a drive weight **also adjusts the
    originating belief's salience** (§7). The will both *consumes* beliefs (what to do) and *refines*
-   them (whether the hunch was right). Event-driven only; passive time-decay of salience is Phase 13.
+   them (whether the hunch was right). The reinforcement is event-driven; **Phase 13** adds **lazy
+   time-decay** so `topInterestBelief` ranks by *effective* (decayed) salience and a stale interest
+   stops driving bursts (§7, `implementation.md` §1).
 
 ### Beyond the PoC
 

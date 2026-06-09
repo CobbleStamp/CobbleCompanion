@@ -6,23 +6,24 @@
  * Keyed by `user_id` (per-user; facts are objective truths shared across a user's
  * companions).
  *
- * Facts are revised by **superseding**, never overwriting: a new value is inserted as
- * current and the prior row is marked `superseded_at`/`superseded_by`, so history is
- * kept (ontology.md §4). SINGULAR predicates supersede the prior value for the
- * `(user_id, predicate)` (one current value); MULTI-VALUED predicates
- * (`MULTI_VALUED_PREDICATES`: languages, relationships) accrete and supersede only an
- * identical `(predicate, object)` restatement, so distinct values coexist.
+ * `user_facts` is a CURRENT-STATE overlay (Phase 13): it holds what's true *now*; the
+ * timeline of the self lives in episodic memory. A revision therefore **replaces** the
+ * prior value rather than stacking a superseded chain — every row is current (ontology.md
+ * §4). SINGULAR predicates keep one value for the `(user_id, predicate)`; MULTI-VALUED
+ * predicates (`MULTI_VALUED_PREDICATES`: languages, relationships) accrete and replace only
+ * an identical `(predicate, object)` restatement, so distinct values coexist.
  */
 import {
   isMultiValuedPredicate,
-  isTier2Predicate,
   TIER2_PREDICATES,
   type UserFactDto,
   type UserFactSource,
 } from '@cobble/shared';
 import { type Database, userFacts } from '@cobble/db';
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { reciprocalRankFusion } from '../memory/rrf.js';
+import { effectiveSalience, isStale } from './decay.js';
+import { isSensitiveMatter } from './sensitive.js';
 
 /** The privileged entity every user-fact is about (ontology.md §1). */
 const USER_SUBJECT = 'user';
@@ -58,7 +59,7 @@ function clamp01(value: number): number {
 export interface RecordTranscriptFactInput {
   readonly userId: string;
   /** A Tier-1 identity attribute (`name`, `livesIn`, `languages`, …). Singular predicates
-   *  keep one current value; multi-valued ones accrete (`MULTI_VALUED_PREDICATES`). */
+   *  keep one value; multi-valued ones accrete (`MULTI_VALUED_PREDICATES`). */
   readonly predicate: string;
   readonly object: string;
   /** The companion whose conversation taught this — the recorded provenance (the
@@ -117,54 +118,65 @@ export interface BeliefSearchParams {
    * The FTS arm self-gates (term match), so the floor applies only to the vector arm.
    */
   readonly maxVectorDistance?: number;
+  /**
+   * "Now", for the lazy salience decay (Phase 13). Injected so tests are deterministic;
+   * production omits it and the store reads the wall clock. A belief whose salience has
+   * decayed below the stale floor is dropped from recall (see `decay.ts`).
+   */
+  readonly now?: Date;
 }
 
 /**
  * Persistence boundary for the User Model. All reads/writes are scoped by `userId`
- * (tenancy); edit/forget additionally verify the fact belongs to the user.
+ * (tenancy); edit/delete additionally verify the fact belongs to the user.
  *
- * The "one current row per `(userId, predicate)` for singular predicates" invariant is
- * enforced by the supersede-within-transaction writes here PLUS the harness serializing
- * captures per-user (harness.ts `userFactChains`). For `name` specifically — seeded on
- * every authed request from auth-guard.ts, OUTSIDE that serialization — a partial unique
- * index (`user_facts_one_current_name_uniq`) also enforces it at the DB, so parallel
- * first-load seeds cannot double-insert; seedName absorbs the conflict. Other singular
- * predicates rely on serialization alone (sufficient for the single-instance PoC; the
- * affect store makes the same assumption). Multi-valued predicates hold several current
- * rows by design.
+ * The "one row per `(userId, predicate)` for singular predicates" invariant is enforced
+ * by the replace-within-transaction writes here PLUS the harness serializing captures
+ * per-user (harness.ts `userFactChains`). For `name` specifically — seeded on every authed
+ * request from auth-guard.ts, OUTSIDE that serialization — a partial unique index
+ * (`user_facts_one_current_name_uniq`) also enforces it at the DB, so parallel first-load
+ * seeds cannot double-insert; seedName absorbs the conflict. Other singular predicates rely
+ * on serialization alone (sufficient for the single-instance PoC; the affect store makes the
+ * same assumption). Multi-valued predicates hold several rows by design.
  */
 export interface UserModelStore {
-  /** Every current (non-superseded) fact for the user, oldest-first. */
+  /** Every current fact for the user, oldest-first. */
   listCurrent(userId: string): Promise<readonly UserFactDto[]>;
   /**
-   * Record an identity attribute learned in conversation. A singular predicate
-   * supersedes the prior current value for the same `(userId, predicate)`; a
-   * multi-valued one accretes, superseding only an identical `(predicate, object)`
-   * restatement. Returns the new fact.
+   * Record an identity attribute learned in conversation. A singular predicate replaces
+   * the prior value for the same `(userId, predicate)`; a multi-valued one accretes,
+   * replacing only an identical `(predicate, object)` restatement. Returns the new fact.
    */
   recordTranscriptFact(input: RecordTranscriptFactInput): Promise<UserFactDto>;
   /**
-   * Seed the user's name from the sign-in provider — only if no `name` fact exists
-   * at all (current OR superseded), so a later sign-in can never resurrect the seed
-   * over a name the user has since stated or edited. Returns the seeded fact, or null
-   * when a name already exists (no-op). Called once, when the user is first created.
+   * Seed the user's name from the sign-in provider — only if no `name` fact exists, so a
+   * later sign-in can never resurrect the seed over a name the user has since stated or
+   * edited. Returns the seeded fact, or null when a name already exists (no-op). Called
+   * once, when the user is first created.
    */
   seedName(userId: string, name: string): Promise<UserFactDto | null>;
   /**
-   * Apply a user edit to one of their facts: supersede it and insert an authoritative
-   * `user_edit` replacement with the same predicate. Returns the new fact, or null if
-   * the fact is not found, not owned by the user, or already superseded.
+   * Apply a user edit to one of their facts/beliefs: replace its value in place with an
+   * authoritative `user_edit` value. For a Tier-2 belief the caller re-embeds the new value
+   * and passes the vector (so it stays vector-recallable); Tier-1 facts carry no embedding.
+   * Returns the updated fact, or null if it is not found or not owned by the user.
    */
-  editFact(userId: string, factId: string, object: string): Promise<UserFactDto | null>;
+  editFact(
+    userId: string,
+    factId: string,
+    object: string,
+    embedding?: readonly number[],
+  ): Promise<UserFactDto | null>;
   /**
-   * Forget a fact (supersede with no replacement) so it leaves the current set and
-   * never resurfaces. Returns false if the fact is not a current fact owned by the user.
+   * Delete a fact/belief outright — the user's explicit "forget" (and the sensitive purge),
+   * any tier (current-state overlay, no chain to keep). Returns false if it is not a fact
+   * owned by the user.
    */
-  forgetFact(userId: string, factId: string): Promise<boolean>;
+  deleteFact(userId: string, factId: string): Promise<boolean>;
 
   // --- Tier-2 learned beliefs (Phase 12) ---
 
-  /** Every current (non-superseded) Tier-2 belief for the user, most-recently-touched first. */
+  /** Every current Tier-2 belief for the user, most-recently-touched first. */
   listCurrentBeliefs(userId: string): Promise<readonly UserFactDto[]>;
   /**
    * Persist a Tier-2 belief. An identical current `(predicate, object)` belief is
@@ -190,11 +202,12 @@ export interface UserModelStore {
    */
   adjustBeliefSalience(userId: string, factId: string, delta: number): Promise<UserFactDto | null>;
   /**
-   * Supersede a current belief with a newer-state replacement (the reflector's
-   * `supersede` op — current-state last-wins, the old row retained as history). Returns
-   * the new belief, or null if the old isn't a current fact owned by the user.
+   * Replace a current belief with a newer-state value (the reflector's `replace` op —
+   * current-state last-wins; the prior value is overwritten in place, the timeline staying
+   * in episodic memory). Returns the updated belief, or null if it isn't a current fact
+   * owned by the user.
    */
-  supersedeBelief(
+  replaceBelief(
     userId: string,
     oldFactId: string,
     replacement: RecordBeliefInput,
@@ -209,27 +222,21 @@ export class DrizzleUserModelStore implements UserModelStore {
     const rows = await this.db
       .select()
       .from(userFacts)
-      .where(and(eq(userFacts.userId, userId), isNull(userFacts.supersededAt)))
+      .where(eq(userFacts.userId, userId))
       .orderBy(userFacts.createdAt);
     return rows.map(toUserFactDto);
   }
 
   async recordTranscriptFact(input: RecordTranscriptFactInput): Promise<UserFactDto> {
     return this.db.transaction(async (tx) => {
-      // Supersede the prior current value(s) for this predicate BEFORE inserting the
-      // replacement. A SINGULAR attribute (name, age, …) keeps exactly one current value,
-      // so every current row for the predicate is superseded. A MULTI-VALUED attribute
-      // (languages, relationships) accretes, so only an identical (predicate, object)
-      // restatement is collapsed — distinct values coexist as separate current rows.
-      //
-      // Order matters: the `name` partial unique index (one current `name` per user)
-      // forbids two current rows even transiently, so we cannot insert-then-supersede.
-      // We supersede first (setting only `superseded_at`, so the rows leave the index),
-      // insert the lone current row, then back-fill `superseded_by` — which FK-references
-      // the new row and so must be set after it exists.
-      const superseded = await tx
-        .update(userFacts)
-        .set({ supersededAt: new Date(), updatedAt: new Date() })
+      // Replace the prior value(s) for this predicate by DELETING them before inserting the
+      // new row (current-state overlay — no superseded chain). A SINGULAR attribute (name,
+      // age, …) keeps exactly one value, so every prior row for the predicate is removed. A
+      // MULTI-VALUED attribute (languages, relationships) accretes, so only an identical
+      // (predicate, object) restatement is removed — distinct values coexist. Delete-first
+      // also keeps the `name` partial unique index satisfied (one `name` row per user).
+      await tx
+        .delete(userFacts)
         .where(
           and(
             eq(userFacts.userId, input.userId),
@@ -237,10 +244,8 @@ export class DrizzleUserModelStore implements UserModelStore {
             isMultiValuedPredicate(input.predicate)
               ? eq(userFacts.object, input.object)
               : undefined,
-            isNull(userFacts.supersededAt),
           ),
-        )
-        .returning({ id: userFacts.id });
+        );
       const [created] = await tx
         .insert(userFacts)
         .values({
@@ -252,21 +257,11 @@ export class DrizzleUserModelStore implements UserModelStore {
           predicate: input.predicate,
           object: input.object,
           confidence: input.confidence ?? null,
+          sensitive: isSensitiveMatter(input.predicate, input.object),
         })
         .returning();
       if (!created) {
         throw new Error('failed to record user fact');
-      }
-      if (superseded.length > 0) {
-        await tx
-          .update(userFacts)
-          .set({ supersededBy: created.id })
-          .where(
-            inArray(
-              userFacts.id,
-              superseded.map((row) => row.id),
-            ),
-          );
       }
       return toUserFactDto(created);
     });
@@ -278,8 +273,8 @@ export class DrizzleUserModelStore implements UserModelStore {
       return null;
     }
     return this.db.transaction(async (tx) => {
-      // Resurrection guard: any name fact (current OR superseded) means the user
-      // already has a name (seeded, stated, or edited) — never seed over it.
+      // Resurrection guard: any name fact means the user already has a name (seeded,
+      // stated, or edited) — never seed over it.
       const [existing] = await tx
         .select({ id: userFacts.id })
         .from(userFacts)
@@ -311,7 +306,12 @@ export class DrizzleUserModelStore implements UserModelStore {
     });
   }
 
-  async editFact(userId: string, factId: string, object: string): Promise<UserFactDto | null> {
+  async editFact(
+    userId: string,
+    factId: string,
+    object: string,
+    embedding?: readonly number[],
+  ): Promise<UserFactDto | null> {
     const trimmed = object.trim();
     if (!trimmed) {
       return null;
@@ -320,95 +320,53 @@ export class DrizzleUserModelStore implements UserModelStore {
       const [target] = await tx
         .select()
         .from(userFacts)
-        .where(
-          and(
-            eq(userFacts.id, factId),
-            eq(userFacts.userId, userId),
-            isNull(userFacts.supersededAt),
-          ),
-        )
+        .where(and(eq(userFacts.id, factId), eq(userFacts.userId, userId)))
         .limit(1);
       if (!target) {
         return null;
       }
-      // Tier-1 only: editFact copies object/predicate but not salience/embedding, so it
-      // cannot correctly revise a Tier-2 belief (the replacement would drop out of vector
-      // recall) — and beliefs are read-only until Phase 13 regardless. Refuse here, at the
-      // store chokepoint, so the invariant holds for every caller; routes surface it as a
-      // 404. A belief edit needs a belief-aware path (re-embed + salience), not this one.
-      if (target.predicate !== null && isTier2Predicate(target.predicate)) {
-        return null;
-      }
-      // Supersede the target first so it leaves the `name` partial unique index before
-      // the replacement is inserted (one current `name` per user, enforced even within a
-      // transaction); `superseded_by` is back-filled after the insert since it
-      // FK-references the new row. See recordTranscriptFact for the same ordering.
-      await tx
+      // Current-state overlay: replace the value IN PLACE (no chain to stack). The edit is
+      // authoritative, so it raises confidence and stamps the `user_edit` origin. For a Tier-2
+      // belief the caller passes a re-embedding of the new value so it stays vector-recallable.
+      const [updated] = await tx
         .update(userFacts)
-        .set({ supersededAt: new Date(), updatedAt: new Date() })
-        .where(eq(userFacts.id, target.id));
-      const [created] = await tx
-        .insert(userFacts)
-        .values({
-          userId,
-          source: 'user_edit',
-          factType: target.factType,
-          subject: target.subject,
-          predicate: target.predicate,
+        .set({
           object: trimmed,
+          source: 'user_edit',
           confidence: USER_EDIT_CONFIDENCE,
+          sensitive: isSensitiveMatter(target.predicate, trimmed),
+          ...(embedding ? { embedding: [...embedding] } : {}),
+          updatedAt: new Date(),
         })
+        .where(eq(userFacts.id, target.id))
         .returning();
-      if (!created) {
-        throw new Error('failed to edit user fact');
-      }
-      await tx
-        .update(userFacts)
-        .set({ supersededBy: created.id })
-        .where(eq(userFacts.id, target.id));
-      return toUserFactDto(created);
+      return updated ? toUserFactDto(updated) : null;
     });
   }
 
-  async forgetFact(userId: string, factId: string): Promise<boolean> {
+  async deleteFact(userId: string, factId: string): Promise<boolean> {
     return this.db.transaction(async (tx) => {
       const [target] = await tx
-        .select({ id: userFacts.id, predicate: userFacts.predicate })
+        .select({ id: userFacts.id })
         .from(userFacts)
-        .where(
-          and(
-            eq(userFacts.id, factId),
-            eq(userFacts.userId, userId),
-            isNull(userFacts.supersededAt),
-          ),
-        )
+        .where(and(eq(userFacts.id, factId), eq(userFacts.userId, userId)))
         .limit(1);
       if (!target) {
         return false;
       }
-      // Tier-1 only: beliefs are read-only until Phase 13. Refuse here, at the store
-      // chokepoint, so no caller can forget a learned belief; routes surface it as a 404.
-      // (A SQL `NOT IN (tier2)` clause would mis-handle a null predicate, so guard in code.)
-      if (target.predicate !== null && isTier2Predicate(target.predicate)) {
-        return false;
-      }
-      await tx
-        .update(userFacts)
-        .set({ supersededAt: new Date(), updatedAt: new Date() })
-        .where(eq(userFacts.id, target.id));
+      // Hard delete, any tier — the current-state overlay keeps no history (the timeline is
+      // episodic memory's job, ontology.md §4). This is the user's explicit forget + the
+      // sensitive purge.
+      await tx.delete(userFacts).where(eq(userFacts.id, target.id));
       return true;
     });
   }
 
   // --- Tier-2 learned beliefs (Phase 12) ---
 
-  /** The shared filter: a user's current (non-superseded) Tier-2 belief rows. */
+  /** The shared filter: a user's current Tier-2 belief rows. */
   private currentBeliefFilter(userId: string) {
-    return and(
-      eq(userFacts.userId, userId),
-      isNull(userFacts.supersededAt),
-      inArray(userFacts.predicate, [...TIER2_PREDICATES]),
-    );
+    return and(eq(userFacts.userId, userId), inArray(userFacts.predicate, [...TIER2_PREDICATES]));
   }
 
   async listCurrentBeliefs(userId: string): Promise<readonly UserFactDto[]> {
@@ -433,7 +391,6 @@ export class DrizzleUserModelStore implements UserModelStore {
             eq(userFacts.userId, input.userId),
             eq(userFacts.predicate, input.predicate),
             eq(userFacts.object, input.object),
-            isNull(userFacts.supersededAt),
           ),
         )
         .limit(1);
@@ -472,6 +429,7 @@ export class DrizzleUserModelStore implements UserModelStore {
           confidence: input.confidence ?? null,
           salience: input.salience ?? DEFAULT_BELIEF_SALIENCE,
           embedding: input.embedding ? [...input.embedding] : null,
+          sensitive: isSensitiveMatter(input.predicate, input.object),
         })
         .returning();
       if (!created) {
@@ -514,16 +472,21 @@ export class DrizzleUserModelStore implements UserModelStore {
       .where(and(filter, sql`${userFacts.fts} @@ plainto_tsquery('english', ${params.queryText})`))
       .orderBy(sql`ts_rank(${userFacts.fts}, plainto_tsquery('english', ${params.queryText})) DESC`)
       .limit(params.topK);
-    // Salience tilts the fused relevance ranking (a reinforced belief rises, a cut one
-    // sinks) without injecting beliefs no relevance arm surfaced — see the helper's
-    // `weightOf` contract and SALIENCE_RANK_WEIGHT. Beliefs always carry salience
-    // (DEFAULT_BELIEF_SALIENCE on write), but coalesce defensively for a null row.
+    // Lazy time-decay (Phase 13): score each belief's *effective* salience (stored ×
+    // decay(now − updated_at)). A belief that has faded below the stale floor stops
+    // surfacing entirely — dropped from both arms before fusion — while the rest have the
+    // decayed value tilt the fused ranking (a reinforced belief rises, a faded one sinks).
+    const now = params.now ?? new Date();
+    const effective = (row: typeof userFacts.$inferSelect): number =>
+      effectiveSalience(row.salience, row.updatedAt, now);
+    const live = (rows: readonly (typeof userFacts.$inferSelect)[]) =>
+      rows.filter((row) => !isStale(effective(row)));
     return reciprocalRankFusion(
-      [vectorRows, lexicalRows],
+      [live(vectorRows), live(lexicalRows)],
       (row) => row.id,
       params.topK,
       undefined,
-      (row) => 1 + SALIENCE_RANK_WEIGHT * (row.salience ?? DEFAULT_BELIEF_SALIENCE),
+      (row) => 1 + SALIENCE_RANK_WEIGHT * effective(row),
     ).map(({ item, score }) => ({ belief: toUserFactDto(item), score }));
   }
 
@@ -553,13 +516,7 @@ export class DrizzleUserModelStore implements UserModelStore {
       const [target] = await tx
         .select()
         .from(userFacts)
-        .where(
-          and(
-            eq(userFacts.id, factId),
-            eq(userFacts.userId, userId),
-            isNull(userFacts.supersededAt),
-          ),
-        )
+        .where(and(eq(userFacts.id, factId), eq(userFacts.userId, userId)))
         .limit(1);
       if (!target) {
         return null;
@@ -574,54 +531,39 @@ export class DrizzleUserModelStore implements UserModelStore {
     });
   }
 
-  async supersedeBelief(
+  async replaceBelief(
     userId: string,
     oldFactId: string,
     replacement: RecordBeliefInput,
   ): Promise<UserFactDto | null> {
     return this.db.transaction(async (tx) => {
       const [target] = await tx
-        .select()
+        .select({ id: userFacts.id })
         .from(userFacts)
-        .where(
-          and(
-            eq(userFacts.id, oldFactId),
-            eq(userFacts.userId, userId),
-            isNull(userFacts.supersededAt),
-          ),
-        )
+        .where(and(eq(userFacts.id, oldFactId), eq(userFacts.userId, userId)))
         .limit(1);
       if (!target) {
         return null;
       }
-      await tx
+      // Current-state overlay: the same matter takes a newer state → overwrite the row IN
+      // PLACE (no superseded chain; the timeline lives in episodic memory, ontology.md §4).
+      const [updated] = await tx
         .update(userFacts)
-        .set({ supersededAt: new Date(), updatedAt: new Date() })
-        .where(eq(userFacts.id, oldFactId));
-      const [created] = await tx
-        .insert(userFacts)
-        .values({
-          userId,
+        .set({
           source: replacement.source ?? 'transcript',
           learnedByCompanionId: replacement.learnedByCompanionId ?? null,
           learnedFromSeq: replacement.learnedFromSeq ?? null,
-          factType: BELIEF_FACT_TYPE,
-          subject: USER_SUBJECT,
           predicate: replacement.predicate,
           object: replacement.object,
           confidence: replacement.confidence ?? null,
           salience: replacement.salience ?? DEFAULT_BELIEF_SALIENCE,
           embedding: replacement.embedding ? [...replacement.embedding] : null,
+          sensitive: isSensitiveMatter(replacement.predicate, replacement.object),
+          updatedAt: new Date(),
         })
+        .where(eq(userFacts.id, target.id))
         .returning();
-      if (!created) {
-        throw new Error('failed to supersede belief');
-      }
-      await tx
-        .update(userFacts)
-        .set({ supersededBy: created.id })
-        .where(eq(userFacts.id, oldFactId));
-      return toUserFactDto(created);
+      return updated ? toUserFactDto(updated) : null;
     });
   }
 }
@@ -636,6 +578,7 @@ function toUserFactDto(row: typeof userFacts.$inferSelect): UserFactDto {
     object: row.object,
     confidence: row.confidence,
     salience: row.salience,
+    sensitive: row.sensitive,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

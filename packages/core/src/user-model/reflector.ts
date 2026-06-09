@@ -10,7 +10,7 @@
  * signal for an implicit belief lives in the un-summarized repetition. Pipeline per run:
  * extract candidate beliefs from the window → embed each → fetch its nearest current
  * beliefs (bounded reconciliation context) → one reconciliation read maps each candidate
- * to add / reinforce / supersede → apply through the UserModelStore (write hygiene lives
+ * to add / reinforce / replace → apply through the UserModelStore (write hygiene lives
  * in one place). The transcript is canonical; the belief overlay is rebuildable.
  */
 
@@ -31,6 +31,7 @@ import {
 import type { VitalityStore } from '../quota/vitality-store.js';
 import { createUsageAccumulator, meteredLlmGateway, type UsageSink } from '../usage.js';
 import { beliefPhrase } from './phrasing.js';
+import { isGatedSensitive } from './sensitive.js';
 import type { UserModelStore } from './store.js';
 
 export interface UserModelReflectorOptions {
@@ -72,7 +73,7 @@ interface BeliefCandidate {
   readonly confidence?: number;
 }
 
-type ReconcileOp = 'add' | 'reinforce' | 'supersede';
+type ReconcileOp = 'add' | 'reinforce' | 'replace';
 interface ReconcileDecision {
   readonly index: number;
   readonly op: ReconcileOp;
@@ -211,6 +212,17 @@ export class LlmUserModelReflector implements UserModelReflector {
   ): Promise<void> {
     for (let i = 0; i < candidates.length; i++) {
       const candidate = candidates[i]!;
+      // Sensitive write-gate (Phase 13): a low-confidence INFERENCE about a protected matter
+      // is never persisted — the companion holds no shaky guess about health/religion/etc.
+      // (An explicit statement comes via inline capture at high confidence; this is the
+      // inference path.) Log only the predicate — never the gated value.
+      if (isGatedSensitive(candidate.predicate, candidate.object, candidate.confidence)) {
+        this.options.logger.info('gated a low-confidence sensitive inference (not persisted)', {
+          operation: 'userModel.reflector.sensitiveGate',
+          predicate: candidate.predicate,
+        });
+        continue;
+      }
       const decision = decisions.get(i) ?? { index: i, op: 'add' as const };
       const shown = neighbours[i] ?? [];
       const target =
@@ -226,8 +238,8 @@ export class LlmUserModelReflector implements UserModelReflector {
         if (updated) {
           continue;
         }
-      } else if (decision.op === 'supersede' && target) {
-        const replaced = await this.options.store.supersedeBelief(userId, target, {
+      } else if (decision.op === 'replace' && target) {
+        const replaced = await this.options.store.replaceBelief(userId, target, {
           userId,
           ...this.beliefValues(candidate, companionId, throughSeq, vectors[i]),
         });
@@ -235,7 +247,7 @@ export class LlmUserModelReflector implements UserModelReflector {
           continue;
         }
       }
-      // add, or a reinforce/supersede whose target was stale (returned null).
+      // add, or a reinforce/replace whose target was stale (returned null).
       await this.options.store.recordBelief({
         userId,
         ...this.beliefValues(candidate, companionId, throughSeq, vectors[i]),
@@ -358,7 +370,7 @@ export function coerceDecisions(args: Record<string, unknown>): readonly Reconci
     if (typeof index !== 'number' || !Number.isInteger(index)) {
       continue;
     }
-    if (op !== 'add' && op !== 'reinforce' && op !== 'supersede') {
+    if (op !== 'add' && op !== 'reinforce' && op !== 'replace') {
       continue;
     }
     out.push({

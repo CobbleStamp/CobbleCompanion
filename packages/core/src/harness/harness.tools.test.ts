@@ -33,6 +33,7 @@ const companion: CompanionDto = {
   form: 'fox',
   temperament: 'curious',
   evolvedPersona: null,
+  userPersona: null,
   proactivityDial: 'gentle',
   createdAt: new Date('2026-01-01').toISOString(),
 };

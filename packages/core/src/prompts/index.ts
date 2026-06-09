@@ -60,3 +60,4 @@ export {
   REPORT_RECONCILIATION,
   REPORT_RECONCILIATION_TOOL,
 } from './catalog/user-beliefs.js';
+export { userPersonaTemplate, type UserPersonaInput } from './catalog/user-persona.js';

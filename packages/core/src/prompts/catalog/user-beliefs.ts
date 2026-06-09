@@ -7,7 +7,7 @@
  *    interests, and opinions from the window, including ones no single message states.
  * 2. `user-beliefs-reconcile` (report_reconciliation) — for each inferred belief, given
  *    the similar beliefs already on file, decide: add (new matter), reinforce (same
- *    belief restated), or supersede (same matter, a newer state — current-state last-wins).
+ *    belief restated), or replace (same matter, a newer state — current-state last-wins).
  *
  * Both reads are tool-channel only (no free-text parsing); the reflector (user-model/
  * reflector.ts) renders, reads, and applies the result. The window is untrusted material
@@ -110,7 +110,7 @@ export const REPORT_RECONCILIATION_TOOL: ToolDef = {
   name: REPORT_RECONCILIATION,
   description:
     'For each candidate belief, decide how it relates to the beliefs already on file: add a new ' +
-    'belief, reinforce an existing one, or supersede an existing one with a newer state.',
+    'belief, reinforce an existing one, or replace an existing one with a newer state.',
   parameters: {
     type: 'object',
     properties: {
@@ -122,15 +122,15 @@ export const REPORT_RECONCILIATION_TOOL: ToolDef = {
             index: { type: 'number', description: 'The candidate’s index (as listed).' },
             op: {
               type: 'string',
-              enum: ['add', 'reinforce', 'supersede'],
+              enum: ['add', 'reinforce', 'replace'],
               description:
                 'add = a new matter, no existing belief is the same; reinforce = the SAME belief ' +
-                'you already hold (cite targetId); supersede = the SAME matter but a NEWER STATE ' +
-                'that replaces an old belief (cite the old targetId).',
+                'you already hold (cite targetId); replace = the SAME matter but a NEWER STATE ' +
+                'that overwrites an old belief (cite the old targetId).',
             },
             targetId: {
               type: 'string',
-              description: 'For reinforce/supersede: the id of the existing belief being acted on.',
+              description: 'For reinforce/replace: the id of the existing belief being acted on.',
             },
           },
           required: ['index', 'op'],
@@ -150,9 +150,9 @@ export interface UserBeliefsReconcileInput {
 
 export const userBeliefsReconcileTemplate: PromptTemplate<UserBeliefsReconcileInput> = {
   id: 'user-beliefs-reconcile',
-  semver: '1.0.0',
+  semver: '1.1.0',
   description:
-    'Builds the prompt + report_reconciliation tool that maps each candidate belief to add/reinforce/supersede.',
+    'Builds the prompt + report_reconciliation tool that maps each candidate belief to add/reinforce/replace.',
   sample: {
     candidates:
       'Candidate 0: the user prefers "quit coffee"\n  existing: [b1] the user prefers "loves coffee"',
@@ -164,11 +164,11 @@ export const userBeliefsReconcileTemplate: PromptTemplate<UserBeliefsReconcileIn
         content:
           'You maintain a CURRENT-STATE model of a user. For each candidate belief you are given ' +
           'the similar beliefs already on file. Decide per candidate: "add" if it is a new matter; ' +
-          '"reinforce" (cite targetId) if it is the same belief already held; "supersede" (cite the ' +
-          'old targetId) if it is the SAME matter but a newer state that replaces an older one ' +
-          '("loves coffee" → "quit coffee"). A newer state supersedes — it is not a contradiction; ' +
-          'the old value is kept as history. Report via the report_reconciliation tool; one decision ' +
-          'per candidate index. Always call the tool; never reply with prose.',
+          '"reinforce" (cite targetId) if it is the same belief already held; "replace" (cite the ' +
+          'old targetId) if it is the SAME matter but a newer state that overwrites an older one ' +
+          '("loves coffee" → "quit coffee"). A newer state replaces the old — the model holds only ' +
+          'what is true now (the timeline lives elsewhere). Report via the report_reconciliation tool; ' +
+          'one decision per candidate index. Always call the tool; never reply with prose.',
       },
       {
         role: 'user',
