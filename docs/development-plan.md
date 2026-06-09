@@ -557,7 +557,7 @@ reacts when it does.
   candidate topics from the explicit Tier-2 belief set** instead of scraping episodes; a belief-driven
   burst records the originating belief (`proactive_outcomes.driven_by_user_fact_id`); and the existing
   change-in-mood reward, when the act was belief-driven, **also adjusts that belief's salience** —
-  reinforced when the user appreciated it, weakened when ignored. Beliefs are thus learned from what
+  reinforced when the user appreciated it, weakened when it was unwelcome. Beliefs are thus learned from what
   the user *says* (reflection) **and** from how they *react to the companion acting on them*. *(Active
   probing for unknown interests is deferred.)*
 - **Eval gate:** a **reflector eval** — seed a multi-turn window, run the reflector, judge (LLM-judge)
@@ -569,7 +569,7 @@ reacts when it does.
 **Done when:** a preference the user expressed earlier resurfaces, unprompted and correctly, in a
 later relevant turn; a same-matter newer state supersedes the prior current belief (history retained),
 not duplicated; and the engine **acts on a learned interest on its own, with the user's reaction
-refining that belief** — reinforced when appreciated, weakened when ignored.
+refining that belief** — reinforced when appreciated, weakened when unwelcome.
 
 **Implemented** (this branch): the Tier-2 learned-belief overlay on the existing `user_facts` table
 (`embedding`/`fts` hybrid-recall columns + an event-driven `salience`). **Inline capture** widened
@@ -582,7 +582,7 @@ beliefs as a fenced "what I know about you" block, ahead of the semantic arm. Th
 loop** closes it: the motivation engine's curiosity sources its topics from the user's interest
 beliefs and attributes a burst to the one it served (`proactive_outcomes.driven_by_user_fact_id`); the
 existing change-in-mood reward then also moves that belief's salience — strengthened when welcomed,
-weakened when ignored. Web shows the beliefs read-only in the memory browser. **Gate passed** (offline,
+weakened when unwelcome. Web shows the beliefs read-only in the memory browser. **Gate passed** (offline,
 deterministic — like P3/P5, the differentiator is *mechanical*): the Phase 12 DoD test drives all three
 Done-when criteria through the real app wiring (capture → resurface; reflector supersedes-not-duplicates;
 belief drives a burst → a welcomed reaction raises its salience). The live `user-extract` eval gained

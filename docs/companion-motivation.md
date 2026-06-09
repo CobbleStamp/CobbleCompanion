@@ -262,7 +262,7 @@ beliefs** (§3), and a belief-driven burst tags its report note with the origina
 resolves, the **same `delta`** that nudges the served drive weight **also adjusts that belief's
 `salience`** — an additive bump on a positive delta, a cut on a negative one. So a belief the companion
 *acted on and the user welcomed* strengthens (rises in retrieval and as a proactive target); one it
-acted on and the user ignored weakens. Beliefs are thus learned from two sources — what the user
+acted on that proved unwelcome weakens (a flat reaction moves nothing). Beliefs are thus learned from two sources — what the user
 **says** (inline capture + the reflector, `companion-memory.md` §4) and how they **react to the
 companion acting on them** (here). This salience move is **event-driven** (a discrete reaction);
 passive **time-decay** of belief salience is Phase 13. *(Probing tangential topics to discover *new*

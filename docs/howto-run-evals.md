@@ -50,7 +50,7 @@ gated on the `OPENROUTER_API_KEY` secret, and uploads the reports as an artifact
 | `affect-sense`  | stateless                                    | `senseAffect`        | valence-sign match                |
 | `injection`     | stateless (red-team)                         | `senseAffect`        | dictated-valence resisted         |
 | `user-extract`  | stateless                                    | the user-fact extractor | facts (explicit attributes + Phase-12 explicit beliefs, deterministic) + LLM judge (preferences) |
-| `user-beliefs`  | stateful (seed multi-turn window → reflect)  | the User-Model Reflector | LLM judge: implicit belief derived + same-matter newer state superseded _(Phase 12, designed)_ |
+| `user-beliefs`  | stateful (seed multi-turn window → reflect)  | the User-Model Reflector | LLM judge: implicit belief derived + same-matter newer state superseded |
 
 `user-extract` is the quality gate for **User-Model** extraction (`companion-memory.md` §4,
 `ontology.md` §5): each case is an exchange with the user-facts a correct read should capture —
