@@ -7,8 +7,10 @@ import {
   episodes,
   facts,
   ingestionJobs,
+  proactiveOutcomes,
   sections,
   sources,
+  userFacts,
   users,
 } from './schema.js';
 import { createTestDatabase } from './testing.js';
@@ -340,5 +342,137 @@ describe('episodic memory schema (PGlite + pgvector)', () => {
     expect(await db.select().from(episodes)).toHaveLength(1);
     await db.delete(companions).where(eq(companions.id, companionId));
     expect(await db.select().from(episodes)).toHaveLength(0);
+  });
+});
+
+describe('user-model Tier-2 belief schema (Phase 12, PGlite + pgvector)', () => {
+  let db: Database;
+  let close: () => Promise<void>;
+  let userId: string;
+  let companionId: string;
+
+  /** A unit vector with a single 1 at `hot`, so cosine distance is 0 to itself. */
+  function basisVector(hot: number): number[] {
+    const v: number[] = new Array<number>(EMBEDDING_DIMENSIONS).fill(0);
+    v[hot] = 1;
+    return v;
+  }
+
+  beforeEach(async () => {
+    ({ db, close } = await createTestDatabase());
+    const [user] = await db.insert(users).values({ email: 'beliefs@example.com' }).returning();
+    userId = user!.id;
+    const [companion] = await db
+      .insert(companions)
+      .values({ ownerId: userId, name: 'Pebble', form: 'fox', temperament: 'curious' })
+      .returning();
+    companionId = companion!.id;
+  });
+
+  afterEach(async () => {
+    await close();
+  });
+
+  it('defaults the user-model reflector cursor on a new companion', async () => {
+    const [companion] = await db.select().from(companions).where(eq(companions.id, companionId));
+    expect(companion?.userFactsThroughSeq).toBe(0);
+  });
+
+  it('stores a Tier-2 belief with salience + embedding and orders by cosine distance', async () => {
+    const [rust] = await db
+      .insert(userFacts)
+      .values({
+        userId,
+        source: 'transcript',
+        factType: 'attribute',
+        subject: 'user',
+        predicate: 'interestedIn',
+        object: 'Rust',
+        confidence: 0.6,
+        salience: 0.5,
+        embedding: basisVector(0),
+      })
+      .returning();
+    await db.insert(userFacts).values({
+      userId,
+      source: 'transcript',
+      factType: 'attribute',
+      subject: 'user',
+      predicate: 'prefers',
+      object: 'oat milk',
+      embedding: basisVector(1),
+    });
+
+    expect(rust?.salience).toBe(0.5);
+
+    const query = basisVector(0);
+    const rows = await db
+      .select({ id: userFacts.id })
+      .from(userFacts)
+      .where(eq(userFacts.userId, userId))
+      .orderBy(sql`${userFacts.embedding} <=> ${JSON.stringify(query)}::vector`)
+      .limit(1);
+
+    expect(rows[0]?.id).toBe(rust!.id);
+  });
+
+  it('matches beliefs by full-text search over the generated subject+predicate+object column', async () => {
+    const [rust] = await db
+      .insert(userFacts)
+      .values({
+        userId,
+        source: 'transcript',
+        factType: 'attribute',
+        subject: 'user',
+        predicate: 'interestedIn',
+        object: 'Rust programming',
+        embedding: basisVector(0),
+      })
+      .returning();
+    await db.insert(userFacts).values({
+      userId,
+      source: 'transcript',
+      factType: 'attribute',
+      subject: 'user',
+      predicate: 'prefers',
+      object: 'oat milk lattes',
+      embedding: basisVector(1),
+    });
+
+    const rows = await db
+      .select({ id: userFacts.id })
+      .from(userFacts)
+      .where(sql`${userFacts.fts} @@ plainto_tsquery('english', ${'Rust'})`);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe(rust!.id);
+  });
+
+  it('links a proactive outcome to the belief that drove it and nulls on belief delete', async () => {
+    const [belief] = await db
+      .insert(userFacts)
+      .values({
+        userId,
+        source: 'transcript',
+        factType: 'attribute',
+        subject: 'user',
+        predicate: 'interestedIn',
+        object: 'Rust',
+        embedding: basisVector(0),
+      })
+      .returning();
+    const [outcome] = await db
+      .insert(proactiveOutcomes)
+      .values({ companionId, drive: 'curiosity', drivenByUserFactId: belief!.id })
+      .returning();
+    expect(outcome?.drivenByUserFactId).toBe(belief!.id);
+
+    // The belief is the user's and outlives the act → the link nulls, the outcome stays.
+    await db.delete(userFacts).where(eq(userFacts.id, belief!.id));
+    const [after] = await db
+      .select()
+      .from(proactiveOutcomes)
+      .where(eq(proactiveOutcomes.id, outcome!.id));
+    expect(after?.drivenByUserFactId).toBeNull();
   });
 });

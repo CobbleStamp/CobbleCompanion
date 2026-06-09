@@ -628,9 +628,28 @@ export function isMultiValuedPredicate(predicate: string): boolean {
 }
 
 /**
+ * The **Tier-2 learned-belief** predicates (Phase 12, companion-memory.md §4) — the
+ * preferences, interests, and opinions the companion learns over time. A **closed** set,
+ * validated at extraction like {@link TIER1_PREDICATES}; **polarity rides the predicate**
+ * (`prefers` vs `dislikes`), so likes/dislikes need no extra column. Unlike Tier-1 these
+ * are not carried in the persona every turn — too many — but surfaced by the Tier-2
+ * retrieval arm (architecture.md §4.3). Single source of truth for the extractor (the
+ * `report_user_facts` enum), the reflector, and the belief retrieval/render filters.
+ */
+export const TIER2_PREDICATES = ['prefers', 'dislikes', 'interestedIn', 'believes'] as const;
+export type Tier2Predicate = (typeof TIER2_PREDICATES)[number];
+
+/** Whether a predicate is a Tier-2 learned belief (vs a Tier-1 identity attribute). */
+export function isTier2Predicate(predicate: string): boolean {
+  return (TIER2_PREDICATES as readonly string[]).includes(predicate);
+}
+
+/**
  * A fact the companion knows about its user, as shown in the memory browser's
  * user-model panel. The surface shape — the per-user tenancy and transcript
- * provenance internals stay server-side (implementation.md §1).
+ * provenance internals stay server-side (implementation.md §1). The same shape carries
+ * both a Tier-1 identity attribute and a Tier-2 learned belief; `salience` is the
+ * belief's strength weight (null on Tier-1 rows — Phase 12).
  */
 export interface UserFactDto {
   readonly id: string;
@@ -640,11 +659,15 @@ export interface UserFactDto {
   readonly predicate: string | null;
   readonly object: string;
   readonly confidence: number | null;
+  readonly salience: number | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
 
-/** The current user-model facts, as returned by `GET /user/facts`. */
+/**
+ * The current user-model facts, as returned by `GET /user/facts`. Phase 12 adds the
+ * read-only Tier-2 learned `beliefs` alongside the Tier-1 `facts`.
+ */
 export interface UserFactsDto {
   readonly facts: readonly UserFactDto[];
 }

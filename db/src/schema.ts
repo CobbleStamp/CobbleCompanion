@@ -114,6 +114,10 @@ export const companions = pgTable(
     consolidatedThroughSeq: bigint('consolidated_through_seq', { mode: 'number' })
       .notNull()
       .default(0),
+    // Phase 12 — User-Model Reflector cursor: the highest transcript `seq` Tier-2 belief
+    // extraction has processed. Independent of `consolidated_through_seq` so a failed
+    // reflection never advances past an unprocessed window (mirrors the evolution cursor).
+    userFactsThroughSeq: bigint('user_facts_through_seq', { mode: 'number' }).notNull().default(0),
     // Phase 4 — proactivity. The user-facing intensity dial (off/gentle/active):
     // scales how readily the motivation engine initiates and how much energy it
     // spends; `off` never initiates (companion-motivation.md §5).
@@ -373,8 +377,11 @@ export const facts = pgTable(
  * identity attribute is revised by superseding (`superseded_at` set, `superseded_by`
  * pointing at the replacement), never overwritten, so history is kept (ontology.md §4).
  *
- * Phase 11 stores the core profile only; the Tier-2 retrieval columns (`embedding`,
- * `fts`, `salience`) + their HNSW/GIN indexes land in Phase 12 (implementation.md §1).
+ * Phase 12 adds the Tier-2 learned-belief overlay in the same table: the
+ * `embedding`/`fts` hybrid-retrieval columns (mirroring `sections`/`episodes`) so the
+ * Tier-2 arm can recall the top-K relevant *current* beliefs per turn, and `salience`,
+ * an event-driven strength weight (bumped on a reflector `reinforce` and on the
+ * belief-learning loop's reward; passive time-decay is Phase 13 — implementation.md §1).
  */
 export const userFacts = pgTable(
   'user_facts',
@@ -389,10 +396,10 @@ export const userFacts = pgTable(
     learnedByCompanionId: uuid('learned_by_companion_id').references(() => companions.id, {
       onDelete: 'set null',
     }),
-    // Reserved provenance: the transcript `seq` a fact was learned from. The inline
-    // capture path does NOT populate it (it reads MessageDto, which omits `seq`) —
-    // recording the companion link instead; pinning the exact turn is a Phase-12
-    // reflector concern. Nullable; null on every fact today.
+    // Provenance: the transcript `seq` a fact was learned from. The inline capture path
+    // leaves it null (it reads MessageDto, which omits `seq`) — recording the companion
+    // link instead; the Phase-12 reflector reads seq-carrying messages and DOES pin the
+    // turn. Nullable (no FK to the churning episodes; re-extraction rebuilds from transcript).
     learnedFromSeq: bigint('learned_from_seq', { mode: 'number' }),
     factType: text('fact_type').notNull(),
     subject: text('subject').notNull(),
@@ -401,7 +408,19 @@ export const userFacts = pgTable(
     // 0–1, advisory; default tracks source (explicit transcript → high, auth_seed →
     // modest, user_edit → authoritative). Steers ranking/supersession, never storage.
     confidence: real('confidence'),
-    // Null = current; set when a singular attribute is revised or a belief contradicted.
+    // Tier-2 (Phase 12) event-driven strength weight: bumped on a reflector `reinforce`
+    // and on a positive belief-driven proactive reaction, cut on a negative one. Steers
+    // retrieval ranking. Passive time-decay is Phase 13. Null on Tier-1 identity rows.
+    salience: real('salience'),
+    // Tier-2 hybrid recall (Phase 12), mirroring sections/episodes. Nullable until the
+    // writer's embedding pass completes; a null-embedding belief still recalls via `fts`.
+    embedding: vector('embedding', { dimensions: EMBEDDING_DIMENSIONS }),
+    fts: tsvector('fts').generatedAlwaysAs(
+      sql`to_tsvector('english', coalesce(subject, '') || ' ' || coalesce(predicate, '') || ' ' || coalesce(object, ''))`,
+    ),
+    // Null = current; set when a singular attribute is revised, a multi-valued one is
+    // restated identically, or a belief's same matter takes a newer state (current-state
+    // last-wins; the prior row is retained as history — ontology.md §4).
     supersededAt: timestamp('superseded_at', { withTimezone: true }),
     // The fact that replaced this one (null when forgotten with no replacement).
     supersededBy: uuid('superseded_by').references((): AnyPgColumn => userFacts.id),
@@ -411,6 +430,9 @@ export const userFacts = pgTable(
   (table) => [
     // The current-facts scan (superseded_at IS NULL) + supersede-by-predicate lookup.
     index('user_facts_user_current_idx').on(table.userId, table.supersededAt),
+    // Tier-2 hybrid recall over current beliefs (Phase 12).
+    index('user_facts_embedding_hnsw_idx').using('hnsw', table.embedding.op('vector_cosine_ops')),
+    index('user_facts_fts_idx').using('gin', table.fts),
     // Enforce one current `name` per user at the DB level. seedName runs on every
     // authenticated request, outside the harness per-user serialization, so a fresh
     // user's parallel first-load requests can both pass seedName's read-then-insert
@@ -611,6 +633,13 @@ export const proactiveOutcomes = pgTable(
     drive: text('drive').$type<Drive>().notNull(),
     // The companion's drive weights at initiation (attribution/debug).
     driveSnapshot: jsonb('drive_snapshot').$type<DriveWeights>(),
+    // Phase 12 — the Tier-2 belief that drove this burst (the belief-learning loop):
+    // when set, resolving the reward also adjusts that belief's salience, so beliefs are
+    // refined by how the user reacts to the companion acting on them. Null for a
+    // non-belief-driven burst. The fact is the user's and outlives the act → `set null`.
+    drivenByUserFactId: uuid('driven_by_user_fact_id').references(() => userFacts.id, {
+      onDelete: 'set null',
+    }),
     // The blended reward once the user reacted; null until resolved.
     reward: real('reward'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

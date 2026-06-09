@@ -271,6 +271,7 @@ function toUserFactDto(row: typeof userFacts.$inferSelect): UserFactDto {
     predicate: row.predicate,
     object: row.object,
     confidence: row.confidence,
+    salience: row.salience,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
