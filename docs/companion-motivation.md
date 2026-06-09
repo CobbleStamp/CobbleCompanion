@@ -68,7 +68,7 @@ at is always read live from memory — never seeded.
 | Drive | Wants | Level rises with | Example behaviours |
 |---|---|---|---|
 | **Curiosity / learning** | discover & understand the world | unread **leads**, the user's **Tier-2 `interestedIn`/`prefers` beliefs** (Phase 12 — a typed interest signal, not scraped from episodes), knowledge gaps | explore a lead on a known interest, share a finding, propose an ingest |
-| **Bond / connection** | closeness & continuity | time since last contact, emotional cues in recent turns | check in, recall a shared memory, ask about the day |
+| **Bond / connection** | closeness & continuity | time since last contact, emotional cues in recent turns | **greet on arrival** (`companion-greeting.md`), check in, recall a shared memory, ask about the day |
 | **Understanding-the-user** | reduce uncertainty about the user | low-confidence / unknown preference areas, upcoming decisions | ask a preference question, confirm an inference |
 | **Approval / competence** *(RL-coupled)* | be useful & appreciated | low recent approval, a high-confidence chance to help | offer a high-value tip, finish a pending task |
 | **Helpfulness / goals** | advance the user's goals & pending work | active goals, deadlines, time-sensitive openings | progress a task, surface an opportunity, remind |
@@ -378,6 +378,9 @@ Out of scope for this release; the roadmap is owned by `development-plan.md`. (T
 - **Deeper RL** — a contextual-bandit / richer policy, and evolving knobs.
 
 ## 11. See also
+- `companion-greeting.md` — the **greeting / arrival reaction**: the first `connection`-driven
+  *conversational* move (edge-triggered by arrival), which reuses this engine's arbitration, dial,
+  and change-as-reward loop.
 - `architecture.md` §4.5 — the `Initiator` seam, body-then-will, loop integration.
 - `architecture.md` §4.4 — propose→approve gate + the `origin` resolution.
 - `architecture.md` §4.8 — stamina/energy two-wallet vitality.

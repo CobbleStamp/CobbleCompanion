@@ -28,6 +28,7 @@ read docs/product-overview.md
 | Threat model & deployment trust model | `docs/architecture.md` §1, §8 |
 | Ontology contract & governance | `docs/ontology.md`                 |
 | Proactivity & motivation mechanism | `docs/companion-motivation.md`  |
+| Greeting / arrival reaction   | `docs/companion-greeting.md`        |
 | Feeding economy (food pantry & vitality) | `docs/companion-economy.md`        |
 | Tool acquisition & use (MCP/CLI) | `docs/companion-tools.md`          |
 | Prompt management & iteration | `docs/guide-prompts.md`             |
