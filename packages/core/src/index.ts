@@ -114,9 +114,12 @@ export {
   type UserRecord,
 } from './identity/store.js';
 
-// User Model (Phase 11)
+// User Model (Phase 11 — core profile; Phase 12 — learned beliefs)
 export {
+  type BeliefHit,
+  type BeliefSearchParams,
   DrizzleUserModelStore,
+  type RecordBeliefInput,
   type RecordTranscriptFactInput,
   type UserModelStore,
 } from './user-model/store.js';

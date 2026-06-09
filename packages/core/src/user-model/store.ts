@@ -1,9 +1,10 @@
 /**
- * The User-Model store (Phase 11, docs/companion-memory.md §4) — persistence for
- * the companion's typed knowledge about its USER. Owns the `user_facts` table: the
- * Tier-1 core profile (identity attributes carried in the persona every turn).
+ * The User-Model store (docs/companion-memory.md §4) — persistence for the companion's
+ * typed knowledge about its USER. Owns the `user_facts` table: the Tier-1 core profile
+ * (identity attributes carried in the persona every turn, Phase 11) and the Tier-2
+ * learned-belief overlay (preferences/interests/opinions, hybrid-recalled, Phase 12).
  * Keyed by `user_id` (per-user; facts are objective truths shared across a user's
- * companions). Tier-2 belief accrual + retrieval arrive in Phase 12.
+ * companions).
  *
  * Facts are revised by **superseding**, never overwriting: a new value is inserted as
  * current and the prior row is marked `superseded_at`/`superseded_by`, so history is
@@ -12,9 +13,15 @@
  * (`MULTI_VALUED_PREDICATES`: languages, relationships) accrete and supersede only an
  * identical `(predicate, object)` restatement, so distinct values coexist.
  */
-import { isMultiValuedPredicate, type UserFactDto } from '@cobble/shared';
+import {
+  isMultiValuedPredicate,
+  TIER2_PREDICATES,
+  type UserFactDto,
+  type UserFactSource,
+} from '@cobble/shared';
 import { type Database, userFacts } from '@cobble/db';
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { reciprocalRankFusion } from '../memory/rrf.js';
 
 /** The privileged entity every user-fact is about (ontology.md §1). */
 const USER_SUBJECT = 'user';
@@ -26,6 +33,17 @@ const NAME_PREDICATE = 'name';
 const AUTH_SEED_CONFIDENCE = 0.5;
 /** A value the user set directly is authoritative — it wins over any inference. */
 const USER_EDIT_CONFIDENCE = 1;
+/** A new Tier-2 belief starts mid-strength; reinforcement/decay move it from here. */
+const DEFAULT_BELIEF_SALIENCE = 0.5;
+/** Salience bump when an identical belief is restated (idempotent reinforcement). */
+const BELIEF_REINFORCE_STEP = 0.1;
+/** Beliefs are `attribute` facts in the closed core set (ontology.md §2). */
+const BELIEF_FACT_TYPE = 'attribute';
+
+/** Clamp a salience/confidence weight into the valid [0, 1] range. */
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
 
 /** A Tier-1 identity attribute learned from a transcript turn. */
 export interface RecordTranscriptFactInput {
@@ -43,6 +61,44 @@ export interface RecordTranscriptFactInput {
   readonly factType?: string;
   /** Extractor self-reported confidence (0–1). */
   readonly confidence?: number;
+}
+
+/**
+ * A Tier-2 learned belief to persist (Phase 12) — written by inline capture (explicit
+ * beliefs) and by the reflector (implicit beliefs + reconciliation). Carries the
+ * embedding for hybrid recall; a null embedding still recalls via the generated `fts`.
+ */
+export interface RecordBeliefInput {
+  readonly userId: string;
+  /** A Tier-2 predicate (`prefers`/`dislikes`/`interestedIn`/`believes`). */
+  readonly predicate: string;
+  readonly object: string;
+  /** Provenance origin; defaults to `transcript`. */
+  readonly source?: UserFactSource;
+  /** The companion whose conversation taught this (transcript provenance). */
+  readonly learnedByCompanionId?: string;
+  /** The transcript `seq` the belief was learned from — the reflector pins it; inline leaves null. */
+  readonly learnedFromSeq?: number;
+  /** Extractor self-reported confidence (0–1). */
+  readonly confidence?: number;
+  /** Initial strength weight; defaults mid-range. */
+  readonly salience?: number;
+  /** The belief embedding for hybrid recall; omit → FTS-only until back-filled. */
+  readonly embedding?: readonly number[];
+}
+
+/** A current belief plus its fused hybrid-retrieval score (highest first). */
+export interface BeliefHit {
+  readonly belief: UserFactDto;
+  readonly score: number;
+}
+
+/** Inputs to {@link UserModelStore.searchBeliefs} — the embedded + raw query turn. */
+export interface BeliefSearchParams {
+  /** The embedded query turn; empty (provider down) → FTS-only. */
+  readonly queryEmbedding: readonly number[];
+  readonly queryText: string;
+  readonly topK: number;
 }
 
 /**
@@ -87,6 +143,44 @@ export interface UserModelStore {
    * never resurfaces. Returns false if the fact is not a current fact owned by the user.
    */
   forgetFact(userId: string, factId: string): Promise<boolean>;
+
+  // --- Tier-2 learned beliefs (Phase 12) ---
+
+  /** Every current (non-superseded) Tier-2 belief for the user, most-recently-touched first. */
+  listCurrentBeliefs(userId: string): Promise<readonly UserFactDto[]>;
+  /**
+   * Persist a Tier-2 belief. An identical current `(predicate, object)` belief is
+   * **reinforced** (salience bumped, refreshed) rather than duplicated; otherwise a new
+   * current belief is inserted. Returns the current belief row.
+   */
+  recordBelief(input: RecordBeliefInput): Promise<UserFactDto>;
+  /** Hybrid (vector + FTS, RRF) recall over the user's current Tier-2 beliefs. */
+  searchBeliefs(userId: string, params: BeliefSearchParams): Promise<readonly BeliefHit[]>;
+  /**
+   * The top-`k` current beliefs most similar to `embedding` (vector-only) — the bounded
+   * reconciliation context the reflector judges a candidate against (`companion-memory.md` §4).
+   */
+  findSimilarBeliefs(
+    userId: string,
+    embedding: readonly number[],
+    k: number,
+  ): Promise<readonly UserFactDto[]>;
+  /**
+   * Adjust a current belief's salience by `delta` (clamped to [0, 1]); the reflector's
+   * `reinforce` and the belief-learning reward (`companion-motivation.md` §7) both use it.
+   * Returns the updated belief, or null if it isn't a current fact owned by the user.
+   */
+  adjustBeliefSalience(userId: string, factId: string, delta: number): Promise<UserFactDto | null>;
+  /**
+   * Supersede a current belief with a newer-state replacement (the reflector's
+   * `supersede` op — current-state last-wins, the old row retained as history). Returns
+   * the new belief, or null if the old isn't a current fact owned by the user.
+   */
+  supersedeBelief(
+    userId: string,
+    oldFactId: string,
+    replacement: RecordBeliefInput,
+  ): Promise<UserFactDto | null>;
 }
 
 /** Drizzle/Postgres implementation of {@link UserModelStore}. */
@@ -259,6 +353,201 @@ export class DrizzleUserModelStore implements UserModelStore {
       )
       .returning({ id: userFacts.id });
     return forgotten.length > 0;
+  }
+
+  // --- Tier-2 learned beliefs (Phase 12) ---
+
+  /** The shared filter: a user's current (non-superseded) Tier-2 belief rows. */
+  private currentBeliefFilter(userId: string) {
+    return and(
+      eq(userFacts.userId, userId),
+      isNull(userFacts.supersededAt),
+      inArray(userFacts.predicate, [...TIER2_PREDICATES]),
+    );
+  }
+
+  async listCurrentBeliefs(userId: string): Promise<readonly UserFactDto[]> {
+    const rows = await this.db
+      .select()
+      .from(userFacts)
+      .where(this.currentBeliefFilter(userId))
+      .orderBy(desc(userFacts.updatedAt));
+    return rows.map(toUserFactDto);
+  }
+
+  async recordBelief(input: RecordBeliefInput): Promise<UserFactDto> {
+    return this.db.transaction(async (tx) => {
+      // Idempotent restatement: an identical current (predicate, object) belief is
+      // reinforced (salience bumped), never duplicated. Semantic dedup of *near*
+      // restatements and contradiction are the reflector's job (companion-memory.md §4).
+      const [existing] = await tx
+        .select()
+        .from(userFacts)
+        .where(
+          and(
+            eq(userFacts.userId, input.userId),
+            eq(userFacts.predicate, input.predicate),
+            eq(userFacts.object, input.object),
+            isNull(userFacts.supersededAt),
+          ),
+        )
+        .limit(1);
+      if (existing) {
+        const next = clamp01(
+          (existing.salience ?? DEFAULT_BELIEF_SALIENCE) + BELIEF_REINFORCE_STEP,
+        );
+        const [bumped] = await tx
+          .update(userFacts)
+          .set({ salience: next, updatedAt: new Date() })
+          .where(eq(userFacts.id, existing.id))
+          .returning();
+        return toUserFactDto(bumped ?? existing);
+      }
+      const [created] = await tx
+        .insert(userFacts)
+        .values({
+          userId: input.userId,
+          source: input.source ?? 'transcript',
+          learnedByCompanionId: input.learnedByCompanionId ?? null,
+          learnedFromSeq: input.learnedFromSeq ?? null,
+          factType: BELIEF_FACT_TYPE,
+          subject: USER_SUBJECT,
+          predicate: input.predicate,
+          object: input.object,
+          confidence: input.confidence ?? null,
+          salience: input.salience ?? DEFAULT_BELIEF_SALIENCE,
+          embedding: input.embedding ? [...input.embedding] : null,
+        })
+        .returning();
+      if (!created) {
+        throw new Error('failed to record belief');
+      }
+      return toUserFactDto(created);
+    });
+  }
+
+  async searchBeliefs(userId: string, params: BeliefSearchParams): Promise<readonly BeliefHit[]> {
+    const filter = this.currentBeliefFilter(userId);
+    // An empty query embedding (provider down, caller degraded) skips the vector arm —
+    // lexical FTS still answers (mirrors the semantic/episodic hybrid).
+    const vectorRows =
+      params.queryEmbedding.length === 0
+        ? []
+        : await this.db
+            .select()
+            .from(userFacts)
+            .where(and(filter, sql`${userFacts.embedding} IS NOT NULL`))
+            .orderBy(
+              sql`${userFacts.embedding} <=> ${JSON.stringify([...params.queryEmbedding])}::vector`,
+            )
+            .limit(params.topK);
+    const lexicalRows = await this.db
+      .select()
+      .from(userFacts)
+      .where(and(filter, sql`${userFacts.fts} @@ plainto_tsquery('english', ${params.queryText})`))
+      .orderBy(sql`ts_rank(${userFacts.fts}, plainto_tsquery('english', ${params.queryText})) DESC`)
+      .limit(params.topK);
+    return reciprocalRankFusion([vectorRows, lexicalRows], (row) => row.id, params.topK).map(
+      ({ item, score }) => ({ belief: toUserFactDto(item), score }),
+    );
+  }
+
+  async findSimilarBeliefs(
+    userId: string,
+    embedding: readonly number[],
+    k: number,
+  ): Promise<readonly UserFactDto[]> {
+    if (embedding.length === 0) {
+      return [];
+    }
+    const rows = await this.db
+      .select()
+      .from(userFacts)
+      .where(and(this.currentBeliefFilter(userId), sql`${userFacts.embedding} IS NOT NULL`))
+      .orderBy(sql`${userFacts.embedding} <=> ${JSON.stringify([...embedding])}::vector`)
+      .limit(k);
+    return rows.map(toUserFactDto);
+  }
+
+  async adjustBeliefSalience(
+    userId: string,
+    factId: string,
+    delta: number,
+  ): Promise<UserFactDto | null> {
+    return this.db.transaction(async (tx) => {
+      const [target] = await tx
+        .select()
+        .from(userFacts)
+        .where(
+          and(
+            eq(userFacts.id, factId),
+            eq(userFacts.userId, userId),
+            isNull(userFacts.supersededAt),
+          ),
+        )
+        .limit(1);
+      if (!target) {
+        return null;
+      }
+      const next = clamp01((target.salience ?? DEFAULT_BELIEF_SALIENCE) + delta);
+      const [updated] = await tx
+        .update(userFacts)
+        .set({ salience: next, updatedAt: new Date() })
+        .where(eq(userFacts.id, factId))
+        .returning();
+      return updated ? toUserFactDto(updated) : null;
+    });
+  }
+
+  async supersedeBelief(
+    userId: string,
+    oldFactId: string,
+    replacement: RecordBeliefInput,
+  ): Promise<UserFactDto | null> {
+    return this.db.transaction(async (tx) => {
+      const [target] = await tx
+        .select()
+        .from(userFacts)
+        .where(
+          and(
+            eq(userFacts.id, oldFactId),
+            eq(userFacts.userId, userId),
+            isNull(userFacts.supersededAt),
+          ),
+        )
+        .limit(1);
+      if (!target) {
+        return null;
+      }
+      await tx
+        .update(userFacts)
+        .set({ supersededAt: new Date(), updatedAt: new Date() })
+        .where(eq(userFacts.id, oldFactId));
+      const [created] = await tx
+        .insert(userFacts)
+        .values({
+          userId,
+          source: replacement.source ?? 'transcript',
+          learnedByCompanionId: replacement.learnedByCompanionId ?? null,
+          learnedFromSeq: replacement.learnedFromSeq ?? null,
+          factType: BELIEF_FACT_TYPE,
+          subject: USER_SUBJECT,
+          predicate: replacement.predicate,
+          object: replacement.object,
+          confidence: replacement.confidence ?? null,
+          salience: replacement.salience ?? DEFAULT_BELIEF_SALIENCE,
+          embedding: replacement.embedding ? [...replacement.embedding] : null,
+        })
+        .returning();
+      if (!created) {
+        throw new Error('failed to supersede belief');
+      }
+      await tx
+        .update(userFacts)
+        .set({ supersededBy: created.id })
+        .where(eq(userFacts.id, oldFactId));
+      return toUserFactDto(created);
+    });
   }
 }
 
