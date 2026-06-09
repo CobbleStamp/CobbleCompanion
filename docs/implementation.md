@@ -310,7 +310,12 @@ extraction/retrieval flow → `companion-memory.md` §4.
 > reaction to a belief-driven proactive act (`companion-motivation.md` §7). **Passive time-decay** of
 > salience and the **stale-drop retrieval cutoff** are Phase 13. Both writers (inline capture, reflector)
 > compute the embedding at write; a null-embedding row degrades gracefully to FTS-only retrieval (the
-> `fts` column is generated, so always present) (`development-plan.md` §4c).
+> `fts` column is generated, so always present) (`development-plan.md` §4c). The vector arm carries a
+> **relevance floor** (`BeliefSearchParams.maxVectorDistance`, default `0.8` cosine distance in the
+> retrieval arm): a belief farther than this is dropped rather than pulled in to fill the top-K, so the
+> "what I know about you" block is what's *relevant now*, not every belief while the user has ≤ topK of
+> them. The FTS arm self-gates (a term match is a relevance gate); the floor is a starting value, tuned
+> against the `user-extract`/`user-beliefs` evals as belief volume grows.
 
 > **The three tiers are a rule, not a column** (mirrors leaf types, `ontology.md` §3). **Tier 1 —
 > core profile**: the subset whose predicate is an identity attribute (`name`, `bornOn`, `livesIn`,

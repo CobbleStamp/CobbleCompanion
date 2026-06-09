@@ -339,6 +339,38 @@ describe('DrizzleUserModelStore', () => {
       expect(byText.map((h) => h.belief.object)).toEqual(['Rust programming']);
     });
 
+    it('applies a vector relevance floor — a far belief is dropped, not pulled in to fill top-K', async () => {
+      const near = await store.recordBelief({
+        userId,
+        predicate: 'interestedIn',
+        object: 'Rust programming',
+        embedding: basisVector(0), // distance 0 to the query
+      });
+      await store.recordBelief({
+        userId,
+        predicate: 'prefers',
+        object: 'oat milk lattes',
+        embedding: basisVector(1), // orthogonal → distance 1.0, beyond the floor
+      });
+
+      // Floored: only the on-topic belief survives, even though topK would fit both.
+      const floored = await store.searchBeliefs(userId, {
+        queryEmbedding: basisVector(0),
+        queryText: 'nonsense-token', // no FTS arm — isolate the vector floor
+        topK: 5,
+        maxVectorDistance: 0.8,
+      });
+      expect(floored.map((h) => h.belief.id)).toEqual([near.id]);
+
+      // Without a floor (omitted), the legacy behaviour stands — both come back.
+      const unfloored = await store.searchBeliefs(userId, {
+        queryEmbedding: basisVector(0),
+        queryText: 'nonsense-token',
+        topK: 5,
+      });
+      expect(unfloored).toHaveLength(2);
+    });
+
     it('lets salience tilt recall — a reinforced belief outranks a more-relevant weaker one', async () => {
       // `near` is the vector-nearest to the query (distance 0); `far` is one rank behind.
       // With equal salience, relevance wins (see the NN test). Here `far` is reinforced to

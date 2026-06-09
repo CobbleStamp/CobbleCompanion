@@ -108,6 +108,15 @@ export interface BeliefSearchParams {
   readonly queryEmbedding: readonly number[];
   readonly queryText: string;
   readonly topK: number;
+  /**
+   * Relevance floor for the vector arm: a maximum cosine distance (pgvector `<=>`,
+   * range [0, 2]; 0 = identical, 1 = unrelated/orthogonal). When set, a belief whose
+   * embedding is farther than this from the query is **not** returned — the arm recalls
+   * "what's relevant", not "the K nearest regardless of relevance". Omitted → no floor
+   * (the raw top-K, for callers that rank rather than gate, e.g. the salience tests).
+   * The FTS arm self-gates (term match), so the floor applies only to the vector arm.
+   */
+  readonly maxVectorDistance?: number;
 }
 
 /**
@@ -466,16 +475,28 @@ export class DrizzleUserModelStore implements UserModelStore {
     const filter = this.currentBeliefFilter(userId);
     // An empty query embedding (provider down, caller degraded) skips the vector arm —
     // lexical FTS still answers (mirrors the semantic/episodic hybrid).
+    const distance = sql`${userFacts.embedding} <=> ${JSON.stringify([...params.queryEmbedding])}::vector`;
+    // Relevance floor (Phase 12): when the caller sets `maxVectorDistance`, the vector
+    // arm gates on distance, not just orders by it — so a far belief is never pulled in
+    // just to fill the top-K. Without it, every belief surfaces while N ≤ topK, framed as
+    // "relevant" when it's really "everything I know". The FTS arm needs no floor (a term
+    // match is itself a relevance gate).
+    const vectorWhere =
+      params.maxVectorDistance === undefined
+        ? and(filter, sql`${userFacts.embedding} IS NOT NULL`)
+        : and(
+            filter,
+            sql`${userFacts.embedding} IS NOT NULL`,
+            sql`${distance} <= ${params.maxVectorDistance}`,
+          );
     const vectorRows =
       params.queryEmbedding.length === 0
         ? []
         : await this.db
             .select()
             .from(userFacts)
-            .where(and(filter, sql`${userFacts.embedding} IS NOT NULL`))
-            .orderBy(
-              sql`${userFacts.embedding} <=> ${JSON.stringify([...params.queryEmbedding])}::vector`,
-            )
+            .where(vectorWhere)
+            .orderBy(distance)
             .limit(params.topK);
     const lexicalRows = await this.db
       .select()

@@ -281,7 +281,10 @@ flowchart LR
 > self-model. **Tier-2 (learned beliefs)** — `prefers`/`interestedIn`/`believes` user-facts, too many
 > for context — is a **retrieval arm**: it embeds the user's turn and hybrid-searches the *current*
 > (non-superseded) Tier-2 `user_facts` (vector + FTS, RRF — the semantic/episodic pattern), prepending
-> the top-K as a fenced "what I know about you" block. **Unlike** the semantic/episodic arms (which rank
+> the top-K as a fenced "what I know about you" block. The vector arm carries a **relevance floor** (a
+> max cosine distance, `implementation.md` §1): a belief farther than the floor is dropped, not pulled in
+> to fill the top-K — so the block is what's *relevant now*, not every belief while the user has ≤ topK of
+> them. **Unlike** the semantic/episodic arms (which rank
 > by fused relevance alone), the belief arm then tilts the fused score by `salience` (`1 + 0.5·salience`,
 > `implementation.md` §1) — a gentle prior, so a reinforced belief rises and a cut one sinks among
 > comparably-relevant hits, without dragging in beliefs no arm found relevant. Reads **current rows only**, so it reflects the
@@ -442,7 +445,7 @@ The engine's parts (each additive, no loop change):
   does not move weights. Weights are interpretable and seed the relationship-growth axis. **From Phase
   12 the reward also targets the *belief* that drove the act:** when the burst was belief-driven, the
   same mood-change reward adjusts that Tier-2 belief's **salience** — reinforced when appreciated,
-  weakened when ignored — so beliefs are learned from how the user *reacts to the companion acting on
+  weakened when unwelcome (a flat reaction moves nothing) — so beliefs are learned from how the user *reacts to the companion acting on
   them*, not only from what they say (the belief-learning loop, `companion-motivation.md` §7).
 - **Output** — the engine **reads** the next leads into the companion's own memory
   **with no approval** (autonomy is autonomy, §4.4), then posts **one in-character report note** to

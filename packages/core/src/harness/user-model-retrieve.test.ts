@@ -34,6 +34,26 @@ describe('createUserModelRetrieveContext', () => {
     });
   }
 
+  /** A unit vector with a single 1 at `hot` — basis vectors are pairwise orthogonal
+   *  (cosine distance 1.0), identical ones distance 0.0, so the floor is exercised exactly. */
+  function basisVector(hot: number): number[] {
+    const v: number[] = new Array<number>(EMBEDDING_DIMENSIONS).fill(0);
+    v[hot] = 1;
+    return v;
+  }
+
+  /** A gateway that embeds every input to a fixed vector — lets a test place the query
+   *  query at a chosen distance from a belief's known embedding. */
+  function fixedGateway(vector: readonly number[]): EmbeddingGateway {
+    return {
+      embed: (params: { input: readonly string[] }) =>
+        Promise.resolve({
+          vectors: params.input.map(() => vector),
+          usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        }),
+    };
+  }
+
   /** Embed a belief's text with the same fake gateway, so recall can match it. */
   async function embed(predicate: string, object: string): Promise<readonly number[]> {
     const { vectors } = await embeddings.embed({
@@ -84,6 +104,34 @@ describe('createUserModelRetrieveContext', () => {
     expect(blocks[0]?.role).toBe('system');
     expect(blocks[0]?.content).toContain("What you've learned about the user");
     expect(blocks[0]?.content).toContain('the user is interested in jazz');
+  });
+
+  it('drops a belief beyond the vector relevance floor (not the K nearest regardless)', async () => {
+    // One belief, embedded at a known basis vector. The default floor (~0.8) decides
+    // whether an off-topic turn still pulls it in.
+    await store.recordBelief({
+      userId,
+      predicate: 'interestedIn',
+      object: 'jazz',
+      embedding: basisVector(0),
+    });
+
+    // Query orthogonal to the belief (cosine distance 1.0 > floor) and FTS-disjoint →
+    // it is NOT injected, even though topK would happily fit it.
+    const offTopic = await arm(fixedGateway(basisVector(7)))({
+      companionId: 'c1',
+      userContent: 'unrelated weather question',
+      ownerId: userId,
+    });
+    expect(offTopic.blocks).toEqual([]);
+
+    // Query identical to the belief (distance 0 < floor) → it surfaces.
+    const onTopic = await arm(fixedGateway(basisVector(0)))({
+      companionId: 'c1',
+      userContent: 'tell me about jazz',
+      ownerId: userId,
+    });
+    expect(onTopic.blocks[0]?.content).toContain('the user is interested in jazz');
   });
 
   it('reflects current state only — a superseded belief never resurfaces', async () => {
