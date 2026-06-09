@@ -10,7 +10,7 @@
 > sibling **energy** wallet) see `companion-economy.md`; for the agent-loop seam see
 > `architecture.md` §4.5; for the *what & why* of proactivity see `product-overview.md` §5.4–§5.6;
 > for canonical schema (the `last_seen_at` column, once built) see `implementation.md` §1; for
-> scope/sequencing see `development-plan.md` §3.
+> scope/sequencing see `development-plan.md` §4d (Phase 14).
 >
 > **Status: designed, not yet built.** This doc specifies the mechanism; acceptance criteria and
 > phase placement are owned by `development-plan.md`.
@@ -311,4 +311,4 @@ return while still empty → one more groan; never per-heartbeat spam.
 - `architecture.md` §4.5 — the `Initiator` seam and body-then-will split.
 - `product-overview.md` §5.4–§5.6 — proactivity & vitality (the what & why).
 - `implementation.md` §1 — canonical schema (`last_seen_at`, `proactive_outcomes`), once built.
-- `development-plan.md` §3 — scope, phase placement, and acceptance criteria.
+- `development-plan.md` §4d (Phase 14) — scope, phase placement, and acceptance criteria.
