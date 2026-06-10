@@ -1,5 +1,5 @@
 import type { GreetingService, Logger } from '@cobble/core';
-import type { ChatStreamEvent } from '@cobble/shared';
+import { companionUnavailableNotice, type ChatStreamEvent } from '@cobble/shared';
 import type { FastifyInstance } from 'fastify';
 import type { AppDeps } from '../app.js';
 import type { RequireAuth } from '../auth-guard.js';
@@ -27,8 +27,12 @@ async function* greetingEvents(
     const plan = await greeting.prepare(companionId, ownerId);
     if (plan.act) {
       yield { type: 'composing' };
-      const message = await greeting.compose(companionId, plan);
-      yield { type: 'done', message };
+      const result = await greeting.compose(companionId, plan);
+      // A failed voicing is an honest, transient error — not a (misleading)
+      // greeting and not a recorded outcome (companion-greeting.md §4).
+      yield result.ok
+        ? { type: 'done', message: result.message }
+        : { type: 'error', message: companionUnavailableNotice() };
     }
   } catch (error) {
     logger.error('greeting stream failed', {
@@ -36,7 +40,7 @@ async function* greetingEvents(
       companionId,
       error,
     });
-    yield { type: 'error', message: 'greeting failed' };
+    yield { type: 'error', message: companionUnavailableNotice() };
   } finally {
     try {
       await greeting.markSeen(companionId);

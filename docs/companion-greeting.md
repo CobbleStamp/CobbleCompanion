@@ -97,6 +97,8 @@ sequenceDiagram
         S-->>C: greeting line + typing off
     else stamina exhausted
         G-->>C: fixed "I'm exhausted…" line (token-free)
+    else voicing failed (LLM error / empty)
+        G-->>C: generic "can't reach you right now" notice<br/>(transient error — no turn, no outcome)
     else idle / continuation
         G-->>API: null (silent)
     end
@@ -149,6 +151,14 @@ The gates, in order:
    line is **token-free** (a template, not an LLM call), which is what makes it safe to show on an
    empty wallet, and it doubles as a feeding nudge. The same once-per-arrival gating applies, so an
    exhausted companion groans **once** per genuine return, not on every heartbeat.
+
+The exhausted line is reserved for *actual stamina exhaustion* — it must never stand in for a
+transient failure. If the voicing itself fails (an LLM error, or an empty result) on a companion that
+*has* stamina, the server surfaces a **generic, no-one's-voice "can't reach your companion right now"
+notice** (a transient `error` event), and that path is honest about being a system hiccup: it
+**persists no turn** and **records no `bond` outcome**, so a generation blip never lies about the
+companion's state and never poisons the change-as-reward loop (§7). Stamina metered before the failure
+is still spent — the tokens were consumed.
 
 `last_seen_at = now` is written **after** the decision on every ping, greet or idle (§3).
 

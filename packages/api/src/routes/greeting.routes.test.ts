@@ -120,6 +120,44 @@ describe('greeting routes', () => {
     expect(await ctx.deps.rewards.findLatestUnresolved(companionId)).toBeNull();
   });
 
+  it('on a voicing failure: emits a generic error, persists no turn, records no outcome', async () => {
+    // A separate app whose lone scripted LLM turn yields nothing, so the voicing
+    // comes back empty — standing in for any transient generation failure.
+    const broken = await makeTestApp(['']);
+    try {
+      const brokenAuth = broken.bearerFor('owner@example.com');
+      const created = await broken.app.inject({
+        method: 'POST',
+        url: '/companions',
+        headers: brokenAuth,
+        payload: { name: 'Pebble', form: 'fox', temperament: 'curious' },
+      });
+      const id = created.json().companion.id;
+      await broken.deps.identity.setProactivityDial(id, 'active');
+      await broken.deps.identity.markSeen(id, new Date(Date.now() - 3 * HOUR));
+
+      const res = await broken.app.inject({
+        method: 'POST',
+        url: `/companions/${id}/greeting`,
+        headers: brokenAuth,
+      });
+      const events = parseSse(res.body);
+      // The failure is honest: composing → error, never a (fake) greeting.
+      expect(events.map((e) => e.type)).toEqual(['composing', 'error']);
+      const err = events.find((e) => e.type === 'error');
+      // Never the misleading "I'm worn out, feed me" line on a healthy companion.
+      expect(err?.type === 'error' && err.message).not.toContain('Feed me');
+      // No turn was written to the transcript...
+      expect(await broken.deps.memory.getRecentMessages(id, 5)).toHaveLength(0);
+      // ...and no reward was attributed to the failed generation.
+      expect(await broken.deps.rewards.findLatestUnresolved(id)).toBeNull();
+      // The arrival clock is still stamped (finally), so it won't re-fire forever.
+      expect((await broken.deps.identity.getCompanionById(id))?.lastSeenAt).not.toBeNull();
+    } finally {
+      await broken.close();
+    }
+  });
+
   it('does not stack a greeting on a note still awaiting a reaction', async () => {
     await ctx.deps.identity.setProactivityDial(companionId, 'active');
     await ctx.deps.identity.markSeen(companionId, new Date(Date.now() - 3 * HOUR));

@@ -59,6 +59,26 @@ export interface GreetingServiceOptions {
   readonly now?: () => Date;
 }
 
+/**
+ * The result of {@link GreetingService.compose}: either a persisted greeting to
+ * deliver, or a transient failure (the voicing hit an LLM/service error) the
+ * caller should surface as a generic "unavailable" notice — never as a message
+ * and never with a reward attributed.
+ */
+export type GreetingComposeResult =
+  | { readonly ok: true; readonly message: MessageDto }
+  | { readonly ok: false };
+
+/**
+ * The result of voicing a greeting: the in-character text, or a tagged failure
+ * (`empty` stream or generation `error`) the caller turns into the generic
+ * unavailable notice. A discriminated union, not a nullable string — a failure
+ * is data the caller must branch on, never a silently-swallowed `null`.
+ */
+type VoiceResult =
+  | { readonly ok: true; readonly text: string }
+  | { readonly ok: false; readonly reason: 'empty' | 'error' };
+
 /** The outcome of {@link GreetingService.prepare}: stay quiet, or act (with the brief). */
 export type GreetingPlan =
   | { readonly act: false }
@@ -153,21 +173,30 @@ export class GreetingService {
    * Voice and persist the greeting. When stamina is exhausted, post the fixed
    * token-free line (no LLM call, no reward outcome — it's a forced groan, not a
    * drive-serving act). Otherwise voice it in-character, billed to STAMINA, and
-   * record a pending `bond` outcome linked to the note. Returns the persisted
-   * assistant message.
+   * record a pending `bond` outcome linked to the note.
+   *
+   * Returns `{ ok: false }` when the voicing fails (LLM error or empty result):
+   * a transient hiccup must NOT masquerade as the exhausted "feed me" line, must
+   * NOT persist a turn, and must NOT record a reward — the caller surfaces a
+   * generic unavailable notice instead.
    */
   async compose(
     companionId: string,
     plan: Extract<GreetingPlan, { act: true }>,
-  ): Promise<MessageDto> {
+  ): Promise<GreetingComposeResult> {
     const { memory, rewards, logger } = this.deps;
     if (plan.exhausted) {
       const line = exhaustedGreetingFallback(plan.voice.name);
-      return memory.appendMessage(companionId, 'assistant', line);
+      const message = await memory.appendMessage(companionId, 'assistant', line);
+      return { ok: true, message };
     }
 
-    const text = await this.voice(companionId, plan.voice);
-    const message = await memory.appendMessage(companionId, 'assistant', text);
+    const voiced = await this.voice(companionId, plan.voice);
+    if (!voiced.ok) {
+      // Voicing failed (logged in voice()); stay honest — no message, no reward.
+      return { ok: false };
+    }
+    const message = await memory.appendMessage(companionId, 'assistant', voiced.text);
     try {
       await rewards.record(companionId, {
         drive: GREETING_DRIVE,
@@ -181,7 +210,7 @@ export class GreetingService {
         error,
       });
     }
-    return message;
+    return { ok: true, message };
   }
 
   /** Stamp the arrival clock to now — AFTER {@link prepare} read the prior value. */
@@ -190,12 +219,13 @@ export class GreetingService {
   }
 
   /**
-   * Voice the greeting in the companion's own words, billed to STAMINA. Falls
-   * back to the exhausted line on a generation failure or an empty result — the
-   * user is never met with silence once the gate decided to greet.
+   * Voice the greeting in the companion's own words, billed to STAMINA. Returns
+   * a {@link VoiceResult}: the text, or a tagged failure on a generation error or
+   * empty stream — a transient hiccup is NOT the exhausted state, so the caller
+   * surfaces a generic unavailable notice rather than the misleading "feed me"
+   * line (and skips the reward outcome).
    */
-  private async voice(companionId: string, input: GreetingInput): Promise<string> {
-    const fallback = exhaustedGreetingFallback(input.name);
+  private async voice(companionId: string, input: GreetingInput): Promise<VoiceResult> {
     const usage = createUsageAccumulator();
     try {
       const llm = meteredLlmGateway(this.deps.llm, usage.sink);
@@ -209,14 +239,14 @@ export class GreetingService {
         text += delta;
       }
       const trimmed = text.trim();
-      return trimmed.length > 0 ? trimmed : fallback;
+      return trimmed.length > 0 ? { ok: true, text: trimmed } : { ok: false, reason: 'empty' };
     } catch (error) {
       this.deps.logger.error('failed to voice greeting', {
         operation: 'greeting.voice',
         companionId,
         error,
       });
-      return fallback;
+      return { ok: false, reason: 'error' };
     } finally {
       // Bill STAMINA in `finally` so a mid-stream throw still spends what was metered.
       const total = usage.total().totalTokens;

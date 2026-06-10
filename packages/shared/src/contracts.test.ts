@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   autonomousReadFallback,
   createCompanionSchema,
+  companionUnavailableNotice,
   exhaustedGreetingFallback,
   feedSchema,
   proactivityDialSchema,
@@ -98,5 +99,14 @@ describe('exhaustedGreetingFallback', () => {
     const line = exhaustedGreetingFallback('Pebble');
     expect(line).toContain('Pebble');
     expect(line.toLowerCase()).toContain('feed me');
+  });
+});
+
+describe('companionUnavailableNotice', () => {
+  it('is a transient failure notice — never the exhausted "feed me" line', () => {
+    const notice = companionUnavailableNotice();
+    expect(notice.toLowerCase()).not.toContain('feed me');
+    expect(notice.toLowerCase()).not.toContain('worn out');
+    expect(notice.length).toBeGreaterThan(0);
   });
 });

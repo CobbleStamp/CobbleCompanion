@@ -131,6 +131,18 @@ export function exhaustedGreetingFallback(name: string): string {
   return `${name} can barely keep their eyes open — "I'm worn out. Feed me and I'll be properly here with you."`;
 }
 
+/**
+ * Honest, no-one's-voice notice that the companion couldn't be reached right now
+ * because of a transient generation/service failure (NOT exhaustion). Distinct
+ * from {@link exhaustedGreetingFallback}: it never claims the companion is out of
+ * stamina, and it's surfaced transiently — never persisted to the transcript and
+ * never rewarded — so a hiccup doesn't lie about the companion's state or poison
+ * the change-as-reward loop.
+ */
+export function companionUnavailableNotice(): string {
+  return "I can't reach your companion right now — please try again in a moment.";
+}
+
 // --- Sources & ingestion (Phase 1 semantic memory) ---
 
 /** How a source entered the companion's knowledge base. */
