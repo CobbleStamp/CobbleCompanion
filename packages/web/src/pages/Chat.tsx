@@ -127,14 +127,17 @@ function mergeMessage(lines: ChatLine[], message: MessageDto): ChatLine[] {
 }
 
 /**
- * Fold a transcript snapshot into the rendered lines, appending any rows we don't
- * already have (by id) in order. Used for the initial load and the reconnect
- * re-sync that recovers rows appended while the channel was disconnected.
+ * Fold a transcript snapshot into the rendered lines in order. Each row goes
+ * through {@link mergeMessage}, so a row already present by id is a no-op and the
+ * id-less optimistic echo of a just-sent user line is reconciled in place rather
+ * than duplicated — the snapshot is the only delivery path for a row whose live
+ * channel echo was lost (the channel was disconnected when it persisted, and the
+ * bus carries no replay). Used for the initial load and the reconnect / tab-return
+ * re-sync that recovers rows appended while the channel was down. Returns the same
+ * array reference when the snapshot adds nothing, so an idle re-sync doesn't churn.
  */
 function mergeSnapshot(lines: ChatLine[], history: readonly MessageDto[]): ChatLine[] {
-  const known = new Set(lines.map((line) => line.id).filter((id): id is string => !!id));
-  const additions = history.filter((message) => !known.has(message.id)).map(messageToLine);
-  return additions.length > 0 ? [...lines, ...additions] : lines;
+  return history.reduce(mergeMessage, lines);
 }
 
 export function Chat({

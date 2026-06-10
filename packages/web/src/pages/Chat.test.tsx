@@ -873,6 +873,40 @@ describe('Chat event channel (push delivery)', () => {
     await waitFor(() => expect(screen.getAllByText('hello')).toHaveLength(1));
     expect(screen.getAllByText('Hi!')).toHaveLength(1);
   });
+
+  it('reconciles an optimistic user line against a re-sync snapshot without duplicating it', async () => {
+    // The channel is down during the turn, so the server's user-row echo is lost
+    // (the bus carries no replay) and the optimistic user line stays id-less. A
+    // snapshot is then its only delivery path — the tab-return re-sync must adopt
+    // the persisted row in place, NOT append a second copy.
+    vi.mocked(sendMessage).mockImplementation(async function* () {
+      yield { type: 'token', value: 'Hi!' };
+      yield { type: 'done', message: channelRow('a1', 'assistant', 'Hi!') };
+    });
+    // Mount snapshot is empty; the tab-return re-sync returns the persisted pair.
+    vi.mocked(fetchMessages)
+      .mockReset()
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([channelRow('u1', 'user', 'hello'), channelRow('a1', 'assistant', 'Hi!')]);
+
+    renderChat();
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText(/Message Pebble/) as HTMLTextAreaElement).disabled).toBe(
+        false,
+      ),
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/Message Pebble/), { target: { value: 'hello' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(screen.getByText('Hi!')).toBeTruthy());
+
+    // Tab-return triggers refreshTranscript → mergeSnapshot. The id-less optimistic
+    // 'hello' must reconcile against the persisted u1 row, not render twice.
+    fireEvent(window, new Event('focus'));
+    await waitFor(() => expect(fetchMessages).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getAllByText('hello')).toHaveLength(1));
+    expect(screen.getAllByText('Hi!')).toHaveLength(1);
+  });
 });
 
 describe('Chat markdown rendering', () => {
