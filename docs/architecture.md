@@ -743,6 +743,7 @@ flowchart TB
       personality/     evolvedPersona synthesis from episodes
       identity/        companion "home" model + store
       motivation/      the "will" (§4.4–§4.5): drives × presence arbitration, autonomous explore burst, engine runner/sweep, affect perception + change-as-reward reinforcement
+      greeting/        the bond-driven arrival reaction (social sibling of the explore burst): token-free decideGreeting gate + stamina-billed greeter, reads companions.last_seen_at — companion-greeting.md
       growth/          four mirror axes derived from substrate (§4.3 hint arm) + the feeding economy: axis readings (band+fill), capabilities registry, growth store/service/runner, foods, the per-user food pantry/store (§4.8)
       quota/           per-companion vitality wallets (stamina + energy) (§4.8)
     api/               BFF / surface boundary (Fastify); memory + source + usage + proposal/inventory routes; presence + proactivity (dial/energy) routes; growth + feed routes
