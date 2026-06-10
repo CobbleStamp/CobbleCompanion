@@ -14,6 +14,7 @@ import {
   listProposals,
   listSources,
   sendMessage,
+  streamGreeting,
   uploadFileSource,
 } from '../api/client.js';
 import { Chat } from './Chat.js';
@@ -51,6 +52,9 @@ const history: MessageDto[] = [
 vi.mock('../api/client.js', () => ({
   fetchMessages: vi.fn(),
   sendMessage: vi.fn(async function* () {}),
+  // The arrival greeting (P14) fires on mount/refocus; default to a quiet stream
+  // so most tests see no greeting unless they opt in.
+  streamGreeting: vi.fn(async function* () {}),
   uploadFileSource: vi.fn(),
   // The ingestion-status hook polls these; default to empty so the header badge
   // and panel stay quiet unless a test opts in.
@@ -765,5 +769,100 @@ describe('Chat transcript fidelity (rich rows survive reload)', () => {
     );
     // The optimistic empty assistant bubble was dropped, not left dangling.
     expect(document.querySelector('.proposal-queue')).not.toBeNull();
+  });
+});
+
+describe('Chat greeting on arrival (P14)', () => {
+  beforeEach(() => {
+    vi.mocked(fetchMessages).mockReset();
+    vi.mocked(streamGreeting).mockReset();
+  });
+
+  it('surfaces a streamed greeting as an assistant line after a composing cue', async () => {
+    vi.mocked(fetchMessages).mockResolvedValue([]);
+    const greeting: MessageDto = {
+      id: 'g1',
+      companionId: companion.id,
+      sourceId: null,
+      role: 'assistant',
+      content: 'Welcome back — how did that interview go?',
+      createdAt: '2026-01-03T00:00:05.000Z',
+    };
+    vi.mocked(streamGreeting).mockImplementation(
+      async function* (): AsyncGenerator<ChatStreamEvent> {
+        yield { type: 'composing' };
+        yield { type: 'done', message: greeting };
+      },
+    );
+
+    renderChat();
+
+    await waitFor(() =>
+      expect(screen.getByText('Welcome back — how did that interview go?')).toBeTruthy(),
+    );
+    expect(vi.mocked(streamGreeting)).toHaveBeenCalledWith(companion.id);
+  });
+
+  it('stays silent when the gate emits no events', async () => {
+    vi.mocked(fetchMessages).mockResolvedValue(history);
+    vi.mocked(streamGreeting).mockImplementation(
+      async function* (): AsyncGenerator<ChatStreamEvent> {
+        // no events — the companion decided to stay quiet
+      },
+    );
+
+    renderChat();
+
+    await waitFor(() => expect(screen.getByText('welcome back')).toBeTruthy());
+    // No extra assistant line beyond the resumed transcript.
+    expect(document.querySelector('.line.composing')).toBeNull();
+  });
+
+  it('clears the typing indicator and adds no line on an error event', async () => {
+    vi.mocked(fetchMessages).mockResolvedValue(history);
+    vi.mocked(streamGreeting).mockImplementation(
+      async function* (): AsyncGenerator<ChatStreamEvent> {
+        yield { type: 'composing' };
+        yield { type: 'error', message: 'I can’t reach your companion right now.' };
+      },
+    );
+
+    renderChat();
+
+    await waitFor(() => expect(screen.getByText('welcome back')).toBeTruthy());
+    // The typing indicator is cleared and no greeting line is appended...
+    await waitFor(() => expect(document.querySelector('.line.composing')).toBeNull());
+    // ...the failure is not surfaced as a chat line (the client drops it today)...
+    expect(screen.queryByText(/can.t reach your companion/i)).toBeNull();
+    // ...and the resumed transcript is left intact by the failed greeting.
+    expect(screen.getByText('hello again')).toBeTruthy();
+  });
+
+  it('coalesces overlapping arrival checks (mount + refocus) into one stream', async () => {
+    vi.mocked(fetchMessages).mockResolvedValue([]);
+    let release!: () => void;
+    const inFlight = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.mocked(streamGreeting).mockImplementation(
+      async function* (): AsyncGenerator<ChatStreamEvent> {
+        yield { type: 'composing' };
+        // Hold the stream open so the mount arrival is still "in flight" when the
+        // refocus fires — the ref must coalesce the second call away.
+        await inFlight;
+      },
+    );
+
+    renderChat();
+    await waitFor(() => expect(document.querySelector('.line.composing')).not.toBeNull());
+
+    // A tab refocus mid-greeting must NOT open a second stream.
+    fireEvent(window, new Event('focus'));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(vi.mocked(streamGreeting)).toHaveBeenCalledTimes(1);
+
+    release();
+    await waitFor(() => expect(document.querySelector('.line.composing')).toBeNull());
   });
 });

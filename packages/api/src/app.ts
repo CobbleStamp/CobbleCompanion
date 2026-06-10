@@ -5,6 +5,7 @@ import type {
   EmbeddingGateway,
   EpisodicMemoryStore,
   FoodStore,
+  GreetingService,
   GrowthService,
   GrowthStore,
   Harness,
@@ -37,6 +38,7 @@ import type { AppConfig } from './config.js';
 import { registerAuthRoutes } from './routes/auth.routes.js';
 import { registerCompanionRoutes } from './routes/companion.routes.js';
 import { registerEpisodeRoutes } from './routes/episode.routes.js';
+import { registerGreetingRoutes } from './routes/greeting.routes.js';
 import { registerGrowthRoutes } from './routes/growth.routes.js';
 import { registerMemoryRoutes } from './routes/memory.routes.js';
 import { registerUserModelRoutes } from './routes/user-model.routes.js';
@@ -83,6 +85,8 @@ export interface AppDeps {
   readonly presence: PresenceStore;
   /** Off-request proactive ticks — routes request it on activity/return (P4). */
   readonly motivation: MotivationRunner;
+  /** The arrival greeting — the bond-driven reaction to the user returning (P14). */
+  readonly greeting: GreetingService;
   /** Per-companion STAMINA wallet — the user-initiated budget (chat/search/tasks). */
   readonly quota: VitalityStore;
   /** Per-companion ENERGY wallet — the self-initiated budget, surfaced as the meter (P4). */
@@ -196,6 +200,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerProposalRoutes(app, deps, requireAuth);
   registerInventoryRoutes(app, deps, requireAuth);
   registerPresenceRoutes(app, deps, requireAuth);
+  registerGreetingRoutes(app, deps, requireAuth);
   registerProactivityRoutes(app, deps, requireAuth);
   registerGrowthRoutes(app, deps, requireAuth);
   registerUsageRoutes(app, deps, requireAuth);

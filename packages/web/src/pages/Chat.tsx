@@ -19,7 +19,13 @@ import {
   uploadKindForFilename,
 } from '@cobble/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { confirmProposal, fetchMessages, sendMessage, uploadFileSource } from '../api/client.js';
+import {
+  confirmProposal,
+  fetchMessages,
+  sendMessage,
+  streamGreeting,
+  uploadFileSource,
+} from '../api/client.js';
 import { IngestionPanel } from '../components/IngestionPanel.js';
 import { IngestionStatusButton } from '../components/IngestionStatusButton.js';
 import { Modal } from '../components/Modal.js';
@@ -104,7 +110,12 @@ export function Chat({
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusOpen, setStatusOpen] = useState(false);
+  // The companion is composing a server-initiated greeting (P14) — show a typing
+  // indicator until it lands or the gate stays quiet.
+  const [composing, setComposing] = useState(false);
   const startedRef = useRef(false);
+  // Guards against overlapping arrival checks (mount + focus can both fire).
+  const greetingRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Last seen status per ingestion job, to spot a job settling (→ done/failed)
   // across polls so we can pull in the companion's proactive note.
@@ -158,6 +169,54 @@ export function Chat({
       console.error('transcript refresh failed', { companionId: companion.id, error: err });
     }
   }, [companion.id]);
+
+  /**
+   * Ask the companion to react to the user's arrival (P14). The server decides
+   * whether to greet from the durable last-seen gap; we just surface the result:
+   * a `composing` cue flips on the typing indicator, then the voiced greeting
+   * lands as its own assistant line (carrying the persisted message, so it never
+   * duplicates a later refetch). Safe to call repeatedly — the server stays quiet
+   * on a brief return — and the ref coalesces overlapping mount/focus calls.
+   */
+  const runGreeting = useCallback(async (): Promise<void> => {
+    if (greetingRef.current) return;
+    greetingRef.current = true;
+    try {
+      for await (const event_ of streamGreeting(companion.id)) {
+        if (event_.type === 'composing') {
+          setComposing(true);
+        } else if (event_.type === 'done') {
+          setLines((prev) => [...prev, messageToLine(event_.message)]);
+          setComposing(false);
+        } else if (event_.type === 'error') {
+          setComposing(false);
+        }
+      }
+    } catch (err) {
+      console.error('greeting failed', { companionId: companion.id, error: err });
+    } finally {
+      setComposing(false);
+      greetingRef.current = false;
+    }
+  }, [companion.id]);
+
+  // Arrival = the chat surface becoming present: once on mount (after the
+  // transcript loads) and again whenever the tab is refocused after being away.
+  useEffect(() => {
+    if (ready) void runGreeting();
+  }, [ready, runGreeting]);
+
+  useEffect(() => {
+    const onReturn = (): void => {
+      if (document.visibilityState === 'visible') void runGreeting();
+    };
+    document.addEventListener('visibilitychange', onReturn);
+    window.addEventListener('focus', onReturn);
+    return () => {
+      document.removeEventListener('visibilitychange', onReturn);
+      window.removeEventListener('focus', onReturn);
+    };
+  }, [runGreeting]);
 
   // When an ingestion job settles (→ done/failed), the companion posts a
   // proactive note server-side; fetch it in. Seeding the ref on the first run
@@ -416,6 +475,12 @@ export function Chat({
             </li>
           );
         })}
+        {composing && (
+          <li className="line assistant composing" aria-live="polite">
+            <span className="who">{companion.name}</span>
+            <span className="content">…</span>
+          </li>
+        )}
       </ul>
       {proposalsCtl.proposals.length > 0 && (
         <div className="proposal-queue">

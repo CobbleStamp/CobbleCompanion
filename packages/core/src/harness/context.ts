@@ -1,4 +1,9 @@
-import { TIER1_PREDICATES, type CompanionDto, type UserFactDto } from '@cobble/shared';
+import {
+  NAME_PREDICATE,
+  TIER1_PREDICATES,
+  type CompanionDto,
+  type UserFactDto,
+} from '@cobble/shared';
 import type { LlmMessage } from '../llm/gateway.js';
 import type { AffectReading } from '../motivation/affect.js';
 import {
@@ -100,14 +105,18 @@ const PROFILE_LABELS: Readonly<Record<string, string>> = {
  * as a compact "what I know about you" line.
  */
 export function buildPersona(companion: CompanionDto, profile: readonly UserFactDto[]): string {
-  const nameFact = profile.find((fact) => fact.predicate === 'name');
+  const nameFact = profile.find((fact) => fact.predicate === NAME_PREDICATE);
   // Group by predicate so a multi-valued attribute (several `languages` rows) renders as
   // one line — "speaks: French, German" — rather than repeating the label per value.
   const byPredicate = new Map<string, string[]>();
   for (const fact of profile) {
     // Tier-1 only, minus `name` (rendered separately as `userName`). A non-Tier-1
     // predicate (a Phase-12 belief) is dropped so it can't leak into the persona.
-    if (fact.predicate === null || fact.predicate === 'name' || !TIER1_SET.has(fact.predicate)) {
+    if (
+      fact.predicate === null ||
+      fact.predicate === NAME_PREDICATE ||
+      !TIER1_SET.has(fact.predicate)
+    ) {
       continue;
     }
     const values = byPredicate.get(fact.predicate) ?? [];

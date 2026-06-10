@@ -39,6 +39,7 @@ import {
   FakeLlmGateway,
   FakeMcpGateway,
   type FakeTurn,
+  GreetingService,
   GrowthService,
   Harness,
   InMemoryPresenceStore,
@@ -346,6 +347,18 @@ export async function makeTestApp(
     ),
     silentLogger,
   );
+  // Greeting on arrival (P14) — voiced greetings spend STAMINA (the `quota` wallet).
+  const greeting = new GreetingService({
+    identity,
+    memory,
+    proposals,
+    rewards,
+    userModel,
+    stamina: quota,
+    llm: llmGateway,
+    model: config.ingestionModel,
+    logger: silentLogger,
+  });
   const deps: AppDeps = {
     identity,
     userModel,
@@ -362,6 +375,7 @@ export async function makeTestApp(
     procedural,
     presence,
     motivation,
+    greeting,
     energy,
     food,
     rewards,

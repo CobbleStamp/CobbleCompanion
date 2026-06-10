@@ -48,6 +48,7 @@ being is proven, because they add platform cost without changing whether the cor
 | **11** | User Model — core profile | Web | Cobble captures & uses the user's identity facts (name, pronouns, age, …) ⭐ | ✅ **Done** (§4c) |
 | **12** | User Model — learned beliefs | Web | Learns preferences/interests/opinions (explicit + implicit); surfaces them unprompted **and acts on them**, refining from reactions ⭐ | ✅ **Done** (§4c) |
 | **13** | User Model — understanding & hygiene | Web | Synthesized user-persona; decay & sensitive attributes; full edit/forget UI | ✅ **Done** (§4c) |
+| **14** | Greeting / arrival reaction | Web | Companion notices you arrive and reacts — greets in context, picks up open threads, or rests when spent | ✅ **Done** (§4d) |
 
 ⭐ = the differentiators the web PoC exists to prove. **Phases 0–5 are the PoC.**
 
@@ -685,6 +686,88 @@ recall (row kept), `deleteFact` removes a fact via the API, and a low-confidence
 refused at write while an explicit one is flagged + purgeable; a live **`user-persona`** judge eval covers
 the persona-shapes-tone claim. Full monorepo green at ≥80% coverage. Canonical mechanism:
 `docs/companion-memory.md` §4.
+
+## 4d. Greeting Workstream (arrival reaction)
+
+The motivation engine (Phase 4) only ever expresses itself by **reading leads and posting a report
+note** — it has no reaction to the user *arriving*. Phase 4 explicitly deferred "unprompted
+conversation beyond the report note" to a later phase; this workstream builds the first slice of it:
+the companion **notices the user return and reacts in context** — greeting, picking up an open
+thread, or staying quiet. It is the first **`connection`-driven conversational move**, the social
+counterpart to the curiosity-driven explore burst, and it **reuses the Phase 4 machinery** unchanged
+(arbitration shape, the off/gentle/active dial, the change-as-reward loop). Like §4b/§4c the numbering
+is a label, not a strict ordering; it extends the web surface and depends only on the PoC spine plus
+the user model (Phases 11–13). Full design → `companion-greeting.md`.
+
+### Phase 14 — Greeting / Arrival Reaction ✅ Done
+**Goal:** when the user comes back to the chat, the companion knows they've arrived and reacts the way
+a being would — a warm hello scaled to how long they've been gone and how well it knows them, picking
+up whatever was left unfinished — or it rests, quietly, when there's nothing worth saying or it's out
+of stamina.
+
+**Scope** (full mechanism → `companion-greeting.md`)
+- **Arrival detection from a durable `last_seen_at`.** A per-companion timestamp (`implementation.md`
+  §1) updated on the **presence heartbeat** (which fires on mount even with no message), *not* the
+  transcript (a silent visit leaves no turn) and *not* the volatile presence store (resets on
+  restart). The gap is computed **before** the write; idempotency falls out (one genuine return ⇒ at
+  most one greeting, no separate `last_greeted_at`) (`companion-greeting.md` §3).
+- **The `decideGreeting` gate** — a token-free sibling to `decideMove`: first-meeting override →
+  dial (`off` = reactive-only) → continuation floor → dial threshold (substance × gap) → stamina gate
+  (`companion-greeting.md` §4).
+- **Stamina-gated voicing, with a token-free exhausted fallback.** A greeting is interaction → billed
+  to **stamina** (not energy); an empty wallet yields a fixed "I'm exhausted" line (no LLM call, shown
+  once per arrival) that doubles as a feeding nudge (`companion-economy.md`).
+- **Content = relationship depth × gap × open loops** (`companion-greeting.md` §5): depth from the
+  user model (Phases 11–13); gap/clock set tone; the single most-relevant open loop (pending approval
+  > unanswered question > away-work to share > settled ingestion) is picked up — voiced in-character,
+  never templated.
+- **First-meeting introduction** that fires even at `off` (the dial governs *ongoing* initiative): the
+  companion introduces itself, sets honest expectations, and asks an opening question — bootstrapping
+  the user-model pipeline (`companion-greeting.md` §6). **Locked default**; an "absolutely-literal
+  `off`" override is a deployment choice owned here.
+- **Async delivery with a `composing` contract** — the user always sees a typing indicator within a
+  beat; preferred implementation is a server→client event stream that also subsumes the proactive-note
+  poll (`companion-greeting.md` §7).
+- **Reward-loop integration** — a greeting is a `proactive_outcomes` initiation, so the change-in-mood
+  reward reinforces/decays the `connection` drive weight: cold greetings make the companion greet less
+  and lighter, *learned* not hand-tuned (`companion-greeting.md` §8).
+
+**Done when:** opening the chat after an absence produces, with no user prompt, an in-character
+greeting scaled to the gap and relationship depth that picks up an open loop when one exists; a
+brand-new companion introduces itself on first open (even at `off`); a brief tab-away or an `off` dial
+produces silence; an exhausted companion shows the fixed fallback (once) instead of a voiced greeting;
+the same return never double-greets; and the user sees a `composing` indicator before the greeting
+streams.
+
+**Key risk:** neediness (the failure mode greetings exist to avoid). Gated behind the dial + the
+continuation floor + the substance threshold, and self-corrected by the change-as-reward loop measured
+from day one (the same signal that governs the explore burst). The voiced *quality* (right depth, no
+faked familiarity, one loop not a list) is the softer risk — validate with a greeting eval (judge the
+brief→greeting on depth-appropriateness and loop selection) alongside the deterministic gate test.
+
+**Deferred (designed here, built later):** richer **arrival reactions** beyond a greeting (surfacing a
+proposal / reporting away-work as the *primary* act); **departure/farewell** reactions (the falling
+edge); **proactive mid-absence outreach** (push — Phase 6, needs an audience); **cross-room arrival**
+(greeting on a different surface than the user left from). Full list → `companion-greeting.md` §10.
+
+**Implemented** (this branch): the durable per-companion `last_seen_at` column (nullable — NULL = a
+first meeting; `implementation.md` §1) backs a token-free **`decideGreeting`** gate (the sibling of
+`decideMove`: first-meeting override → `off` → continuation floor → dial threshold over gap × open
+loop) and a **`GreetingService`** that voices ONE in-character greeting billed to **STAMINA** (a
+greeting is interaction, not solo work) — or shows the fixed token-free **exhausted line** when stamina
+is gone — and records a **`bond`** proactive outcome so the change-as-reward loop learns to greet less
+when greetings land cold. The open loop is the single most relevant of a pending approval (P3) or an
+unanswered question the companion left; depth comes from the user model. A new SSE endpoint
+**`POST /companions/:id/greeting`** streams a **`composing`** cue then the greeting as `done`; the web
+client opens it on **mount and on tab-return**, shows a typing indicator, and appends the greeting —
+and the arrival clock is stamped **after** the gap is read so an idle return never re-greets. The gate
+also won't stack a greeting on an outcome still awaiting a reaction. (Mechanism →
+`companion-greeting.md`; schema → `implementation.md` §1.) **Gate passed** (offline, deterministic —
+like P3/P5, the differentiator is *mechanical*): the Phase 14 DoD test proves first-meeting introduces
+itself even at `off`; a real-gap return greets, spends stamina (not energy), records a `bond` outcome,
+and stamps the clock; a brief tab-away and an `off` dial stay silent; an exhausted companion shows the
+fixed line with no outcome; and a greeting never stacks on a pending note. The `decideGreeting` gate is
+exhaustively unit-tested; the full monorepo is green at ≥80% coverage.
 
 ## 5. Open Questions to Resolve (owned here)
 Owned here (single-source). Each is assigned a decision point:

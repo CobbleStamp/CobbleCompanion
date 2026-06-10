@@ -117,6 +117,7 @@ erDiagram
 | `user_facts_through_seq` | bigint, default 0 | _(Phase 12)_ highest transcript `seq` the **User-Model Reflector** has extracted Tier-2 beliefs through — the **belief-extraction cursor**, independent of `consolidated_through_seq` so a failed reflection never advances past an unprocessed window (mirrors the evolution cursor's independence) |
 | `user_model_updated_through_seq` | bigint, default 0 | transcript `seq` the `user_persona` was last synthesized from (Tier-3 user-model cursor, mirrors the evolution cursor; Phase 13) |
 | `created_at` | timestamptz | |
+| `last_seen_at` | timestamptz, **nullable** | _(Phase 14)_ when the user was last present with this companion — the durable arrival clock the greeting gate computes its gap from. Stamped (to `now`) on every arrival check **after** the gap is read, so an idle return doesn't re-greet. **NULL = never seen**, which is exactly the first-meeting signal (the introduction overrides the dial). `companion-greeting.md` §3 |
 
 ### `messages` — transcript (episodic-memory substrate)
 | Field | Type | Notes |

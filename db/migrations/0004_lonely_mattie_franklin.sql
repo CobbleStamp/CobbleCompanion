@@ -1,1 +1,0 @@
-CREATE UNIQUE INDEX "user_facts_one_current_name_uniq" ON "user_facts" USING btree ("user_id","predicate") WHERE "user_facts"."predicate" = 'name' AND "user_facts"."superseded_at" IS NULL;

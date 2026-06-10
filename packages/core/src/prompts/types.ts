@@ -23,6 +23,7 @@ export type PromptId =
   | 'enricher'
   | 'affect-sense'
   | 'autonomous-note'
+  | 'greeting'
   | 'judge'
   | 'tool-search'
   | 'user-extract'

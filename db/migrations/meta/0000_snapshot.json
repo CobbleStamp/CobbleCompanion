@@ -1,5 +1,5 @@
 {
-  "id": "c3c18892-cdbe-4a11-bef6-5319c7faca20",
+  "id": "2143cb61-7959-4d38-8a15-6cdd91f7bc08",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -180,6 +180,26 @@
           "notNull": true,
           "default": 0
         },
+        "user_facts_through_seq": {
+          "name": "user_facts_through_seq",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "user_persona": {
+          "name": "user_persona",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "user_model_updated_through_seq": {
+          "name": "user_model_updated_through_seq",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
         "proactivity_dial": {
           "name": "proactivity_dial",
           "type": "text",
@@ -219,6 +239,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "last_seen_at": {
+          "name": "last_seen_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {
@@ -1095,6 +1121,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "driven_by_user_fact_id": {
+          "name": "driven_by_user_fact_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "reward": {
           "name": "reward",
           "type": "real",
@@ -1186,6 +1218,19 @@
           "tableTo": "proposals",
           "columnsFrom": [
             "proposal_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "proactive_outcomes_driven_by_user_fact_id_user_facts_id_fk": {
+          "name": "proactive_outcomes_driven_by_user_fact_id_user_facts_id_fk",
+          "tableFrom": "proactive_outcomes",
+          "tableTo": "user_facts",
+          "columnsFrom": [
+            "driven_by_user_fact_id"
           ],
           "columnsTo": [
             "id"
@@ -1854,6 +1899,225 @@
       },
       "indexes": {},
       "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.user_facts": {
+      "name": "user_facts",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "learned_by_companion_id": {
+          "name": "learned_by_companion_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "learned_from_seq": {
+          "name": "learned_from_seq",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "fact_type": {
+          "name": "fact_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "subject": {
+          "name": "subject",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "predicate": {
+          "name": "predicate",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "object": {
+          "name": "object",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "confidence": {
+          "name": "confidence",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "salience": {
+          "name": "salience",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "sensitive": {
+          "name": "sensitive",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "embedding": {
+          "name": "embedding",
+          "type": "vector(1024)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "fts": {
+          "name": "fts",
+          "type": "tsvector",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "to_tsvector('english', coalesce(subject, '') || ' ' || coalesce(predicate, '') || ' ' || coalesce(object, ''))",
+            "type": "stored"
+          }
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "user_facts_user_predicate_idx": {
+          "name": "user_facts_user_predicate_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "predicate",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "user_facts_embedding_hnsw_idx": {
+          "name": "user_facts_embedding_hnsw_idx",
+          "columns": [
+            {
+              "expression": "embedding",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last",
+              "opclass": "vector_cosine_ops"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "hnsw",
+          "with": {}
+        },
+        "user_facts_fts_idx": {
+          "name": "user_facts_fts_idx",
+          "columns": [
+            {
+              "expression": "fts",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "gin",
+          "with": {}
+        },
+        "user_facts_one_current_name_uniq": {
+          "name": "user_facts_one_current_name_uniq",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "predicate",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"user_facts\".\"predicate\" = 'name'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "user_facts_user_id_users_id_fk": {
+          "name": "user_facts_user_id_users_id_fk",
+          "tableFrom": "user_facts",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "user_facts_learned_by_companion_id_companions_id_fk": {
+          "name": "user_facts_learned_by_companion_id_companions_id_fk",
+          "tableFrom": "user_facts",
+          "tableTo": "companions",
+          "columnsFrom": [
+            "learned_by_companion_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},

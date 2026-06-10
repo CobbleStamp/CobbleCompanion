@@ -121,6 +121,28 @@ export function autonomousReadFallback(titles: readonly string[]): string {
   return `While you were away I read ${count} things from my list. Ask me anything about them.`;
 }
 
+/**
+ * Fixed, token-free line shown on arrival when the companion is out of STAMINA
+ * (Phase 14, companion-greeting.md §4). An exhausted companion can't muster a
+ * voiced greeting, so it groans this instead — which doubles as a feeding nudge.
+ * A template, never an LLM call, so it's safe to show on an empty wallet.
+ */
+export function exhaustedGreetingFallback(name: string): string {
+  return `${name} can barely keep their eyes open — "I'm worn out. Feed me and I'll be properly here with you."`;
+}
+
+/**
+ * Honest, no-one's-voice notice that the companion couldn't be reached right now
+ * because of a transient generation/service failure (NOT exhaustion). Distinct
+ * from {@link exhaustedGreetingFallback}: it never claims the companion is out of
+ * stamina, and it's surfaced transiently — never persisted to the transcript and
+ * never rewarded — so a hiccup doesn't lie about the companion's state or poison
+ * the change-as-reward loop.
+ */
+export function companionUnavailableNotice(): string {
+  return "I can't reach your companion right now — please try again in a moment.";
+}
+
 // --- Sources & ingestion (Phase 1 semantic memory) ---
 
 /** How a source entered the companion's knowledge base. */
@@ -618,6 +640,16 @@ export const TIER1_PREDICATES = [
 export type Tier1Predicate = (typeof TIER1_PREDICATES)[number];
 
 /**
+ * The singular `name` predicate — the first Tier-1 attribute and the one the system
+ * special-cases throughout: the sign-in seed guard (`user-model/store.ts`), the persona's
+ * "what I call you" line rendered apart from the rest of the profile (`harness/context.ts`),
+ * the synthesis phrasing (`user-model/synthesize.ts`), and the first-meeting greeting's
+ * icebreaker (`greeting/greeter.ts`). Single source of truth so these can never drift; the
+ * `satisfies` ties it to the predicate set so a rename of the ontology fact fails to compile.
+ */
+export const NAME_PREDICATE = 'name' satisfies Tier1Predicate;
+
+/**
  * The Tier-1 predicates that are **multi-valued** — a person speaks several languages
  * and has many relationships, so a new value *accretes* as its own row rather than
  * superseding the prior one. The store supersedes these only on an identical
@@ -807,6 +839,17 @@ export interface StreamReflectionEvent {
   readonly message: MessageDto;
 }
 
+/**
+ * The companion is composing a server-initiated message (Phase 14 greeting on
+ * arrival). Emitted FIRST on the greeting stream — before the LLM voicing it
+ * precedes — so the client can show a "composing…" typing indicator within a
+ * beat, then the greeting lands as a `done` (or the stream closes silently when
+ * the gate decides to stay quiet). Carries no payload; it's a pure lifecycle cue.
+ */
+export interface StreamComposingEvent {
+  readonly type: 'composing';
+}
+
 /** Terminal failure event — failures are data (architecture.md §4.7). */
 export interface StreamErrorEvent {
   readonly type: 'error';
@@ -843,6 +886,7 @@ export type ChatStreamEvent =
   | StreamProposalEvent
   | StreamDoneEvent
   | StreamReflectionEvent
+  | StreamComposingEvent
   | StreamErrorEvent;
 
 // --- Generic API envelope (patterns.md "API Response Format") ---

@@ -325,6 +325,22 @@ export {
 } from './motivation/autonomous-burst.js';
 export { MotivationRunner, type MotivationTarget } from './motivation/engine-runner.js';
 export { type MotivationSweepDeps, sweepMotivation } from './motivation/engine-sweep.js';
+// Greeting on arrival (Phase 14) — the bond-driven reaction to the user returning.
+export {
+  decideGreeting,
+  type GreetingDecisionInput,
+  type GreetingKind,
+  type GreetingMove,
+  CONTINUATION_FLOOR_MS,
+  ACTIVE_GAP_MS,
+  GENTLE_GAP_MS,
+} from './greeting/decide.js';
+export {
+  GreetingService,
+  type GreetingServiceDeps,
+  type GreetingServiceOptions,
+  type GreetingPlan,
+} from './greeting/greeter.js';
 // Reinforcement — outcome store, change-as-reward weight update, attribution (Phase 4)
 export {
   DrizzleProactiveOutcomeStore,
