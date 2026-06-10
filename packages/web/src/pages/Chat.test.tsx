@@ -553,58 +553,28 @@ describe('Chat upload-turn persistence and proactive notes', () => {
     expect(screen.getAllByRole('button', { name: 'View status →' })).toHaveLength(1);
   });
 
-  it('appends the proactive note when a reading finishes, without duplicating turns', async () => {
-    vi.mocked(listSources).mockResolvedValue([
-      {
-        id: 's1',
-        kind: 'pdf',
-        title: 'report.pdf',
-        origin: 'report.pdf',
-        byteSize: 1,
-        createdAt: '2026-01-03T00:00:00.000Z',
-      },
-    ]);
-    // The job is reading on the first poll, then settles to done on the next.
-    vi.mocked(listIngestionJobs)
-      .mockResolvedValueOnce([
-        {
-          id: 'j1',
-          sourceId: 's1',
-          status: 'enriching',
-          sectionsTotal: 4,
-          sectionsDone: 2,
-          error: null,
-        },
-      ])
-      .mockResolvedValue([
-        {
-          id: 'j1',
-          sourceId: 's1',
-          status: 'done',
-          sectionsTotal: 4,
-          sectionsDone: 4,
-          error: null,
-        },
-      ]);
-    const note: MessageDto = {
-      id: 'note1',
-      companionId: companion.id,
-      sourceId: null,
-      role: 'assistant',
-      content: 'All read — ask away!',
-      createdAt: '2026-01-03T00:00:05.000Z',
-    };
-    // Mount transcript is empty; the refresh triggered by the job settling sees the note.
-    vi.mocked(fetchMessages).mockReset().mockResolvedValueOnce([]).mockResolvedValue([note]);
+  it('delivers the proactive "finished reading" note by push, without duplicating', async () => {
+    // Delivery is now the standing channel (architecture.md §6), not an
+    // ingestion-status poll: when the reading finishes the announcer appends the
+    // note and it's pushed over the channel like any other row.
+    vi.mocked(fetchMessages).mockResolvedValue([]);
+    const channel = controllableChannel();
+    vi.mocked(subscribeMessages).mockImplementation(channel.impl);
+    const note = channelRow('note1', 'assistant', 'All read — ask away!');
 
     renderChat();
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText(/Message Pebble/) as HTMLTextAreaElement).disabled).toBe(
+        false,
+      ),
+    );
 
-    // The note is pulled into the open chat once the job flips to done (next poll).
-    await waitFor(() => expect(screen.getByText('All read — ask away!')).toBeTruthy(), {
-      timeout: 4000,
-    });
-    // Merge-by-id: delivered exactly once, never duplicated by repeated fetches.
-    expect(screen.getAllByText('All read — ask away!')).toHaveLength(1);
+    channel.push(note);
+    await waitFor(() => expect(screen.getByText('All read — ask away!')).toBeTruthy());
+
+    // A redundant re-delivery (a channel re-emit or the focus re-sync) dedupes by id.
+    channel.push(note);
+    await waitFor(() => expect(screen.getAllByText('All read — ask away!')).toHaveLength(1));
   });
 });
 

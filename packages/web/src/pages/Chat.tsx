@@ -8,7 +8,6 @@ import type {
   ChatStreamEvent,
   Citation,
   CompanionDto,
-  IngestionStatus,
   MessageDto,
   MessageKind,
   MessageRole,
@@ -168,9 +167,6 @@ export function Chat({
   const fileInputRef = useRef<HTMLInputElement>(null);
   // The multi-line composer, auto-grown to fit its content (see the effect below).
   const composerRef = useRef<HTMLTextAreaElement>(null);
-  // Last seen status per ingestion job, to spot a job settling (→ done/failed)
-  // across polls so we can pull in the companion's proactive note.
-  const prevJobStatus = useRef<Map<string, IngestionStatus>>(new Map());
   // One poll for the whole chat surface, shared by the header badge and panel.
   const ingestion = useIngestionJobs(companion.id);
   // The pending approval queue (propose→approve, P3) — surfaced as cards below
@@ -294,10 +290,11 @@ export function Chat({
   }, [ready, locked]);
 
   /**
-   * Pull any transcript turns we don't already have and append them. Merged by
-   * id, so re-fetching never duplicates lines already shown (every persisted
-   * line carries its server id). Used to deliver the companion's proactive
-   * "finished reading…" note into an already-open chat.
+   * Re-sync against the transcript snapshot, appending any rows we don't already
+   * have (merged by id, so it never duplicates). The standing event channel
+   * (architecture.md §6) is the primary delivery path; this is the belt-and-
+   * suspenders re-sync on tab-return, in case the connection silently died while
+   * the tab was hidden and reconnect hasn't fired yet.
    */
   const refreshTranscript = useCallback(async (): Promise<void> => {
     try {
@@ -346,7 +343,11 @@ export function Chat({
 
   useEffect(() => {
     const onReturn = (): void => {
-      if (document.visibilityState === 'visible') void runGreeting();
+      if (document.visibilityState !== 'visible') return;
+      // Re-sync the transcript (cheap, id-deduped) in case the standing channel
+      // dropped while the tab was hidden, then run the arrival greeting.
+      void refreshTranscript();
+      void runGreeting();
     };
     document.addEventListener('visibilitychange', onReturn);
     window.addEventListener('focus', onReturn);
@@ -354,22 +355,7 @@ export function Chat({
       document.removeEventListener('visibilitychange', onReturn);
       window.removeEventListener('focus', onReturn);
     };
-  }, [runGreeting]);
-
-  // When an ingestion job settles (→ done/failed), the companion posts a
-  // proactive note server-side; fetch it in. Seeding the ref on the first run
-  // (it starts empty) means a chat opened after completion doesn't re-announce —
-  // that note is already in the mount-load transcript.
-  useEffect(() => {
-    const previous = prevJobStatus.current;
-    const settled = ingestion.jobs.some((job) => {
-      const before = previous.get(job.id);
-      const wasUnsettled = before !== undefined && before !== 'done' && before !== 'failed';
-      return wasUnsettled && (job.status === 'done' || job.status === 'failed');
-    });
-    prevJobStatus.current = new Map(ingestion.jobs.map((job) => [job.id, job.status]));
-    if (settled) void refreshTranscript();
-  }, [ingestion.jobs, refreshTranscript]);
+  }, [refreshTranscript, runGreeting]);
 
   /**
    * Drive a streamed turn into the transcript: tokens grow the trailing
