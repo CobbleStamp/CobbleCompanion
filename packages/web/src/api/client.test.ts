@@ -1,4 +1,9 @@
-import type { ChatStreamEvent, FoodInventoryDto, StaminaEnergyDto } from '@cobble/shared';
+import type {
+  ChatStreamEvent,
+  FoodInventoryDto,
+  MessageDto,
+  StaminaEnergyDto,
+} from '@cobble/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   confirmProposal,
@@ -10,6 +15,7 @@ import {
   sendMessage,
   setAccessTokenGetter,
   setProactivityDial,
+  subscribeMessages,
 } from './client.js';
 
 /**
@@ -266,5 +272,124 @@ describe('phase 4 budget/dial/heartbeat methods', () => {
     expect(url).toContain('/companions/c1/heartbeat');
     expect(init.method).toBe('POST');
     expect(JSON.parse(init.body as string)).toEqual({ tabVisible: false });
+  });
+});
+
+/**
+ * The standing event-channel subscription (architecture.md §6): yields the pushed
+ * `{ type: 'message' }` rows, skips `: ping` heartbeat comments, and treats an
+ * abort as a clean stop rather than an error (the caller owns reconnect).
+ */
+describe('subscribeMessages event channel', () => {
+  beforeEach(() => {
+    setAccessTokenGetter(async () => 'tok');
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    setAccessTokenGetter(async () => null);
+  });
+
+  function row(id: string): MessageDto {
+    return {
+      id,
+      companionId: 'companion-1',
+      role: 'assistant',
+      content: `row ${id}`,
+      kind: 'message',
+      sourceId: null,
+      createdAt: '2026-01-03T00:00:00.000Z',
+    };
+  }
+
+  /** Fake fetch whose body streams the given UTF-8 chunks, then ends. */
+  function stubChannel(chunks: readonly string[]): void {
+    const encoder = new TextEncoder();
+    let index = 0;
+    const reader = {
+      read: async (): Promise<ReadableStreamReadResult<Uint8Array>> => {
+        if (index >= chunks.length) return { done: true, value: undefined };
+        const chunk = chunks[index]!;
+        index += 1;
+        return { done: false, value: encoder.encode(chunk) };
+      },
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, body: { getReader: () => reader } })),
+    );
+  }
+
+  it('yields pushed message rows and ignores heartbeat comments', async () => {
+    stubChannel([
+      ': ping\n\n',
+      `data: ${JSON.stringify({ type: 'message', message: row('m1') })}\n\n`,
+      ': ping\n\n' + `data: ${JSON.stringify({ type: 'message', message: row('m2') })}\n\n`,
+    ]);
+
+    const got: MessageDto[] = [];
+    for await (const message of subscribeMessages('companion-1', new AbortController().signal)) {
+      got.push(message);
+    }
+
+    expect(got.map((m) => m.id)).toEqual(['m1', 'm2']);
+  });
+
+  it('GETs the events endpoint with the abort signal', async () => {
+    stubChannel([]); // empty stream → the generator connects, yields nothing, ends
+    const controller = new AbortController();
+    const got: MessageDto[] = [];
+    for await (const message of subscribeMessages('companion-1', controller.signal)) {
+      got.push(message);
+    }
+    expect(got).toEqual([]);
+    const [url, init] = vi.mocked(fetch).mock.calls[0]!;
+    expect(url).toContain('/companions/companion-1/events');
+    expect(init?.method).toBe('GET');
+    expect(init?.signal).toBe(controller.signal);
+  });
+
+  it('ends quietly when the connect is aborted (no throw)', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new DOMException('aborted', 'AbortError');
+      }),
+    );
+
+    const got: MessageDto[] = [];
+    for await (const message of subscribeMessages('companion-1', controller.signal)) {
+      got.push(message);
+    }
+    expect(got).toEqual([]);
+  });
+
+  it('ends quietly when aborted mid-stream after delivering rows', async () => {
+    const controller = new AbortController();
+    const encoder = new TextEncoder();
+    let reads = 0;
+    const reader = {
+      read: async (): Promise<ReadableStreamReadResult<Uint8Array>> => {
+        reads += 1;
+        if (reads === 1) {
+          const frame = `data: ${JSON.stringify({ type: 'message', message: row('m1') })}\n\n`;
+          return { done: false, value: encoder.encode(frame) };
+        }
+        // The consumer aborted after m1; the underlying fetch read now rejects.
+        throw new DOMException('aborted', 'AbortError');
+      },
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, body: { getReader: () => reader } })),
+    );
+
+    const got: MessageDto[] = [];
+    for await (const message of subscribeMessages('companion-1', controller.signal)) {
+      got.push(message);
+      controller.abort(); // unmount after the first row → next read throws AbortError
+    }
+    expect(got.map((m) => m.id)).toEqual(['m1']);
   });
 });

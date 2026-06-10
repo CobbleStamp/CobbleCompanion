@@ -54,6 +54,8 @@ import {
   MotivationEngine,
   MotivationRunner,
   reinforceFromDelta,
+  InProcessCompanionEventBus,
+  PublishingMemoryStore,
   type RetrieveContext,
   ToolRegistry,
   TranscriptMemoryStore,
@@ -196,7 +198,10 @@ export async function makeTestApp(
     startingVitalityTokens: config.startingVitalityTokens,
   });
   const userModel = new DrizzleUserModelStore(db);
-  const memory = new TranscriptMemoryStore(db);
+  // Mirror production wiring (index.ts): the publish-on-append decorator over the
+  // transcript store so tests exercise the same event-channel publish path.
+  const eventBus = new InProcessCompanionEventBus();
+  const memory = new PublishingMemoryStore(new TranscriptMemoryStore(db), eventBus, silentLogger);
   const semantic = new DrizzleSemanticMemoryStore(db);
   const episodic = new DrizzleEpisodicMemoryStore(db);
   const quota = new DrizzleVitalityStore(db, 'stamina');
@@ -363,6 +368,7 @@ export async function makeTestApp(
     identity,
     userModel,
     memory,
+    eventBus,
     semantic,
     episodic,
     embeddings,

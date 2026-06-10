@@ -8,7 +8,6 @@ import type {
   ChatStreamEvent,
   Citation,
   CompanionDto,
-  IngestionStatus,
   MessageDto,
   MessageKind,
   MessageRole,
@@ -24,10 +23,12 @@ import {
   fetchMessages,
   sendMessage,
   streamGreeting,
+  subscribeMessages,
   uploadFileSource,
 } from '../api/client.js';
 import { IngestionPanel } from '../components/IngestionPanel.js';
 import { IngestionStatusButton } from '../components/IngestionStatusButton.js';
+import { MarkdownMessage } from '../components/MarkdownMessage.js';
 import { Modal } from '../components/Modal.js';
 import { ProposalCard } from '../components/ProposalCard.js';
 import { BudgetMeter } from '../components/BudgetMeter.js';
@@ -95,6 +96,50 @@ function messageToLine(m: MessageDto): ChatLine {
   };
 }
 
+/** Reconnect backoff bounds for the standing event channel (implementation.md §3). */
+const CHANNEL_INITIAL_BACKOFF_MS = 1000;
+const CHANNEL_MAX_BACKOFF_MS = 15000;
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Merge one pushed/persisted row into the rendered lines, keyed by server id
+ * (architecture.md §6). Already present by id → no-op: the per-turn stream, the
+ * snapshot, and the channel can each deliver the same row. Otherwise reconcile the
+ * optimistic, id-less echo of a row this client just sent — a user line matched by
+ * content — by adopting the authoritative row in place; a genuinely new row is
+ * appended (the channel and snapshot both deliver in chronological order).
+ */
+function mergeMessage(lines: ChatLine[], message: MessageDto): ChatLine[] {
+  if (lines.some((line) => line.id === message.id)) return lines;
+  if (message.role === 'user') {
+    const optimistic = lines.findIndex(
+      (line) => line.id === undefined && line.role === 'user' && line.content === message.content,
+    );
+    if (optimistic >= 0) {
+      return [
+        ...lines.slice(0, optimistic),
+        messageToLine(message),
+        ...lines.slice(optimistic + 1),
+      ];
+    }
+  }
+  return [...lines, messageToLine(message)];
+}
+
+/**
+ * Fold a transcript snapshot into the rendered lines in order. Each row goes
+ * through {@link mergeMessage}, so a row already present by id is a no-op and the
+ * id-less optimistic echo of a just-sent user line is reconciled in place rather
+ * than duplicated — the snapshot is the only delivery path for a row whose live
+ * channel echo was lost (the channel was disconnected when it persisted, and the
+ * bus carries no replay). Used for the initial load and the reconnect / tab-return
+ * re-sync that recovers rows appended while the channel was down. Returns the same
+ * array reference when the snapshot adds nothing, so an idle re-sync doesn't churn.
+ */
+function mergeSnapshot(lines: ChatLine[], history: readonly MessageDto[]): ChatLine[] {
+  return history.reduce(mergeMessage, lines);
+}
+
 export function Chat({
   companion,
   onSignOut,
@@ -113,13 +158,18 @@ export function Chat({
   // The companion is composing a server-initiated greeting (P14) — show a typing
   // indicator until it lands or the gate stays quiet.
   const [composing, setComposing] = useState(false);
-  const startedRef = useRef(false);
   // Guards against overlapping arrival checks (mount + focus can both fire).
   const greetingRef = useRef(false);
+  // Channel rows that arrived before the snapshot landed or while a turn is in
+  // flight, held until it's safe to merge them (see the establishment effect).
+  const bufferedRef = useRef<MessageDto[]>([]);
+  // Mirrors of `ready`/`locked` the long-lived channel consumer reads — its closure
+  // can't see fresh React state.
+  const readyRef = useRef(false);
+  const lockedRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  // Last seen status per ingestion job, to spot a job settling (→ done/failed)
-  // across polls so we can pull in the companion's proactive note.
-  const prevJobStatus = useRef<Map<string, IngestionStatus>>(new Map());
+  // The multi-line composer, auto-grown to fit its content (see the effect below).
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   // One poll for the whole chat surface, shared by the header badge and panel.
   const ingestion = useIngestionJobs(companion.id);
   // The pending approval queue (propose→approve, P3) — surfaced as cards below
@@ -132,39 +182,127 @@ export function Chat({
   // While a send is streaming or a file is uploading, the composer is locked so
   // the two intake paths never overlap.
   const locked = busy || attaching;
+  // Keep the refs the async channel consumer reads in step with render.
+  readyRef.current = ready;
+  lockedRef.current = locked;
 
+  // Grow the composer with its content (Gemini-style), up to the CSS max-height,
+  // then scroll. Runs on every input change — including the reset to '' after a
+  // send, which snaps it back to a single row.
   useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
+    const el = composerRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [input]);
+
+  // Establish the durable view (architecture.md §6): open the standing event
+  // channel AND load the transcript snapshot. Subscribe-FIRST (live rows buffer
+  // until the snapshot lands), then snapshot, then merge by id — so a row that
+  // persists after the snapshot still arrives over the live channel, and the two
+  // never drop or duplicate. The channel reconnects with backoff while mounted and
+  // re-syncs on reconnect; everything aborts on unmount. This is what makes opening
+  // the chat, navigating away and back, or a second tab all converge on the
+  // transcript without a manual refresh.
+  useEffect(() => {
+    const controller = new AbortController();
+    let cancelled = false;
+
+    // Hold rows until the snapshot has landed and no turn is mid-flight (the
+    // per-turn stream owns its optimistic lines until then); the buffer is flushed,
+    // deduped by id, once it's safe (the effect below).
+    const applyOrBuffer = (message: MessageDto): void => {
+      if (!readyRef.current || lockedRef.current) {
+        bufferedRef.current.push(message);
+      } else {
+        setLines((prev) => mergeMessage(prev, message));
+      }
+    };
+
+    // The standing subscription, reconnecting until unmount.
     void (async () => {
-      try {
-        // A companion has one lifelong conversation, so resuming is just loading
-        // its transcript — no session to pick or create.
-        const history = await fetchMessages(companion.id);
-        setLines(history.map(messageToLine));
-        setReady(true);
-      } catch (err) {
-        // Allow a retry on remount rather than getting stuck in a half-started state.
-        startedRef.current = false;
-        setError(err instanceof Error ? err.message : 'Failed to load conversation');
+      let backoff = CHANNEL_INITIAL_BACKOFF_MS;
+      while (!cancelled) {
+        try {
+          for await (const message of subscribeMessages(companion.id, controller.signal)) {
+            if (cancelled) break;
+            applyOrBuffer(message);
+            backoff = CHANNEL_INITIAL_BACKOFF_MS; // a healthy frame resets backoff
+          }
+        } catch (err) {
+          if (cancelled || controller.signal.aborted) break;
+          console.error('event channel error; reconnecting', {
+            companionId: companion.id,
+            error: err,
+          });
+        }
+        if (cancelled) break;
+        await delay(backoff);
+        backoff = Math.min(backoff * 2, CHANNEL_MAX_BACKOFF_MS);
+        if (cancelled) break;
+        // Recover rows appended while we were disconnected (no server-side replay).
+        try {
+          const history = await fetchMessages(companion.id);
+          if (!cancelled) setLines((prev) => mergeSnapshot(prev, history));
+        } catch (err) {
+          console.error('re-snapshot after reconnect failed', {
+            companionId: companion.id,
+            error: err,
+          });
+        }
       }
     })();
+
+    // The initial snapshot, retried until it lands (a companion has one lifelong
+    // conversation, so resuming is just loading its transcript).
+    void (async () => {
+      let backoff = CHANNEL_INITIAL_BACKOFF_MS;
+      while (!cancelled) {
+        try {
+          const history = await fetchMessages(companion.id);
+          if (cancelled) return;
+          setLines((prev) =>
+            prev.length > 0 ? mergeSnapshot(prev, history) : history.map(messageToLine),
+          );
+          setError(null);
+          setReady(true);
+          return;
+        } catch (err) {
+          if (cancelled) return;
+          setError(err instanceof Error ? err.message : 'Failed to load conversation');
+          await delay(backoff);
+          backoff = Math.min(backoff * 2, CHANNEL_MAX_BACKOFF_MS);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, [companion.id]);
 
+  // Once the snapshot has landed and no turn is in flight, flush the rows the
+  // channel buffered in the meantime (deduped by id against what's already shown).
+  useEffect(() => {
+    if (!ready || locked) return;
+    if (bufferedRef.current.length === 0) return;
+    const pending = bufferedRef.current;
+    bufferedRef.current = [];
+    setLines((prev) => pending.reduce(mergeMessage, prev));
+  }, [ready, locked]);
+
   /**
-   * Pull any transcript turns we don't already have and append them. Merged by
-   * id, so re-fetching never duplicates lines already shown (every persisted
-   * line carries its server id). Used to deliver the companion's proactive
-   * "finished reading…" note into an already-open chat.
+   * Re-sync against the transcript snapshot, appending any rows we don't already
+   * have (merged by id, so it never duplicates). The standing event channel
+   * (architecture.md §6) is the primary delivery path; this is the belt-and-
+   * suspenders re-sync on tab-return, in case the connection silently died while
+   * the tab was hidden and reconnect hasn't fired yet.
    */
   const refreshTranscript = useCallback(async (): Promise<void> => {
     try {
       const history = await fetchMessages(companion.id);
-      setLines((prev) => {
-        const known = new Set(prev.map((line) => line.id).filter((id): id is string => !!id));
-        const additions = history.filter((m) => !known.has(m.id)).map(messageToLine);
-        return additions.length > 0 ? [...prev, ...additions] : prev;
-      });
+      setLines((prev) => mergeSnapshot(prev, history));
     } catch (err) {
       console.error('transcript refresh failed', { companionId: companion.id, error: err });
     }
@@ -186,7 +324,7 @@ export function Chat({
         if (event_.type === 'composing') {
           setComposing(true);
         } else if (event_.type === 'done') {
-          setLines((prev) => [...prev, messageToLine(event_.message)]);
+          setLines((prev) => mergeMessage(prev, event_.message));
           setComposing(false);
         } else if (event_.type === 'error') {
           setComposing(false);
@@ -208,7 +346,11 @@ export function Chat({
 
   useEffect(() => {
     const onReturn = (): void => {
-      if (document.visibilityState === 'visible') void runGreeting();
+      if (document.visibilityState !== 'visible') return;
+      // Re-sync the transcript (cheap, id-deduped) in case the standing channel
+      // dropped while the tab was hidden, then run the arrival greeting.
+      void refreshTranscript();
+      void runGreeting();
     };
     document.addEventListener('visibilitychange', onReturn);
     window.addEventListener('focus', onReturn);
@@ -216,22 +358,7 @@ export function Chat({
       document.removeEventListener('visibilitychange', onReturn);
       window.removeEventListener('focus', onReturn);
     };
-  }, [runGreeting]);
-
-  // When an ingestion job settles (→ done/failed), the companion posts a
-  // proactive note server-side; fetch it in. Seeding the ref on the first run
-  // (it starts empty) means a chat opened after completion doesn't re-announce —
-  // that note is already in the mount-load transcript.
-  useEffect(() => {
-    const previous = prevJobStatus.current;
-    const settled = ingestion.jobs.some((job) => {
-      const before = previous.get(job.id);
-      const wasUnsettled = before !== undefined && before !== 'done' && before !== 'failed';
-      return wasUnsettled && (job.status === 'done' || job.status === 'failed');
-    });
-    prevJobStatus.current = new Map(ingestion.jobs.map((job) => [job.id, job.status]));
-    if (settled) void refreshTranscript();
-  }, [ingestion.jobs, refreshTranscript]);
+  }, [refreshTranscript, runGreeting]);
 
   /**
    * Drive a streamed turn into the transcript: tokens grow the trailing
@@ -260,7 +387,7 @@ export function Chat({
           // A growth reflection posted right after the reply (P5, "growth, felt").
           // Append it as its own assistant line; it carries the persisted message,
           // so its id matches a later refetch and never duplicates.
-          setLines((prev) => [...prev, messageToLine(event_.message)]);
+          setLines((prev) => mergeMessage(prev, event_.message));
         } else if (event_.type === 'proposal') {
           // The turn EXITed proposing an effectful action; it's now a transcript
           // row, and the live queue needs the pending entry for its Approve card.
@@ -285,8 +412,7 @@ export function Chat({
     setLines(history.map(messageToLine));
   }, [companion.id]);
 
-  async function onSend(event: React.FormEvent): Promise<void> {
-    event.preventDefault();
+  async function sendCurrentInput(): Promise<void> {
     if (!ready || input.trim().length === 0 || busy) return;
     const content = input.trim();
     setInput('');
@@ -308,6 +434,23 @@ export function Chat({
       setError(err instanceof Error ? err.message : 'Failed to send message');
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function onSend(event: React.FormEvent): Promise<void> {
+    event.preventDefault();
+    await sendCurrentInput();
+  }
+
+  /**
+   * Enter sends; Shift+Enter inserts a newline (Gemini-style multi-line compose).
+   * IME composition is respected so confirming a candidate with Enter never fires
+   * an accidental send.
+   */
+  function onComposerKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>): void {
+    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      void sendCurrentInput();
     }
   }
 
@@ -457,7 +600,15 @@ export function Chat({
             <li key={key} className={`line ${line.role}${line.attachment ? ' attachment' : ''}`}>
               <span className="who">{line.role === 'user' ? 'You' : companion.name}</span>
               <span className="content">
-                {line.attachment ? `📎 ${line.content}` : line.content}
+                {line.attachment ? (
+                  `📎 ${line.content}`
+                ) : line.role === 'assistant' ? (
+                  // The companion replies in Markdown; render it formatted. User
+                  // turns stay literal so typed asterisks/backticks show as typed.
+                  <MarkdownMessage content={line.content} />
+                ) : (
+                  line.content
+                )}
               </span>
               {line.sourceId && !line.attachment && (
                 <button type="button" className="link-button" onClick={() => setStatusOpen(true)}>
@@ -521,11 +672,14 @@ export function Chat({
           >
             📎
           </button>
-          <input
+          <textarea
+            ref={composerRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            onKeyDown={onComposerKeyDown}
             placeholder={`Message ${companion.name}…`}
             disabled={locked || !ready}
+            rows={1}
           />
           <button type="submit" disabled={locked || !ready}>
             Send

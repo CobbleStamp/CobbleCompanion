@@ -1,8 +1,9 @@
-import type { Logger } from '@cobble/core';
-import type { ChatStreamEvent } from '@cobble/shared';
-import type { FastifyReply } from 'fastify';
-import { describe, expect, it } from 'vitest';
-import { streamSse } from './sse.js';
+import { InProcessCompanionEventBus, type Logger } from '@cobble/core';
+import type { ChatStreamEvent, MessageDto } from '@cobble/shared';
+import { EventEmitter } from 'node:events';
+import type { FastifyReply, FastifyRequest } from 'fastify';
+import { describe, expect, it, vi } from 'vitest';
+import { streamChannel, streamSse } from './sse.js';
 
 interface LogEntry {
   readonly message: string;
@@ -116,5 +117,116 @@ describe('streamSse', () => {
     ).resolves.toBeUndefined();
     expect(errors).toHaveLength(0);
     expect(infos.some((e) => e.message.includes('end failed'))).toBe(true);
+  });
+});
+
+/** A fake `FastifyRequest` whose `raw` is an emitter, so tests can fire `close`. */
+function fakeRequest(): { request: FastifyRequest; close: () => void } {
+  const raw = new EventEmitter();
+  const request = { raw } as unknown as FastifyRequest;
+  return { request, close: () => raw.emit('close') };
+}
+
+function message(id: string, companionId: string, content: string): MessageDto {
+  return {
+    id,
+    companionId,
+    role: 'assistant',
+    content,
+    kind: 'message',
+    sourceId: null,
+    createdAt: '2026-01-03T00:00:00.000Z',
+  };
+}
+
+/** Let the parked iterator resolve and the loop body run (a macrotask). */
+const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+describe('streamChannel', () => {
+  it('writes a published row as a message frame, then ends on client close', async () => {
+    const bus = new InProcessCompanionEventBus();
+    const subscription = bus.subscribe('c1');
+    let ended = false;
+    const { reply, writes } = fakeReply({ endImpl: () => (ended = true) });
+    const { request, close } = fakeRequest();
+
+    const done = streamChannel(reply, request, subscription);
+    bus.publish('c1', message('m1', 'c1', 'pushed'));
+    await tick();
+
+    // The row is wrapped as a `{ type: 'message' }` SSE data frame.
+    const frame = writes.find((w) => w.startsWith('data: '));
+    expect(frame).toBeDefined();
+    expect(JSON.parse(frame!.slice('data: '.length))).toMatchObject({
+      type: 'message',
+      message: { id: 'm1', content: 'pushed' },
+    });
+
+    close();
+    await done;
+    expect(ended).toBe(true);
+
+    // After close the subscription is released — a later publish writes nothing.
+    const before = writes.length;
+    bus.publish('c1', message('m2', 'c1', 'after'));
+    await tick();
+    expect(writes).toHaveLength(before);
+  });
+
+  it('ends without writing a data frame when the client closes before any row', async () => {
+    const bus = new InProcessCompanionEventBus();
+    const subscription = bus.subscribe('c1');
+    let ended = false;
+    const { reply, writes } = fakeReply({ endImpl: () => (ended = true) });
+    const { request, close } = fakeRequest();
+
+    const done = streamChannel(reply, request, subscription);
+    close();
+    await done;
+
+    expect(ended).toBe(true);
+    expect(writes.some((w) => w.startsWith('data: '))).toBe(false);
+  });
+
+  it('emits a heartbeat comment on the interval', async () => {
+    vi.useFakeTimers();
+    try {
+      const bus = new InProcessCompanionEventBus();
+      const subscription = bus.subscribe('c1');
+      const { reply, writes } = fakeReply({});
+      const { request, close } = fakeRequest();
+
+      const done = streamChannel(reply, request, subscription);
+      await vi.advanceTimersByTimeAsync(25_000);
+
+      // A comment line (`:`-prefixed) the SSE parser ignores — never a data frame.
+      expect(writes.some((w) => w.startsWith(': ping'))).toBe(true);
+      expect(writes.some((w) => w.startsWith('data: '))).toBe(false);
+
+      close();
+      await done;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops and logs at info when a write throws (disconnect mid-stream)', async () => {
+    const errors: LogEntry[] = [];
+    const infos: LogEntry[] = [];
+    const bus = new InProcessCompanionEventBus();
+    const subscription = bus.subscribe('c1');
+    const { reply } = fakeReply({
+      writeImpl: () => {
+        throw new Error('EPIPE: write after end');
+      },
+    });
+    const { request } = fakeRequest();
+
+    const done = streamChannel(reply, request, subscription, capturingLogger(errors, infos));
+    bus.publish('c1', message('m1', 'c1', 'x'));
+    await done; // the throw breaks the loop → finally cleanup → resolves
+
+    expect(errors).toHaveLength(0); // a disconnect is not error-severity
+    expect(infos.some((e) => e.context.operation === 'sse.channel')).toBe(true);
   });
 });

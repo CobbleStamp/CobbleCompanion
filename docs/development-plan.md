@@ -49,6 +49,7 @@ being is proven, because they add platform cost without changing whether the cor
 | **12** | User Model — learned beliefs | Web | Learns preferences/interests/opinions (explicit + implicit); surfaces them unprompted **and acts on them**, refining from reactions ⭐ | ✅ **Done** (§4c) |
 | **13** | User Model — understanding & hygiene | Web | Synthesized user-persona; decay & sensitive attributes; full edit/forget UI | ✅ **Done** (§4c) |
 | **14** | Greeting / arrival reaction | Web | Companion notices you arrive and reacts — greets in context, picks up open threads, or rests when spent | ✅ **Done** (§4d) |
+| **15** | Realtime delivery — standing event channel | Web | New messages (replies, proactive notes, greetings) reach an open client by push; navigating away and back is always current — no forced refresh | 🚧 **In progress** (§4e) |
 
 ⭐ = the differentiators the web PoC exists to prove. **Phases 0–5 are the PoC.**
 
@@ -768,6 +769,59 @@ itself even at `off`; a real-gap return greets, spends stamina (not energy), rec
 and stamps the clock; a brief tab-away and an `off` dial stay silent; an exhausted companion shows the
 fixed line with no outcome; and a greeting never stacks on a pending note. The `decideGreeting` gate is
 exhaustively unit-tested; the full monorepo is green at ≥80% coverage.
+
+## 4e. Realtime Delivery Workstream (standing event channel)
+
+Through Phase 14, the surface receives backend-produced messages two ways, both with seams: the
+**per-turn SSE** lives only for the turn that opened it and is **owned by the chat component** — so
+in-app navigation (open Memory, come back) tears it down and the streamed reply lands nowhere; and a
+genuinely backend-initiated message (an ingestion note, a greeting) reaches an open chat only by
+**polling** (the ingestion-status poll drives a transcript refresh). The visible bug: send a message,
+navigate away and back before it persists, and the reply never appears until a manual refresh.
+
+This workstream adds a **standing per-companion push channel** so every appended transcript row
+reaches any open surface the moment it persists, and a surface re-established after navigation is
+immediately current. It is the substrate the proactive product needs anyway (backend-initiated
+messages become first-class push, not a poll). Like §4b–§4d the numbering is a label, not a strict
+ordering; it extends the web surface and depends only on the PoC spine. Full mechanism →
+`architecture.md` §6 + `implementation.md` §2.4.
+
+### Phase 15 — Standing Companion Event Channel 🚧 In progress
+**Goal:** new messages — turn replies, ingestion notes, greetings, proactive nudges — reach an open
+client by **push** the instant they persist; opening, navigating away, reconnecting, or running a
+second tab always converges on the durable transcript without a manual refresh.
+
+**Scope** (full mechanism → `architecture.md` §6, `implementation.md` §2.4)
+- **Publish on append.** A `PublishingMemoryStore` decorator over the one `appendMessage` chokepoint
+  emits each appended row to an in-process **Companion Event Bus** — every persistence path (turn,
+  greeting, announcer, upload) publishes with no call-site change.
+- **Standing SSE route.** `GET /companions/:id/events` streams the bus to a surface; heartbeat-kept,
+  close-cleaned (unsubscribe on disconnect). Open-ended `streamChannel`, distinct from the finite
+  per-turn `streamSse`.
+- **Subscribe-then-snapshot establishment.** The client opens the channel **first**, then snapshots
+  the transcript, and **merges by message id** — closing the navigation/reconnect race (a reply that
+  persists after the snapshot still arrives live). Reconnect with backoff + snapshot-per-reconnect;
+  no server-side replay (deferred).
+- **Reconciliation by id.** The per-turn stream, the snapshot, and the channel can all deliver the
+  same row; the client dedupes by id and replaces id-less optimistic lines with their authoritative
+  event. The ingestion-status-poll *delivery* path is superseded (the poll remains only for the
+  reading-progress UI).
+
+**Done when:** a message appended by any path appears in an already-open chat with no refetch trigger;
+navigating to Memory and back surfaces a reply that persisted while away, with no manual refresh and
+no duplicate; a dropped channel reconnects and re-syncs; and a second open tab stays current. Full
+monorepo green at ≥80% coverage.
+
+**Key risk:** standing-connection lifecycle — leaked bus subscriptions / sockets if close-cleanup or
+the heartbeat is wrong (the main new infra), and the optimistic-line reconciliation (dedup of the
+user's own just-sent messages). Both isolated behind tested units (the bus, the `mergeMessage`
+reducer).
+
+**Deferred (designed here, built later):** `Last-Event-ID` server-side **replay** (snapshot-on-reconnect
+covers gaps for now); **multi-replica fan-out** (the bus interface swaps to Postgres `LISTEN/NOTIFY`
+when running >1 instance, `architecture.md` §9); routing the **turn itself** over the channel for live
+token-streaming continuity *while* on another view (this phase recovers the final message on return,
+not the live typing); **WebSockets** (SSE fits — server→client push, client→server stays POSTs).
 
 ## 5. Open Questions to Resolve (owned here)
 Owned here (single-source). Each is assigned a decision point:

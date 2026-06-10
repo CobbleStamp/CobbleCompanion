@@ -889,6 +889,23 @@ export type ChatStreamEvent =
   | StreamComposingEvent
   | StreamErrorEvent;
 
+/**
+ * One row appended to a companion's transcript, pushed over the standing
+ * companion event channel (`architecture.md` §6). Unlike {@link ChatStreamEvent}
+ * — which narrates a single in-flight turn over a request-scoped stream — this is
+ * the durable delivery path: every persisted row (a turn reply, an ingestion
+ * note, a greeting, a proactive nudge) reaches any subscribed surface the moment
+ * it's appended, regardless of which request produced it. The client merges these
+ * into the transcript deduped by message id.
+ */
+export interface StreamMessageEvent {
+  readonly type: 'message';
+  readonly message: MessageDto;
+}
+
+/** Events carried by the standing companion event channel (`GET .../events`). */
+export type CompanionStreamEvent = StreamMessageEvent;
+
 // --- Generic API envelope (patterns.md "API Response Format") ---
 
 export interface ApiError {

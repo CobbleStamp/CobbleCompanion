@@ -158,6 +158,14 @@ export {
 
 // Memory
 export { TranscriptMemoryStore, type MemoryStore, type TranscriptEntry } from './memory/store.js';
+export { PublishingMemoryStore } from './memory/publishing-store.js';
+
+// Event channel (architecture.md §6) — the standing companion event channel's substrate
+export {
+  InProcessCompanionEventBus,
+  type CompanionEventBus,
+  type CompanionSubscription,
+} from './events/bus.js';
 export {
   consolidateWindow,
   parseEpisodes,

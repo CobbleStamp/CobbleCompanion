@@ -15,6 +15,7 @@ import {
   listSources,
   sendMessage,
   streamGreeting,
+  subscribeMessages,
   uploadFileSource,
 } from '../api/client.js';
 import { Chat } from './Chat.js';
@@ -56,6 +57,17 @@ vi.mock('../api/client.js', () => ({
   // so most tests see no greeting unless they opt in.
   streamGreeting: vi.fn(async function* () {}),
   uploadFileSource: vi.fn(),
+  // The standing event channel (architecture.md §6): default to a quiet channel
+  // that stays open until the chat aborts it on unmount, so it neither delivers
+  // rows nor spins reconnecting. Tests opt in by overriding this.
+  subscribeMessages: vi.fn((_companionId: string, signal: AbortSignal) =>
+    (async function* () {
+      await new Promise<void>((resolve) => {
+        if (signal.aborted) resolve();
+        else signal.addEventListener('abort', () => resolve(), { once: true });
+      });
+    })(),
+  ),
   // The ingestion-status hook polls these; default to empty so the header badge
   // and panel stay quiet unless a test opts in.
   listSources: vi.fn(() => Promise.resolve([])),
@@ -541,58 +553,28 @@ describe('Chat upload-turn persistence and proactive notes', () => {
     expect(screen.getAllByRole('button', { name: 'View status →' })).toHaveLength(1);
   });
 
-  it('appends the proactive note when a reading finishes, without duplicating turns', async () => {
-    vi.mocked(listSources).mockResolvedValue([
-      {
-        id: 's1',
-        kind: 'pdf',
-        title: 'report.pdf',
-        origin: 'report.pdf',
-        byteSize: 1,
-        createdAt: '2026-01-03T00:00:00.000Z',
-      },
-    ]);
-    // The job is reading on the first poll, then settles to done on the next.
-    vi.mocked(listIngestionJobs)
-      .mockResolvedValueOnce([
-        {
-          id: 'j1',
-          sourceId: 's1',
-          status: 'enriching',
-          sectionsTotal: 4,
-          sectionsDone: 2,
-          error: null,
-        },
-      ])
-      .mockResolvedValue([
-        {
-          id: 'j1',
-          sourceId: 's1',
-          status: 'done',
-          sectionsTotal: 4,
-          sectionsDone: 4,
-          error: null,
-        },
-      ]);
-    const note: MessageDto = {
-      id: 'note1',
-      companionId: companion.id,
-      sourceId: null,
-      role: 'assistant',
-      content: 'All read — ask away!',
-      createdAt: '2026-01-03T00:00:05.000Z',
-    };
-    // Mount transcript is empty; the refresh triggered by the job settling sees the note.
-    vi.mocked(fetchMessages).mockReset().mockResolvedValueOnce([]).mockResolvedValue([note]);
+  it('delivers the proactive "finished reading" note by push, without duplicating', async () => {
+    // Delivery is now the standing channel (architecture.md §6), not an
+    // ingestion-status poll: when the reading finishes the announcer appends the
+    // note and it's pushed over the channel like any other row.
+    vi.mocked(fetchMessages).mockResolvedValue([]);
+    const channel = controllableChannel();
+    vi.mocked(subscribeMessages).mockImplementation(channel.impl);
+    const note = channelRow('note1', 'assistant', 'All read — ask away!');
 
     renderChat();
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText(/Message Pebble/) as HTMLTextAreaElement).disabled).toBe(
+        false,
+      ),
+    );
 
-    // The note is pulled into the open chat once the job flips to done (next poll).
-    await waitFor(() => expect(screen.getByText('All read — ask away!')).toBeTruthy(), {
-      timeout: 4000,
-    });
-    // Merge-by-id: delivered exactly once, never duplicated by repeated fetches.
-    expect(screen.getAllByText('All read — ask away!')).toHaveLength(1);
+    channel.push(note);
+    await waitFor(() => expect(screen.getByText('All read — ask away!')).toBeTruthy());
+
+    // A redundant re-delivery (a channel re-emit or the focus re-sync) dedupes by id.
+    channel.push(note);
+    await waitFor(() => expect(screen.getAllByText('All read — ask away!')).toHaveLength(1));
   });
 });
 
@@ -769,6 +751,246 @@ describe('Chat transcript fidelity (rich rows survive reload)', () => {
     );
     // The optimistic empty assistant bubble was dropped, not left dangling.
     expect(document.querySelector('.proposal-queue')).not.toBeNull();
+  });
+});
+
+/**
+ * A channel whose rows the test pushes by hand: the generator drains a queue and
+ * parks between pushes until the chat aborts it on unmount. Lets a test deliver a
+ * pushed row at a chosen moment (e.g. after a send completes).
+ */
+function controllableChannel(): {
+  push: (message: MessageDto) => void;
+  impl: (companionId: string, signal: AbortSignal) => AsyncGenerator<MessageDto>;
+} {
+  const queue: MessageDto[] = [];
+  let wake: (() => void) | null = null;
+  let ended = false;
+  const push = (message: MessageDto): void => {
+    queue.push(message);
+    wake?.();
+  };
+  async function* impl(_companionId: string, signal: AbortSignal): AsyncGenerator<MessageDto> {
+    signal.addEventListener(
+      'abort',
+      () => {
+        ended = true;
+        wake?.();
+      },
+      { once: true },
+    );
+    for (;;) {
+      while (queue.length > 0) yield queue.shift()!;
+      if (ended || signal.aborted) return;
+      await new Promise<void>((resolve) => (wake = resolve));
+    }
+  }
+  return { push, impl };
+}
+
+function channelRow(id: string, role: 'user' | 'assistant', content: string): MessageDto {
+  return {
+    id,
+    companionId: companion.id,
+    sourceId: null,
+    role,
+    content,
+    kind: 'message',
+    createdAt: '2026-01-03T00:00:05.000Z',
+  };
+}
+
+describe('Chat event channel (push delivery)', () => {
+  beforeEach(() => {
+    vi.mocked(fetchMessages).mockReset().mockResolvedValue([]);
+    vi.mocked(sendMessage).mockReset();
+    vi.mocked(subscribeMessages).mockReset();
+  });
+
+  it('renders a row pushed over the channel — no refetch needed', async () => {
+    const channel = controllableChannel();
+    vi.mocked(subscribeMessages).mockImplementation(channel.impl);
+
+    renderChat();
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText(/Message Pebble/) as HTMLTextAreaElement).disabled).toBe(
+        false,
+      ),
+    );
+
+    // A proactive note the user never asked for, delivered by push.
+    channel.push(channelRow('pn1', 'assistant', 'Finished reading your book!'));
+
+    await waitFor(() => expect(screen.getByText('Finished reading your book!')).toBeTruthy());
+    // It arrived live — the transcript was fetched once (the mount snapshot), not
+    // re-polled to discover it.
+    expect(fetchMessages).toHaveBeenCalledTimes(1);
+  });
+
+  it('dedupes by id when the snapshot and the channel deliver the same row', async () => {
+    const row = channelRow('m1', 'assistant', 'only once');
+    vi.mocked(fetchMessages).mockResolvedValue([row]);
+    const channel = controllableChannel();
+    vi.mocked(subscribeMessages).mockImplementation(channel.impl);
+
+    renderChat();
+    await waitFor(() => expect(screen.getByText('only once')).toBeTruthy());
+
+    // The channel re-delivers the same persisted row; it must not double-render.
+    channel.push(row);
+    await waitFor(() => expect(screen.getAllByText('only once')).toHaveLength(1));
+  });
+
+  it('reconciles the channel echo of a just-sent message without duplicating it', async () => {
+    vi.mocked(sendMessage).mockImplementation(async function* () {
+      yield { type: 'token', value: 'Hi!' };
+      yield {
+        type: 'done',
+        message: channelRow('a1', 'assistant', 'Hi!'),
+      };
+    });
+    const channel = controllableChannel();
+    vi.mocked(subscribeMessages).mockImplementation(channel.impl);
+
+    renderChat();
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText(/Message Pebble/) as HTMLTextAreaElement).disabled).toBe(
+        false,
+      ),
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/Message Pebble/), { target: { value: 'hello' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(screen.getByText('Hi!')).toBeTruthy());
+
+    // The server now pushes the persisted user + assistant rows over the channel
+    // (as it does for every append). The user row carries the id the optimistic
+    // line lacks; the assistant row's id is already shown (finalized by `done`).
+    channel.push(channelRow('u1', 'user', 'hello'));
+    channel.push(channelRow('a1', 'assistant', 'Hi!'));
+
+    // Give the merges a chance to (not) duplicate, then assert one of each.
+    await waitFor(() => expect(screen.getAllByText('hello')).toHaveLength(1));
+    expect(screen.getAllByText('Hi!')).toHaveLength(1);
+  });
+
+  it('reconciles an optimistic user line against a re-sync snapshot without duplicating it', async () => {
+    // The channel is down during the turn, so the server's user-row echo is lost
+    // (the bus carries no replay) and the optimistic user line stays id-less. A
+    // snapshot is then its only delivery path — the tab-return re-sync must adopt
+    // the persisted row in place, NOT append a second copy.
+    vi.mocked(sendMessage).mockImplementation(async function* () {
+      yield { type: 'token', value: 'Hi!' };
+      yield { type: 'done', message: channelRow('a1', 'assistant', 'Hi!') };
+    });
+    // Mount snapshot is empty; the tab-return re-sync returns the persisted pair.
+    vi.mocked(fetchMessages)
+      .mockReset()
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([channelRow('u1', 'user', 'hello'), channelRow('a1', 'assistant', 'Hi!')]);
+
+    renderChat();
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText(/Message Pebble/) as HTMLTextAreaElement).disabled).toBe(
+        false,
+      ),
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/Message Pebble/), { target: { value: 'hello' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(screen.getByText('Hi!')).toBeTruthy());
+
+    // Tab-return triggers refreshTranscript → mergeSnapshot. The id-less optimistic
+    // 'hello' must reconcile against the persisted u1 row, not render twice.
+    fireEvent(window, new Event('focus'));
+    await waitFor(() => expect(fetchMessages).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getAllByText('hello')).toHaveLength(1));
+    expect(screen.getAllByText('Hi!')).toHaveLength(1);
+  });
+});
+
+describe('Chat markdown rendering', () => {
+  beforeEach(() => {
+    vi.mocked(fetchMessages).mockReset();
+  });
+
+  it('renders an assistant reply as formatted Markdown', async () => {
+    vi.mocked(fetchMessages).mockResolvedValue([
+      {
+        id: 'm1',
+        companionId: companion.id,
+        sourceId: null,
+        role: 'assistant',
+        content: 'Here is **bold** and a list:\n\n- one\n- two',
+        createdAt: '2026-01-03T00:00:01.000Z',
+      },
+    ]);
+
+    renderChat();
+
+    // The asterisks/dashes become real HTML, not literal characters.
+    await waitFor(() => expect(document.querySelector('.markdown strong')).not.toBeNull());
+    expect(document.querySelector('.markdown strong')?.textContent).toBe('bold');
+    expect(document.querySelectorAll('.markdown li')).toHaveLength(2);
+  });
+
+  it('leaves a user turn literal — no Markdown processing', async () => {
+    vi.mocked(fetchMessages).mockResolvedValue([
+      {
+        id: 'm1',
+        companionId: companion.id,
+        sourceId: null,
+        role: 'user',
+        content: 'render **these stars** literally',
+        createdAt: '2026-01-03T00:00:01.000Z',
+      },
+    ]);
+
+    renderChat();
+
+    // The user's text is shown exactly as typed; no markdown container is created.
+    await waitFor(() => expect(screen.getByText('render **these stars** literally')).toBeTruthy());
+    expect(document.querySelector('.markdown')).toBeNull();
+  });
+});
+
+describe('Chat composer (multi-line input)', () => {
+  beforeEach(() => {
+    vi.mocked(fetchMessages).mockReset().mockResolvedValue([]);
+    vi.mocked(sendMessage)
+      .mockReset()
+      .mockImplementation(async function* () {});
+  });
+
+  async function readyComposer(): Promise<HTMLTextAreaElement> {
+    renderChat();
+    const box = screen.getByPlaceholderText(/Message Pebble/) as HTMLTextAreaElement;
+    await waitFor(() => expect(box.disabled).toBe(false));
+    return box;
+  }
+
+  it('sends the message on Enter', async () => {
+    const box = await readyComposer();
+    fireEvent.change(box, { target: { value: 'hi there' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledWith(companion.id, 'hi there'));
+  });
+
+  it('does not send on Shift+Enter (newline instead)', async () => {
+    const box = await readyComposer();
+    fireEvent.change(box, { target: { value: 'line one' } });
+    fireEvent.keyDown(box, { key: 'Enter', shiftKey: true });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not send on Enter while an IME composition is active', async () => {
+    const box = await readyComposer();
+    fireEvent.change(box, { target: { value: 'こんにちは' } });
+    fireEvent.keyDown(box, { key: 'Enter', isComposing: true });
+
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 });
 

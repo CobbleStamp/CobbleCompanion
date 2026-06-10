@@ -703,6 +703,41 @@ fencing. The how-to (changing/adding a prompt) lives in `guide-prompts.md`.
 The proactive `Initiator` seam is filled by the motivation engine in `motivation/` (see §1
 and `companion-motivation.md`).
 
+### 2.4 Event delivery — the companion event channel
+
+The standing per-companion push channel (`architecture.md` §6). No schema change — the bus is
+**in-process pub/sub**; durability lives in the `messages` table, the channel only delivers.
+
+- **Publish point.** `appendMessage` (`memory/store.ts`) is the single chokepoint every persistence
+  path flows through (turn reply, greeting, ingestion announcer, upload turns). A
+  **`PublishingMemoryStore`** decorator wraps the real store and, after a successful append, calls
+  `CompanionEventBus.publish(companionId, dto)`. The publish is **best-effort**: wrapped in
+  `try/catch`, logged at `error` on failure, and never allowed to fail the append (a delivery hiccup
+  must not break persistence — `common/logging.md`). It is wired once at the composition root
+  (`api/src/index.ts`) — `new PublishingMemoryStore(new TranscriptMemoryStore(db), bus, logger)` — so
+  harness, greeter, and announcer all publish through the one shared instance with no call-site change.
+- **Bus.** `CompanionEventBus` (`core/src/events/`) is an interface; `InProcessCompanionEventBus`
+  keeps a `Map<companionId, Set<subscriber>>` and exposes `publish` + `subscribe(companionId) →
+  { iterator: AsyncIterable<MessageDto>; close() }` (a bounded queue + waiter bridges callback →
+  async-iterable). The interface is the seam for a Postgres `LISTEN/NOTIFY` / Redis implementation
+  when the API runs on >1 replica (`architecture.md` §9) — publishers and the route are unchanged.
+- **Channel route.** `GET /companions/:companionId/events` (`requireAuth` + ownership check) opens an
+  **open-ended** SSE (`streamChannel`, distinct from the finite `streamSse`): it subscribes to the
+  bus, writes each row as `{ type: 'message', message }`, emits a heartbeat comment (`: ping`) on an
+  interval to keep intermediaries from reaping the idle connection, and registers
+  `request.raw.on('close', …)` to **unsubscribe + clear the heartbeat + end** — the close-driven
+  cleanup the per-turn streams don't need. Published rows include `tool_step`/`proposal` kinds, so a
+  client that wasn't the turn's initiator still renders a complete transcript.
+- **Client transport + establishment.** `subscribeMessages(companionId, signal)` (`web/src/api/
+  client.ts`) reads the channel via the shared `fetch`-based `send()` (so the bearer header is set —
+  no `EventSource` limitation) and an SSE parser, threading an `AbortSignal`. The chat's establishment
+  effect: open the subscription **first** (buffering), **then** `fetchMessages` the snapshot, and feed
+  both through a `mergeMessage(lines, dto)` reducer keyed by server id — present id ⇒ ignore; an
+  id-less optimistic line matching `role`+`content`(+`sourceId`) ⇒ replace it adopting the id; else
+  insert in `createdAt` order. On stream error while mounted it reconnects with backoff, re-running the
+  snapshot each (re)connect; on unmount it aborts. Ordering uses `createdAt` (the DTO carries no
+  `seq`); add `seq` to `MessageDto` if equal-timestamp ordering ever glitches.
+
 ## 3. Configuration
 
 Loaded from environment / a secret manager; required values validated at startup (fail fast).
@@ -755,6 +790,11 @@ chars) and link-harvest cap (`MAX_HARVESTED_LINKS`, default 20), and the `/explo
 (`motivation/`). Both per-companion vitality wallets (**stamina** and **energy**) are seeded from
 `STARTING_VITALITY_TOKENS` (`api/src/index.ts`), and the post-turn **affect read** runs on
 `INGESTION_MODEL` (spent from the companion's stamina) — see §1 and `companion-motivation.md` §7–§8.
+
+**Event-channel constants** are in-code (not secrets): the standing channel's **heartbeat interval**
+(the `: ping` keep-alive cadence, `api/src/sse.ts`) and the client's **reconnect backoff** bounds
+(`web/src/api/client.ts`). No env wiring — the channel is in-process pub/sub with no provider or
+credential (§2.4).
 
 **User-model decay constants** _(Phase 13)_ are also in-code: `BELIEF_SALIENCE_HALF_LIFE_DAYS` (the
 uniform half-life of the lazy `effectiveSalience` view) and `STALE_SALIENCE_FLOOR` (below which a decayed
