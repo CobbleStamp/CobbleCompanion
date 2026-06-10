@@ -118,14 +118,16 @@ flowchart TB
 
 | Component | Owns | Notes |
 |---|---|---|
-| **Web Client** | Chat UI (incl. citations, in-chat ingestion-status panel, persisted upload turns + live proactive notes), create-a-companion, auth flows, sources page, memory browser + search | Thin client over the API (invariant #1) |
+| **Web Client** | Chat UI (incl. citations, in-chat ingestion-status panel, persisted upload turns, and live updates pushed over the companion event channel §6), create-a-companion, auth flows, sources page, memory browser + search | Thin client over the API (invariant #1); the chat establishes the standing channel **subscribe-then-snapshot** on (re)mount (§6) so a surface torn down by in-app navigation is immediately current on return — no manual refresh |
 | **API / BFF** | Auth, sessions, routing, response streaming, source intake (multipart), memory routes | The only thing surfaces talk to |
 | **Harness** | The agent loop; defines memory/tool/initiation hooks | See §4; the memory hook is filled with semantic recall |
 | **LLM Gateway** | Provider-agnostic chat-model access | Default OpenRouter; provider pluggable |
 | **Prompt Registry** | Code-as-truth, versioned prompts (`core/src/prompts`) — every system/tool prompt is a typed `PromptTemplate` rendered at its call site | Single source for prompt wording; each LLM call stamps the `promptRef` (semver + content hash) that produced it. See `guide-prompts.md` |
 | **Embedding Gateway** | Provider-agnostic embedding access | OpenRouter `/embeddings`; deterministic fake for tests |
-| **MemoryStore** | Boundary for the transcript (episodic substrate) | The companion's single transcript (`messages`), keyed by `companion_id`; a turn may carry an optional `source_id` (an upload's attachment + acknowledgement) so the chat reconstructs them on reload |
-| **Ingestion Announcer** | Proactive transcript note when a read ends (§4.8) | On `done`/`failed`, posts an in-character, **metered** assistant turn (canned fallback when stamina is empty / on failure); fired by the pipeline, decoupled from it |
+| **MemoryStore** | Boundary for the transcript (episodic substrate) | The companion's single transcript (`messages`), keyed by `companion_id`; a turn may carry an optional `source_id` (an upload's attachment + acknowledgement) so the chat reconstructs them on reload. Wrapped by a **publish-on-append** decorator (`PublishingMemoryStore`) that emits each appended row to the **Companion Event Bus** for live delivery (§6) — so every persistence path publishes with no call-site change |
+| **Ingestion Announcer** | Proactive transcript note when a read ends (§4.8) | On `done`/`failed`, posts an in-character, **metered** assistant turn (canned fallback when stamina is empty / on failure); fired by the pipeline, decoupled from it. Reaches an open chat by **push** over the companion event channel (§6), like any appended row |
+| **Companion Event Bus** | In-process per-companion pub/sub of appended transcript rows (`core/src/events/`) | Fed by the publish-on-append MemoryStore decorator, so a turn reply, a greeting, and an ingestion note all emit uniformly. Interface-seamed so a single-instance `EventEmitter` gives way to Postgres `LISTEN/NOTIFY` (or Redis) when running >1 API replica (§9) — without touching publishers or the channel |
+| **Companion Event Channel** | The standing `GET /companions/:id/events` SSE that streams the bus to a surface (§6) | The durable delivery path: pushes every appended row (`{ type: 'message' }`) to any subscribed surface. Heartbeat-kept, close-cleaned (unsubscribes on client disconnect); the client establishes **subscribe-then-snapshot** and merges **deduped by message id** |
 | **Semantic Store** | Sources (verbatim), sections (vector + FTS), fact overlay, ingestion jobs | Hybrid retrieval with provenance; contract → `ontology.md` |
 | **Ingestion Pipeline + Runner** | Two-pass source reading off the request path (§4.8) | Durable status in `ingestion_jobs`; replaceable by a real worker |
 | **Episodic Store** | Consolidated, time-anchored episodes (vector + FTS) + the consolidation cursor | Derived from the transcript (rebuildable); hybrid recall by topic (§4.3) |
@@ -516,6 +518,10 @@ sequenceDiagram
   `message` rows** (tool steps + proposals are UI chrome and never re-enter the model's context, nor
   episodic consolidation). Live streaming is a *progressive preview* of rows that will be persisted; a
   turn that produced tool-step/proposal rows reconciles the surface against the transcript on settle.
+  Across navigation and multiple open surfaces, the **companion event channel** (§6) is what keeps
+  *live* equal to *projection*: it pushes every appended row to any subscribed surface, and a
+  re-established surface merges by id — so what you see live is exactly what a reload would show, never
+  a richer ephemeral reality that a refresh could lose.
 - **State is authoritative only at the home.** Surfaces never hold loop state (§6); a run reads from
   and writes back to the cloud home.
 
@@ -565,7 +571,10 @@ Design rules (the "improved staged hybrid"; memory guide → `companion-memory.m
   the job flips to its terminal status, so a client polling the job sees the note already in the
   transcript; an announcement failure is logged and never changes the job's recorded outcome.
   Surfacing: the upload's own attachment + acknowledgement turns are persisted (`messages.source_id`)
-  too, and the open chat pulls the proactive note in live off the ingestion-status poll.
+  too. The proactive note reaches an open chat by **push over the companion event channel** (§6) the
+  moment it's appended — the same delivery path as any other transcript row, so no status-poll pull is
+  needed for delivery (the channel supersedes it; an ingestion-status poll remains only for the
+  reading-progress UI).
 - **Re-running a source is idempotent.** A run writes a source's whole section set in one call,
   *replacing* (not appending to) any prior sections for that source — so a re-run never duplicates
   sections/facts or inflates counts (orphaned facts cascade with their sections). This holds
@@ -714,8 +723,31 @@ flowchart TB
   and streaming contract lives in shared types. No surface-specific logic crosses into the core
   (invariant #1). Future mobile and desktop surfaces consume the *same* contract; their OS access
   is exposed *to the core as tools*, not as new core APIs.
-- **Streaming.** Chat responses stream to the client (SSE or WebSocket) so the UI shows tokens as
-  they arrive despite multi-second model latency.
+- **Streaming & delivery.** Two complementary **server-sent-event** channels, both `fetch`-based so
+  the bearer token rides the `Authorization` header (no `EventSource` cookie workaround):
+  - **Per-turn stream** — the `POST .../messages` response (and `/greeting`, `/confirm`) streams the
+    in-flight turn's events (`token` / `citations` / `tool_step` / `proposal` / `done`) so the UI
+    shows tokens as they arrive despite multi-second model latency. It is **request-scoped**: it
+    exists only for that turn, and it is owned by the component that opened it.
+  - **Companion event channel** — a **standing** `GET .../events` subscription that pushes **every
+    row appended to the transcript** (`{ type: 'message' }`), regardless of which request produced it.
+    This is the durable delivery path: a turn reply, an ingestion "finished reading…" note, a
+    proactive nudge, and a greeting all reach an open client the moment they persist — **push, not
+    poll**. It's backed by the in-process **Companion Event Bus**, fed by a publish-on-append hook on
+    the MemoryStore (§3), so nothing at the call sites changes to emit.
+  - **Establishment is subscribe-then-snapshot.** On (re)connect the client opens the channel
+    **first** (buffering live events), **then** fetches the transcript snapshot, and merges both
+    **deduped by message id**. Subscribe-first can only ever double-deliver (harmless under id dedup),
+    never drop — the opposite ordering reopens a gap. This closes the reconnect/navigation race: a
+    reply that persists *after* the snapshot still arrives over the live channel. The channel sends
+    periodic heartbeat comments; the client reconnects with backoff and re-runs the snapshot per
+    reconnect, so rows that landed while disconnected are recovered without any server-side replay
+    (deferred, §9). A surface torn down by in-app navigation simply re-establishes on return and is
+    immediately current — the message-loss / forced-refresh failure this design exists to remove.
+  - **Reconciliation by id.** Three sources can deliver the same row — the active per-turn stream's
+    `done`, the snapshot, and the channel — so the client merges by server message id, and replaces a
+    still-optimistic (id-less) line with its authoritative event rather than duplicating it. This is
+    the surface realization of the §4.7 *transcript-is-truth* invariant.
 - **External services.** The **LLM Provider** (OpenRouter) is the only external dependency —
   outbound HTTPS via the LLM Gateway. User content crossing to the provider is an
   explicit trust boundary (§8).
@@ -737,7 +769,8 @@ flowchart TB
       tracing/         online-tracing seam (TraceSink + noop, redaction, sampling) — runbook-tracing.md
       embedding/       provider-agnostic embedding gateway (request-path memoizing wrapper)
       ingestion/       parse → segment → enrich → embed pipeline + runner + deferred-job sweeper (§4.8)
-      memory/          MemoryStore (transcript) + SemanticMemoryStore + EpisodicMemoryStore + consolidation service/runner
+      events/          in-process Companion Event Bus — per-companion pub/sub of appended transcript rows; fed by the publish-on-append MemoryStore decorator, drained by the standing event-channel route (§6)
+      memory/          MemoryStore (transcript) + the publish-on-append PublishingMemoryStore decorator (§6) + SemanticMemoryStore + EpisodicMemoryStore + consolidation service/runner
       user-model/      UserModelStore (user_facts: Tier-1 profile + Tier-2 beliefs) + inline User-Fact Extractor + background User-Model Reflector (Tier-2 beliefs + reconciliation; Tier-3 user_persona) (§4.3/§4.5)
       tools/           tool framework + registry, the three tools, the approval gate, proposal/tool-call/lead/procedural stores (§4.2/§4.4)
       personality/     evolvedPersona synthesis from episodes
@@ -746,9 +779,9 @@ flowchart TB
       greeting/        the bond-driven arrival reaction (social sibling of the explore burst): token-free decideGreeting gate + stamina-billed greeter, reads companions.last_seen_at — companion-greeting.md
       growth/          four mirror axes derived from substrate (§4.3 hint arm) + the feeding economy: axis readings (band+fill), capabilities registry, growth store/service/runner, foods, the per-user food pantry/store (§4.8)
       quota/           per-companion vitality wallets (stamina + energy) (§4.8)
-    api/               BFF / surface boundary (Fastify); memory + source + usage + proposal/inventory routes; presence + proactivity (dial/energy) routes; growth + feed routes
+    api/               BFF / surface boundary (Fastify); memory + source + usage + proposal/inventory routes; presence + proactivity (dial/energy) routes; growth + feed routes; the standing companion event-channel route (§6)
       tracing/         Langfuse Cloud TraceSink adapter (fetch-based; sampling + redaction before export) — runbook-tracing.md
-    web/               React web client; chat w/ citations + ingestion-status panel + approval cards, sources page, memory browser (incl. editable user-model profile/beliefs panel), usage badge; vitality meter + proactivity dial; growth view + kitchen
+    web/               React web client; chat w/ citations + ingestion-status panel + approval cards (subscribe-then-snapshot establishment over the companion event channel, §6), sources page, memory browser (incl. editable user-model profile/beliefs panel), usage badge; vitality meter + proactivity dial; growth view + kitchen
     shared/            shared TS types / contracts
     eval/              dataset/scorer/runner offline eval framework: memory-recall + stateless (affect-sense, user-extract) + injection red-team (→ companion-memory.md §5)
   db/                  migrations & schema (→ implementation.md)
