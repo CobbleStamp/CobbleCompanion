@@ -16,6 +16,20 @@ interface CompanionParams {
  * — then the voiced greeting lands as `done`. When the gate stays quiet the stream
  * closes with no events (the correct, silent outcome). The arrival clock is stamped
  * in `finally` regardless, so an idle return doesn't re-greet on the next check.
+ *
+ * Accepted race — a rare double-greet. `prepare` (reads `last_seen_at`) and
+ * `markSeen` (writes it) are not atomic, and the gap between them spans the whole
+ * `compose` LLM call (seconds). Two arrival checks that don't share the client's
+ * in-memory `greetingRef` guard can both read the same stale clock and both greet:
+ *   - a refresh *during* compose (old page's guard is torn down, new page remounts);
+ *   - two tabs / windows (each has its own guard);
+ *   - two devices or surfaces on the one cloud companion;
+ *   - an SSE reconnect/retry while the first request is still draining.
+ * We accept it: it needs near-simultaneous multi-client arrivals, the worst outcome
+ * is one duplicate greeting (no corruption), and `greetingRef` covers the common
+ * single-tab case. Closing it would need a server-side compare-and-set on `markSeen`
+ * (stamp only if `last_seen_at` still equals the value `prepare` observed) or a
+ * `SELECT ... FOR UPDATE` around read+decide+stamp — deferred until it's worth it.
  */
 async function* greetingEvents(
   greeting: GreetingService,

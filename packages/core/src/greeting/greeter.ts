@@ -213,7 +213,12 @@ export class GreetingService {
     return { ok: true, message };
   }
 
-  /** Stamp the arrival clock to now — AFTER {@link prepare} read the prior value. */
+  /**
+   * Stamp the arrival clock to now — AFTER {@link prepare} read the prior value.
+   * Unconditional last-writer-wins (no compare-and-set), so concurrent arrivals
+   * that don't share the client guard can double-greet; accepted, see the route's
+   * `greetingEvents` doc for the cases and the fix if it ever needs closing.
+   */
   async markSeen(companionId: string): Promise<void> {
     await this.deps.identity.markSeen(companionId, this.now());
   }
@@ -318,7 +323,7 @@ export class GreetingService {
 }
 
 /** A human phrase for an arrival gap, for the greeting's tone (not its content). */
-function describeGap(gapMs: number): string {
+export function describeGap(gapMs: number): string {
   const minutes = Math.round(gapMs / 60_000);
   if (minutes < 90) {
     return 'a little while';

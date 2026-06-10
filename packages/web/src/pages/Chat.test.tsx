@@ -817,4 +817,52 @@ describe('Chat greeting on arrival (P14)', () => {
     // No extra assistant line beyond the resumed transcript.
     expect(document.querySelector('.line.composing')).toBeNull();
   });
+
+  it('clears the typing indicator and adds no line on an error event', async () => {
+    vi.mocked(fetchMessages).mockResolvedValue(history);
+    vi.mocked(streamGreeting).mockImplementation(
+      async function* (): AsyncGenerator<ChatStreamEvent> {
+        yield { type: 'composing' };
+        yield { type: 'error', message: 'I can’t reach your companion right now.' };
+      },
+    );
+
+    renderChat();
+
+    await waitFor(() => expect(screen.getByText('welcome back')).toBeTruthy());
+    // The typing indicator is cleared and no greeting line is appended...
+    await waitFor(() => expect(document.querySelector('.line.composing')).toBeNull());
+    // ...the failure is not surfaced as a chat line (the client drops it today)...
+    expect(screen.queryByText(/can.t reach your companion/i)).toBeNull();
+    // ...and the resumed transcript is left intact by the failed greeting.
+    expect(screen.getByText('hello again')).toBeTruthy();
+  });
+
+  it('coalesces overlapping arrival checks (mount + refocus) into one stream', async () => {
+    vi.mocked(fetchMessages).mockResolvedValue([]);
+    let release!: () => void;
+    const inFlight = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.mocked(streamGreeting).mockImplementation(
+      async function* (): AsyncGenerator<ChatStreamEvent> {
+        yield { type: 'composing' };
+        // Hold the stream open so the mount arrival is still "in flight" when the
+        // refocus fires — the ref must coalesce the second call away.
+        await inFlight;
+      },
+    );
+
+    renderChat();
+    await waitFor(() => expect(document.querySelector('.line.composing')).not.toBeNull());
+
+    // A tab refocus mid-greeting must NOT open a second stream.
+    fireEvent(window, new Event('focus'));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(vi.mocked(streamGreeting)).toHaveBeenCalledTimes(1);
+
+    release();
+    await waitFor(() => expect(document.querySelector('.line.composing')).toBeNull());
+  });
 });

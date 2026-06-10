@@ -195,10 +195,15 @@ to-do dump is its own kind of needy). Priority order:
 ```mermaid
 flowchart LR
     P1["1 · pending approvals<br/>(P3 propose→approve)"] --> P2["2 · unanswered question<br/>(last assistant turn)"]
-    P2 --> P3["3 · away-work to share<br/>(autonomous 'what I read')"]
-    P3 --> P4["4 · settled ingestion<br/>(an upload finished)"]
+    P2 --> P3["3 · away-work to share<br/>(autonomous 'what I read')<br/>— deferred"]
+    P3 --> P4["4 · settled ingestion<br/>(an upload finished)<br/>— deferred"]
     P4 --> P0["— none → greet on depth + gap alone"]
 ```
+
+> **Built scope (Phase 14):** `findOpenLoop` implements only tiers **1–2** (pending approvals, then
+> an unanswered last-assistant question). Tiers **3–4** are deferred — they depend on away-work
+> reporting and ingestion-settled signals that land with the "richer arrival reactions" family (see
+> *Out of scope / future* below); the ladder is the seam they slot into.
 
 So the assembled greeting is: **acknowledge arrival (tone from gap + clock) → bridge at the right
 depth → surface the one best open loop (or none) → invite continuation.**
