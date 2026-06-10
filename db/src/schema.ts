@@ -157,6 +157,13 @@ export const companions = pgTable(
       .notNull()
       .default(DEFAULT_STARTING_VITALITY_TOKENS),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    // Phase 14 — greeting on arrival. The durable, per-companion "when did the user
+    // last show up" timestamp the greeting gate computes its gap from. Updated on
+    // every arrival check (mount / tab-return), AFTER the gap is read — so the next
+    // check sees the freshly-written value and an idle return doesn't re-greet
+    // (companion-greeting.md §3). NULLABLE, no default: NULL means never seen, which
+    // is exactly the first-meeting signal (the introduction overrides the dial, §4).
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
   },
   (table) => [index('companions_owner_idx').on(table.ownerId)],
 );

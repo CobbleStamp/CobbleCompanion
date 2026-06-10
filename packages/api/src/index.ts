@@ -37,6 +37,7 @@ import {
   DrizzleUserModelStore,
   FakeEmbeddingGateway,
   FakeLlmGateway,
+  GreetingService,
   GrowthService,
   DEFAULT_GROWTH_CONFIG,
   Harness,
@@ -375,6 +376,21 @@ async function main(): Promise<void> {
   });
   const motivation = new MotivationRunner(motivationEngine, consoleLogger);
 
+  // Greeting on arrival (P14): the bond-driven reaction to the user returning.
+  // Voiced greetings are interaction, so they spend STAMINA (the `quota` wallet),
+  // not energy — an exhausted companion shows a fixed token-free line instead.
+  const greeting = new GreetingService({
+    identity,
+    memory,
+    proposals,
+    rewards,
+    userModel,
+    stamina: quota,
+    llm: llmGateway,
+    model: config.ingestionModel,
+    logger: consoleLogger,
+  });
+
   // Growth (P5): four-axis growth DERIVED from substrate, with an idempotent
   // high-water mark. The service recomputes post-turn off the message stream (GET is
   // read-only). Decoupled from feeding — it stores nothing spendable.
@@ -411,6 +427,7 @@ async function main(): Promise<void> {
     procedural,
     presence,
     motivation,
+    greeting,
     quota,
     energy,
     food,

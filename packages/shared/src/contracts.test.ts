@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   autonomousReadFallback,
   createCompanionSchema,
+  exhaustedGreetingFallback,
   feedSchema,
   proactivityDialSchema,
   proposalOriginSchema,
@@ -89,5 +90,13 @@ describe('autonomousReadFallback', () => {
     expect(autonomousReadFallback([])).toBe(
       'While you were away I read 0 things from my list. Ask me anything about them.',
     );
+  });
+});
+
+describe('exhaustedGreetingFallback', () => {
+  it('names the companion in the token-free worn-out line', () => {
+    const line = exhaustedGreetingFallback('Pebble');
+    expect(line).toContain('Pebble');
+    expect(line.toLowerCase()).toContain('feed me');
   });
 });

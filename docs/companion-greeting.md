@@ -12,8 +12,10 @@
 > for canonical schema (the `last_seen_at` column, once built) see `implementation.md` §1; for
 > scope/sequencing see `development-plan.md` §4d (Phase 14).
 >
-> **Status: designed, not yet built.** This doc specifies the mechanism; acceptance criteria and
-> phase placement are owned by `development-plan.md`.
+> **Status: built (Phase 14).** The mechanism below ships in `packages/core/src/greeting/`
+> (`decide.ts` gate + `greeter.ts` service), the SSE route `packages/api/src/routes/greeting.routes.ts`,
+> and the web client (`Chat.tsx` arrival triggers + composing indicator). Acceptance criteria and phase
+> placement are owned by `development-plan.md` §4d.
 
 ## 1. Why this exists — what a greeting *is*
 

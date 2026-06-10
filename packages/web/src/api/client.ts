@@ -355,6 +355,15 @@ export async function* sendMessage(
   });
 }
 
+/**
+ * Ask the companion to react to the user's arrival (Phase 14). Yields a
+ * `composing` cue (→ typing indicator) then the voiced greeting as `done`, or no
+ * events when the gate decides to stay quiet. Opened on mount and on tab-return.
+ */
+export async function* streamGreeting(companionId: string): AsyncGenerator<ChatStreamEvent> {
+  yield* stream(`/companions/${companionId}/greeting`, { method: 'POST' });
+}
+
 /** Parse a `text/event-stream` body into chat events (shared by chat + confirm). */
 async function* readSse(response: Response): AsyncGenerator<ChatStreamEvent> {
   const reader = response.body!.getReader();

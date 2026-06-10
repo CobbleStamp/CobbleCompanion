@@ -121,6 +121,16 @@ export function autonomousReadFallback(titles: readonly string[]): string {
   return `While you were away I read ${count} things from my list. Ask me anything about them.`;
 }
 
+/**
+ * Fixed, token-free line shown on arrival when the companion is out of STAMINA
+ * (Phase 14, companion-greeting.md §4). An exhausted companion can't muster a
+ * voiced greeting, so it groans this instead — which doubles as a feeding nudge.
+ * A template, never an LLM call, so it's safe to show on an empty wallet.
+ */
+export function exhaustedGreetingFallback(name: string): string {
+  return `${name} can barely keep their eyes open — "I'm worn out. Feed me and I'll be properly here with you."`;
+}
+
 // --- Sources & ingestion (Phase 1 semantic memory) ---
 
 /** How a source entered the companion's knowledge base. */
@@ -807,6 +817,17 @@ export interface StreamReflectionEvent {
   readonly message: MessageDto;
 }
 
+/**
+ * The companion is composing a server-initiated message (Phase 14 greeting on
+ * arrival). Emitted FIRST on the greeting stream — before the LLM voicing it
+ * precedes — so the client can show a "composing…" typing indicator within a
+ * beat, then the greeting lands as a `done` (or the stream closes silently when
+ * the gate decides to stay quiet). Carries no payload; it's a pure lifecycle cue.
+ */
+export interface StreamComposingEvent {
+  readonly type: 'composing';
+}
+
 /** Terminal failure event — failures are data (architecture.md §4.7). */
 export interface StreamErrorEvent {
   readonly type: 'error';
@@ -843,6 +864,7 @@ export type ChatStreamEvent =
   | StreamProposalEvent
   | StreamDoneEvent
   | StreamReflectionEvent
+  | StreamComposingEvent
   | StreamErrorEvent;
 
 // --- Generic API envelope (patterns.md "API Response Format") ---

@@ -42,6 +42,12 @@ export interface CompanionRecord {
   /** Null → neutral defaults; learned (additive change-as-reward nudge) by the reinforcement loop. */
   readonly driveWeights: DriveWeights | null;
   readonly createdAt: string;
+  /**
+   * Phase 14 — the durable "when the user was last here" timestamp the greeting
+   * gate computes its arrival gap from. `null` = never seen = a first meeting
+   * (the introduction overrides the dial, companion-greeting.md §3–§4).
+   */
+  readonly lastSeenAt: string | null;
 }
 
 /**
@@ -96,6 +102,13 @@ export interface IdentityStore {
     userPersona: string,
     userModelUpdatedThroughSeq: number,
   ): Promise<void>;
+  /**
+   * Stamp the companion's arrival clock to `at` (Phase 14 greeting). Called AFTER
+   * the greeting gate has read the prior value to compute the gap, so the next
+   * arrival check sees the fresh value and an idle return doesn't re-greet
+   * (companion-greeting.md §3). Keyed by companionId (a background/arrival write).
+   */
+  markSeen(companionId: string, at: Date): Promise<void>;
   /** Set the proactivity dial (Phase 4 tunability). Keyed by companionId. */
   setProactivityDial(companionId: string, dial: ProactivityDial): Promise<void>;
   /** Persist learned drive weights (Phase 4 reinforcement). Keyed by companionId. */
@@ -215,6 +228,10 @@ export class DrizzleIdentityStore implements IdentityStore {
       .where(eq(companions.id, companionId));
   }
 
+  async markSeen(companionId: string, at: Date): Promise<void> {
+    await this.db.update(companions).set({ lastSeenAt: at }).where(eq(companions.id, companionId));
+  }
+
   async setProactivityDial(companionId: string, dial: ProactivityDial): Promise<void> {
     await this.db
       .update(companions)
@@ -265,5 +282,6 @@ function toCompanionRecord(row: typeof companions.$inferSelect): CompanionRecord
     personalityKnobs: row.personalityKnobs,
     driveWeights: row.driveWeights,
     createdAt: row.createdAt.toISOString(),
+    lastSeenAt: row.lastSeenAt ? row.lastSeenAt.toISOString() : null,
   };
 }
