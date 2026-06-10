@@ -39,6 +39,7 @@ import type { AppConfig } from './config.js';
 import { registerAuthRoutes } from './routes/auth.routes.js';
 import { registerCompanionRoutes } from './routes/companion.routes.js';
 import { registerEpisodeRoutes } from './routes/episode.routes.js';
+import { registerEventRoutes } from './routes/event.routes.js';
 import { registerGreetingRoutes } from './routes/greeting.routes.js';
 import { registerGrowthRoutes } from './routes/growth.routes.js';
 import { registerMemoryRoutes } from './routes/memory.routes.js';
@@ -197,6 +198,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerAuthRoutes(app, deps, requireAuth);
   registerCompanionRoutes(app, deps, requireAuth);
   registerMessageRoutes(app, deps, requireAuth);
+  registerEventRoutes(app, deps, requireAuth);
   registerMemoryRoutes(app, deps, requireAuth);
   registerUserModelRoutes(app, deps, requireAuth);
   registerEpisodeRoutes(app, deps, requireAuth);
