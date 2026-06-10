@@ -772,6 +772,91 @@ describe('Chat transcript fidelity (rich rows survive reload)', () => {
   });
 });
 
+describe('Chat markdown rendering', () => {
+  beforeEach(() => {
+    vi.mocked(fetchMessages).mockReset();
+  });
+
+  it('renders an assistant reply as formatted Markdown', async () => {
+    vi.mocked(fetchMessages).mockResolvedValue([
+      {
+        id: 'm1',
+        companionId: companion.id,
+        sourceId: null,
+        role: 'assistant',
+        content: 'Here is **bold** and a list:\n\n- one\n- two',
+        createdAt: '2026-01-03T00:00:01.000Z',
+      },
+    ]);
+
+    renderChat();
+
+    // The asterisks/dashes become real HTML, not literal characters.
+    await waitFor(() => expect(document.querySelector('.markdown strong')).not.toBeNull());
+    expect(document.querySelector('.markdown strong')?.textContent).toBe('bold');
+    expect(document.querySelectorAll('.markdown li')).toHaveLength(2);
+  });
+
+  it('leaves a user turn literal — no Markdown processing', async () => {
+    vi.mocked(fetchMessages).mockResolvedValue([
+      {
+        id: 'm1',
+        companionId: companion.id,
+        sourceId: null,
+        role: 'user',
+        content: 'render **these stars** literally',
+        createdAt: '2026-01-03T00:00:01.000Z',
+      },
+    ]);
+
+    renderChat();
+
+    // The user's text is shown exactly as typed; no markdown container is created.
+    await waitFor(() => expect(screen.getByText('render **these stars** literally')).toBeTruthy());
+    expect(document.querySelector('.markdown')).toBeNull();
+  });
+});
+
+describe('Chat composer (multi-line input)', () => {
+  beforeEach(() => {
+    vi.mocked(fetchMessages).mockReset().mockResolvedValue([]);
+    vi.mocked(sendMessage)
+      .mockReset()
+      .mockImplementation(async function* () {});
+  });
+
+  async function readyComposer(): Promise<HTMLTextAreaElement> {
+    renderChat();
+    const box = screen.getByPlaceholderText(/Message Pebble/) as HTMLTextAreaElement;
+    await waitFor(() => expect(box.disabled).toBe(false));
+    return box;
+  }
+
+  it('sends the message on Enter', async () => {
+    const box = await readyComposer();
+    fireEvent.change(box, { target: { value: 'hi there' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledWith(companion.id, 'hi there'));
+  });
+
+  it('does not send on Shift+Enter (newline instead)', async () => {
+    const box = await readyComposer();
+    fireEvent.change(box, { target: { value: 'line one' } });
+    fireEvent.keyDown(box, { key: 'Enter', shiftKey: true });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not send on Enter while an IME composition is active', async () => {
+    const box = await readyComposer();
+    fireEvent.change(box, { target: { value: 'こんにちは' } });
+    fireEvent.keyDown(box, { key: 'Enter', isComposing: true });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+});
+
 describe('Chat greeting on arrival (P14)', () => {
   beforeEach(() => {
     vi.mocked(fetchMessages).mockReset();

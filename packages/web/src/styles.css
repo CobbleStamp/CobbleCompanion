@@ -25,6 +25,7 @@ body {
 }
 
 input,
+textarea,
 button {
   padding: 0.6rem 0.75rem;
   border-radius: 8px;
@@ -88,13 +89,16 @@ button:disabled {
   background: #e0e7ff;
   border-radius: 10px;
   padding: 0.5rem 0.75rem;
+  /* User turns are literal: preserve their newlines (Shift+Enter) verbatim. */
+  white-space: pre-wrap;
 }
 
 .line.assistant .content {
   background: #fff;
   border-radius: 10px;
   padding: 0.5rem 0.75rem;
-  white-space: pre-wrap;
+  /* Assistant turns are Markdown-rendered (see .markdown), so block elements —
+     not pre-wrap — carry the structure. */
 }
 
 /* An attached file reads as a pill rather than a typed bubble. */
@@ -107,15 +111,74 @@ button:disabled {
   font-size: 0.9rem;
 }
 
-/* The chat composer: paperclip · text input · Send, on one row. */
+/* Markdown-rendered assistant replies. Tame default block margins so a single
+   paragraph sits flush in its bubble, while lists/code/tables keep readable
+   spacing. */
+.markdown > :first-child {
+  margin-top: 0;
+}
+.markdown > :last-child {
+  margin-bottom: 0;
+}
+.markdown p {
+  margin: 0.5rem 0;
+}
+.markdown ul,
+.markdown ol {
+  margin: 0.5rem 0;
+  padding-left: 1.25rem;
+}
+.markdown a {
+  color: #2563eb;
+}
+.markdown code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+}
+.markdown :not(pre) > code {
+  background: #eef2f7;
+  border-radius: 4px;
+  padding: 0.1rem 0.3rem;
+}
+.markdown pre {
+  background: #eef2f7;
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  overflow-x: auto;
+}
+.markdown blockquote {
+  margin: 0.5rem 0;
+  padding-left: 0.75rem;
+  border-left: 3px solid #d0d0e0;
+  color: #4b5563;
+}
+.markdown table {
+  border-collapse: collapse;
+}
+.markdown th,
+.markdown td {
+  border: 1px solid #d0d0e0;
+  padding: 0.3rem 0.5rem;
+}
+
+/* The chat composer: paperclip · text input · Send. Bottom-aligned so the
+   buttons stay anchored as the textarea grows over multiple lines. */
 .composer {
   display: flex;
   gap: 0.5rem;
-  align-items: center;
+  align-items: flex-end;
 }
 
-.composer input {
+/* Auto-growing multi-line input: starts one row, grows with content up to
+   max-height (JS sets the exact height; see Chat.tsx), then scrolls. */
+.composer textarea {
   flex: 1;
+  resize: none;
+  font-family: inherit;
+  line-height: 1.4;
+  min-height: 2.6rem;
+  max-height: 10rem;
+  overflow-y: auto;
 }
 
 .attach-button {

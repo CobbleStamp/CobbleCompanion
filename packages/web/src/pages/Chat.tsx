@@ -28,6 +28,7 @@ import {
 } from '../api/client.js';
 import { IngestionPanel } from '../components/IngestionPanel.js';
 import { IngestionStatusButton } from '../components/IngestionStatusButton.js';
+import { MarkdownMessage } from '../components/MarkdownMessage.js';
 import { Modal } from '../components/Modal.js';
 import { ProposalCard } from '../components/ProposalCard.js';
 import { BudgetMeter } from '../components/BudgetMeter.js';
@@ -117,6 +118,8 @@ export function Chat({
   // Guards against overlapping arrival checks (mount + focus can both fire).
   const greetingRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // The multi-line composer, auto-grown to fit its content (see the effect below).
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   // Last seen status per ingestion job, to spot a job settling (→ done/failed)
   // across polls so we can pull in the companion's proactive note.
   const prevJobStatus = useRef<Map<string, IngestionStatus>>(new Map());
@@ -132,6 +135,16 @@ export function Chat({
   // While a send is streaming or a file is uploading, the composer is locked so
   // the two intake paths never overlap.
   const locked = busy || attaching;
+
+  // Grow the composer with its content (Gemini-style), up to the CSS max-height,
+  // then scroll. Runs on every input change — including the reset to '' after a
+  // send, which snaps it back to a single row.
+  useEffect(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [input]);
 
   useEffect(() => {
     if (startedRef.current) return;
@@ -285,8 +298,7 @@ export function Chat({
     setLines(history.map(messageToLine));
   }, [companion.id]);
 
-  async function onSend(event: React.FormEvent): Promise<void> {
-    event.preventDefault();
+  async function sendCurrentInput(): Promise<void> {
     if (!ready || input.trim().length === 0 || busy) return;
     const content = input.trim();
     setInput('');
@@ -308,6 +320,23 @@ export function Chat({
       setError(err instanceof Error ? err.message : 'Failed to send message');
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function onSend(event: React.FormEvent): Promise<void> {
+    event.preventDefault();
+    await sendCurrentInput();
+  }
+
+  /**
+   * Enter sends; Shift+Enter inserts a newline (Gemini-style multi-line compose).
+   * IME composition is respected so confirming a candidate with Enter never fires
+   * an accidental send.
+   */
+  function onComposerKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>): void {
+    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      void sendCurrentInput();
     }
   }
 
@@ -457,7 +486,15 @@ export function Chat({
             <li key={key} className={`line ${line.role}${line.attachment ? ' attachment' : ''}`}>
               <span className="who">{line.role === 'user' ? 'You' : companion.name}</span>
               <span className="content">
-                {line.attachment ? `📎 ${line.content}` : line.content}
+                {line.attachment ? (
+                  `📎 ${line.content}`
+                ) : line.role === 'assistant' ? (
+                  // The companion replies in Markdown; render it formatted. User
+                  // turns stay literal so typed asterisks/backticks show as typed.
+                  <MarkdownMessage content={line.content} />
+                ) : (
+                  line.content
+                )}
               </span>
               {line.sourceId && !line.attachment && (
                 <button type="button" className="link-button" onClick={() => setStatusOpen(true)}>
@@ -521,11 +558,14 @@ export function Chat({
           >
             📎
           </button>
-          <input
+          <textarea
+            ref={composerRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            onKeyDown={onComposerKeyDown}
             placeholder={`Message ${companion.name}…`}
             disabled={locked || !ready}
+            rows={1}
           />
           <button type="submit" disabled={locked || !ready}>
             Send
