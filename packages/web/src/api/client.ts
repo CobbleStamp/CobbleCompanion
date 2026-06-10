@@ -1,6 +1,7 @@
 import type {
   ChatStreamEvent,
   CompanionDto,
+  CompanionStreamEvent,
   CreateCompanionBody,
   CreateLinkSourceBody,
   CreateNoteSourceBody,
@@ -364,8 +365,45 @@ export async function* streamGreeting(companionId: string): AsyncGenerator<ChatS
   yield* stream(`/companions/${companionId}/greeting`, { method: 'POST' });
 }
 
-/** Parse a `text/event-stream` body into chat events (shared by chat + confirm). */
-async function* readSse(response: Response): AsyncGenerator<ChatStreamEvent> {
+/**
+ * Subscribe to the standing companion event channel (architecture.md §6): yields
+ * each transcript row the server pushes (`{ type: 'message' }`) — a turn reply, an
+ * ingestion note, a greeting — for as long as the connection stays open. `signal`
+ * cancels the underlying fetch (the caller aborts it on unmount), and an abort
+ * ends the generator quietly rather than surfacing as an error; the caller owns
+ * any reconnect. GET (no side effects); the bearer rides the `Authorization`
+ * header via `send`, so no `EventSource` cookie workaround is needed.
+ */
+export async function* subscribeMessages(
+  companionId: string,
+  signal: AbortSignal,
+): AsyncGenerator<MessageDto> {
+  let response: Response;
+  try {
+    response = await send(`/companions/${companionId}/events`, { method: 'GET', signal });
+  } catch (error) {
+    if (signal.aborted) return; // an unmount/abort is a clean stop, not a failure
+    throw error;
+  }
+  if (!response.body) throw new Error('event channel response has no body');
+  try {
+    for await (const payload of readSseData(response)) {
+      const event = JSON.parse(payload) as CompanionStreamEvent;
+      if (event.type === 'message') yield event.message;
+    }
+  } catch (error) {
+    if (signal.aborted) return;
+    throw error;
+  }
+}
+
+/**
+ * Yield the JSON payload of each `data:` SSE frame from a `text/event-stream`
+ * body. Splits on the `\n\n` frame boundary, carries any partial trailing frame
+ * across reads, and skips non-`data:` lines (e.g. the standing channel's `: ping`
+ * heartbeat comments). Shared by the per-turn parser and the channel subscription.
+ */
+async function* readSseData(response: Response): AsyncGenerator<string> {
   const reader = response.body!.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -378,8 +416,14 @@ async function* readSse(response: Response): AsyncGenerator<ChatStreamEvent> {
     for (const frame of frames) {
       const line = frame.trim();
       if (!line.startsWith('data:')) continue;
-      const payload = line.slice('data:'.length).trim();
-      yield JSON.parse(payload) as ChatStreamEvent;
+      yield line.slice('data:'.length).trim();
     }
+  }
+}
+
+/** Parse a `text/event-stream` body into chat events (shared by chat + confirm). */
+async function* readSse(response: Response): AsyncGenerator<ChatStreamEvent> {
+  for await (const payload of readSseData(response)) {
+    yield JSON.parse(payload) as ChatStreamEvent;
   }
 }
