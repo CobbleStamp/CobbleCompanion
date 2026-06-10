@@ -186,7 +186,11 @@ so it reads as the companion rather than a canned string.
 | **~a day**               | a genuine "welcome back"                                                                                                            |
 | **many days**            | may carry mild relational weight ("it's been a couple weeks — I wondered how you were"), depth permitting; **never guilt-tripping** |
 
-Absolute clock colours tone independently ("morning" / "you're up late").
+> **Deferred (not built):** absolute clock-of-day colouring ("morning" / "you're up late") is
+> not yet wired — `GreetingInput` carries only the relative arrival gap (`gapPhrase`), not a
+> wall-clock time, so the brief shapes tone from the gap alone. Time-of-day joins the "richer
+> arrival reactions" family (see _Out of scope / future_); the gap framing above is the seam it
+> slots into.
 
 **Axis C — Open loops** — what makes a greeting companion-grade rather than generic. **Lead with the
 single most relevant loop; mention if more wait; never recite the list** (a greeting that reads as a
@@ -205,7 +209,7 @@ flowchart LR
 > reporting and ingestion-settled signals that land with the "richer arrival reactions" family (see
 > _Out of scope / future_ below); the ladder is the seam they slot into.
 
-So the assembled greeting is: **acknowledge arrival (tone from gap + clock) → bridge at the right
+So the assembled greeting is: **acknowledge arrival (tone from gap) → bridge at the right
 depth → surface the one best open loop (or none) → invite continuation.**
 
 ## 6. The first meeting — the highest-value, lowest-risk greeting
@@ -331,6 +335,8 @@ return while still empty → one more groan; never per-heartbeat spam.
 - **Richer arrival reactions** beyond a greeting — surfacing a proposal or reporting away-work as the
   _primary_ act, with the greeting wrapping it (the "arrival reaction" family). The §5 open-loop
   ladder is the seam where this grows.
+- **Time-of-day tone** (§5 Axis B) — colouring the greeting by the absolute wall clock ("morning"
+  / "you're up late") on top of the relative gap; the brief carries no clock field yet.
 - **Departure / farewell** reactions (the falling edge) — this doc covers arrival only.
 - **Proactive mid-absence outreach** (push) — greeting reacts to the user _returning_, not to the
   companion reaching out while away; that needs an audience channel (`architecture.md` §4.5).
