@@ -15,6 +15,7 @@ import {
   listSources,
   sendMessage,
   streamGreeting,
+  subscribeMessages,
   uploadFileSource,
 } from '../api/client.js';
 import { Chat } from './Chat.js';
@@ -56,6 +57,17 @@ vi.mock('../api/client.js', () => ({
   // so most tests see no greeting unless they opt in.
   streamGreeting: vi.fn(async function* () {}),
   uploadFileSource: vi.fn(),
+  // The standing event channel (architecture.md §6): default to a quiet channel
+  // that stays open until the chat aborts it on unmount, so it neither delivers
+  // rows nor spins reconnecting. Tests opt in by overriding this.
+  subscribeMessages: vi.fn((_companionId: string, signal: AbortSignal) =>
+    (async function* () {
+      await new Promise<void>((resolve) => {
+        if (signal.aborted) resolve();
+        else signal.addEventListener('abort', () => resolve(), { once: true });
+      });
+    })(),
+  ),
   // The ingestion-status hook polls these; default to empty so the header badge
   // and panel stay quiet unless a test opts in.
   listSources: vi.fn(() => Promise.resolve([])),
@@ -769,6 +781,127 @@ describe('Chat transcript fidelity (rich rows survive reload)', () => {
     );
     // The optimistic empty assistant bubble was dropped, not left dangling.
     expect(document.querySelector('.proposal-queue')).not.toBeNull();
+  });
+});
+
+/**
+ * A channel whose rows the test pushes by hand: the generator drains a queue and
+ * parks between pushes until the chat aborts it on unmount. Lets a test deliver a
+ * pushed row at a chosen moment (e.g. after a send completes).
+ */
+function controllableChannel(): {
+  push: (message: MessageDto) => void;
+  impl: (companionId: string, signal: AbortSignal) => AsyncGenerator<MessageDto>;
+} {
+  const queue: MessageDto[] = [];
+  let wake: (() => void) | null = null;
+  let ended = false;
+  const push = (message: MessageDto): void => {
+    queue.push(message);
+    wake?.();
+  };
+  async function* impl(_companionId: string, signal: AbortSignal): AsyncGenerator<MessageDto> {
+    signal.addEventListener(
+      'abort',
+      () => {
+        ended = true;
+        wake?.();
+      },
+      { once: true },
+    );
+    for (;;) {
+      while (queue.length > 0) yield queue.shift()!;
+      if (ended || signal.aborted) return;
+      await new Promise<void>((resolve) => (wake = resolve));
+    }
+  }
+  return { push, impl };
+}
+
+function channelRow(id: string, role: 'user' | 'assistant', content: string): MessageDto {
+  return {
+    id,
+    companionId: companion.id,
+    sourceId: null,
+    role,
+    content,
+    kind: 'message',
+    createdAt: '2026-01-03T00:00:05.000Z',
+  };
+}
+
+describe('Chat event channel (push delivery)', () => {
+  beforeEach(() => {
+    vi.mocked(fetchMessages).mockReset().mockResolvedValue([]);
+    vi.mocked(sendMessage).mockReset();
+    vi.mocked(subscribeMessages).mockReset();
+  });
+
+  it('renders a row pushed over the channel — no refetch needed', async () => {
+    const channel = controllableChannel();
+    vi.mocked(subscribeMessages).mockImplementation(channel.impl);
+
+    renderChat();
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText(/Message Pebble/) as HTMLTextAreaElement).disabled).toBe(
+        false,
+      ),
+    );
+
+    // A proactive note the user never asked for, delivered by push.
+    channel.push(channelRow('pn1', 'assistant', 'Finished reading your book!'));
+
+    await waitFor(() => expect(screen.getByText('Finished reading your book!')).toBeTruthy());
+    // It arrived live — the transcript was fetched once (the mount snapshot), not
+    // re-polled to discover it.
+    expect(fetchMessages).toHaveBeenCalledTimes(1);
+  });
+
+  it('dedupes by id when the snapshot and the channel deliver the same row', async () => {
+    const row = channelRow('m1', 'assistant', 'only once');
+    vi.mocked(fetchMessages).mockResolvedValue([row]);
+    const channel = controllableChannel();
+    vi.mocked(subscribeMessages).mockImplementation(channel.impl);
+
+    renderChat();
+    await waitFor(() => expect(screen.getByText('only once')).toBeTruthy());
+
+    // The channel re-delivers the same persisted row; it must not double-render.
+    channel.push(row);
+    await waitFor(() => expect(screen.getAllByText('only once')).toHaveLength(1));
+  });
+
+  it('reconciles the channel echo of a just-sent message without duplicating it', async () => {
+    vi.mocked(sendMessage).mockImplementation(async function* () {
+      yield { type: 'token', value: 'Hi!' };
+      yield {
+        type: 'done',
+        message: channelRow('a1', 'assistant', 'Hi!'),
+      };
+    });
+    const channel = controllableChannel();
+    vi.mocked(subscribeMessages).mockImplementation(channel.impl);
+
+    renderChat();
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText(/Message Pebble/) as HTMLTextAreaElement).disabled).toBe(
+        false,
+      ),
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/Message Pebble/), { target: { value: 'hello' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(screen.getByText('Hi!')).toBeTruthy());
+
+    // The server now pushes the persisted user + assistant rows over the channel
+    // (as it does for every append). The user row carries the id the optimistic
+    // line lacks; the assistant row's id is already shown (finalized by `done`).
+    channel.push(channelRow('u1', 'user', 'hello'));
+    channel.push(channelRow('a1', 'assistant', 'Hi!'));
+
+    // Give the merges a chance to (not) duplicate, then assert one of each.
+    await waitFor(() => expect(screen.getAllByText('hello')).toHaveLength(1));
+    expect(screen.getAllByText('Hi!')).toHaveLength(1);
   });
 });
 
