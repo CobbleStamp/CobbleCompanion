@@ -640,6 +640,16 @@ export const TIER1_PREDICATES = [
 export type Tier1Predicate = (typeof TIER1_PREDICATES)[number];
 
 /**
+ * The singular `name` predicate — the first Tier-1 attribute and the one the system
+ * special-cases throughout: the sign-in seed guard (`user-model/store.ts`), the persona's
+ * "what I call you" line rendered apart from the rest of the profile (`harness/context.ts`),
+ * the synthesis phrasing (`user-model/synthesize.ts`), and the first-meeting greeting's
+ * icebreaker (`greeting/greeter.ts`). Single source of truth so these can never drift; the
+ * `satisfies` ties it to the predicate set so a rename of the ontology fact fails to compile.
+ */
+export const NAME_PREDICATE = 'name' satisfies Tier1Predicate;
+
+/**
  * The Tier-1 predicates that are **multi-valued** — a person speaks several languages
  * and has many relationships, so a new value *accretes* as its own row rather than
  * superseding the prior one. The store supersedes these only on an identical

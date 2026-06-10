@@ -18,6 +18,14 @@ export interface GreetingInput {
   readonly evolvedPersona: string | null;
   /** Tier-3 "who this person is to you" (Phase 13), appended to the voice when present. */
   readonly userPersona: string | null;
+  /**
+   * The name the companion has on file for the user (the Tier-1 `name` fact —
+   * seeded from the sign-in provider, then refined in conversation), or null when
+   * none is known. On a first meeting it is the one thing the companion *does*
+   * know — the icebreaker — so the introduction greets by it while gently
+   * checking it is what they like to be called (companion-greeting.md §6).
+   */
+  readonly userName: string | null;
   /** `introduce` = first meeting; `greet` = an ordinary return. */
   readonly kind: 'introduce' | 'greet';
   /** A human phrase for how long they were gone (e.g. "a few hours"); null for a first meeting. */
@@ -38,6 +46,11 @@ export const greetingTemplate: PromptTemplate<GreetingInput> = {
     temperament: 'curious',
     evolvedPersona: null,
     userPersona: null,
+    // The sample renders a return greeting (`kind: 'greet'`), which never reads
+    // userName — only the first-meeting `introduce` branch does — so null here, not
+    // a stand-in name. (No runtime default: a real first greeting with no name on
+    // file passes null and asks for it.)
+    userName: null,
     kind: 'greet',
     gapPhrase: 'a few hours',
     knownThings: ['they are learning Rust'],
@@ -54,10 +67,21 @@ export const greetingTemplate: PromptTemplate<GreetingInput> = {
 
     const user =
       input.kind === 'introduce'
-        ? `This is the very first time you are meeting the person you accompany — you do not know ` +
-          `them yet. Introduce yourself warmly and briefly (who and what you are), say plainly that ` +
-          `you grow and come to know them the more you talk, and ask one light opening question. ` +
-          `Do not pretend to know anything about them. One to three sentences, plain text, no markdown.`
+        ? [
+            `The person who just brought you home is here for the very first time. This is the ` +
+              `moment you meet them — react the way you genuinely would to being adopted: with ` +
+              `warmth and open curiosity about who they are, in your own voice and form.`,
+            input.userName
+              ? `You know one thing about them: their name is ${input.userName}. Let that be your ` +
+                `icebreaker — greet them by it, and since you can't be sure yet whether it's what ` +
+                `they like to be called, lightly check ("...is that what I should call you?"). Do ` +
+                `not assume anything else about them.`
+              : `You don't know their name yet — ask, lightly, what you should call them. Do not ` +
+                `pretend to know anything about them.`,
+            `Then ask one genuine, low-pressure question to start getting to know them. One to ` +
+              `three sentences, plain text, no markdown. Be warm, not a sales pitch — you are a ` +
+              `companion meeting your person, not a product explaining itself.`,
+          ].join(' ')
         : [
             `The person you accompany has just come back` +
               (input.gapPhrase ? ` after being away ${input.gapPhrase}` : '') +

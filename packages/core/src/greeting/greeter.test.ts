@@ -83,6 +83,23 @@ function belief(
   };
 }
 
+/** A Tier-1 `name` fact, as seeded from sign-in (the introduction's icebreaker). */
+function nameFact(name: string): UserFactDto {
+  return {
+    id: 'f-name',
+    source: 'auth_seed',
+    factType: 'identity',
+    subject: 'user',
+    predicate: 'name',
+    object: name,
+    confidence: 0.5,
+    salience: null,
+    sensitive: false,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  };
+}
+
 function proposal(summary: string): ProposalRecord {
   return {
     id: `p-${summary}`,
@@ -158,9 +175,15 @@ class FakeRewards {
 }
 
 class FakeUserModel {
-  constructor(private readonly beliefs: readonly UserFactDto[] = []) {}
+  constructor(
+    private readonly beliefs: readonly UserFactDto[] = [],
+    private readonly profile: readonly UserFactDto[] = [],
+  ) {}
   async listCurrentBeliefs(): Promise<readonly UserFactDto[]> {
     return this.beliefs;
+  }
+  async listCurrent(): Promise<readonly UserFactDto[]> {
+    return this.profile;
   }
 }
 
@@ -190,6 +213,7 @@ function makeService(
     pending?: readonly ProposalRecord[];
     unresolved?: ProactiveOutcomeRecord | null;
     beliefs?: readonly UserFactDto[];
+    profile?: readonly UserFactDto[];
     staminaEmpty?: boolean;
     llm?: LlmGateway;
   } = {},
@@ -200,7 +224,7 @@ function makeService(
   const memory = new FakeMemory(opts.recent);
   const proposals = new FakeProposals(opts.pending);
   const rewards = new FakeRewards(opts.unresolved ?? null);
-  const userModel = new FakeUserModel(opts.beliefs);
+  const userModel = new FakeUserModel(opts.beliefs, opts.profile);
   const stamina = new FakeStamina(opts.staminaEmpty ?? false);
   const llm = opts.llm ?? new FakeLlmGateway(['Hello there']);
   const deps: GreetingServiceDeps = {
@@ -305,6 +329,45 @@ describe('GreetingService.prepare — known things', () => {
     expect(plan.move.kind).toBe('introduce');
     expect(plan.voice.knownThings).toEqual([]);
     expect(plan.voice.gapPhrase).toBeNull();
+  });
+});
+
+describe('GreetingService.prepare — the user name (icebreaker)', () => {
+  it('carries the seeded name into a first-meeting introduction', async () => {
+    const h = makeService({
+      companion: companionRecord({ lastSeenAt: null }),
+      profile: [nameFact('Sam')],
+    });
+    const plan = await prepareActing(h);
+    expect(plan.move.kind).toBe('introduce');
+    // The name is the one thing known on a first meeting — the icebreaker — even
+    // though no other facts are surfaced (knownThings stays empty).
+    expect(plan.voice.userName).toBe('Sam');
+    expect(plan.voice.knownThings).toEqual([]);
+  });
+
+  it('carries no name when none is on file (the introduction asks for it)', async () => {
+    const h = makeService({ companion: companionRecord({ lastSeenAt: null }), profile: [] });
+    const plan = await prepareActing(h);
+    expect(plan.voice.userName).toBeNull();
+  });
+
+  it('treats a blank/whitespace name fact as no name (never greets an empty string)', async () => {
+    const h = makeService({
+      companion: companionRecord({ lastSeenAt: null }),
+      profile: [nameFact('   ')],
+    });
+    const plan = await prepareActing(h);
+    expect(plan.voice.userName).toBeNull();
+  });
+
+  it('ignores non-name profile facts when resolving the name', async () => {
+    const h = makeService({
+      companion: companionRecord({ lastSeenAt: null }),
+      profile: [belief('Berlin', null, 'livesIn')],
+    });
+    const plan = await prepareActing(h);
+    expect(plan.voice.userName).toBeNull();
   });
 });
 

@@ -12,7 +12,7 @@
  * synthesized from, so it only re-derives when one of them advanced (no wasted tokens).
  */
 
-import { isTier2Predicate, type UserFactDto } from '@cobble/shared';
+import { isTier2Predicate, NAME_PREDICATE, type UserFactDto } from '@cobble/shared';
 import type { IdentityStore } from '../identity/store.js';
 import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
@@ -47,7 +47,7 @@ const MAX_PERSONA_CHARS = 1_200;
 
 /** Render one current user-fact as a natural-language line for the synthesis prompt. */
 function factLine(fact: UserFactDto): string {
-  if (fact.predicate === 'name') {
+  if (fact.predicate === NAME_PREDICATE) {
     return `their name is ${fact.object}`;
   }
   if (fact.predicate !== null && isTier2Predicate(fact.predicate)) {
@@ -112,7 +112,7 @@ export class LlmUserPersonaSynthesizer implements UserPersonaSynthesizer {
     facts: readonly UserFactDto[],
     episodes: readonly { readonly summary: string }[],
   ): Promise<string> {
-    const nameFact = facts.find((fact) => fact.predicate === 'name');
+    const nameFact = facts.find((fact) => fact.predicate === NAME_PREDICATE);
     const prompt = render(userPersonaTemplate, {
       companionName: companion.name,
       userName: nameFact?.object ?? null,

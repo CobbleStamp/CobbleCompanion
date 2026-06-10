@@ -18,6 +18,7 @@
 
 import {
   exhaustedGreetingFallback,
+  NAME_PREDICATE,
   type Drive,
   type DriveWeights,
   type MessageDto,
@@ -139,7 +140,11 @@ export class GreetingService {
         return { act: false };
       }
 
+      // The name is known even at a first meeting (seeded from sign-in) — it is the
+      // introduction's icebreaker. Other facts about the user are withheld until the
+      // relationship has earned them, so knownThings stays empty on a first meeting.
       const knownThings = firstMeeting ? [] : await this.knownThings(ownerId);
+      const userName = await this.userName(ownerId);
       const exhausted = await this.deps.stamina.isEmpty(companionId);
       const voice: GreetingInput = {
         name: companion.name,
@@ -147,6 +152,7 @@ export class GreetingService {
         temperament: companion.temperament,
         evolvedPersona: companion.evolvedPersona,
         userPersona: companion.userPersona,
+        userName,
         kind: move.kind,
         gapPhrase: move.kind === 'introduce' ? null : describeGap(gapMs),
         knownThings,
@@ -301,6 +307,31 @@ export class GreetingService {
       });
     }
     return null;
+  }
+
+  /**
+   * The name the companion has on file for the user (the Tier-1 `name` fact,
+   * companion-memory.md §4), or null. Read from the core profile — not from
+   * {@link knownThings}, which carries Tier-2 beliefs — so it is available even at
+   * a first meeting, where it is the introduction's icebreaker. A missing fact OR
+   * a blank/whitespace value both collapse to null, so the introduction never
+   * greets an empty string — it falls to asking for the name instead. Best-effort:
+   * a read error also means "no name".
+   */
+  private async userName(ownerId: string): Promise<string | null> {
+    try {
+      const profile = await this.deps.userModel.listCurrent(ownerId);
+      const nameFact = profile.find((fact) => fact.predicate === NAME_PREDICATE);
+      const name = nameFact?.object.trim();
+      return name ? name : null;
+    } catch (error) {
+      this.deps.logger.error('greeting user-name read failed', {
+        operation: 'greeting.userName',
+        ownerId,
+        error,
+      });
+      return null;
+    }
   }
 
   /** Up to {@link MAX_KNOWN_THINGS} things known about the user, strongest first. */

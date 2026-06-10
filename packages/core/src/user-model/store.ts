@@ -15,6 +15,7 @@
  */
 import {
   isMultiValuedPredicate,
+  NAME_PREDICATE,
   TIER2_PREDICATES,
   type UserFactDto,
   type UserFactSource,
@@ -29,8 +30,6 @@ import { isSensitiveMatter } from './sensitive.js';
 const USER_SUBJECT = 'user';
 /** Identity attributes are `attribute` facts in the closed core set (ontology.md §2). */
 const DEFAULT_IDENTITY_FACT_TYPE = 'attribute';
-/** The singular `name` predicate, special-cased only for the sign-in seed guard. */
-const NAME_PREDICATE = 'name';
 /** A name from the Google profile is a guess about the account — modest confidence. */
 const AUTH_SEED_CONFIDENCE = 0.5;
 /** A value the user set directly is authoritative — it wins over any inference. */
