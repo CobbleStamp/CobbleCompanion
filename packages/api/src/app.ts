@@ -1,6 +1,7 @@
 import { CompanionNotFoundError } from '@cobble/core';
 import type {
   CompanionAffectStore,
+  CompanionEventBus,
   ConsolidationRunner,
   EmbeddingGateway,
   EpisodicMemoryStore,
@@ -64,6 +65,9 @@ export interface AppDeps {
    *  and backs the user-model routes; the harness reads/writes it during a turn. */
   readonly userModel: UserModelStore;
   readonly memory: MemoryStore;
+  /** The standing companion event channel's bus (architecture.md §6) — fed by the
+   *  publish-on-append MemoryStore decorator, drained by the event-channel route. */
+  readonly eventBus: CompanionEventBus;
   readonly semantic: SemanticMemoryStore;
   readonly episodic: EpisodicMemoryStore;
   readonly embeddings: EmbeddingGateway;

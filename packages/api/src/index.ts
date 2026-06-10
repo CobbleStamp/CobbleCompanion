@@ -57,6 +57,8 @@ import {
   sweepConsolidation,
   sweepMotivation,
   ToolRegistry,
+  InProcessCompanionEventBus,
+  PublishingMemoryStore,
   TranscriptMemoryStore,
   type EmbeddingGateway,
   type LlmGateway,
@@ -112,7 +114,12 @@ async function main(): Promise<void> {
   // The User Model (Phase 11) — seeds the name on sign-in, feeds the persona, and
   // captures stated identity facts post-turn (companion-memory.md §4).
   const userModel = new DrizzleUserModelStore(db);
-  const memory = new TranscriptMemoryStore(db);
+  // The standing companion event channel's substrate (architecture.md §6): the
+  // bus fans appended rows out to subscribed surfaces, and wrapping the store in a
+  // publish-on-append decorator HERE means every persistence path downstream
+  // (announcer, harness, greeter) publishes through the one shared instance.
+  const eventBus = new InProcessCompanionEventBus();
+  const memory = new PublishingMemoryStore(new TranscriptMemoryStore(db), eventBus, consoleLogger);
   // Reinforcement log + the rolling affect read — built early so the harness can
   // sense the user's mood each turn (Phase 4.2) and the will can learn from it.
   const rewards = new DrizzleProactiveOutcomeStore(db);
@@ -414,6 +421,7 @@ async function main(): Promise<void> {
     identity,
     userModel,
     memory,
+    eventBus,
     semantic,
     episodic,
     embeddings,
