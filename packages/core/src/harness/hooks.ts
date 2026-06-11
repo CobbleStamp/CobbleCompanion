@@ -40,6 +40,14 @@ export interface TurnCtx {
   readonly companionId: string;
   /** The companion's owner — tools scope tenant state and bill tokens to it (P3). */
   readonly ownerId: string;
+  /**
+   * The id of the user message that triggered this turn — the message the
+   * companion's `react` action attaches its emoji to (companion-reactions.md §5).
+   * Absent on a proactive turn (no triggering user message), where reacting is a
+   * no-op. Addressing an *older* message (a request-scoped `ref` handle) is a
+   * documented fast-follow; v1 reacts to the current turn only.
+   */
+  readonly currentUserMessageId?: string;
 }
 
 /** A loop ENTRY — a human turn (P0) or a proactive trigger (P4). */

@@ -136,6 +136,54 @@ describe('reaction routes', () => {
     expect(res.statusCode).toBe(200);
   });
 
+  it('lets the companion react to the user message mid-turn, leaving no chrome row', async () => {
+    // The model reacts (👀) on its first step, then replies — companion-reactions.md §5.
+    const reactCtx = await makeTestApp([
+      { toolCalls: [{ name: 'react', args: { emoji: '👀' } }] },
+      { chunks: ['On it!'] },
+    ]);
+    try {
+      const a = reactCtx.bearerFor('owner@example.com');
+      const created = await reactCtx.app.inject({
+        method: 'POST',
+        url: '/companions',
+        headers: a,
+        payload: { name: 'Pebble', form: 'fox', temperament: 'curious' },
+      });
+      const cid = created.json().companion.id;
+
+      const sent = await reactCtx.app.inject({
+        method: 'POST',
+        url: `/companions/${cid}/messages`,
+        headers: a,
+        payload: { content: 'can you check this?' },
+      });
+      expect(sent.statusCode).toBe(200);
+
+      const res = await reactCtx.app.inject({
+        method: 'GET',
+        url: `/companions/${cid}/messages`,
+        headers: a,
+      });
+      const messages = res.json().messages as MessageDto[];
+      // The companion's 👀 is attached to the user's message…
+      const userMsg = messages.find(
+        (m) => m.role === 'user' && m.content === 'can you check this?',
+      );
+      expect(userMsg?.reactions?.some((r) => r.reactor === 'companion' && r.emoji === '👀')).toBe(
+        true,
+      );
+      // …it left NO tool_step chrome row…
+      expect(messages.some((m) => m.kind === 'tool_step')).toBe(false);
+      // …it created NO proactive outcome (expression awaits no reward, §5)…
+      expect(await reactCtx.deps.rewards.list(cid, 10)).toHaveLength(0);
+      // …and the reply still streamed.
+      expect(messages.some((m) => m.role === 'assistant' && m.content === 'On it!')).toBe(true);
+    } finally {
+      await reactCtx.close();
+    }
+  });
+
   it('triggers learning that resolves the proactive outcome the reaction lands on', async () => {
     // A gateway scripted to report a value-created reward, so the floated read
     // produces a learning signal (the default text gateway would read null).

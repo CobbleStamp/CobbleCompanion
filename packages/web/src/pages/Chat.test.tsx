@@ -1178,4 +1178,33 @@ describe('Chat reactions', () => {
     channel.pushEvent({ type: 'reaction_removed', messageId: 'a1', reactor: 'user', emoji: '👍' });
     await waitFor(() => expect(screen.queryByLabelText('You reacted 👍')).toBeNull());
   });
+
+  it("renders the companion's reaction on a user message as a read-only chip", async () => {
+    vi.mocked(fetchMessages).mockResolvedValue([
+      {
+        id: 'u9',
+        companionId: companion.id,
+        sourceId: null,
+        role: 'user',
+        content: 'can you check this?',
+        createdAt: '2026-01-03T00:00:02.000Z',
+      },
+    ]);
+    const channel = controllableChannel();
+    vi.mocked(subscribeCompanionEvents).mockImplementation(channel.impl);
+
+    renderChat();
+    await waitFor(() => expect(screen.getByText('can you check this?')).toBeTruthy());
+
+    // The companion reacts to the user's message (Phase D), delivered over the channel.
+    channel.pushEvent({
+      type: 'reaction_added',
+      messageId: 'u9',
+      reactor: 'companion',
+      emoji: '👀',
+    });
+    const chip = await screen.findByLabelText('Companion reacted 👀');
+    // It's a read-only chip — the user can't toggle the companion's own reaction.
+    expect((chip as HTMLButtonElement).disabled).toBe(true);
+  });
 });

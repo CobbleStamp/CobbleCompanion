@@ -373,6 +373,7 @@ export {
   type ReactionSenseParams,
 } from './reactions/sense.js';
 export { ReactionLearner, type ReactionLearnerDeps } from './reactions/learner.js';
+export { createReactTool, type ReactToolOptions } from './reactions/react-tool.js';
 export {
   DEFAULT_LEARNING_RATE,
   nudgeDriveWeight,

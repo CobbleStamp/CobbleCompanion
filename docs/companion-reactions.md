@@ -12,7 +12,12 @@
 > `companion-memory.md` §4; for canonical schema (`message_reactions`) see `implementation.md` §1; for
 > scope/sequencing see `development-plan.md` §4f.
 >
-> **Status: designed, not built.** Nothing in this doc ships yet. It specifies the design; phase
+> **Status: built (Phase 16), with two designed fast-follows.** The reaction substrate, delivery, the
+> user-reaction reward channel, and the companion's current-turn `react` action all ship
+> (`packages/core/src/reactions/`, `packages/api/src/routes/reaction.routes.ts`, the web chat). Two
+> pieces of §5 are designed but deferred — request-scoped `[n]` **addressing handles** (reacting to a
+> non-latest message) and reaction **read-back** (a reaction re-entering context on a later turn) — both
+> because they tag the production composed recall stack; see the _Built scope_ notes in §5 and §11. Phase
 > placement and acceptance criteria are owned by `development-plan.md` §4f.
 
 ## 1. Why this exists — what a reaction _is_
@@ -155,27 +160,42 @@ it does teach. The question is _which_ drive, given a plain answer has no _motiv
 ## 5. Flow 2 — the companion reacts (expression, planned in the turn)
 
 The companion's own reactions are **a first-class expressive action the model plans within a turn** —
-not a side-channel perception. The killer property is **react-early-then-work**: you ask it to
-validate something, a 👀 lands on your message in a beat, _then_ the tool steps stream, _then_ the
-verdict. That depends on the reaction being _in_ the plan, decided by the model that understands the
-request.
+not a side-channel perception. The intended property is **react-early-then-work**: you ask it to
+validate something, a 👀 lands on your message, _then_ the tool steps stream, _then_ the verdict. That
+depends on the reaction being _in_ the plan, decided by the model that understands the request.
+
+> **Built scope — delivery timing.** The `react` action publishes its event to the **standing channel**
+> (not the per-turn stream), and the web client **buffers channel events during a turn**, so today the
+> companion's reaction appears on the user's message at **turn completion**, not live mid-turn. It is
+> reliably delivered and correctly attributed (the user message's own channel event reconciles the
+> optimistic line's id first, then the reaction applies) — but the ~instant "👀 _before_ the work"
+> render is a **fast-follow** that routes the reaction over the per-turn stream. v1 ships the action,
+> the persistence, and turn-completion delivery.
 
 ```mermaid
 flowchart TD
     A["user turn arrives"] --> B["agent loop — model plans the turn"]
     B --> R{"react now?<br/>(adds something:<br/>acknowledgement / resonance)"}
-    R -->|yes| EMIT["react(emoji, ref?) — free, ungated action<br/>ref→message via per-turn map (omit = current turn)<br/>persist message_reactions (reactor=companion)<br/>flush over event channel immediately"]
+    R -->|yes| EMIT["react(emoji) — free, ungated, silent action<br/>binds to the current user turn (ref handles: fast-follow)<br/>persist message_reactions (reactor=companion)<br/>publish over the event channel"]
     R -->|no| WORK
     EMIT --> WORK["continue turn —<br/>tool_steps, then reply"]
     WORK --> DONE["reply streams"]
 ```
 
-- **Plumbed like a free `tool_step`.** The `react` action reuses the loop's expressive-emit machinery:
-  **ungated** (no approval — it's not effectful), **leaves no `tool_step` chrome row** (the reaction
-  itself is the artifact — see _Reading back_ below), and **streamed the instant it's decided** so it
-  can precede the rest of the turn. It persists a `reactor='companion'` row on the _user's_ message.
+- **Plumbed like a free `tool_step`.** The `react` action reuses the loop's tool machinery:
+  **ungated** (no approval — it's not effectful, so it bypasses the propose→approve gate), **leaves no
+  `tool_step` chrome row** (`silent` — the reaction itself is the artifact; the audit `tool_call_log`
+  still records it), and persists a `reactor='companion'` row on the _user's_ message, pushed over the
+  event channel (delivery timing per the _Built scope_ note above).
 
 ### Addressing — _which_ message the companion reacts to
+
+> **Built scope:** v1 ships the **omit-`ref` / current-turn** path only — the `react(emoji)` action
+> binds to the message that triggered this turn (`TurnCtx.currentUserMessageId`), which covers the
+> dominant 👀-on-it case. The request-scoped `[n]` **handles** below (addressing a non-latest message)
+> are a designed **fast-follow** — they require tagging the production composed recall stack, the
+> highest-blast-radius path, so they land separately. The `react(emoji, ref?)` signature is
+> forward-compatible: adding `ref` is non-breaking.
 
 A reaction is **addressed** (§1), so the companion must point at a specific message. But the model
 never sees message ids — the context projection (`architecture.md` §4.5) is `{role, content}` only, and
@@ -202,6 +222,12 @@ the real ids are UUIDs the model would mis-copy. The mechanism keeps identity **
   both simpler and correct: it mirrors a person reacting to what's on screen.
 
 ### Reading back — reactions are conversational content, always visible to the companion
+
+> **Built scope:** read-back is a designed **fast-follow**, deferred for the same reason as the `[n]`
+> handles — it surfaces reactions inline in the production composed recall stack (the highest-risk
+> path). In v1 the companion sees its _own_ reaction within the current turn (the `react` tool result
+> rides the loop), but a reaction does not yet re-enter context on a _later_ turn. The contained gap:
+> the companion could re-celebrate news it already cheered until read-back lands.
 
 A reaction was genuinely _expressed_, so the companion **always reads it back** — its own _and_ the
 user's — woven in as an **inline annotation on the message it belongs to**, not a separate transcript
@@ -435,6 +461,13 @@ because it was a deliberate bet you're rewarding). Same up/down mechanism, diffe
 - **The reflection pass itself** — §6 is designed but is the layer _after_ the reward channel; v1 ships
   the inline read + reward, logs the corpus, and leaves reflection's belief/persona synthesis for the
   next phase.
+- **Request-scoped `[n]` addressing handles** (§5) — letting the companion react to a _non-latest_
+  message (rapid-fire bursts, a recently-earlier turn). v1 reacts to the current turn only; the
+  `react(emoji, ref?)` signature is forward-compatible. Deferred because it tags the production composed
+  recall stack (highest blast radius).
+- **Reaction read-back** (§5) — surfacing reactions inline in later-turn context so the companion sees
+  its own (and the user's) past reactions and stays coherent. v1 sees its own reaction only within the
+  emitting turn. Same deferral reason (the recall stack).
 - **Context-sensitive companion _affective_ reactions** beyond pragmatic acknowledgement (richer
   emotional resonance) — the §5 action is the seam they grow in.
 - **Fast-loop attune from a reaction** — using a reaction to update the rolling

@@ -16,6 +16,7 @@ import {
   createIngestSourceTool,
   createLoggingAfterToolCall,
   createMemorySearchTool,
+  createReactTool,
   createProceduralRetrieveContext,
   createSemanticRetrieveContext,
   createUserModelRetrieveContext,
@@ -204,6 +205,7 @@ export async function makeTestApp(
   // transcript store so tests exercise the same event-channel publish path.
   const eventBus = new InProcessCompanionEventBus();
   const memory = new PublishingMemoryStore(new TranscriptMemoryStore(db), eventBus, silentLogger);
+  const reactions = new DrizzleReactionStore(db);
   const semantic = new DrizzleSemanticMemoryStore(db);
   const episodic = new DrizzleEpisodicMemoryStore(db);
   const quota = new DrizzleVitalityStore(db, 'stamina');
@@ -289,6 +291,7 @@ export async function makeTestApp(
       logger: silentLogger,
     }),
     createIngestSourceTool({ semantic, ingestion, logger: silentLogger }),
+    createReactTool({ reactions, eventBus, logger: silentLogger }),
   ];
   // Phases 9–10: wire tool acquisition when the test configures a source — an MCP
   // whitelist + a (fake) gateway, and/or a CLI tools path + an injected store +
@@ -319,7 +322,6 @@ export async function makeTestApp(
   const food = new DrizzleFoodStore(db, { initialFood: DEFAULT_GROWTH_CONFIG.initialFood });
   const rewards = new DrizzleProactiveOutcomeStore(db);
   const affectStore = new DrizzleCompanionAffectStore(db);
-  const reactions = new DrizzleReactionStore(db);
   const reactionLearner = new ReactionLearner({
     rewards,
     reactions,

@@ -150,7 +150,7 @@ erDiagram
 > `created_at` at sub-millisecond resolution, so a monotonic ordinal is the source of truth for
 > transcript order. `seq` is a single global sequence, so it orders the whole transcript.
 
-### `message_reactions` — emoji reactions _(designed, not built)_
+### `message_reactions` — emoji reactions
 | Field | Type | Notes |
 |---|---|---|
 | `id` | uuid (PK) | |
@@ -487,7 +487,7 @@ erDiagram
     companions  ||--o{ proactive_outcomes  : "reinforcement log"
     leads       |o--o{ proposals           : "explore-origin (SET NULL)"
     messages    |o--o| proactive_outcomes  : "report note reacted to"
-    messages    ||--o{ message_reactions   : "emoji reactions (designed)"
+    messages    ||--o{ message_reactions   : "emoji reactions"
     user_facts  |o--o{ proactive_outcomes  : "belief that drove the act (SET NULL)"
 
     companions {
@@ -582,7 +582,7 @@ erDiagram
   the read yielded only boilerplate), and the route returns them newest-first alongside the initiative
   `stats` (the same `{ total, positive }` the Growth Initiative axis reads).
 
-- **`message_reactions`** _(designed, not built)_ — emoji reactions on a transcript message, both
+- **`message_reactions`** — emoji reactions on a transcript message, both
   directions (`reactor` = `user` | `companion`), defined above beside `messages`. A **second reward
   channel** beside `proactive_outcomes`/`companion_affect`: a user reaction is an _addressed_ verdict,
   so its **value-created** read (the `report_affect` machinery generalized) resolves the matching

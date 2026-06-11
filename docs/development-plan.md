@@ -50,7 +50,7 @@ being is proven, because they add platform cost without changing whether the cor
 | **13** | User Model — understanding & hygiene | Web | Synthesized user-persona; decay & sensitive attributes; full edit/forget UI | ✅ **Done** (§4c) |
 | **14** | Greeting / arrival reaction | Web | Companion notices you arrive and reacts — greets in context, picks up open threads, or rests when spent | ✅ **Done** (§4d) |
 | **15** | Realtime delivery — standing event channel | Web | New messages (replies, proactive notes, greetings) reach an open client by push; navigating away and back is always current — no forced refresh | ✅ **Done** (PR #16, §4e) |
-| **16** | Emoji reactions | Web | You react to the companion's messages (an addressed reward signal it learns from); the companion reacts to yours as a planned expressive act | Designed (§4f) |
+| **16** | Emoji reactions | Web | You react to the companion's messages (an addressed reward signal it learns from); the companion reacts to yours as a planned expressive act | ✅ **Built** (§4f) — two designed fast-follows (ref handles, read-back) |
 
 ⭐ = the differentiators the web PoC exists to prove. **Phases 0–5 are the PoC.**
 

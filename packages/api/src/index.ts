@@ -17,6 +17,7 @@ import {
   createIngestSourceTool,
   createLoggingAfterToolCall,
   createMemorySearchTool,
+  createReactTool,
   createProceduralRetrieveContext,
   createSemanticRetrieveContext,
   createUserModelRetrieveContext,
@@ -200,6 +201,9 @@ async function main(): Promise<void> {
       logger: consoleLogger,
     }),
     createIngestSourceTool({ semantic, ingestion, logger: consoleLogger }),
+    // The companion's expressive emoji reaction (companion-reactions.md §5): free,
+    // ungated, silent; binds to the message that triggered the turn.
+    createReactTool({ reactions, eventBus, logger: consoleLogger }),
   ];
   // Phases 9–10: runtime tool acquisition. Off unless MCP_SERVERS and/or
   // CLI_TOOLS_PATH is configured — then search_tools/load_tool join the native core
