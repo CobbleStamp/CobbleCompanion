@@ -92,6 +92,34 @@ describe('proactive-activity routes', () => {
     expect(secondBody.nextCursor).toBeNull(); // exhausted
   });
 
+  it('surfaces the sources an act read with the findings each yielded', async () => {
+    const source = await ctx.deps.semantic.createSource(companionId, {
+      kind: 'link',
+      title: 'https://ex.com/cpi',
+      origin: 'https://ex.com/cpi',
+      rawText: 'x',
+    });
+    await ctx.deps.semantic.insertSections(companionId, source.id, [
+      { topicTitle: 'Risk Disclaimer', originalText: '…', paraStart: 0, paraEnd: 1, ord: 0 },
+    ]);
+    const message = await ctx.deps.memory.appendMessage(companionId, 'assistant', 'I read it.');
+    await ctx.deps.rewards.record(companionId, {
+      noteMessageId: message.id,
+      drive: 'curiosity',
+      readSources: [{ sourceId: source.id, title: 'https://ex.com/cpi' }],
+    });
+
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: `/companions/${companionId}/activity`,
+      headers: auth,
+    });
+    const body = res.json() as ProactiveActivityDto;
+    expect(body.outcomes[0]!.sources).toHaveLength(1);
+    expect(body.outcomes[0]!.sources[0]!.title).toBe('https://ex.com/cpi');
+    expect(body.outcomes[0]!.sources[0]!.findings).toEqual(['Risk Disclaimer']);
+  });
+
   it('404s for a companion the caller does not own', async () => {
     const intruder = ctx.bearerFor('intruder@example.com');
     const res = await ctx.app.inject({

@@ -10,6 +10,7 @@ import type {
   MessageRole,
   PersonalityKnobs,
   ProactivityDial,
+  ProactiveReadSourceRef,
   ProposalOrigin,
   ProposalStatus,
   SourceKind,
@@ -659,6 +660,10 @@ export const proactiveOutcomes = pgTable(
     drive: text('drive').$type<Drive>().notNull(),
     // The companion's drive weights at initiation (attribution/debug).
     driveSnapshot: jsonb('drive_snapshot').$type<DriveWeights>(),
+    // The sources this burst read ({sourceId, title}[]), snapshotted so the Activity
+    // view can show what it acted on (and the findings each yielded, joined live at
+    // read time). Null on legacy rows / non-reading acts.
+    readSources: jsonb('read_sources').$type<ProactiveReadSourceRef[]>(),
     // Phase 12 — the Tier-2 belief that drove this burst (the belief-learning loop):
     // when set, resolving the reward also adjusts that belief's salience, so beliefs are
     // refined by how the user reacts to the companion acting on them. Null for a

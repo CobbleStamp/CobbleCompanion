@@ -206,6 +206,8 @@ export async function runAutonomousBurst(
       drive,
       driveSnapshot: weights,
       noteMessageId: message.id,
+      // Snapshot what it read so the Activity view can show the sources + findings.
+      readSources: read.map((r) => ({ sourceId: r.sourceId, title: r.title })),
       ...(drivenByUserFactId !== undefined ? { drivenByUserFactId } : {}),
     });
   } catch (error) {

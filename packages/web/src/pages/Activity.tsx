@@ -12,6 +12,7 @@ import type {
   ProactiveActivityStats,
   ProactiveBeliefDto,
   ProactiveOutcomeDto,
+  ProactiveReadSourceDto,
 } from '@cobble/shared';
 import { DRIVE_LABELS } from '@cobble/shared';
 import { useEffect, useState } from 'react';
@@ -136,6 +137,8 @@ function ActivityCard({
 
       {outcome.belief && <BeliefLine belief={outcome.belief} />}
 
+      <ReadSources sources={outcome.sources} />
+
       <RewardChip reward={outcome.reward} resolved={outcome.resolved} />
 
       {outcome.driveSnapshot && (
@@ -152,6 +155,56 @@ function BeliefLine({ belief }: { belief: ProactiveBeliefDto }): JSX.Element {
     <p className="activity-belief muted">
       <span aria-hidden="true">↳ </span>Driven by: {phrase}
     </p>
+  );
+}
+
+/**
+ * The sources this act read, each with the findings it actually extracted. A source
+ * with no findings (e.g. a JS-rendered page that yielded only boilerplate) says so
+ * plainly, so the log never implies substance it didn't capture.
+ */
+function ReadSources({
+  sources,
+}: {
+  sources: readonly ProactiveReadSourceDto[];
+}): JSX.Element | null {
+  if (sources.length === 0) {
+    return null;
+  }
+  return (
+    <div className="activity-sources">
+      <p className="muted activity-sources-head">
+        Read {sources.length} source{sources.length === 1 ? '' : 's'}:
+      </p>
+      <ul className="activity-source-list">
+        {sources.map((source) => (
+          <li key={source.sourceId} className="activity-source">
+            <SourceTitle title={source.title} />
+            {source.findings.length > 0 ? (
+              <ul className="activity-findings">
+                {source.findings.map((finding, i) => (
+                  <li key={i}>{finding}</li>
+                ))}
+              </ul>
+            ) : (
+              <span className="muted activity-no-findings">no readable findings extracted</span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** Render a source's captured title as an external link when it's a URL, else text. */
+function SourceTitle({ title }: { title: string }): JSX.Element {
+  const isUrl = /^https?:\/\//.test(title);
+  return isUrl ? (
+    <a className="activity-source-link" href={title} target="_blank" rel="noreferrer noopener">
+      {title}
+    </a>
+  ) : (
+    <span className="activity-source-link">{title}</span>
   );
 }
 

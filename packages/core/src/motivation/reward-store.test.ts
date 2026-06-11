@@ -5,6 +5,7 @@ import { createTestDatabase } from '@cobble/db/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DrizzleIdentityStore } from '../identity/store.js';
 import { TranscriptMemoryStore } from '../memory/store.js';
+import { DrizzleSemanticMemoryStore } from '../memory/semantic-store.js';
 import { DrizzleUserModelStore } from '../user-model/store.js';
 import { DrizzleProactiveOutcomeStore } from './reward-store.js';
 import { DEFAULT_DRIVE_WEIGHTS } from './drives.js';
@@ -17,6 +18,7 @@ describe('DrizzleProactiveOutcomeStore', () => {
   let rewards: DrizzleProactiveOutcomeStore;
   let memory: TranscriptMemoryStore;
   let userModel: DrizzleUserModelStore;
+  let semantic: DrizzleSemanticMemoryStore;
 
   /** Append an assistant "report" note and return its id (the reward target). */
   async function noteId(content = 'I read a couple of things from my list.'): Promise<string> {
@@ -40,6 +42,7 @@ describe('DrizzleProactiveOutcomeStore', () => {
     rewards = new DrizzleProactiveOutcomeStore(db);
     memory = new TranscriptMemoryStore(db);
     userModel = new DrizzleUserModelStore(db);
+    semantic = new DrizzleSemanticMemoryStore(db);
   });
   afterEach(async () => {
     await close();
@@ -212,6 +215,54 @@ describe('DrizzleProactiveOutcomeStore', () => {
       const nextPage = await rewards.listDetailed(companionId, 2, firstPage[1]!.seq);
       expect(nextPage).toHaveLength(1);
       expect(nextPage[0]!.noteContent).toBe('1');
+    });
+
+    it('attaches read sources enriched with their findings (section topics)', async () => {
+      const src = await semantic.createSource(companionId, {
+        kind: 'link',
+        title: 'https://ex.com/cpi',
+        origin: 'https://ex.com/cpi',
+        rawText: 'x',
+      });
+      await semantic.insertSections(companionId, src.id, [
+        { topicTitle: 'Risk Disclaimer', originalText: '…', paraStart: 0, paraEnd: 1, ord: 0 },
+        { topicTitle: 'Copyright Notice', originalText: '…', paraStart: 1, paraEnd: 2, ord: 1 },
+      ]);
+      await rewards.record(companionId, {
+        noteMessageId: await noteId('I read it'),
+        drive: 'curiosity',
+        readSources: [{ sourceId: src.id, title: 'https://ex.com/cpi' }],
+      });
+
+      const [detail] = await rewards.listDetailed(companionId, 10);
+      expect(detail?.sources).toHaveLength(1);
+      expect(detail?.sources[0]?.sourceId).toBe(src.id);
+      expect(detail?.sources[0]?.title).toBe('https://ex.com/cpi');
+      expect(detail?.sources[0]?.findings).toEqual(['Risk Disclaimer', 'Copyright Notice']);
+    });
+
+    it('lists a read source with empty findings when it yielded no sections', async () => {
+      const src = await semantic.createSource(companionId, {
+        kind: 'link',
+        title: 'https://ex.com/empty',
+        origin: 'https://ex.com/empty',
+        rawText: '',
+      });
+      await rewards.record(companionId, {
+        noteMessageId: await noteId('only boilerplate'),
+        drive: 'curiosity',
+        readSources: [{ sourceId: src.id, title: 'https://ex.com/empty' }],
+      });
+
+      const [detail] = await rewards.listDetailed(companionId, 10);
+      expect(detail?.sources).toHaveLength(1);
+      expect(detail?.sources[0]?.findings).toEqual([]);
+    });
+
+    it('defaults sources to an empty array for a non-reading act (legacy row)', async () => {
+      await rewards.record(companionId, { noteMessageId: await noteId('plain'), drive: 'bond' });
+      const [detail] = await rewards.listDetailed(companionId, 10);
+      expect(detail?.sources).toEqual([]);
     });
 
     it('scopes to the companion (tenancy)', async () => {

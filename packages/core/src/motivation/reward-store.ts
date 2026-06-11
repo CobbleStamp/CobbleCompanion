@@ -6,9 +6,17 @@
  * not approve/reject). Also the helpful-vs-annoying measurement surface.
  */
 
-import { messages, proactiveOutcomes, userFacts, type Database } from '@cobble/db';
-import type { Drive, DriveWeights } from '@cobble/shared';
-import { and, count, desc, eq, isNull, lt, sql } from 'drizzle-orm';
+import { messages, proactiveOutcomes, sections, userFacts, type Database } from '@cobble/db';
+import type {
+  Drive,
+  DriveWeights,
+  ProactiveReadSourceDto,
+  ProactiveReadSourceRef,
+} from '@cobble/shared';
+import { and, count, desc, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
+
+/** Max findings (section topic titles) surfaced per read source on an activity card. */
+const MAX_FINDINGS_PER_SOURCE = 5;
 
 export interface RecordOutcomeInput {
   /** The drive the move served (whose weight a reward nudges). */
@@ -28,6 +36,11 @@ export interface RecordOutcomeInput {
    * non-belief-driven burst.
    */
   readonly drivenByUserFactId?: string;
+  /**
+   * The sources this burst read ({sourceId, title}[]), snapshotted onto the outcome
+   * so the Activity view can show what it acted on. Omitted for non-reading acts.
+   */
+  readonly readSources?: readonly ProactiveReadSourceRef[];
 }
 
 export interface ProactiveOutcomeRecord {
@@ -71,6 +84,8 @@ export interface ProactiveOutcomeDetail extends ProactiveOutcomeRecord {
   readonly driveSnapshot: DriveWeights | null;
   readonly noteContent: string | null;
   readonly belief: ProactiveOutcomeBelief | null;
+  /** The sources read, each enriched with the findings (section topics) it yielded. */
+  readonly sources: readonly ProactiveReadSourceDto[];
 }
 
 export interface ProactiveOutcomeStore {
@@ -117,6 +132,7 @@ export class DrizzleProactiveOutcomeStore implements ProactiveOutcomeStore {
         ...(input.noteMessageId !== undefined ? { noteMessageId: input.noteMessageId } : {}),
         ...(input.proposalId !== undefined ? { proposalId: input.proposalId } : {}),
         ...(input.driveSnapshot !== undefined ? { driveSnapshot: input.driveSnapshot } : {}),
+        ...(input.readSources !== undefined ? { readSources: [...input.readSources] } : {}),
         ...(input.drivenByUserFactId !== undefined
           ? { drivenByUserFactId: input.drivenByUserFactId }
           : {}),
@@ -199,6 +215,7 @@ export class DrizzleProactiveOutcomeStore implements ProactiveOutcomeStore {
         proposalId: proactiveOutcomes.proposalId,
         drive: proactiveOutcomes.drive,
         driveSnapshot: proactiveOutcomes.driveSnapshot,
+        readSources: proactiveOutcomes.readSources,
         drivenByUserFactId: proactiveOutcomes.drivenByUserFactId,
         reward: proactiveOutcomes.reward,
         createdAt: proactiveOutcomes.createdAt,
@@ -214,7 +231,43 @@ export class DrizzleProactiveOutcomeStore implements ProactiveOutcomeStore {
       .where(where)
       .orderBy(desc(proactiveOutcomes.seq))
       .limit(limit);
-    return rows.map(toDetail);
+    const findingsBySource = await this.loadFindings(companionId, rows);
+    return rows.map((row) => toDetail(row, findingsBySource));
+  }
+
+  /**
+   * Batch-load the findings (section topic titles) for every source referenced by
+   * a page of outcomes — one query for the whole page rather than N per-source
+   * calls. Returns a map sourceId → topic titles (capped per source). Sources with
+   * no sections (e.g. a read that yielded only boilerplate) are simply absent.
+   */
+  private async loadFindings(
+    companionId: string,
+    rows: readonly DetailRow[],
+  ): Promise<Map<string, string[]>> {
+    const sourceIds = [
+      ...new Set(rows.flatMap((row) => (row.readSources ?? []).map((s) => s.sourceId))),
+    ];
+    const byId = new Map<string, string[]>();
+    if (sourceIds.length === 0) {
+      return byId;
+    }
+    const secs = await this.db
+      .select({
+        sourceId: sections.sourceId,
+        topicTitle: sections.topicTitle,
+      })
+      .from(sections)
+      .where(and(eq(sections.companionId, companionId), inArray(sections.sourceId, sourceIds)))
+      .orderBy(sections.sourceId, sections.ord);
+    for (const sec of secs) {
+      const list = byId.get(sec.sourceId) ?? [];
+      if (list.length < MAX_FINDINGS_PER_SOURCE && sec.topicTitle.trim().length > 0) {
+        list.push(sec.topicTitle.trim());
+      }
+      byId.set(sec.sourceId, list);
+    }
+    return byId;
   }
 }
 
@@ -241,7 +294,19 @@ interface DetailRow extends Row {
   readonly beliefObject: string | null;
 }
 
-function toDetail(row: DetailRow): ProactiveOutcomeDetail {
+/** Combine a read-source snapshot with its freshly-loaded findings for the card. */
+function toReadSourceDto(
+  ref: ProactiveReadSourceRef,
+  findingsBySource: Map<string, string[]>,
+): ProactiveReadSourceDto {
+  return {
+    sourceId: ref.sourceId,
+    title: ref.title,
+    findings: findingsBySource.get(ref.sourceId) ?? [],
+  };
+}
+
+function toDetail(row: DetailRow, findingsBySource: Map<string, string[]>): ProactiveOutcomeDetail {
   // A belief is present only when the join matched (subject + object are NOT NULL on
   // user_facts, so either both are set or the row was non-belief-driven / nulled).
   const belief: ProactiveOutcomeBelief | null =
@@ -258,5 +323,6 @@ function toDetail(row: DetailRow): ProactiveOutcomeDetail {
     driveSnapshot: row.driveSnapshot ?? null,
     noteContent: row.noteContent,
     belief,
+    sources: (row.readSources ?? []).map((ref) => toReadSourceDto(ref, findingsBySource)),
   };
 }

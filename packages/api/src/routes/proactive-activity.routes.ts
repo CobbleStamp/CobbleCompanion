@@ -90,6 +90,7 @@ function toDto(detail: ProactiveOutcomeDetail): ProactiveOutcomeDto {
     driveSnapshot: detail.driveSnapshot,
     note: detail.noteContent,
     belief: detail.belief,
+    sources: detail.sources,
     reward: detail.reward,
     resolved: detail.resolvedAt !== null,
     createdAt: detail.createdAt.toISOString(),

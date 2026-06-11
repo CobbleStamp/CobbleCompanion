@@ -540,10 +540,13 @@ erDiagram
   **`driven_by_user_fact_id`** (uuid, nullable, FK → `user_facts.id` `ON DELETE SET NULL`): the Tier-2
   belief that drove a belief-driven burst (null for non-belief acts). On resolution the same `delta`
   that nudges the drive weight also adjusts **that belief's `salience`** — the belief-learning loop
-  (`companion-motivation.md` §7). This log is also surfaced read-only to the user as the **Activity
-  view** via **`GET /companions/:companionId/activity`** (`?limit=`, default 30 / max 100, keyset-
-  paginated by `?before=<seq>`): the store's `listDetailed` LEFT-JOINs the report-note text and the
-  driving belief onto each row, and the route returns them newest-first alongside the initiative
+  (`companion-motivation.md` §7). It also carries **`read_sources`** (jsonb, nullable): a snapshot of
+  the sources the burst read (`{sourceId, title}[]`, captured at read time so the labels survive a
+  later source deletion). This log is surfaced read-only to the user as the **Activity view** via
+  **`GET /companions/:companionId/activity`** (`?limit=`, default 30 / max 100, keyset-paginated by
+  `?before=<seq>`): the store's `listDetailed` LEFT-JOINs the report-note text and the driving belief
+  onto each row, batch-loads each read source's **findings** (its section topic titles — empty when
+  the read yielded only boilerplate), and the route returns them newest-first alongside the initiative
   `stats` (the same `{ total, positive }` the Growth Initiative axis reads).
 
 Presence is **not** a table — it is a volatile, heartbeat-fed in-memory signal (§4.5).

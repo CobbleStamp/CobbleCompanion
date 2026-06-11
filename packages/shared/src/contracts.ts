@@ -395,6 +395,30 @@ export interface ProactiveBeliefDto {
 }
 
 /**
+ * A reference to a source an autonomous burst read, snapshotted onto the outcome
+ * (`proactive_outcomes.read_sources`). `title` is the URL/label captured at read
+ * time so it survives the source being deleted; `sourceId` still points at the
+ * live source while it exists. Stored shape — the API enriches it with findings.
+ */
+export interface ProactiveReadSourceRef {
+  readonly sourceId: string;
+  readonly title: string;
+}
+
+/**
+ * A source an autonomous burst read, surfaced on the Activity card: the captured
+ * `title` (URL), the live `sourceId`, and the `findings` it actually extracted (the
+ * section topic titles — empty when the read produced nothing substantive, e.g. a
+ * JS-rendered page that yielded only boilerplate). The verbatim section text lives
+ * on the Sources page.
+ */
+export interface ProactiveReadSourceDto {
+  readonly sourceId: string;
+  readonly title: string;
+  readonly findings: readonly string[];
+}
+
+/**
  * One autonomous initiative the companion took on its own (a `proactive_outcomes`
  * row), shaped for the Activity view: the in-character report `note` it posted, the
  * `drive` it served (with the `driveSnapshot` weight mix at the time), the `belief`
@@ -412,6 +436,8 @@ export interface ProactiveOutcomeDto {
   /** The "what I read" report note posted to the transcript; null if the note is gone. */
   readonly note: string | null;
   readonly belief: ProactiveBeliefDto | null;
+  /** The sources this act read, with the findings each yielded (empty on legacy rows). */
+  readonly sources: readonly ProactiveReadSourceDto[];
   /** Mood delta across the user's reaction; null until resolved. */
   readonly reward: number | null;
   readonly resolved: boolean;
