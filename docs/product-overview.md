@@ -189,6 +189,12 @@ Cobble's personality, so proactivity feels like a creature with its own attentio
 into a room), and solo work while you're away that surfaces on your return. Frequency and intensity
 are **tunable** so it feels alive, not annoying.
 
+**Reactions _(designed)_:** the lightest way to be understood. You can **react to any of its messages
+with an emoji** — an addressed nudge it learns from (and reads in context: a 😢 at a moving story is
+appreciation, not a complaint). And it **reacts back** to you — a 👀 when you ask it to look into
+something, a 🎉 when you share good news — as a natural part of how it responds, so a glance can stand
+in for a sentence. See `companion-reactions.md`.
+
 ### 5.5 The Bond & Growth
 You don't just use Cobble — you raise it. The growth surface is a **mirror**: a readout that reflects
 the companion's *current* accumulated standing (it can move in either direction — it is not a game
@@ -313,6 +319,8 @@ never a hidden dossier. (Detailed data model and threat model: `architecture.md`
 | [`ontology.md`](./ontology.md) | Knowledge ontology contract & governance (fixed core types + rules for the dynamic part) |
 | [`companion-memory.md`](./companion-memory.md) | The memory mechanism — browsing it, evaluating memory vs performance |
 | [`companion-motivation.md`](./companion-motivation.md) | The motivation/proactivity mechanism — drives, arbitration, seeding, learning |
+| [`companion-greeting.md`](./companion-greeting.md) | The greeting / arrival reaction — noticing you return and reacting in context |
+| [`companion-reactions.md`](./companion-reactions.md) | Emoji reactions — the user's reaction as an addressed reward, the companion's as a planned expressive act |
 | [`companion-economy.md`](./companion-economy.md) | The feeding economy — a per-user pantry of foods spent to refill a companion's vitality |
 | [`companion-tools.md`](./companion-tools.md) | Tool acquisition & use — acquiring whitelisted CLIs/MCP servers at runtime and learning to use them |
 | [`../README.md`](../README.md) | Orientation & setup |

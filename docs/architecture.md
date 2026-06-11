@@ -152,6 +152,7 @@ flowchart TB
 | **Procedural Store** | Learned, reusable workflows seeded from approved actions (`procedural_memories`) | Browseable, and surfaced as a `RetrieveContext` hint arm (§4.3) so a routine resurfaces and is reused |
 | **Motivation Engine** | Fills the `Initiator` seam — drives × presence → bounded autonomous explore burst | Reads the lead inventory into memory on its own (no approval), bounded by energy; posts an in-character report note. Includes presence, change-as-reward reinforcement, and an off-request runner/sweep. Mechanism → §4.5, `companion-motivation.md` |
 | **Greeting Service** | The bond-driven reaction to the user *arriving* (`packages/core/src/greeting/`) — the social sibling of the explore burst | A token-free `decideGreeting` gate (first-meeting override → dial → continuation floor → gap × open loop) + a service that voices one in-character greeting billed to **stamina** (or a fixed exhausted line), recording a `bond` outcome. Reads the durable `companions.last_seen_at` clock; streamed to the client (`composing` → `done`) by `POST /companions/:id/greeting`. Mechanism → `companion-greeting.md` |
+| **Reaction Service** _(designed, not built)_ | Emoji reactions both ways (`message_reactions`) — a second reward channel beside the affect loop | A user reaction triggers an event-scoped **inline value-created read** (the `report_affect` machinery generalized) → a reward attributed **by `note_message_id`**, nudging the served drive (or approval/competence on an ordinary answer); the companion's own reaction is a **planned, free, ungated agent action** emitted mid-turn (react-early-then-work). Delivered live over the event channel (§6). Mechanism → `companion-reactions.md` |
 | **Energy Wallet** | The self-initiated half of the §4.8 two-wallet vitality (`companions.energy_balance_tokens`) | Per-companion token balance; a separate wallet from stamina (the `Stamina Wallet` above), metered by the same `VitalityStore`, so autonomy can't starve interaction |
 | **Food Pantry** | The user's seeded inventory of typed foods (`user_food`) — the feeding economy's supply | Per-user counts of `ration`/`spark`/`treat`; `POST /feed` consumes one and refills the fed companion's wallet(s) (`companion-economy.md`) |
 | **Growth Service** | Derives the four MIRROR axes (knowledge, bond, initiative, character) + the observed-capabilities checklist from substrate | Growth is DERIVED — a readout that may move either way, never scored or floored. Recompute is post-turn and token-free; the read is a snapshot. Decoupled from feeding. The procedural retrieval-as-hint arm that makes a capability *functional* is §4.3; the axis-derivation mechanism → `development-plan.md` §3 (Phase 5); data model → `implementation.md` §1 |
@@ -738,7 +739,10 @@ flowchart TB
     This is the durable delivery path: a turn reply, an ingestion "finished reading…" note, a
     proactive nudge, and a greeting all reach an open client the moment they persist — **push, not
     poll**. It's backed by the in-process **Companion Event Bus**, fed by a publish-on-append hook on
-    the MemoryStore (§3), so nothing at the call sites changes to emit.
+    the MemoryStore (§3), so nothing at the call sites changes to emit. _(Designed, not built:_ emoji
+    reactions ride this same channel as `reaction_added` / `reaction_removed` events — mutations on an
+    existing row rather than a new transcript turn — so a reaction placed on one surface, or by the
+    companion itself, appears live on every open surface; `companion-reactions.md` §8.)
   - **Establishment is subscribe-then-snapshot.** On (re)connect the client opens the channel
     **first** (buffering live events), **then** fetches the transcript snapshot, and merges both
     **deduped by message id**. Subscribe-first can only ever double-deliver (harmless under id dedup),
@@ -784,6 +788,7 @@ flowchart TB
       identity/        companion "home" model + store
       motivation/      the "will" (§4.4–§4.5): drives × presence arbitration, autonomous explore burst, engine runner/sweep, affect perception + change-as-reward reinforcement
       greeting/        the bond-driven arrival reaction (social sibling of the explore burst): token-free decideGreeting gate + stamina-billed greeter, reads companions.last_seen_at — companion-greeting.md
+      reactions/       (designed, not built) emoji reactions: ReactionService runs the inline value-created read on a user reaction → reward by note_message_id; the companion's react action is a free agent-loop emit — companion-reactions.md
       growth/          four mirror axes derived from substrate (§4.3 hint arm + development-plan.md §3) + the feeding economy: axis readings (band+fill), capabilities registry, growth store/service/runner, foods, the per-user food pantry/store (§4.8)
       quota/           per-companion vitality wallets (stamina + energy) (§4.8)
     api/               BFF / surface boundary (Fastify); memory + source + usage + proposal/inventory routes; presence + proactivity (dial/energy) routes; growth + feed routes; the autonomous-activity log route (read-only `proactive_outcomes`); the standing companion event-channel route (§6)

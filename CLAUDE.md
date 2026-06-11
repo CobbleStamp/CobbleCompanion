@@ -29,6 +29,7 @@ read docs/product-overview.md
 | Ontology contract & governance | `docs/ontology.md`                 |
 | Proactivity & motivation mechanism | `docs/companion-motivation.md`  |
 | Greeting / arrival reaction   | `docs/companion-greeting.md`        |
+| Emoji reactions (reward + expression) | `docs/companion-reactions.md`  |
 | Feeding economy (food pantry & vitality) | `docs/companion-economy.md`        |
 | Tool acquisition & use (MCP/CLI) | `docs/companion-tools.md`          |
 | Realtime delivery (standing event channel / SSE push) | `docs/architecture.md` §6, `docs/implementation.md` §2.4 |

@@ -150,6 +150,32 @@ erDiagram
 > `created_at` at sub-millisecond resolution, so a monotonic ordinal is the source of truth for
 > transcript order. `seq` is a single global sequence, so it orders the whole transcript.
 
+### `message_reactions` — emoji reactions _(designed, not built)_
+| Field | Type | Notes |
+|---|---|---|
+| `id` | uuid (PK) | |
+| `message_id` | uuid (FK → `messages.id`, **`ON DELETE CASCADE`**) | the row reacted to — only `kind='message'` rows are reactable |
+| `companion_id` | uuid (FK → `companions.id`, **`ON DELETE CASCADE`**) | tenancy/scoping |
+| `reactor` | text | `user` \| `companion` — who placed it |
+| `emoji` | text | the reaction glyph; **unique `(message_id, reactor, emoji)`** so a re-tap is idempotent and un-reacting is a `DELETE` |
+| `reward` | numeric | nullable; the **value-created** reward the inline reaction-read assigns to a _user_ reaction (∅ for a companion reaction, or until the read resolves) |
+| `reward_note` | text | nullable; the read's short note ("moved, engaged") — the corpus the **reflection** pass consumes |
+| `created_at` | timestamptz | |
+
+> **Why a separate table, not `messages.metadata`.** The transcript is append-only and immutable
+> (`architecture.md` §4.7); a reaction is **mutable** (added later, removed, re-added). Keeping mutable
+> annotation state out of the canonical turn preserves that invariant. A reaction is **not** a
+> transcript turn: it never enters the LLM-context projection, and it is delivered as a
+> `reaction_added` / `reaction_removed` event on the standing channel (§2.4) — a mutation on an existing
+> row rather than a new `{ type: 'message' }`. Full mechanism → `companion-reactions.md`.
+
+> **The reward path** generalizes the `companion_affect` `report_affect` machinery (below): a user
+> reaction triggers an **inline contextual read** — _did the companion's act create value?_, judged in
+> context, **not** a fixed emoji→score lexicon — yielding `reward` + `reward_note`, or `null` (a failed
+> read learns nothing). A reaction on a report note resolves the matching `proactive_outcomes` row **by
+> `note_message_id`** (better-attributed than the ambient `findLatestUnresolved`); a reaction on an
+> ordinary answer nudges the approval/competence drive at a smaller rate (`companion-reactions.md` §4, §7).
+
 ### `episodes` — consolidated episodic memory
 | Field | Type | Notes |
 |---|---|---|
@@ -461,6 +487,7 @@ erDiagram
     companions  ||--o{ proactive_outcomes  : "reinforcement log"
     leads       |o--o{ proposals           : "explore-origin (SET NULL)"
     messages    |o--o| proactive_outcomes  : "report note reacted to"
+    messages    ||--o{ message_reactions   : "emoji reactions (designed)"
     user_facts  |o--o{ proactive_outcomes  : "belief that drove the act (SET NULL)"
 
     companions {
@@ -497,6 +524,12 @@ erDiagram
         uuid companion_id FK
         uuid note_message_id FK
         uuid driven_by_user_fact_id FK
+    }
+    message_reactions {
+        uuid id PK
+        uuid message_id FK
+        uuid companion_id FK
+        text reactor "user | companion"
     }
 ```
 
@@ -548,6 +581,13 @@ erDiagram
   onto each row, batch-loads each read source's **findings** (its section topic titles — empty when
   the read yielded only boilerplate), and the route returns them newest-first alongside the initiative
   `stats` (the same `{ total, positive }` the Growth Initiative axis reads).
+
+- **`message_reactions`** _(designed, not built)_ — emoji reactions on a transcript message, both
+  directions (`reactor` = `user` | `companion`), defined above beside `messages`. A **second reward
+  channel** beside `proactive_outcomes`/`companion_affect`: a user reaction is an _addressed_ verdict,
+  so its **value-created** read (the `report_affect` machinery generalized) resolves the matching
+  outcome **by `note_message_id`** rather than the ambient `findLatestUnresolved`. Full mechanism →
+  `companion-reactions.md`.
 
 Presence is **not** a table — it is a volatile, heartbeat-fed in-memory signal (§4.5).
 
