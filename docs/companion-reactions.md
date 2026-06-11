@@ -124,11 +124,34 @@ Three things this flow makes precise:
   `companion-motivation.md` §7) means if a reaction resolves an outcome, the later ambient affect delta
   finds nothing unresolved — no double-nudge — and vice-versa. No new guard.
 
-**Reactions on _ordinary_ answers.** Today ordinary chat moves no weights (diffuse credit is
-deferred). But a reaction on a plain answer is _not_ diffuse — it is addressed — so it nudges the
-**approval/competence** drive (`companion-motivation.md` §3, the RL-coupled axis) at a smaller α, and
-its note feeds reflection (§6). This is attributed learning on everyday chat without solving general
-diffuse credit assignment.
+**Reactions on _ordinary_ answers — which drive, and how hard.** Today ordinary chat moves no weights
+(diffuse credit is deferred). But a reaction on a plain answer is _not_ diffuse — it is addressed — so
+it does teach. The question is _which_ drive, given a plain answer has no _motivating_ drive to credit
+(unlike a proactive act, where the served drive is known).
+
+- **Target: the `approval` drive.** A reaction on a plain answer signals one thing — _"were you useful /
+  did that land?"_ — which is exactly the **`approval`** drive: the companion's "be useful and
+  appreciated" axis (`companion-motivation.md` §3, the RL-coupled one). A 👍 on a crisp answer raises
+  it; a 👎 on a bloated one lowers it. _("approval/competence" in §3 is one drive with a two-word label
+  — approval = appreciated, competence = good-at-it — not two drives; the code calls it `approval`.)_
+  All plain-answer reactions route here, **not** split across bond/understanding/etc.: guessing that
+  split from one emoji is the diffuse-credit problem we defer (§6); approval is the honest, well-aimed
+  default because every reaction on a direct answer is, at bottom, about usefulness.
+- **A gentler nudge than a proactive act.** A proactive-act reaction judges a **deliberate bet the
+  companion chose to make** (high signal about its _initiative and judgment_) and is **precisely aimed**
+  (the served drive is known); a plain-answer reaction is **lighter** (feedback on one response, not its
+  character), **fuzzier** (routed to a default), and **far more frequent**. If every casual 👍 moved
+  personality as much as a reaction to a self-initiated act, the character would whipsaw on everyday
+  taps. So everyday feedback **drifts** the dial gently and accumulates. _Analogy:_ a colleague who
+  **stays late on their own initiative** to prep a briefing and hears "this is excellent" learns a lot
+  about whether to take initiative again; the same colleague answering a routine question and hearing
+  "thanks, perfect" learns little from any one — but a hundred such moments add up to "reliably
+  helpful." → **proactive-act reaction ≈ `0.1`** (parity with the existing affect-delta rate — an
+  addressed reaction is at least as trustworthy); **plain-answer reaction ≈ `0.04`** (gentle drift).
+  Both are deliberately conservative starting values, tunable up later (`companion-motivation.md`'s
+  "slow drift, not whiplash" guard). The reaction's _emotional intensity_ already scales within each
+  channel (a 🎉 carries more than a lukewarm 👍); these rates set each channel's **baseline weight**.
+- Its note still feeds reflection (§6).
 
 ## 5. Flow 2 — the companion reacts (expression, planned in the turn)
 
@@ -142,16 +165,61 @@ request.
 flowchart TD
     A["user turn arrives"] --> B["agent loop — model plans the turn"]
     B --> R{"react now?<br/>(adds something:<br/>acknowledgement / resonance)"}
-    R -->|yes| EMIT["react(emoji) — free, ungated action<br/>persist message_reactions (reactor=companion)<br/>flush over event channel immediately"]
+    R -->|yes| EMIT["react(emoji, ref?) — free, ungated action<br/>ref→message via per-turn map (omit = current turn)<br/>persist message_reactions (reactor=companion)<br/>flush over event channel immediately"]
     R -->|no| WORK
     EMIT --> WORK["continue turn —<br/>tool_steps, then reply"]
     WORK --> DONE["reply streams"]
 ```
 
 - **Plumbed like a free `tool_step`.** The `react` action reuses the loop's expressive-emit machinery:
-  UI-only, **ungated** (no approval — it's not effectful), **excluded from the LLM-context projection**
-  on reload, and **streamed the instant it's decided** so it can precede the rest of the turn. It
-  persists a `reactor='companion'` row on the _user's_ message.
+  **ungated** (no approval — it's not effectful), **leaves no `tool_step` chrome row** (the reaction
+  itself is the artifact — see _Reading back_ below), and **streamed the instant it's decided** so it
+  can precede the rest of the turn. It persists a `reactor='companion'` row on the _user's_ message.
+
+### Addressing — _which_ message the companion reacts to
+
+A reaction is **addressed** (§1), so the companion must point at a specific message. But the model
+never sees message ids — the context projection (`architecture.md` §4.5) is `{role, content}` only, and
+the real ids are UUIDs the model would mis-copy. The mechanism keeps identity **server-side**:
+
+- **Request-scoped handles.** When context is assembled, each **addressable message** (the recent
+  _user_ turns — the only rows the companion reacts to) is tagged with a tiny ordinal `[1] [2] [3]`,
+  and a turn-local map `ref → messageId` is held for that request only (never persisted; discarded when
+  the turn ends). The model points with `react(emoji, ref)`; the harness resolves `ref` against the map
+  to the real message id. The model handles a small integer, never a UUID, and `ref` is validated to be
+  **in range** — so it cannot point outside what it can see.
+- **Omit `ref` = the current turn.** The common case (👀 the thing you just asked) needs no handle: an
+  omitted `ref` binds to the message that triggered this turn, which the harness already knows. Handles
+  matter only when the companion singles out a _non-latest_ message.
+- **The grain is the message row, exactly as sent.** Reactions attach to whole messages, never
+  sub-spans. If you send three separate messages, that is three addressable rows (🎉 on one, 👀 on
+  another); if you send the same three lines as _one_ message, it is one row and both reactions stack on
+  it. A single message can carry several reactions (different emoji → different rows; the
+  `unique(message_id, reactor, emoji)` rule allows it). The companion can't pin a reaction to one phrase
+  inside a combined message — separate sends give finer-grained reactions.
+- **Bounded to what's in view.** Addressing reaches only messages **in the current context window** —
+  covering a rapid-fire burst and a recently-earlier message, but not something scrolled far into the
+  past (that would need _retrieval_ first — out of scope, §11). Reacting to what's presently visible is
+  both simpler and correct: it mirrors a person reacting to what's on screen.
+
+### Reading back — reactions are conversational content, always visible to the companion
+
+A reaction was genuinely _expressed_, so the companion **always reads it back** — its own _and_ the
+user's — woven in as an **inline annotation on the message it belongs to**, not a separate transcript
+line. So later context reads like `[1] You: I got the job! (companion reacted 🎉)` /
+`Companion: …answer… (you reacted ❤️)`. This is what stops the companion from re-celebrating news it
+already cheered, and lets it carry the sense that a past answer _landed well_.
+
+> **Reading back ≠ learning again.** Learning fires **once**, the moment a reaction lands (§4); reading
+> the reaction back later is **pure memory** and moves no weights — so continuity never re-triggers a
+> reward, no matter how many times the reaction re-enters context. _(This corrects an earlier draft that
+> said the companion's reaction is "excluded from the context projection like a `tool_step`": the
+> chrome **row** is suppressed, but the reaction's **content** is surfaced inline.)_
+
+Reactions ride **with their messages**: when a message ages out of the window, its reactions go with it;
+a reaction moment worth keeping long-term is captured by the episodic layer (`companion-memory.md`), not
+by pinning it in live context forever.
+
 - **It subsumes the affective case too.** If the companion is taking a turn anyway, the main model
   understands emotional content at least as well as a cheap side-read — so a ❤️ on good news is also
   just a planned action. **One mechanism**, not two; the affect read goes back to pure perception
@@ -286,8 +354,8 @@ it — they reuse its machinery unchanged:
 - **The wallets** — the inline read and any expressive reaction ride **stamina** (user-initiated /
   in-turn), never energy. Self-initiated work's energy budget is untouched (`companion-economy.md`).
 
-The one genuinely new reward path is the **ordinary-answer reaction → approval/competence** nudge
-(§4): addressed credit on everyday chat the ambient loop deliberately forgoes.
+The one genuinely new reward path is the **ordinary-answer reaction → `approval` drive** nudge
+(§4, ≈0.04): addressed credit on everyday chat the ambient loop deliberately forgoes.
 
 ## 10. Worked examples
 
@@ -308,15 +376,32 @@ which over time forms the belief "prefers concise" in the user model.
 outcome. The row is deleted and the event republished; because resolution is claim-once and
 idempotent, the companion's weights don't oscillate.
 
+**E — addressing a rapid-fire burst.** You send three _separate_ messages: "I got the job!", "starts in
+two weeks", "anyway, what should I cook tonight?". Context tags them `[1] [2] [3]` with a turn-local
+`ref→messageId` map. The companion 🎉 **`ref=1`** (the job — _not_ the latest message) and 👀 **`ref=3`**
+(the dinner question it's about to help with), then answers. Each lands on the right bubble even though
+the salient one wasn't last. Had you sent all three lines as **one** message, it's a single row `[1]`,
+and both 🎉 and 👀 stack on it (the companion can't pin to one line within a combined message).
+
+**F — reading back, no double-celebration.** Two turns after example E, you keep chatting. The companion
+reads the conversation back with its own reaction inline — `[1] You: I got the job! (companion reacted
+🎉)` — so it _knows it already celebrated_ and doesn't gush "congratulations!" again. The re-read moves
+no weights; learning already happened when the 🎉 was placed.
+
+**G — gentle vs. firm learning.** You 👍 a tidy answer (plain answer → `approval` drive, rate ≈ 0.04 —
+a gentle drift). Separately, the companion's curiosity drove it to read two articles and report back,
+and you 🎉 that note (proactive act → the served _curiosity_ drive, rate ≈ 0.1 — a firmer nudge,
+because it was a deliberate bet you're rewarding). Same up/down mechanism, different step size.
+
 ## 11. Design decisions & scope
 
 **Design decisions (this doc):**
 
 1. **Two directions, two natures** — user→companion is a learning _input_ (a verdict); companion→user
    is an expressive _output_. They share a table, not a mechanism (§3).
-2. **The companion's reaction is a planned agent action**, emitted mid-turn and plumbed like a free,
-   ungated `tool_step` — enabling **react-early-then-work**. It subsumes the affective case; there is
-   **one** reaction mechanism, and the affect read stays pure perception (§5).
+2. **The companion's reaction is a planned agent action**, emitted mid-turn as a free, ungated emit
+   that **leaves no `tool_step` chrome row** — enabling **react-early-then-work**. It subsumes the
+   affective case; there is **one** reaction mechanism, and the affect read stays pure perception (§5).
 3. **The reward is "value created", interpreted in context — not a fixed emoji lexicon** (§7). The
    inline reaction-read reuses the `report_affect` machinery; `null` on failure never fabricates a
    neutral.
@@ -326,14 +411,25 @@ idempotent, the companion's weights don't oscillate.
 5. **Reactions resolve outcomes _by message id_**, strictly better-attributed than the ambient
    `findLatestUnresolved`; the existing atomic claim makes reaction-vs-delta safe with no new guard
    (§4, §9).
-6. **Ordinary-answer reactions nudge approval/competence** at a small α — addressed credit on everyday
-   chat the ambient loop forgoes; the note also feeds reflection (§4).
+6. **Ordinary-answer reactions nudge the `approval` drive** — addressed credit the ambient loop forgoes.
+   All plain-answer reactions route to `approval` (not split across drives — that's deferred diffuse
+   credit, §6); the note also feeds reflection (§4).
 7. **A reaction lives outside the append-only transcript** (it is mutable) in `message_reactions`,
    delivered live over the standing event channel as `reaction_added` / `reaction_removed` (§8).
 8. **No emoji is whitelisted, either direction.** Because the reward is interpreted in context (not a
    lexicon), there is no constraint to enforce: the user reacts with anything (the quick-react bar is a
    shortcut), and the companion picks freely, guided by taste/legibility rather than an allowed set
    (§5, §7). Boundary validation checks _well-formedness_, not membership (§8).
+9. **The companion addresses messages via request-scoped handles, resolved server-side.** The model
+   never sees ids — addressable (recent _user_) turns get a tiny `[n]` tag and a turn-local `ref→id` map;
+   `react(emoji, ref?)` resolves against it, omit ⇒ current turn, `ref` validated in-range. Grain is the
+   message row as sent (multiple emoji per row allowed); addressing is bounded to the context window (§5).
+10. **The companion always reads reactions back** — its own and the user's — as **inline annotations on
+    their messages**, not chrome rows. Reading back is **memory, not learning**: it moves no weights, so
+    continuity never re-triggers a reward (§5).
+11. **Two learning rates, conservative.** A proactive-act reaction nudges the served drive at **≈0.1**
+    (parity with the affect-delta rate); a plain-answer reaction nudges `approval` at **≈0.04** (gentle
+    drift — lighter, fuzzier, far more frequent). Emotional intensity scales within each channel (§4).
 
 **Out of scope / future** (roadmap owned by `development-plan.md`):
 
