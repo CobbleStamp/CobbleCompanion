@@ -141,8 +141,11 @@ flowchart TD
 5. **Act** — the engine runs the chosen behaviour against its live target, spending real tokens
    debited to **energy** (the only token spend; §8). That behaviour is **reading** the
    next leads into memory — **no approval, autonomous work isn't gated** (§4.4) — then posting one
-   in-character **report note** summarising what it did. The burst is sized to what energy can
-   afford (§8).
+   in-character **report note**. The note **leads with the substance** — it summarises the actual
+   findings (drawn from each read source's section topic titles and enrichment context-headers, so
+   there is something real to report, not just the URLs) — keeps the creature personality light, and
+   **offers further detail as an optional door** the user can leave closed rather than pulling them
+   into digging in. The burst is sized to what energy can afford (§8).
 6. **Learn** — learning does not happen on this engine tick; it happens on the *chat* turn the user
    reacts on. The agent loop senses the user's mood every turn and, when a report note is awaiting a
    reaction, the **change** in mood it produced nudges the served drive's weight (§7).

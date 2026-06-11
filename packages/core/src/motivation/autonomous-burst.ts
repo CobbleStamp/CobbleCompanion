@@ -30,8 +30,9 @@ import {
 import type { IngestionTarget } from '../ingestion/runner.js';
 import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
+import type { SectionRecord } from '../memory/semantic-store.js';
 import type { MemoryStore } from '../memory/store.js';
-import { autonomousNoteTemplate, render } from '../prompts/index.js';
+import { autonomousNoteTemplate, render, type ReadSourceDigest } from '../prompts/index.js';
 import type { VitalityStore } from '../quota/vitality-store.js';
 import type { LeadStore } from '../tools/lead-store.js';
 import { createUsageAccumulator, meteredLlmGateway } from '../usage.js';
@@ -47,7 +48,11 @@ export interface AutonomousIngestStore {
   listJobs(
     companionId: string,
   ): Promise<readonly { readonly id: string; readonly status: IngestionStatus }[]>;
+  listSectionsBySource(companionId: string, sourceId: string): Promise<readonly SectionRecord[]>;
 }
+
+/** Max findings (topic / context-header lines) surfaced per source in the note. */
+const MAX_FINDINGS_PER_SOURCE = 3;
 
 /** The companion persona fields the report note is voiced from. */
 export interface CompanionVoice {
@@ -191,8 +196,10 @@ export async function runAutonomousBurst(
     return NOTHING;
   }
 
-  // Surface what it did (the reward surface) and log the pending outcome.
-  const note = await composeReportNote(deps, companionId, companion, read);
+  // Surface what it did (the reward surface) and log the pending outcome. The
+  // note summarises real findings (section digests), not just the URLs read.
+  const digests = await buildSourceDigests(deps, companionId, read);
+  const note = await composeReportNote(deps, companionId, companion, digests);
   const message = await memory.appendMessage(companionId, 'assistant', note);
   try {
     await rewards.record(companionId, {
@@ -234,6 +241,43 @@ async function parkFailedLead(
 }
 
 /**
+ * Build a short findings digest per read source from its section topic titles and
+ * enrichment context-headers (preferring the header — entities named, pronouns
+ * resolved). Best-effort per source: a failed section read just yields an empty
+ * findings list, so the note degrades to naming the source rather than aborting.
+ */
+async function buildSourceDigests(
+  deps: AutonomousBurstDeps,
+  companionId: string,
+  read: readonly { readonly sourceId: string; readonly title: string }[],
+): Promise<ReadSourceDigest[]> {
+  const digests: ReadSourceDigest[] = [];
+  for (const source of read) {
+    let findings: readonly string[] = [];
+    try {
+      const sections = await deps.semantic.listSectionsBySource(companionId, source.sourceId);
+      findings = sections
+        .map((section) =>
+          section.contextHeader && section.contextHeader.trim().length > 0
+            ? section.contextHeader.trim()
+            : section.topicTitle.trim(),
+        )
+        .filter((line) => line.length > 0)
+        .slice(0, MAX_FINDINGS_PER_SOURCE);
+    } catch (error) {
+      deps.logger.error('failed to read sections for report digest', {
+        operation: 'motivation.autonomousBurst.digest',
+        companionId,
+        sourceId: source.sourceId,
+        error,
+      });
+    }
+    digests.push({ title: source.title, findings });
+  }
+  return digests;
+}
+
+/**
  * Compose the report note in the companion's voice, billed to ENERGY. Falls back
  * to a canned line when generation fails or yields nothing — the user is always
  * told what the companion did (never silent).
@@ -242,10 +286,9 @@ async function composeReportNote(
   deps: AutonomousBurstDeps,
   companionId: string,
   companion: CompanionVoice,
-  read: readonly { readonly title: string }[],
+  sources: readonly ReadSourceDigest[],
 ): Promise<string> {
-  const titles = read.map((r) => r.title);
-  const fallback = autonomousReadFallback(titles);
+  const fallback = autonomousReadFallback(sources.map((s) => s.title));
   const usage = createUsageAccumulator();
   try {
     const llm = meteredLlmGateway(deps.llm, usage.sink);
@@ -254,7 +297,7 @@ async function composeReportNote(
       form: companion.form,
       temperament: companion.temperament,
       evolvedPersona: companion.evolvedPersona,
-      titles,
+      sources,
     });
 
     let text = '';

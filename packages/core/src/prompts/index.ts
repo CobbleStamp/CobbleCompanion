@@ -35,7 +35,11 @@ export {
   REPORT_AFFECT,
   REPORT_AFFECT_TOOL,
 } from './catalog/affect-sense.js';
-export { autonomousNoteTemplate, type AutonomousNoteInput } from './catalog/autonomous-note.js';
+export {
+  autonomousNoteTemplate,
+  type AutonomousNoteInput,
+  type ReadSourceDigest,
+} from './catalog/autonomous-note.js';
 export { greetingTemplate, type GreetingInput } from './catalog/greeting.js';
 export { judgeTemplate, type JudgeInput } from './catalog/judge.js';
 export {

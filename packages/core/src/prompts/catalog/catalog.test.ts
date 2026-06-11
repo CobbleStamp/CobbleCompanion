@@ -113,11 +113,35 @@ describe('autonomousNoteTemplate.build', () => {
       form: 'a small fox',
       temperament: 'curious',
       evolvedPersona: 'You have grown fond of their late-night chats.',
-      titles: ['An Article'],
+      sources: [{ title: 'An Article', findings: ['Inflation cooled in Q2.'] }],
     });
     const system = built.messages[0]?.content ?? '';
     expect(system).toContain('You have grown fond of their late-night chats.');
     expect(system).toContain('You speak directly, in your own voice');
+  });
+
+  it('summarises findings and offers optional detail, not a pull to dig in', () => {
+    const built = autonomousNoteTemplate.build({
+      name: 'Pebble',
+      form: 'a small fox',
+      temperament: 'curious',
+      evolvedPersona: null,
+      sources: [
+        { title: 'German CPI', findings: ['German CPI came in softer than expected.'] },
+        { title: 'Turkey CPI', findings: [] },
+      ],
+    });
+    const user = built.messages[1]?.content ?? '';
+    // The findings substrate reaches the model — it has something to summarise.
+    expect(user).toContain('German CPI came in softer than expected.');
+    // A source with no captured detail degrades gracefully rather than vanishing.
+    expect(user).toContain('From Turkey CPI: (no detail captured)');
+    // Lead with substance, keep personality light, offer depth as an optional door.
+    expect(user).toContain('Lead with the substance');
+    expect(user).toContain('keep the personality light');
+    expect(user).toContain('leave it entirely optional');
+    // Guard against inventing detail it does not have.
+    expect(user).toContain('rather than inventing specifics');
   });
 });
 

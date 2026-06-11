@@ -34,9 +34,10 @@ function energyStore(db: Database): DrizzleVitalityStore {
 }
 
 /**
- * Fake pipeline: bill the meter + flip the job done, EXCEPT for URLs whose host
- * is in `failOn` — those throw after the meter would otherwise run (no spend, no
- * job update), simulating a network/parse blowup mid-burst.
+ * Fake pipeline: bill the meter, write one enriched section (a context-header the
+ * report digest reads back), and flip the job done — EXCEPT for URLs whose host is
+ * in `failOn`, which throw before any of that (no spend, no section, no job
+ * update), simulating a network/parse blowup mid-burst.
  */
 class FlakyReadPipeline implements IngestionTarget {
   constructor(
@@ -49,6 +50,18 @@ class FlakyReadPipeline implements IngestionTarget {
     }
     if (params.meter) {
       await params.meter.quota.spend(params.meter.accountId, TOKENS_PER_READ);
+    }
+    const [section] = await this.semantic.insertSections(params.companionId, params.sourceId, [
+      {
+        topicTitle: `Topic for ${params.sourceTitle}`,
+        originalText: 'body',
+        paraStart: 0,
+        paraEnd: 1,
+        ord: 0,
+      },
+    ]);
+    if (section) {
+      await this.semantic.setSectionContextHeader(section.id, `Finding from ${params.sourceTitle}`);
     }
     await this.semantic.updateJob(params.jobId, { status: 'done' });
   }
@@ -158,6 +171,13 @@ describe('runAutonomousBurst — best-effort per lead', () => {
     // The report-note call is stamped with its prompt version (prompts/registry).
     expect(llm.lastParams?.promptRef?.id).toBe('autonomous-note');
     expect(llm.lastParams?.promptRef?.version.contentHash).toMatch(/^[0-9a-f]{16}$/);
+
+    // The note prompt is fed real findings (each source's section digest), not
+    // just the URLs — so the companion can summarise rather than gesture.
+    const noteUserMessage = llm.lastParams?.messages.at(-1)?.content ?? '';
+    expect(noteUserMessage).toContain('Finding from https://a.dev');
+    expect(noteUserMessage).toContain('Finding from https://c.dev');
+    expect(noteUserMessage).not.toContain('Finding from https://boom.dev');
 
     // One pending outcome linked to the note, awaiting the user's reaction.
     const outcomes = await rewards.list(companionId, 10);

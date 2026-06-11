@@ -11,8 +11,8 @@ exports[`prompt registry > locks prompt versions against accidental drift 1`] = 
     "semver": "1.0.0",
   },
   "autonomous-note": {
-    "contentHash": "72667218e6f6e88a",
-    "semver": "1.0.0",
+    "contentHash": "7178024b1e3050ff",
+    "semver": "1.1.0",
   },
   "consolidation": {
     "contentHash": "a96496fa9b3fe49e",
