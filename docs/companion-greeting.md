@@ -9,7 +9,7 @@
 > it plugs into see `companion-motivation.md`; for the **stamina** wallet a greeting spends (and its
 > sibling **energy** wallet) see `companion-economy.md`; for the agent-loop seam see
 > `architecture.md` §4.5; for the _what & why_ of proactivity see `product-overview.md` §5.4–§5.6;
-> for canonical schema (the `last_seen_at` column, once built) see `implementation.md` §1; for
+> for canonical schema (the `last_seen_at` column) see `implementation.md` §1; for
 > scope/sequencing see `development-plan.md` §4d (Phase 14).
 >
 > **Status: built (Phase 14).** The mechanism below ships in `packages/core/src/greeting/`
@@ -66,7 +66,7 @@ resets on restart, so it cannot answer "it's been three days." `last_seen_at` mu
 keyed **per companion** (the companion row, or a small presence table), not globally on the user:
 greeting gap is about co-presence with _this_ companion, so a user with two companions doesn't make
 companion B think "you just visited" when they visited A. Canonical column lives in
-`implementation.md` §1 once built.
+`implementation.md` §1.
 
 **Sequencing — compute before you overwrite.** On each heartbeat: read the _stored_ `last_seen_at` →
 `gap = now − last_seen_at` → run the greeting decision (§4) against that gap → **then** write
@@ -248,17 +248,20 @@ knowing anything is coming. The contract is: **arrival decides to greet → the 
 within a beat → the greeting streams in.** A greeting that appears a moment _after_ load actually
 feels more alive — the companion noticing you walked in — than an instant canned hello.
 
-Two implementations, in increasing order of cleanliness:
+**As built**, this rides two distinct SSE shapes (`architecture.md` §6):
 
-- **Minimal — flag + poll.** The heartbeat response returns `{ greetingPending: true }`; the client
-  flips on the existing typing affordance and polls `refreshTranscript` (`Chat.tsx`) until the line
-  lands, then clears it.
-- **Preferred — a server→client event stream.** A persistent stream the client subscribes to on
-  mount, carrying a **`composing`** event (→ typing dots) followed by the streamed greeting. This
-  reuses the SSE machinery chat replies already use, just **server-initiated**, and it **subsumes the
-  `refreshTranscript` poll**: the same channel becomes the delivery path for _all_ proactive companion
-  messages (greetings now, autonomous report notes next — `companion-motivation.md` §5), with the
-  typing indicator a first-class event rather than a bolt-on.
+- **The greeting's own turn — a finite per-turn stream.** The client opens
+  **`POST /companions/:id/greeting`** on mount and on tab-return; the route streams a **`composing`**
+  cue (→ typing dots) and then the greeting as a `done` event, on the same finite `streamSse`
+  machinery chat replies use — just **server-initiated**. The decision to greet is made server-side
+  from the durable `last_seen_at` clock, so no `greetingPending` flag or poll is needed.
+- **Convergence + recovery — the standing event channel.** Because the greeting is an appended
+  transcript row, it also publishes to the **standing companion event channel** (Phase 15,
+  `architecture.md` §6) like any proactive message: a surface re-established after navigation recovers
+  the persisted greeting by snapshot+merge even if it missed the live turn. That channel — not a
+  `refreshTranscript` poll — is now the durable delivery path for _all_ proactive companion messages
+  (greetings and autonomous report notes alike); the per-turn greeting stream is what carries the live
+  `composing`→stream experience on arrival.
 
 Billing: the greeting's tokens ride the arrival turn and are debited to **stamina**, like ordinary
 chat (`companion-economy.md`). The exhausted fallback (§4, gate 5) is token-free and bypasses voicing
@@ -325,8 +328,8 @@ return while still empty → one more groan; never per-heartbeat spam.
    being adopted rather than narrating what the companion is; it degrades to asking for a name when
    none is on file (§6).
 7. **Async delivery with a `composing` contract** — the user always sees a typing indicator within a
-   beat; preferred implementation is a server→client event stream that also subsumes the proactive-
-   note poll (§7).
+   beat; the greeting's live turn streams over a finite per-turn SSE, and the persisted row also rides
+   the standing event channel (Phase 15) that has replaced the proactive-note poll (§7).
 8. **No neediness rule is hand-coded** — the reward loop decays the `connection` weight when greetings
    land cold, so restraint is _learned_ (§8).
 
@@ -353,5 +356,5 @@ return while still empty → one more groan; never per-heartbeat spam.
 - `companion-memory.md` §4 — the user model the depth axis reads and the first greeting bootstraps.
 - `architecture.md` §4.5 — the `Initiator` seam and body-then-will split.
 - `product-overview.md` §5.4–§5.6 — proactivity & vitality (the what & why).
-- `implementation.md` §1 — canonical schema (`last_seen_at`, `proactive_outcomes`), once built.
+- `implementation.md` §1 — canonical schema (`last_seen_at`, `proactive_outcomes`).
 - `development-plan.md` §4d (Phase 14) — scope, phase placement, and acceptance criteria.

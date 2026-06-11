@@ -158,6 +158,8 @@ Before claiming any work is done, verify:
 | Memory: browsing & evaluation             | `docs/companion-memory.md`     |
 | Feeding economy (food pantry & vitality)  | `docs/companion-economy.md`    |
 | Tool acquisition & use (MCP/CLI)          | `docs/companion-tools.md`      |
+| Greeting / arrival reaction               | `docs/companion-greeting.md`   |
+| Realtime delivery (event channel / SSE)   | `docs/architecture.md` §6, `docs/implementation.md` §2.4 |
 | Proactivity & motivation                  | `docs/companion-motivation.md` |
 | Ontology contract & governance            | `docs/ontology.md`             |
 | Prompt management & iteration             | `docs/guide-prompts.md`        |

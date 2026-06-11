@@ -4,14 +4,17 @@ A personal AI companion you name, raise, and bond with — one continuous, cloud
 that learns you and your world, acts on your behalf, and is **proactive** rather than passive.
 For the full product vision see [`docs/product-overview.md`](./docs/product-overview.md).
 
-> **Status: Phase 2 (memory & continuity) — done.** On top of the Phase 0 walking skeleton
-> (Google sign-in, companion creation, persisted streamed chat) and the Phase 1 knowledge
-> organism (sources → semantic memory → grounded, cited answers), the companion now forms
-> **episodic memory**: a background pass consolidates the conversation into time-anchored
-> episodes it recalls by topic, and its **personality evolves** from them. A TypeScript
-> monorepo (`packages/{shared,core,api,web}` + `db/`) with the agent-loop harness,
-> provider-agnostic LLM and embedding gateways, and an ≥80%-coverage test suite. Cloud Run
-> deployment lives in `infra/` (Pulumi). See `docs/development-plan.md` §3.
+> **Status: the web PoC and its follow-on workstreams are complete (Phases 0–15 ✅).** The
+> companion talks end-to-end (Phase 0); ingests sources into **semantic memory** with grounded,
+> cited recall (Phase 1); forms **episodic memory** and an **evolving personality** (Phase 2);
+> **acts** through a tool framework behind a propose→approve gate (Phase 3); **initiates** on its
+> own via a motivation engine with stamina/energy vitality (Phase 4); shows **growth** and a feeding
+> economy (Phase 5); acquires **MCP and CLI tools at runtime** with no redeploy (Phases 9–10); builds
+> a structured **user model** (Phases 11–13); **greets** on arrival (Phase 14); and pushes new
+> messages over a **standing event channel** (Phase 15). Native mobile/desktop surfaces (Phases 6–8)
+> are the next frontier. A TypeScript monorepo (`packages/{shared,core,api,web}` + `db/`) with the
+> agent-loop harness, provider-agnostic LLM and embedding gateways, and an ≥80%-coverage test suite.
+> Cloud Run deployment lives in `infra/` (Pulumi). See `docs/development-plan.md` §2.
 
 ## Documentation
 
@@ -25,12 +28,12 @@ Start here, then follow the links:
 | [`docs/implementation.md`](./docs/implementation.md) | Data models, harness internals, config, security |
 | [`AGENTS.md`](./AGENTS.md) · [`CLAUDE.md`](./CLAUDE.md) | Working rules · AI-agent entry point |
 
-## Stack (Phases 0–1)
+## Stack
 
 TypeScript end-to-end — Node/Fastify API + React/Vite web client, Postgres + `pgvector`,
-Drizzle ORM, and provider-agnostic LLM + embedding gateways (default OpenRouter). Phase 1
-adds semantic memory: ingested sources are chunked, embedded into `pgvector`, and recalled
-via hybrid (vector + full-text) search. Full rationale:
+Drizzle ORM, and provider-agnostic LLM + embedding gateways (default OpenRouter). Semantic
+memory chunks ingested sources, embeds them into `pgvector`, and recalls them via hybrid
+(vector + full-text) search. Full rationale:
 [`docs/architecture.md`](./docs/architecture.md) §5.
 
 ## Quick start

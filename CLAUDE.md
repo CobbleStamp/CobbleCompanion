@@ -31,6 +31,7 @@ read docs/product-overview.md
 | Greeting / arrival reaction   | `docs/companion-greeting.md`        |
 | Feeding economy (food pantry & vitality) | `docs/companion-economy.md`        |
 | Tool acquisition & use (MCP/CLI) | `docs/companion-tools.md`          |
+| Realtime delivery (standing event channel / SSE push) | `docs/architecture.md` §6, `docs/implementation.md` §2.4 |
 | Prompt management & iteration | `docs/guide-prompts.md`             |
 | Running evals (offline harness) | `docs/howto-run-evals.md`         |
 | Online tracing / observability | `docs/runbook-tracing.md`          |
@@ -40,16 +41,17 @@ read docs/product-overview.md
 ## Development Environment
 
 > CobbleCompanion is a **mobile + web** personal-companion product (see `docs/product-overview.md`).
-> The implementation stack below is **not yet decided** — entries marked _TBD_ are to be defined in
-> `docs/architecture.md` and `docs/development-plan.md`. Do not infer a stack from older docs or code.
+> The implementation stack is **decided and built** — canonical in `docs/architecture.md` §5. The
+> web PoC and its follow-on workstreams (Phases 0–15) ship; native mobile/desktop (Phases 6–8) are
+> the next frontier. Do not infer a stack from older docs — follow `architecture.md` §5.
 
 - **Surfaces (target platforms):** **mobile** (iOS + Android), **web**, and **desktop** (macOS/Windows/Linux). These are "living rooms" the one companion embodies in — **one at a time**, summoned by the user (see `docs/product-overview.md` §2). Web = portable/sandboxed; mobile = GPS/camera/health/notifications; desktop = files/local storage.
 - **The companion (intelligence):** model + harness + knowledge base. Knowledge base = three long-term memories — **semantic, episodic, procedural** (`docs/product-overview.md` §2.1).
 - **Data posture:** the companion's **canonical self lives in the cloud** (identity + long-term memory persist and sync there for continuity across rooms). **Raw on-device OS data can stay local** in the surface it came from and be reached via OS tools; *derived* knowledge syncs. Core data concerns: knowledge base, long-term memory, and the propose→approve **approval queue** (`docs/product-overview.md` §7).
 - **OS as tools:** **mobile and desktop** surfaces wrap their OS access as functions/tools for the companion (permission-gated); the companion can also act as its own cross-room/cloud sync courier.
 - **LLM:** agentic, **tool / skill / MCP**-using model loop (web-crawling and OS access are tools among many); provider-agnostic gateway, default **OpenRouter** (`docs/architecture.md` §5). Embeddings also via OpenRouter (`/embeddings`, default `perplexity/pplx-embed-v1-0.6b`) behind a provider-agnostic gateway — **all models come from OpenRouter**.
-- **Stack (Phases 0–1):** **TypeScript end-to-end** — Node/**Fastify** API + **React/Vite** web client; **Postgres + `pgvector`** store (semantic memory: verbatim sections + vector/FTS hybrid retrieval + typed fact overlay per `docs/ontology.md`; ingestion flow `docs/architecture.md` §4.8). Canonical: `docs/architecture.md` §5. _Later phases evolve this doc incrementally._
-- **App shell:** mobile + web + desktop clients over a cloud "home" backend; one active embodiment at a time. Phases 0–1 build the **web** surface only (`docs/development-plan.md` §3); core↔surface boundary is fixed (`docs/architecture.md` §2).
+- **Stack:** **TypeScript end-to-end** — Node/**Fastify** API + **React/Vite** web client; **Postgres + `pgvector`** store (semantic memory: verbatim sections + vector/FTS hybrid retrieval + typed fact overlay per `docs/ontology.md`; ingestion flow `docs/architecture.md` §4.8). Canonical: `docs/architecture.md` §5.
+- **App shell:** mobile + web + desktop clients over a cloud "home" backend; one active embodiment at a time. The **web** surface is built (Phases 0–15, `docs/development-plan.md` §2–§3); native mobile/desktop are Phases 6–8. The core↔surface boundary is fixed (`docs/architecture.md` §2).
 
 ## When to Update Docs
 

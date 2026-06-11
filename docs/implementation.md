@@ -342,12 +342,12 @@ extraction/retrieval flow → `companion-memory.md` §4.
 > (validated at extraction, mirroring `TIER1_PREDICATES`; polarity rides the predicate); too many for
 > context, so surfaced by the retrieval arm over *current* Tier-2 rows only (`architecture.md` §4.3) —
 > added in Phase 12. **Tier 3 — user persona**:
-> the synthesized narrative in `companions.user_persona` (Phase 13). Indexes (Phase 11): btree on
-> `(user_id, superseded_at)` for the current-facts scan; plus a **partial unique index**
-> `user_facts_one_current_name_uniq` on `(user_id, predicate)` `WHERE predicate = 'name' AND
-> superseded_at IS NULL` — DB-enforced "one current `name` per user". _(Phase 13: with `superseded_at`
-> gone, the scan index becomes `(user_id, predicate)` and the unique index drops its `superseded_at`
-> clause — one `name` row per user, period, since every row is current.)_ The seed matters because
+> the synthesized narrative in `companions.user_persona` (Phase 13). Indexes: btree on
+> `(user_id, predicate)` for the current-facts scan; plus a **partial unique index**
+> `user_facts_one_current_name_uniq` on `(user_id, predicate)` `WHERE predicate = 'name'` —
+> DB-enforced "one `name` row per user, period" (every row is current). _(Phase 11 originally keyed
+> both on `superseded_at`; that column was dropped in Phase 13 when `user_facts` became current-state
+> only, and the indexes lost the clause.)_ The seed matters because
 > `seedName` runs on every
 > authed request outside the harness per-user serialization and parallel first-load seeds would
 > otherwise double-insert (`seedName` absorbs the conflict via `ON CONFLICT DO NOTHING`). Scoped to
@@ -527,9 +527,11 @@ erDiagram
   (`null`): the prior baseline is kept and nothing is learned, so a transient hiccup can't masquerade as
   a neutral mood and fabricate a reward delta. The user's message is **fenced in `<user_message>` tags**
   in the read prompt so it cannot dictate its own valence.
-- **`proactive_outcomes`** — one row per initiation for the reinforcement loop: the served
+- **`proactive_outcomes`** — one row per initiation for the reinforcement loop (ordered by a
+  `seq` bigserial, indexed `(companion_id, seq)`): the served
   drive, a drive snapshot at initiation, the linked **`note_message_id`** (the report note the user
-  reacts to), and the **reward** once resolved. The reward is the **change** in the user's mood
+  reacts to), and the **reward** once resolved (a legacy nullable `proposal_id` FK is retained but
+  unused). The reward is the **change** in the user's mood
   across their reaction to the note (`delta = valence_now − valence_before`, sensed in the agent
   loop), applied as an additive nudge — not approve/reject. Doubles as the helpful-vs-annoying
   measurement. Resolution is an **atomic claim** — the reward write is conditioned on
@@ -718,7 +720,7 @@ The standing per-companion push channel (`architecture.md` §6). No schema chang
   harness, greeter, and announcer all publish through the one shared instance with no call-site change.
 - **Bus.** `CompanionEventBus` (`core/src/events/`) is an interface; `InProcessCompanionEventBus`
   keeps a `Map<companionId, Set<subscriber>>` and exposes `publish` + `subscribe(companionId) →
-  { iterator: AsyncIterable<MessageDto>; close() }` (a bounded queue + waiter bridges callback →
+  { events: AsyncIterableIterator<MessageDto>; close() }` (a bounded queue + waiter bridges callback →
   async-iterable). The interface is the seam for a Postgres `LISTEN/NOTIFY` / Redis implementation
   when the API runs on >1 replica (`architecture.md` §9) — publishers and the route are unchanged.
 - **Channel route.** `GET /companions/:companionId/events` (`requireAuth` + ownership check) opens an
@@ -854,9 +856,7 @@ Out of scope for this release; the roadmap is owned by `development-plan.md`.
   Separately, **salience** is ignored by RRF — it ranks by fused vector/FTS rank alone; filler never
   reaches recall because consolidation omits it, not because salience down-weights it.
 
-**Out of scope / future.**
-- **Onboarding personality seed** — drive weights stay neutral so the character card is *earned*.
-- **Deeper reinforcement** — a contextual-bandit policy beyond the additive change-as-reward nudge.
+**Built (post-PoC workstream).**
 - **Runtime tool acquisition** — the implementation behind `companion-tools.md`, **both tracks built**
   (`development-plan.md` Phases 9–10) over one **source-polymorphic `CapabilitySource`** seam
   (`core/acquisition/`) the catalog builder, `load_tool`, and the equipped-registry resolver dispatch
@@ -894,6 +894,10 @@ Out of scope for this release; the roadmap is owned by `development-plan.md`.
   `limits` block — no deployment default); `buildToolAcquisitionWiring` composes MCP + CLI sources
   (null only when neither is configured). Mechanism → `companion-tools.md`; scope →
   `development-plan.md`.
+
+**Out of scope / future.**
+- **Onboarding personality seed** — drive weights stay neutral so the character card is *earned*.
+- **Deeper reinforcement** — a contextual-bandit policy beyond the additive change-as-reward nudge.
 - **Auth** — an app-issued session JWT and silent refresh / 401-driven re-auth beyond the ~1h
   Google ID token.
 - **Background workers & push** — worker tuning and push-notification credentials.

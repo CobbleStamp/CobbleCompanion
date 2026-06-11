@@ -144,13 +144,17 @@ flowchart TB
 | **Tool Registry + Tools** | The tools a turn advertises + dispatches (`core/tools/`): `web_fetch`, `memory_search` (read-only), `ingest_source` (effectful) | Read-only tools run freely; the gate holds effectful ones (§4.4). `web_fetch` reuses the link resolver; `ingest_source` reuses the ingestion pipeline |
 | **Approval Queue + Gate** | The `beforeToolCall` gate + the `proposals` store — holds effectful calls for one-tap approval, resolved exactly once | The mechanical realization of propose→approve (§4.4); confirm executes via `dispatchTool` |
 | **Tool-Call Log** | Append-only audit of every executed tool call (`tool_calls`) | The `afterToolCall` hook records all calls — every tool call is logged |
+| **Tool Catalog + Acquisition meta-tools** _(Phases 9–10 built)_ | The deployment-wide catalog of whitelisted tools (lightweight entries, off-context) + the `search_tools`/`load_tool` discovery meta-tools (`core/src/acquisition/`) | Composition of capability sources behind the unchanged registry interface, **resolved per model step** so a mid-turn `load_tool` is callable next iteration (loop shape unchanged — invariant #3); off by default. Trust = developer whitelist (§9). Mechanism → `companion-tools.md`; impl → `implementation.md` §6 |
+| **Equipped Set** _(Phases 9–10 built)_ | Per-companion, persisted LRU-bounded set of loaded tools (server ref + last-fetched schema) the per-step registry rebuilds from | Survives restart with no re-discovery; the fixed core tools live in code, never counted. Schema → `implementation.md` §1, §6 |
+| **MCP Connector Executor** _(Phase 9 built)_ | Provider-agnostic MCP gateway + adapter (`core/src/mcp/`, `api/src/mcp/`) — `initialize`/`tools/list`/`tools/call` over the official SDK | **HTTP/SSE only**, SSRF-guarded (connection-layer DNS re-validation); namespaced collision-safe names; results fenced as untrusted (§2.1). Whitelist = binary per-server allow/deny |
+| **CLI Sandbox Executor** _(Phase 10 built)_ | Drives developer-described CLI tool folders under `CLI_TOOLS_PATH` (`core/src/cli/`, `api/src/cli/`) — schema-validated argv into a no-shell subprocess | Argv verbatim (injection-inert), scrubbed env, per-tenant ephemeral cwd, time/output kills; def re-read at call time (a removed folder is revoked immediately). OS-level/network isolation deferred (§9) |
 | **Lead Inventory** | The companion's reading list (`leads`) — discovered-but-unread URLs | Populated by `web_fetch` link harvest; worked on command (`/explore`) and by the motivation engine on idle (§4.5) |
 | **Procedural Store** | Learned, reusable workflows seeded from approved actions (`procedural_memories`) | Browseable, and surfaced as a `RetrieveContext` hint arm (§4.3) so a routine resurfaces and is reused |
 | **Motivation Engine** | Fills the `Initiator` seam — drives × presence → bounded autonomous explore burst | Reads the lead inventory into memory on its own (no approval), bounded by energy; posts an in-character report note. Includes presence, change-as-reward reinforcement, and an off-request runner/sweep. Mechanism → §4.5, `companion-motivation.md` |
 | **Greeting Service** | The bond-driven reaction to the user *arriving* (`packages/core/src/greeting/`) — the social sibling of the explore burst | A token-free `decideGreeting` gate (first-meeting override → dial → continuation floor → gap × open loop) + a service that voices one in-character greeting billed to **stamina** (or a fixed exhausted line), recording a `bond` outcome. Reads the durable `companions.last_seen_at` clock; streamed to the client (`composing` → `done`) by `POST /companions/:id/greeting`. Mechanism → `companion-greeting.md` |
 | **Energy Wallet** | The self-initiated half of the §4.8 two-wallet vitality (`companions.energy_balance_tokens`) | Per-companion token balance; a separate wallet from stamina (the `Stamina Wallet` above), metered by the same `VitalityStore`, so autonomy can't starve interaction |
 | **Food Pantry** | The user's seeded inventory of typed foods (`user_food`) — the feeding economy's supply | Per-user counts of `ration`/`spark`/`treat`; `POST /feed` consumes one and refills the fed companion's wallet(s) (`companion-economy.md`) |
-| **Growth Service** | Derives the four MIRROR axes (knowledge, bond, initiative, character) + the observed-capabilities checklist from substrate | Growth is DERIVED — a readout that may move either way, never scored or floored. Recompute is post-turn and token-free; the read is a snapshot. Decoupled from feeding. Mechanism → §4.3; data model → `implementation.md` §1 |
+| **Growth Service** | Derives the four MIRROR axes (knowledge, bond, initiative, character) + the observed-capabilities checklist from substrate | Growth is DERIVED — a readout that may move either way, never scored or floored. Recompute is post-turn and token-free; the read is a snapshot. Decoupled from feeding. The procedural retrieval-as-hint arm that makes a capability *functional* is §4.3; the axis-derivation mechanism → `development-plan.md` §3 (Phase 5); data model → `implementation.md` §1 |
 
 ## 4. The Agent Loop & Harness
 
@@ -773,13 +777,17 @@ flowchart TB
       memory/          MemoryStore (transcript) + the publish-on-append PublishingMemoryStore decorator (§6) + SemanticMemoryStore + EpisodicMemoryStore + consolidation service/runner
       user-model/      UserModelStore (user_facts: Tier-1 profile + Tier-2 beliefs) + inline User-Fact Extractor + background User-Model Reflector (Tier-2 beliefs + reconciliation; Tier-3 user_persona) (§4.3/§4.5)
       tools/           tool framework + registry, the three tools, the approval gate, proposal/tool-call/lead/procedural stores (§4.2/§4.4)
+      acquisition/     runtime tool acquisition spine (Phases 9–10): catalog + search_tools/load_tool meta-tools, per-step registry composition, equipped-set store (§9) — companion-tools.md
+      mcp/             MCP connector executor — HTTP/SSE gateway + adapter, SSRF-guarded, per-server whitelist (§9, Phase 9)
+      cli/             CLI sandbox executor — developer-described tool folders under CLI_TOOLS_PATH, no-shell schema-validated argv subprocess (§9, Phase 10)
       personality/     evolvedPersona synthesis from episodes
       identity/        companion "home" model + store
       motivation/      the "will" (§4.4–§4.5): drives × presence arbitration, autonomous explore burst, engine runner/sweep, affect perception + change-as-reward reinforcement
       greeting/        the bond-driven arrival reaction (social sibling of the explore burst): token-free decideGreeting gate + stamina-billed greeter, reads companions.last_seen_at — companion-greeting.md
-      growth/          four mirror axes derived from substrate (§4.3 hint arm) + the feeding economy: axis readings (band+fill), capabilities registry, growth store/service/runner, foods, the per-user food pantry/store (§4.8)
+      growth/          four mirror axes derived from substrate (§4.3 hint arm + development-plan.md §3) + the feeding economy: axis readings (band+fill), capabilities registry, growth store/service/runner, foods, the per-user food pantry/store (§4.8)
       quota/           per-companion vitality wallets (stamina + energy) (§4.8)
     api/               BFF / surface boundary (Fastify); memory + source + usage + proposal/inventory routes; presence + proactivity (dial/energy) routes; growth + feed routes; the standing companion event-channel route (§6)
+      acquisition/, mcp/, cli/   API-side wiring of the runtime tool-acquisition spine + MCP/CLI executors (§9, Phases 9–10)
       tracing/         Langfuse Cloud TraceSink adapter (fetch-based; sampling + redaction before export) — runbook-tracing.md
     web/               React web client; chat w/ citations + ingestion-status panel + approval cards (subscribe-then-snapshot establishment over the companion event channel, §6), sources page, memory browser (incl. editable user-model profile/beliefs panel), usage badge; vitality meter + proactivity dial; growth view + kitchen
     shared/            shared TS types / contracts
@@ -837,28 +845,31 @@ owned by `development-plan.md`.
 - **Boredom & distractibility knobs.** The two personality knobs are persisted but inert; only
   **focus length** drives the burst today (`companion-motivation.md` §6).
 
+**Built (post-PoC workstream).**
+- **Runtime tool acquisition** — the toolset **grows at runtime without code or redeploy**, so the
+  companion *acquires* new primitives (not only *combines* the ones it ships with). The shared spine:
+  **`search_tools`**/**`load_tool`** discovery meta-tools; a **catalog** of whitelisted tools indexed
+  off-context (so hundreds of tools cost no per-turn tokens); a per-companion **equipped set** the
+  model loads into on demand; and a **dynamic registry** composed behind the existing registry
+  interface (§3) but **resolved per model step** so a tool loaded mid-turn is callable on the next
+  loop iteration — the loop *shape* is unchanged (§4.7), this stays within the tool-invocation
+  extension point (invariant #3). `search_tools` is a cheap off-loop LLM lookup over the lightweight
+  catalog (no embeddings on the critical path). Trust is a **developer-whitelist** — binary
+  allow/deny defining the catalog — sitting *beside* propose→approve (§4.4), not replacing it.
+  Server-host only; tool outputs treated as untrusted (`implementation.md` §2.1). **Both tracks are
+  built** (`development-plan.md` Phases 9–10), each off by default: the **MCP-connector** executor
+  (HTTP/SSE + SSRF-guarded, §8) and the **CLI sandbox** executor (no-shell subprocess, scrubbed env,
+  per-tenant ephemeral cwd, time/output ceilings — portable tier; OS-level/network/filesystem
+  isolation deferred to Phase 8 hardening). CLI tools are developer-described folders under
+  `CLI_TOOLS_PATH`, each surfacing as its own callable `cli__<ref>`, so they flow through the same
+  spine as MCP tools. Components → §3; design → `companion-tools.md`; impl → `implementation.md` §6;
+  scope/sequencing → `development-plan.md` §4b.
+
 **Out of scope / future.**
 - **Proactivity reach** — unprompted conversation beyond the report note (tips, questions,
   check-ins) and a stronger sense of purpose/agenda; continuous work-while-away (needs push for an
   audience); a deeper contextual-bandit reinforcement policy (`companion-motivation.md`).
 - **Onboarding personality seed** — drive weights stay neutral so the character card is *earned*.
-- **Runtime tool acquisition** — letting the toolset **grow at runtime without code or redeploy**,
-  so the companion *acquires* new primitives (not only *combines* the three it ships with). The
-  shared spine: **`search_tools`**/**`load_tool`** discovery meta-tools; a **catalog** of whitelisted
-  tools indexed off-context (so hundreds of tools cost no per-turn tokens); a per-companion
-  **equipped set** the model loads into on demand; and a **dynamic registry** composed behind the
-  existing registry interface (§3) but **resolved per model step** so a tool loaded mid-turn is
-  callable on the next loop iteration — the loop *shape* is unchanged (§4.7), this stays within the
-  tool-invocation extension point (invariant #3). `search_tools` is a cheap off-loop LLM lookup over
-  the lightweight catalog (no embeddings on the critical path). Trust is a **developer-whitelist** —
-  binary allow/deny defining the catalog — sitting *beside* propose→approve (§4.4), not replacing it.
-  Server-host only; tool outputs treated as untrusted (`implementation.md` §2.1). **Both tracks are
-  built** (`development-plan.md` Phases 9–10), each off by default: the **MCP-connector** executor
-  (HTTP/SSE + SSRF-guarded, §8) and the **CLI sandbox** executor (no-shell subprocess, scrubbed
-  env, per-tenant ephemeral cwd, time/output ceilings — portable tier; OS-level/network/filesystem
-  isolation deferred to §9 / `development-plan.md` Phase 8 hardening). CLI tools are developer-described folders under `CLI_TOOLS_PATH`, each
-  surfacing as its own callable `cli__<ref>`, so they flow through the same spine as MCP tools. Design → `companion-tools.md`; scope/sequencing →
-  `development-plan.md`.
 - **Multiple companions per user & an account spend ceiling** — ownership is already modelled M:1
   (`companions.owner_id`), so the data model supports several companions per user; the PoC just
   ships one. When multiple lands, a real-money **account-level** token cap (across all of a user's

@@ -49,7 +49,7 @@ being is proven, because they add platform cost without changing whether the cor
 | **12** | User Model — learned beliefs | Web | Learns preferences/interests/opinions (explicit + implicit); surfaces them unprompted **and acts on them**, refining from reactions ⭐ | ✅ **Done** (§4c) |
 | **13** | User Model — understanding & hygiene | Web | Synthesized user-persona; decay & sensitive attributes; full edit/forget UI | ✅ **Done** (§4c) |
 | **14** | Greeting / arrival reaction | Web | Companion notices you arrive and reacts — greets in context, picks up open threads, or rests when spent | ✅ **Done** (§4d) |
-| **15** | Realtime delivery — standing event channel | Web | New messages (replies, proactive notes, greetings) reach an open client by push; navigating away and back is always current — no forced refresh | 🚧 **In progress** (§4e) |
+| **15** | Realtime delivery — standing event channel | Web | New messages (replies, proactive notes, greetings) reach an open client by push; navigating away and back is always current — no forced refresh | ✅ **Done** (PR #16, §4e) |
 
 ⭐ = the differentiators the web PoC exists to prove. **Phases 0–5 are the PoC.**
 
@@ -786,7 +786,7 @@ messages become first-class push, not a poll). Like §4b–§4d the numbering is
 ordering; it extends the web surface and depends only on the PoC spine. Full mechanism →
 `architecture.md` §6 + `implementation.md` §2.4.
 
-### Phase 15 — Standing Companion Event Channel 🚧 In progress
+### Phase 15 — Standing Companion Event Channel ✅ Done
 **Goal:** new messages — turn replies, ingestion notes, greetings, proactive nudges — reach an open
 client by **push** the instant they persist; opening, navigating away, reconnecting, or running a
 second tab always converges on the durable transcript without a manual refresh.
@@ -822,6 +822,25 @@ covers gaps for now); **multi-replica fan-out** (the bus interface swaps to Post
 when running >1 instance, `architecture.md` §9); routing the **turn itself** over the channel for live
 token-streaming continuity *while* on another view (this phase recovers the final message on return,
 not the live typing); **WebSockets** (SSE fits — server→client push, client→server stays POSTs).
+
+**Implemented** (PR #16): the standing per-companion push channel end-to-end. A
+**`PublishingMemoryStore`** decorator wraps the one `appendMessage` chokepoint at the composition root
+and publishes every appended row to an in-process **`InProcessCompanionEventBus`** (best-effort,
+try/catch, logged at `error`, never failing the append) — so every persistence path (turn reply,
+greeting, ingestion announcer, upload) emits with no call-site change. The standing
+**`GET /companions/:id/events`** route (`requireAuth` + ownership) opens an open-ended `streamChannel`
+(distinct from the finite per-turn `streamSse`) that subscribes to the bus, writes each row as
+`{ type: 'message', message }`, heartbeats with `: ping`, and unsubscribes on disconnect. The web
+client does **subscribe-then-snapshot** establishment — opens the channel first, snapshots the
+transcript, and **merges by message id** (the `mergeMessage` reducer dedupes the per-turn stream,
+snapshot, and channel, and replaces id-less optimistic lines with their authoritative event) — closing
+the navigate-away-and-back race; it reconnects with backoff + snapshot-per-reconnect. The poll-based
+note-delivery path was retired (the ingestion poll now drives only the reading-progress UI). (Mechanism
+→ `architecture.md` §6; impl → `implementation.md` §2.4.) **Gate passed** (offline, deterministic — the
+differentiator is *mechanical*: convergence without a refetch trigger): the bus and the `mergeMessage`
+reducer are unit-tested (subscription lifecycle, close-cleanup, id dedup, optimistic-line
+reconciliation), and the event route + publishing store have integration coverage. Full monorepo green
+at ≥80% coverage.
 
 ## 5. Open Questions to Resolve (owned here)
 Owned here (single-source). Each is assigned a decision point:
