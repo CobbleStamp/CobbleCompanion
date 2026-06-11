@@ -360,6 +360,11 @@ export {
   type RecordOutcomeInput,
 } from './motivation/reward-store.js';
 export {
+  DrizzleReactionStore,
+  type ReactionRecord,
+  type ReactionStore,
+} from './reactions/store.js';
+export {
   DEFAULT_LEARNING_RATE,
   nudgeDriveWeight,
   WEIGHT_CEILING,
