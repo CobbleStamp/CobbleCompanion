@@ -2,8 +2,8 @@
 
 > **Canonical source for emoji reactions in chat** — the user reacting to the companion's messages,
 > and the companion reacting to the user's. Reactions are a **second reward-learning channel** beside
-> the every-turn affect loop: an *addressed, explicit* signal the companion learns from, and an
-> *expressive* act the companion emits to feel present. This doc owns the reaction surface, its data
+> the every-turn affect loop: an _addressed, explicit_ signal the companion learns from, and an
+> _expressive_ act the companion emits to feel present. This doc owns the reaction surface, its data
 > model, and how its signal plugs into learning; the **drive model, arbitration, and change-as-reward
 > loop it extends** are owned by `companion-motivation.md` §7. For the agent-loop seam the companion's
 > own reaction is emitted from see `architecture.md` §4.5; for the standing event channel reactions
@@ -18,7 +18,7 @@
 ## 1. Why this exists — what a reaction _is_
 
 A reaction is a distinct speech act from a reply, and stripping it to first principles is what makes
-it valuable to a *learning* companion. A reaction has four properties a typed turn does not:
+it valuable to a _learning_ companion. A reaction has four properties a typed turn does not:
 
 1. **It is _addressed_.** A reaction is bound to exactly one message. A reply is ambient — it answers
    "the conversation," and you must infer what it responds to. A ❤️ on message _M_ is unambiguously
@@ -43,15 +43,15 @@ redundant.
 
 ## 2. Vocabulary
 
-| Term | What it is |
-|---|---|
-| **Reaction** | An emoji attached to a single transcript message, by the user or the companion. A `message_reactions` row, not a transcript turn (`implementation.md` §1). |
-| **Reactor** | Who placed the reaction — `user` or `companion`. |
-| **Value-created reward** | The reward a *user* reaction yields: **did the companion's act create value for the user?** Judged in context, in [−1, 1] — not the emoji's face-value valence (§7). |
-| **Inline reaction-read** | The cheap, per-reaction structured read that turns one user reaction (in the context of the act it lands on) into a value-created reward + note. The fast path that feeds the nudge (§4, §7). |
-| **Reflection** | The slower, periodic pass that turns *many* reactions + their notes into understanding — beliefs, persona, diffuse credit — feeding the user model (§6). A separate timescale from the inline read. |
-| **Expressive reaction** | A reaction the **companion** emits as part of a turn (👀 "on it", 🎉, 🙏). Pure expression — it creates no outcome and awaits no reward (§5). |
-| **Quick-react bar** | A curated shortcut set (❤️ 👍 😂 🎉 😮 😢 🙏 👎) shown for one-tap reacting, with a "+" to the full picker. A **convenience, not a constraint** — neither side is limited to it (§7). |
+| Term                     | What it is                                                                                                                                                                                          |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Reaction**             | An emoji attached to a single transcript message, by the user or the companion. A `message_reactions` row, not a transcript turn (`implementation.md` §1).                                          |
+| **Reactor**              | Who placed the reaction — `user` or `companion`.                                                                                                                                                    |
+| **Value-created reward** | The reward a _user_ reaction yields: **did the companion's act create value for the user?** Judged in context, in [−1, 1] — not the emoji's face-value valence (§7).                                |
+| **Inline reaction-read** | The cheap, per-reaction structured read that turns one user reaction (in the context of the act it lands on) into a value-created reward + note. The fast path that feeds the nudge (§4, §7).       |
+| **Reflection**           | The slower, periodic pass that turns _many_ reactions + their notes into understanding — beliefs, persona, diffuse credit — feeding the user model (§6). A separate timescale from the inline read. |
+| **Expressive reaction**  | A reaction the **companion** emits as part of a turn (👀 "on it", 🎉, 🙏). Pure expression — it creates no outcome and awaits no reward (§5).                                                       |
+| **Quick-react bar**      | A curated shortcut set (❤️ 👍 😂 🎉 😮 😢 🙏 👎) shown for one-tap reacting, with a "+" to the full picker. A **convenience, not a constraint** — neither side is limited to it (§7).               |
 
 ## 3. The two directions
 
@@ -87,8 +87,8 @@ sequenceDiagram
     participant API as API (reactions route)
     participant DB as message_reactions
     participant CH as Event channel (§6)
-    participant R as ReactionService (body — senses)
-    participant W as reinforce.ts (will — learns)
+    participant R as ReactionLearner (body — senses)
+    participant W as ReactionLearner (will — learns)
 
     C->>API: POST …/messages/:id/reactions {emoji}
     API->>DB: upsert row (reactor=user)
@@ -102,7 +102,6 @@ sequenceDiagram
         R-->>W: no learning (never fabricate neutral)
     else reward
         R->>DB: store reward + reward_note (reflection corpus §6)
-        R->>R: nudge rolling companion_affect (fast-loop attune)
         R->>W: reinforce(messageId, reward)
         alt reacted id maps to an unresolved outcome
             W->>W: resolve THAT outcome by note_message_id<br/>nudge served drive — if belief-driven,<br/>adjust belief salience
@@ -335,7 +334,7 @@ reaction placed on one surface syncs to another.
 reinforcement run after the response, best-effort.
 
 **Seam — event-triggered, beside the harness.** A user reaction is _not_ a turn, so its read is
-triggered from a small **`ReactionService`** (body-side perception → reward), not from the harness's
+triggered from a small **`ReactionLearner`** (body-side perception → reward), not from the harness's
 in-loop `perceiveAndLearn` — analogous to how the greeting is edge-triggered (`companion-greeting.md`).
 The companion's _own_ reaction, by contrast, _is_ emitted inside the agent loop (§5).
 
@@ -438,6 +437,12 @@ because it was a deliberate bet you're rewarding). Same up/down mechanism, diffe
   next phase.
 - **Context-sensitive companion _affective_ reactions** beyond pragmatic acknowledgement (richer
   emotional resonance) — the §5 action is the seam they grow in.
+- **Fast-loop attune from a reaction** — using a reaction to update the rolling
+  `companion_affect` mood read so the _next_ reply is warmer. Deferred deliberately: the reaction read
+  yields a **value-created** reward, which is _not_ a mood valence (the 😢-on-sad-news case has high
+  value but a sad mood, §7), so writing it into `companion_affect` would corrupt attunement. A faithful
+  fast loop needs a separate mood read; v1 learns from the reward (slow loop) and leaves attunement to
+  the per-turn affect read.
 - **Reactions as a first-class growth signal** surfaced in the mirror ("Cobble learned you love its
   concise summaries") — the reward log makes them legible; the mirror wiring is later.
 

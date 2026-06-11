@@ -42,7 +42,8 @@ describe('DrizzleReactionStore', () => {
 
   it('adds a user reaction with no reward yet', async () => {
     const msg = await messageId();
-    const row = await reactions.add(companionId, msg, 'user', '❤️');
+    const { record: row, inserted } = await reactions.add(companionId, msg, 'user', '❤️');
+    expect(inserted).toBe(true);
     expect(row.messageId).toBe(msg);
     expect(row.reactor).toBe('user');
     expect(row.emoji).toBe('❤️');
@@ -54,7 +55,10 @@ describe('DrizzleReactionStore', () => {
     const msg = await messageId();
     const first = await reactions.add(companionId, msg, 'user', '👍');
     const again = await reactions.add(companionId, msg, 'user', '👍');
-    expect(again.id).toBe(first.id);
+    // First call inserted; the re-tap did not, and returns the same row.
+    expect(first.inserted).toBe(true);
+    expect(again.inserted).toBe(false);
+    expect(again.record.id).toBe(first.record.id);
     const all = await reactions.listForMessages(companionId, [msg]);
     expect(all).toHaveLength(1);
   });
@@ -79,7 +83,7 @@ describe('DrizzleReactionStore', () => {
 
   it('a companion reaction never carries a reward', async () => {
     const msg = await messageId();
-    const row = await reactions.add(companionId, msg, 'companion', '👀');
+    const { record: row } = await reactions.add(companionId, msg, 'companion', '👀');
     expect(row.reward).toBeNull();
     expect(row.rewardNote).toBeNull();
   });

@@ -187,6 +187,9 @@ describe('reinforceFromDelta — claim-loss, vanished companion, and swallowed e
     async findLatestUnresolved(): Promise<ProactiveOutcomeRecord | null> {
       return this.outcome;
     }
+    async findUnresolvedByNoteMessageId(): Promise<ProactiveOutcomeRecord | null> {
+      return this.outcome;
+    }
     async setReward(): Promise<boolean> {
       return this.claims;
     }
@@ -248,6 +251,9 @@ describe('reinforceFromDelta — claim-loss, vanished companion, and swallowed e
         return { total: 0, positive: 0 };
       },
       async findLatestUnresolved(): Promise<ProactiveOutcomeRecord | null> {
+        throw new Error('store down');
+      },
+      async findUnresolvedByNoteMessageId(): Promise<ProactiveOutcomeRecord | null> {
         throw new Error('store down');
       },
       async setReward(): Promise<boolean> {

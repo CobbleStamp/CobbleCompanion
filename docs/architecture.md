@@ -788,7 +788,7 @@ flowchart TB
       identity/        companion "home" model + store
       motivation/      the "will" (§4.4–§4.5): drives × presence arbitration, autonomous explore burst, engine runner/sweep, affect perception + change-as-reward reinforcement
       greeting/        the bond-driven arrival reaction (social sibling of the explore burst): token-free decideGreeting gate + stamina-billed greeter, reads companions.last_seen_at — companion-greeting.md
-      reactions/       (designed, not built) emoji reactions: ReactionService runs the inline value-created read on a user reaction → reward by note_message_id; the companion's react action is a free agent-loop emit — companion-reactions.md
+      reactions/       emoji reactions: ReactionStore (mutable rows) + senseReaction/ReactionLearner (the value-created read → reward by note_message_id); the companion's react action is a free agent-loop emit (Phase D) — companion-reactions.md
       growth/          four mirror axes derived from substrate (§4.3 hint arm + development-plan.md §3) + the feeding economy: axis readings (band+fill), capabilities registry, growth store/service/runner, foods, the per-user food pantry/store (§4.8)
       quota/           per-companion vitality wallets (stamina + energy) (§4.8)
     api/               BFF / surface boundary (Fastify); memory + source + usage + proposal/inventory routes; presence + proactivity (dial/energy) routes; growth + feed routes; the autonomous-activity log route (read-only `proactive_outcomes`); the standing companion event-channel route (§6)

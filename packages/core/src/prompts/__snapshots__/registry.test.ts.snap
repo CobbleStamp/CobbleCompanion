@@ -42,6 +42,10 @@ exports[`prompt registry > locks prompt versions against accidental drift 1`] = 
     "contentHash": "f308121ccfdc2d4d",
     "semver": "1.0.0",
   },
+  "reaction-sense": {
+    "contentHash": "5602af23036fac45",
+    "semver": "1.0.0",
+  },
   "segmenter": {
     "contentHash": "f40e6fb083d11a5c",
     "semver": "1.0.0",

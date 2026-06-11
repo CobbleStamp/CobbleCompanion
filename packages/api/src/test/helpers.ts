@@ -48,6 +48,7 @@ import {
   type IngestionTarget,
   DrizzleProactiveOutcomeStore,
   DrizzleReactionStore,
+  ReactionLearner,
   LlmIngestionAnnouncer,
   type McpGateway,
   LlmUserModelReflector,
@@ -319,6 +320,15 @@ export async function makeTestApp(
   const rewards = new DrizzleProactiveOutcomeStore(db);
   const affectStore = new DrizzleCompanionAffectStore(db);
   const reactions = new DrizzleReactionStore(db);
+  const reactionLearner = new ReactionLearner({
+    rewards,
+    reactions,
+    identity,
+    memory,
+    userModel,
+    sense: { llm: llmGateway, model: config.ingestionModel, logger: silentLogger, quota },
+    logger: silentLogger,
+  });
   // Growth (P5) — derived four-axis growth over the same db (decoupled from feeding).
   const growthStore = new DrizzleGrowthStore(db);
   const growth = new GrowthService({
@@ -388,6 +398,7 @@ export async function makeTestApp(
     food,
     rewards,
     reactions,
+    reactionLearner,
     growth,
     growthStore,
     harness: new Harness({
@@ -486,6 +497,9 @@ export async function makeTestApp(
       // Drain proactive ticks (GET/POST messages request them) before the db
       // closes, so a background tick can't write to a torn-down database.
       await motivation.close();
+      // Drain fire-and-forget reaction reads (the POST reaction route floats one)
+      // for the same reason — a detached read must not outlive the db.
+      await reactionLearner.whenIdle();
       // Growth recompute runs inline as the tail of each turn's stream, so there's
       // no background runner to drain here.
       await app.close();

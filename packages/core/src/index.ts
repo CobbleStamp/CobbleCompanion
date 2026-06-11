@@ -361,9 +361,18 @@ export {
 } from './motivation/reward-store.js';
 export {
   DrizzleReactionStore,
+  type AddReactionResult,
   type ReactionRecord,
   type ReactionStore,
 } from './reactions/store.js';
+export {
+  senseReaction,
+  coerceReactionReading,
+  type ReactionReading,
+  type ReactionSenseDeps,
+  type ReactionSenseParams,
+} from './reactions/sense.js';
+export { ReactionLearner, type ReactionLearnerDeps } from './reactions/learner.js';
 export {
   DEFAULT_LEARNING_RATE,
   nudgeDriveWeight,

@@ -135,4 +135,40 @@ describe('reaction routes', () => {
     });
     expect(res.statusCode).toBe(200);
   });
+
+  it('triggers learning that resolves the proactive outcome the reaction lands on', async () => {
+    // A gateway scripted to report a value-created reward, so the floated read
+    // produces a learning signal (the default text gateway would read null).
+    const learnCtx = await makeTestApp([
+      { toolCalls: [{ name: 'report_reaction', args: { reward: 0.8, note: 'moved' } }] },
+    ]);
+    try {
+      const a = learnCtx.bearerFor('owner@example.com');
+      const created = await learnCtx.app.inject({
+        method: 'POST',
+        url: '/companions',
+        headers: a,
+        payload: { name: 'Pebble', form: 'fox', temperament: 'curious' },
+      });
+      const cid = created.json().companion.id;
+      const note = await learnCtx.deps.memory.appendMessage(cid, 'assistant', 'I read two things.');
+      await learnCtx.deps.rewards.record(cid, { noteMessageId: note.id, drive: 'curiosity' });
+
+      const res = await learnCtx.app.inject({
+        method: 'POST',
+        url: `/companions/${cid}/messages/${note.id}/reactions`,
+        headers: a,
+        payload: { emoji: '❤️' },
+      });
+      expect(res.statusCode).toBe(200);
+
+      // The route floats the read; drain it, then the outcome is resolved by the
+      // reaction's value (addressed by note_message_id).
+      await learnCtx.deps.reactionLearner.whenIdle();
+      const [resolved] = await learnCtx.deps.rewards.list(cid, 1);
+      expect(resolved?.reward).toBeCloseTo(0.8);
+    } finally {
+      await learnCtx.close();
+    }
+  });
 });

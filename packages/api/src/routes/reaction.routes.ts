@@ -28,7 +28,7 @@ export function registerReactionRoutes(
   deps: AppDeps,
   requireAuth: RequireAuth,
 ): void {
-  const { identity, memory, reactions, eventBus, logger } = deps;
+  const { identity, memory, reactions, reactionLearner, eventBus, logger } = deps;
 
   // Add a reaction to a message.
   app.post(
@@ -52,13 +52,28 @@ export function registerReactionRoutes(
         return reply.code(404).send({ error: 'message not found' });
       }
       try {
-        await reactions.add(companion.id, messageId, 'user', parsed.data.emoji);
-        eventBus.publish(companion.id, {
-          type: 'reaction_added',
+        const { inserted } = await reactions.add(
+          companion.id,
           messageId,
-          reactor: 'user',
-          emoji: parsed.data.emoji,
-        });
+          'user',
+          parsed.data.emoji,
+        );
+        // Fire the live event and the learning ONLY when this call actually created
+        // the reaction. A re-tap / double-POST of the same emoji is a no-op: no
+        // duplicate broadcast, and no second (billed) read nudging the weights again.
+        if (inserted) {
+          eventBus.publish(companion.id, {
+            type: 'reaction_added',
+            messageId,
+            reactor: 'user',
+            emoji: parsed.data.emoji,
+          });
+          // The reaction is the addressed reward signal (companion-reactions.md §4):
+          // read its value and learn AFTER responding — fire-and-forget, self-catching,
+          // billed to stamina — so it never blocks the tap. Only an *added* reaction
+          // teaches; removing one doesn't.
+          reactionLearner.learn(companion.id, messageId, parsed.data.emoji);
+        }
         return reply.send({ ok: true });
       } catch (error) {
         logger.error('failed to add reaction', {

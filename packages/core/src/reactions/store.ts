@@ -25,17 +25,27 @@ export interface ReactionRecord {
   readonly createdAt: Date;
 }
 
+/** The outcome of an {@link ReactionStore.add}: the row, plus whether THIS call
+ *  created it. `inserted: false` means the reaction already existed (an idempotent
+ *  re-tap or a double-POST race) — callers gate one-time side effects (publish a
+ *  live event, learn from the reaction) on `inserted` so they fire exactly once. */
+export interface AddReactionResult {
+  readonly record: ReactionRecord;
+  readonly inserted: boolean;
+}
+
 export interface ReactionStore {
   /**
    * Add a reaction. Idempotent on `(messageId, reactor, emoji)`: a re-tap returns
-   * the existing row rather than creating a duplicate. Returns the row either way.
+   * the existing row rather than creating a duplicate, with `inserted: false`. The
+   * row comes back either way.
    */
   add(
     companionId: string,
     messageId: string,
     reactor: Reactor,
     emoji: string,
-  ): Promise<ReactionRecord>;
+  ): Promise<AddReactionResult>;
   /** Remove a reaction. Returns `true` iff a row was actually deleted (so an
    *  un-react of something already gone is a harmless `false`, not an error). */
   remove(companionId: string, messageId: string, reactor: Reactor, emoji: string): Promise<boolean>;
@@ -82,10 +92,11 @@ export class DrizzleReactionStore implements ReactionStore {
     messageId: string,
     reactor: Reactor,
     emoji: string,
-  ): Promise<ReactionRecord> {
+  ): Promise<AddReactionResult> {
     // `onConflictDoNothing` makes a re-tap idempotent: the unique index on
     // (message, reactor, emoji) catches the duplicate and `returning` comes back
-    // empty, so we read the pre-existing row instead of erroring.
+    // empty, so we read the pre-existing row instead of erroring — and report
+    // `inserted: false` so the caller doesn't re-fire one-time side effects.
     const [inserted] = await this.db
       .insert(messageReactions)
       .values({ companionId, messageId, reactor, emoji })
@@ -94,7 +105,7 @@ export class DrizzleReactionStore implements ReactionStore {
       })
       .returning();
     if (inserted) {
-      return toRecord(inserted);
+      return { record: toRecord(inserted), inserted: true };
     }
     const [existing] = await this.db
       .select()
@@ -111,7 +122,7 @@ export class DrizzleReactionStore implements ReactionStore {
     if (!existing) {
       throw new Error('failed to add reaction');
     }
-    return toRecord(existing);
+    return { record: toRecord(existing), inserted: false };
   }
 
   async remove(
