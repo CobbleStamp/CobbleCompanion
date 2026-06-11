@@ -32,6 +32,10 @@ class FakeMemoryStore implements MemoryStore {
     return this.recentResult;
   }
 
+  async getMessageById(): Promise<MessageDto | null> {
+    return null;
+  }
+
   async getMessagesSince(): Promise<readonly TranscriptEntry[]> {
     return [];
   }
@@ -65,9 +69,10 @@ describe('PublishingMemoryStore', () => {
 
     const result = await store.appendMessage('c1', 'assistant', 'hi there');
 
-    // It publishes the inner store's DTO (with its server id), keyed by companion.
+    // It publishes the inner store's DTO (with its server id) as a `message`
+    // event, keyed by companion.
     expect(publish).toHaveBeenCalledTimes(1);
-    expect(publish).toHaveBeenCalledWith('c1', result);
+    expect(publish).toHaveBeenCalledWith('c1', { type: 'message', message: result });
   });
 
   it('swallows and logs a bus failure — the append still returns', async () => {

@@ -151,7 +151,7 @@ describe('streamChannel', () => {
     const { request, close } = fakeRequest();
 
     const done = streamChannel(reply, request, subscription);
-    bus.publish('c1', message('m1', 'c1', 'pushed'));
+    bus.publish('c1', { type: 'message', message: message('m1', 'c1', 'pushed') });
     await tick();
 
     // The row is wrapped as a `{ type: 'message' }` SSE data frame.
@@ -168,9 +168,32 @@ describe('streamChannel', () => {
 
     // After close the subscription is released — a later publish writes nothing.
     const before = writes.length;
-    bus.publish('c1', message('m2', 'c1', 'after'));
+    bus.publish('c1', { type: 'message', message: message('m2', 'c1', 'after') });
     await tick();
     expect(writes).toHaveLength(before);
+  });
+
+  it('writes a reaction event through to the wire as-is', async () => {
+    const bus = new InProcessCompanionEventBus();
+    const subscription = bus.subscribe('c1');
+    const { reply, writes } = fakeReply({});
+    const { request, close } = fakeRequest();
+
+    const done = streamChannel(reply, request, subscription);
+    bus.publish('c1', { type: 'reaction_added', messageId: 'm1', reactor: 'user', emoji: '❤️' });
+    await tick();
+
+    const frame = writes.find((w) => w.startsWith('data: '));
+    expect(frame).toBeDefined();
+    expect(JSON.parse(frame!.slice('data: '.length))).toEqual({
+      type: 'reaction_added',
+      messageId: 'm1',
+      reactor: 'user',
+      emoji: '❤️',
+    });
+
+    close();
+    await done;
   });
 
   it('ends without writing a data frame when the client closes before any row', async () => {
@@ -223,7 +246,7 @@ describe('streamChannel', () => {
     const { request } = fakeRequest();
 
     const done = streamChannel(reply, request, subscription, capturingLogger(errors, infos));
-    bus.publish('c1', message('m1', 'c1', 'x'));
+    bus.publish('c1', { type: 'message', message: message('m1', 'c1', 'x') });
     await done; // the throw breaks the loop → finally cleanup → resolves
 
     expect(errors).toHaveLength(0); // a disconnect is not error-severity

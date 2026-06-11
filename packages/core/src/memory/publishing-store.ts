@@ -30,7 +30,7 @@ export class PublishingMemoryStore implements MemoryStore {
   ): Promise<MessageDto> {
     const message = await this.inner.appendMessage(companionId, role, content, options);
     try {
-      this.bus.publish(companionId, message);
+      this.bus.publish(companionId, { type: 'message', message });
     } catch (error) {
       this.logger.error('failed to publish appended message to the event bus', {
         operation: 'memory.publishAppend',
@@ -44,6 +44,10 @@ export class PublishingMemoryStore implements MemoryStore {
 
   getRecentMessages(companionId: string, limit: number): Promise<readonly MessageDto[]> {
     return this.inner.getRecentMessages(companionId, limit);
+  }
+
+  getMessageById(companionId: string, messageId: string): Promise<MessageDto | null> {
+    return this.inner.getMessageById(companionId, messageId);
   }
 
   getMessagesSince(

@@ -22,7 +22,7 @@ export function isUuid(value: string): boolean {
  * so a future non-UUID path param (e.g. a slug) needs no change here and is
  * never wrongly rejected.
  */
-const UUID_PARAM_NAMES = ['companionId', 'proposalId', 'sourceId', 'factId'] as const;
+const UUID_PARAM_NAMES = ['companionId', 'messageId', 'proposalId', 'sourceId', 'factId'] as const;
 
 /**
  * Register a global preHandler that 404s any request whose resource-id path

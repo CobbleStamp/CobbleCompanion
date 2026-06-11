@@ -3,19 +3,26 @@
  * rendering from the streamed citations event.
  */
 
-import type { ChatStreamEvent, CompanionDto, MessageDto } from '@cobble/shared';
+import type {
+  ChatStreamEvent,
+  CompanionDto,
+  CompanionStreamEvent,
+  MessageDto,
+} from '@cobble/shared';
 import { fileSourceAcknowledgement } from '@cobble/shared';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  addReaction,
   confirmProposal,
   fetchMessages,
   listIngestionJobs,
   listProposals,
   listSources,
+  removeReaction,
   sendMessage,
   streamGreeting,
-  subscribeMessages,
+  subscribeCompanionEvents,
   uploadFileSource,
 } from '../api/client.js';
 import { Chat } from './Chat.js';
@@ -60,7 +67,7 @@ vi.mock('../api/client.js', () => ({
   // The standing event channel (architecture.md §6): default to a quiet channel
   // that stays open until the chat aborts it on unmount, so it neither delivers
   // rows nor spins reconnecting. Tests opt in by overriding this.
-  subscribeMessages: vi.fn((_companionId: string, signal: AbortSignal) =>
+  subscribeCompanionEvents: vi.fn((_companionId: string, signal: AbortSignal) =>
     (async function* () {
       await new Promise<void>((resolve) => {
         if (signal.aborted) resolve();
@@ -68,6 +75,8 @@ vi.mock('../api/client.js', () => ({
       });
     })(),
   ),
+  addReaction: vi.fn(() => Promise.resolve()),
+  removeReaction: vi.fn(() => Promise.resolve()),
   // The ingestion-status hook polls these; default to empty so the header badge
   // and panel stay quiet unless a test opts in.
   listSources: vi.fn(() => Promise.resolve([])),
@@ -560,7 +569,7 @@ describe('Chat upload-turn persistence and proactive notes', () => {
     // note and it's pushed over the channel like any other row.
     vi.mocked(fetchMessages).mockResolvedValue([]);
     const channel = controllableChannel();
-    vi.mocked(subscribeMessages).mockImplementation(channel.impl);
+    vi.mocked(subscribeCompanionEvents).mockImplementation(channel.impl);
     const note = channelRow('note1', 'assistant', 'All read — ask away!');
 
     renderChat();
@@ -762,16 +771,22 @@ describe('Chat transcript fidelity (rich rows survive reload)', () => {
  */
 function controllableChannel(): {
   push: (message: MessageDto) => void;
-  impl: (companionId: string, signal: AbortSignal) => AsyncGenerator<MessageDto>;
+  pushEvent: (event: CompanionStreamEvent) => void;
+  impl: (companionId: string, signal: AbortSignal) => AsyncGenerator<CompanionStreamEvent>;
 } {
-  const queue: MessageDto[] = [];
+  const queue: CompanionStreamEvent[] = [];
   let wake: (() => void) | null = null;
   let ended = false;
-  const push = (message: MessageDto): void => {
-    queue.push(message);
+  const pushEvent = (event: CompanionStreamEvent): void => {
+    queue.push(event);
     wake?.();
   };
-  async function* impl(_companionId: string, signal: AbortSignal): AsyncGenerator<MessageDto> {
+  // Convenience: push a transcript row as a `message` event (the common case).
+  const push = (message: MessageDto): void => pushEvent({ type: 'message', message });
+  async function* impl(
+    _companionId: string,
+    signal: AbortSignal,
+  ): AsyncGenerator<CompanionStreamEvent> {
     signal.addEventListener(
       'abort',
       () => {
@@ -786,7 +801,7 @@ function controllableChannel(): {
       await new Promise<void>((resolve) => (wake = resolve));
     }
   }
-  return { push, impl };
+  return { push, pushEvent, impl };
 }
 
 function channelRow(id: string, role: 'user' | 'assistant', content: string): MessageDto {
@@ -805,12 +820,12 @@ describe('Chat event channel (push delivery)', () => {
   beforeEach(() => {
     vi.mocked(fetchMessages).mockReset().mockResolvedValue([]);
     vi.mocked(sendMessage).mockReset();
-    vi.mocked(subscribeMessages).mockReset();
+    vi.mocked(subscribeCompanionEvents).mockReset();
   });
 
   it('renders a row pushed over the channel — no refetch needed', async () => {
     const channel = controllableChannel();
-    vi.mocked(subscribeMessages).mockImplementation(channel.impl);
+    vi.mocked(subscribeCompanionEvents).mockImplementation(channel.impl);
 
     renderChat();
     await waitFor(() =>
@@ -832,7 +847,7 @@ describe('Chat event channel (push delivery)', () => {
     const row = channelRow('m1', 'assistant', 'only once');
     vi.mocked(fetchMessages).mockResolvedValue([row]);
     const channel = controllableChannel();
-    vi.mocked(subscribeMessages).mockImplementation(channel.impl);
+    vi.mocked(subscribeCompanionEvents).mockImplementation(channel.impl);
 
     renderChat();
     await waitFor(() => expect(screen.getByText('only once')).toBeTruthy());
@@ -851,7 +866,7 @@ describe('Chat event channel (push delivery)', () => {
       };
     });
     const channel = controllableChannel();
-    vi.mocked(subscribeMessages).mockImplementation(channel.impl);
+    vi.mocked(subscribeCompanionEvents).mockImplementation(channel.impl);
 
     renderChat();
     await waitFor(() =>
@@ -1087,5 +1102,80 @@ describe('Chat greeting on arrival (P14)', () => {
 
     release();
     await waitFor(() => expect(document.querySelector('.line.composing')).toBeNull());
+  });
+});
+
+describe('Chat reactions', () => {
+  beforeEach(() => {
+    vi.mocked(fetchMessages).mockReset().mockResolvedValue([]);
+    vi.mocked(sendMessage).mockReset();
+    vi.mocked(subscribeCompanionEvents).mockReset();
+    vi.mocked(addReaction).mockReset().mockResolvedValue(undefined);
+    vi.mocked(removeReaction).mockReset().mockResolvedValue(undefined);
+  });
+
+  it('hydrates reactions from the transcript snapshot', async () => {
+    vi.mocked(fetchMessages).mockResolvedValue([
+      {
+        id: 'a1',
+        companionId: companion.id,
+        sourceId: null,
+        role: 'assistant',
+        content: 'welcome back',
+        createdAt: '2026-01-03T00:00:02.000Z',
+        reactions: [{ messageId: 'a1', reactor: 'user', emoji: '❤️' }],
+      },
+    ]);
+
+    renderChat();
+
+    await waitFor(() => expect(screen.getByText('welcome back')).toBeTruthy());
+    expect(screen.getByLabelText('You reacted ❤️')).toBeTruthy();
+  });
+
+  it('toggles a reaction optimistically and calls the API', async () => {
+    vi.mocked(fetchMessages).mockResolvedValue([
+      {
+        id: 'a1',
+        companionId: companion.id,
+        sourceId: null,
+        role: 'assistant',
+        content: 'an answer',
+        createdAt: '2026-01-03T00:00:02.000Z',
+      },
+    ]);
+
+    renderChat();
+    await waitFor(() => expect(screen.getByText('an answer')).toBeTruthy());
+
+    fireEvent.click(screen.getByLabelText('React 🎉'));
+
+    // Optimistic chip appears immediately, and the API was called.
+    await waitFor(() => expect(screen.getByLabelText('You reacted 🎉')).toBeTruthy());
+    expect(addReaction).toHaveBeenCalledWith(companion.id, 'a1', '🎉');
+  });
+
+  it('applies a reaction pushed live over the channel', async () => {
+    vi.mocked(fetchMessages).mockResolvedValue([
+      {
+        id: 'a1',
+        companionId: companion.id,
+        sourceId: null,
+        role: 'assistant',
+        content: 'an answer',
+        createdAt: '2026-01-03T00:00:02.000Z',
+      },
+    ]);
+    const channel = controllableChannel();
+    vi.mocked(subscribeCompanionEvents).mockImplementation(channel.impl);
+
+    renderChat();
+    await waitFor(() => expect(screen.getByText('an answer')).toBeTruthy());
+
+    channel.pushEvent({ type: 'reaction_added', messageId: 'a1', reactor: 'user', emoji: '👍' });
+    await waitFor(() => expect(screen.getByLabelText('You reacted 👍')).toBeTruthy());
+
+    channel.pushEvent({ type: 'reaction_removed', messageId: 'a1', reactor: 'user', emoji: '👍' });
+    await waitFor(() => expect(screen.queryByLabelText('You reacted 👍')).toBeNull());
   });
 });

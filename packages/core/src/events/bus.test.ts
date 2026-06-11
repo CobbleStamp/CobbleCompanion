@@ -1,16 +1,20 @@
-import type { MessageDto } from '@cobble/shared';
+import type { CompanionStreamEvent } from '@cobble/shared';
 import { describe, expect, it } from 'vitest';
 import { InProcessCompanionEventBus } from './bus.js';
 
-function message(id: string, companionId: string, content: string): MessageDto {
+/** A `message` event carrying a minimal DTO — the bus fans events, not raw rows. */
+function message(id: string, companionId: string, content: string): CompanionStreamEvent {
   return {
-    id,
-    companionId,
-    role: 'assistant',
-    content,
-    kind: 'message',
-    sourceId: null,
-    createdAt: '2026-01-03T00:00:00.000Z',
+    type: 'message',
+    message: {
+      id,
+      companionId,
+      role: 'assistant',
+      content,
+      kind: 'message',
+      sourceId: null,
+      createdAt: '2026-01-03T00:00:00.000Z',
+    },
   };
 }
 
@@ -23,7 +27,7 @@ describe('InProcessCompanionEventBus', () => {
 
     const next = await sub.events.next();
     expect(next.done).toBe(false);
-    expect(next.value).toMatchObject({ id: 'm1', content: 'hello' });
+    expect(next.value).toMatchObject({ message: { id: 'm1', content: 'hello' } });
     sub.close();
   });
 
@@ -36,7 +40,7 @@ describe('InProcessCompanionEventBus', () => {
     bus.publish('c1', message('m1', 'c1', 'later'));
 
     const next = await pending;
-    expect(next.value).toMatchObject({ id: 'm1' });
+    expect(next.value).toMatchObject({ message: { id: 'm1' } });
     sub.close();
   });
 
@@ -47,8 +51,8 @@ describe('InProcessCompanionEventBus', () => {
     bus.publish('c1', message('m1', 'c1', 'one'));
     bus.publish('c1', message('m2', 'c1', 'two'));
 
-    expect((await sub.events.next()).value).toMatchObject({ id: 'm1' });
-    expect((await sub.events.next()).value).toMatchObject({ id: 'm2' });
+    expect((await sub.events.next()).value).toMatchObject({ message: { id: 'm1' } });
+    expect((await sub.events.next()).value).toMatchObject({ message: { id: 'm2' } });
     sub.close();
   });
 
@@ -59,8 +63,8 @@ describe('InProcessCompanionEventBus', () => {
 
     bus.publish('c1', message('m1', 'c1', 'broadcast'));
 
-    expect((await a.events.next()).value).toMatchObject({ id: 'm1' });
-    expect((await b.events.next()).value).toMatchObject({ id: 'm1' });
+    expect((await a.events.next()).value).toMatchObject({ message: { id: 'm1' } });
+    expect((await b.events.next()).value).toMatchObject({ message: { id: 'm1' } });
     a.close();
     b.close();
   });
@@ -106,7 +110,7 @@ describe('InProcessCompanionEventBus', () => {
     a.close();
     bus.publish('c1', message('m1', 'c1', 'still here'));
 
-    expect((await b.events.next()).value).toMatchObject({ id: 'm1' });
+    expect((await b.events.next()).value).toMatchObject({ message: { id: 'm1' } });
     b.close();
   });
 
@@ -117,7 +121,7 @@ describe('InProcessCompanionEventBus', () => {
 
     const second = bus.subscribe('c1');
     bus.publish('c1', message('m1', 'c1', 'reopened'));
-    expect((await second.events.next()).value).toMatchObject({ id: 'm1' });
+    expect((await second.events.next()).value).toMatchObject({ message: { id: 'm1' } });
     second.close();
   });
 

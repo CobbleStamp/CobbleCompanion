@@ -20,6 +20,7 @@ import type {
   ProactiveOutcomeStore,
   ProceduralStore,
   ProposalStore,
+  ReactionStore,
   SemanticMemoryStore,
   ToolCallLog,
   ToolRegistry,
@@ -50,6 +51,7 @@ import { registerPresenceRoutes } from './routes/presence.routes.js';
 import { registerProactiveActivityRoutes } from './routes/proactive-activity.routes.js';
 import { registerProactivityRoutes } from './routes/proactivity.routes.js';
 import { registerProposalRoutes } from './routes/proposal.routes.js';
+import { registerReactionRoutes } from './routes/reaction.routes.js';
 import { registerSourceRoutes } from './routes/source.routes.js';
 import { registerUsageRoutes } from './routes/usage.routes.js';
 import { registerUuidParamGuard } from './uuid.js';
@@ -101,6 +103,8 @@ export interface AppDeps {
   readonly food: FoodStore;
   /** Reinforcement log — one outcome per proactive initiation (P4). */
   readonly rewards: ProactiveOutcomeStore;
+  /** Emoji reactions on transcript messages, both directions (companion-reactions.md). */
+  readonly reactions: ReactionStore;
   /** The rolling read of the user's mood, sensed in the agent loop (P4.2). */
   readonly affect: CompanionAffectStore;
   /**
@@ -199,6 +203,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerAuthRoutes(app, deps, requireAuth);
   registerCompanionRoutes(app, deps, requireAuth);
   registerMessageRoutes(app, deps, requireAuth);
+  registerReactionRoutes(app, deps, requireAuth);
   registerEventRoutes(app, deps, requireAuth);
   registerMemoryRoutes(app, deps, requireAuth);
   registerUserModelRoutes(app, deps, requireAuth);

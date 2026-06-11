@@ -1,5 +1,10 @@
-import type { GrowthService, Logger } from '@cobble/core';
-import { sendMessageSchema, type ChatStreamEvent } from '@cobble/shared';
+import type { GrowthService, Logger, ReactionStore } from '@cobble/core';
+import {
+  sendMessageSchema,
+  type ChatStreamEvent,
+  type MessageDto,
+  type ReactionDto,
+} from '@cobble/shared';
 import type { FastifyInstance } from 'fastify';
 import type { AppDeps } from '../app.js';
 import type { RequireAuth } from '../auth-guard.js';
@@ -41,6 +46,38 @@ async function* withGrowthReflections(
 }
 
 /**
+ * Attach each message's emoji reactions (joined from the reactions table) to its
+ * DTO for the transcript snapshot (companion-reactions.md §8). Messages with none
+ * are returned unchanged. One batched query for the whole page.
+ */
+async function hydrateReactions(
+  reactions: ReactionStore,
+  companionId: string,
+  messages: readonly MessageDto[],
+): Promise<readonly MessageDto[]> {
+  if (messages.length === 0) {
+    return messages;
+  }
+  const rows = await reactions.listForMessages(
+    companionId,
+    messages.map((message) => message.id),
+  );
+  if (rows.length === 0) {
+    return messages;
+  }
+  const byMessage = new Map<string, ReactionDto[]>();
+  for (const row of rows) {
+    const list = byMessage.get(row.messageId) ?? [];
+    list.push({ messageId: row.messageId, reactor: row.reactor, emoji: row.emoji });
+    byMessage.set(row.messageId, list);
+  }
+  return messages.map((message) => {
+    const messageReactions = byMessage.get(message.id);
+    return messageReactions ? { ...message, reactions: messageReactions } : message;
+  });
+}
+
+/**
  * The companion's single continuous conversation (architecture.md invariant: one
  * lifelong conversation per companion, no conversation/session entity). Messages
  * attach directly to the companion, so these routes are keyed by companion alone.
@@ -50,8 +87,18 @@ export function registerMessageRoutes(
   deps: AppDeps,
   requireAuth: RequireAuth,
 ): void {
-  const { identity, memory, harness, quota, consolidation, presence, motivation, growth, logger } =
-    deps;
+  const {
+    identity,
+    memory,
+    reactions,
+    harness,
+    quota,
+    consolidation,
+    presence,
+    motivation,
+    growth,
+    logger,
+  } = deps;
 
   // Read the companion's transcript (oldest-first).
   app.get(
@@ -64,11 +111,15 @@ export function registerMessageRoutes(
         return reply.code(404).send({ error: 'companion not found' });
       }
       const messages = await memory.getRecentMessages(companion.id, 200);
+      // Hydrate reactions onto the snapshot (companion-reactions.md §8): they live
+      // in their own table, so a reload reconstructs them by join, not from the
+      // immutable message row. Live add/remove still rides the event channel.
+      const withReactions = await hydrateReactions(reactions, companion.id, messages);
       // Opening the transcript is a "return" — nudge the motivation engine so it
       // can offer something on arrival (P4 lazy trigger). Fire-and-forget; the
       // engine's gate decides whether to act (and stays idle if not).
       motivation.request(companion.id);
-      return reply.send({ messages });
+      return reply.send({ messages: withReactions });
     },
   );
 

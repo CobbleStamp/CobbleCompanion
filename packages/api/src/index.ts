@@ -28,6 +28,7 @@ import {
   DrizzleProceduralStore,
   DrizzleProactiveOutcomeStore,
   DrizzleProposalStore,
+  DrizzleReactionStore,
   DrizzleSemanticMemoryStore,
   DrizzleCompanionAffectStore,
   DrizzleVitalityStore,
@@ -124,6 +125,7 @@ async function main(): Promise<void> {
   // sense the user's mood each turn (Phase 4.2) and the will can learn from it.
   const rewards = new DrizzleProactiveOutcomeStore(db);
   const affectStore = new DrizzleCompanionAffectStore(db);
+  const reactions = new DrizzleReactionStore(db);
   const semantic = new DrizzleSemanticMemoryStore(db);
   const episodic = new DrizzleEpisodicMemoryStore(db);
   const quota = new DrizzleVitalityStore(db, 'stamina');
@@ -440,6 +442,7 @@ async function main(): Promise<void> {
     energy,
     food,
     rewards,
+    reactions,
     affect: affectStore,
     growth,
     growthStore,

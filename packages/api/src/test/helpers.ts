@@ -47,6 +47,7 @@ import {
   IngestionRunner,
   type IngestionTarget,
   DrizzleProactiveOutcomeStore,
+  DrizzleReactionStore,
   LlmIngestionAnnouncer,
   type McpGateway,
   LlmUserModelReflector,
@@ -317,6 +318,7 @@ export async function makeTestApp(
   const food = new DrizzleFoodStore(db, { initialFood: DEFAULT_GROWTH_CONFIG.initialFood });
   const rewards = new DrizzleProactiveOutcomeStore(db);
   const affectStore = new DrizzleCompanionAffectStore(db);
+  const reactions = new DrizzleReactionStore(db);
   // Growth (P5) — derived four-axis growth over the same db (decoupled from feeding).
   const growthStore = new DrizzleGrowthStore(db);
   const growth = new GrowthService({
@@ -385,6 +387,7 @@ export async function makeTestApp(
     energy,
     food,
     rewards,
+    reactions,
     growth,
     growthStore,
     harness: new Harness({

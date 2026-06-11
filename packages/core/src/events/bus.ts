@@ -1,35 +1,38 @@
-import type { MessageDto } from '@cobble/shared';
+import type { CompanionStreamEvent } from '@cobble/shared';
 
 /**
  * The standing companion event channel's server-side substrate (`architecture.md`
  * §6, `implementation.md` §2.4). An in-process per-companion publish/subscribe of
- * appended transcript rows: the publish-on-append MemoryStore decorator
- * ({@link PublishingMemoryStore}) emits each persisted row here, and the
- * `GET /companions/:id/events` route drains a subscription to a connected surface.
+ * companion events: the publish-on-append MemoryStore decorator
+ * ({@link PublishingMemoryStore}) emits each persisted row here as a `message`
+ * event, the reactions route emits `reaction_added`/`reaction_removed`
+ * (companion-reactions.md §8), and the `GET /companions/:id/events` route drains a
+ * subscription to a connected surface — writing each event to the wire as-is.
  *
- * Durability is NOT here — it lives in the `messages` table; the bus only fans a
- * row out to whoever is currently listening. A surface that was disconnected
- * recovers missed rows from the transcript snapshot on (re)connect, so the bus
- * carries no replay buffer (`architecture.md` §9).
+ * Durability is NOT here — it lives in the `messages`/`message_reactions` tables;
+ * the bus only fans an event out to whoever is currently listening. A surface that
+ * was disconnected recovers missed state from the transcript snapshot (with its
+ * joined reactions) on (re)connect, so the bus carries no replay buffer
+ * (`architecture.md` §9).
  */
 export interface CompanionEventBus {
   /**
-   * Fan a freshly appended row out to every live subscriber for that companion.
+   * Fan a companion event out to every live subscriber for that companion.
    * Best-effort and synchronous: it never throws to the caller (a slow or broken
    * subscriber must not break persistence) and is a no-op when nobody listens.
    */
-  publish(companionId: string, message: MessageDto): void;
-  /** Open a subscription to a companion's appended rows, in publish order. */
+  publish(companionId: string, event: CompanionStreamEvent): void;
+  /** Open a subscription to a companion's events, in publish order. */
   subscribe(companionId: string): CompanionSubscription;
 }
 
 /**
- * A live subscription: an async iterable of appended rows plus a {@link close} to
- * release it. The route iterates `events` and calls `close()` from its
+ * A live subscription: an async iterable of companion events plus a {@link close}
+ * to release it. The route iterates `events` and calls `close()` from its
  * connection-close handler (idempotent).
  */
 export interface CompanionSubscription {
-  readonly events: AsyncIterableIterator<MessageDto>;
+  readonly events: AsyncIterableIterator<CompanionStreamEvent>;
   close(): void;
 }
 
@@ -43,11 +46,11 @@ export interface CompanionSubscription {
 export class InProcessCompanionEventBus implements CompanionEventBus {
   private readonly subscribers = new Map<string, Set<Subscriber>>();
 
-  publish(companionId: string, message: MessageDto): void {
+  publish(companionId: string, event: CompanionStreamEvent): void {
     const set = this.subscribers.get(companionId);
     if (!set) return;
     for (const subscriber of set) {
-      subscriber.push(message);
+      subscriber.push(event);
     }
   }
 
@@ -72,31 +75,31 @@ export class InProcessCompanionEventBus implements CompanionEventBus {
 }
 
 /**
- * One subscriber's queue. A row arriving while the consumer is parked at `next()`
- * resolves the waiter directly; otherwise it buffers until the consumer asks. The
- * buffer is unbounded — appended rows are infrequent and consumers (one SSE
+ * One subscriber's queue. An event arriving while the consumer is parked at
+ * `next()` resolves the waiter directly; otherwise it buffers until the consumer
+ * asks. The buffer is unbounded — events are infrequent and consumers (one SSE
  * socket) drain promptly, and a stalled consumer is bounded in practice by the
  * connection being closed.
  */
-class Subscriber implements AsyncIterableIterator<MessageDto> {
-  private readonly queue: MessageDto[] = [];
-  private waiting: ((result: IteratorResult<MessageDto>) => void) | null = null;
+class Subscriber implements AsyncIterableIterator<CompanionStreamEvent> {
+  private readonly queue: CompanionStreamEvent[] = [];
+  private waiting: ((result: IteratorResult<CompanionStreamEvent>) => void) | null = null;
   private closed = false;
 
   constructor(private readonly onClose: () => void) {}
 
-  push(message: MessageDto): void {
+  push(event: CompanionStreamEvent): void {
     if (this.closed) return;
     if (this.waiting) {
       const resolve = this.waiting;
       this.waiting = null;
-      resolve({ value: message, done: false });
+      resolve({ value: event, done: false });
       return;
     }
-    this.queue.push(message);
+    this.queue.push(event);
   }
 
-  next(): Promise<IteratorResult<MessageDto>> {
+  next(): Promise<IteratorResult<CompanionStreamEvent>> {
     const buffered = this.queue.shift();
     if (buffered !== undefined) {
       return Promise.resolve({ value: buffered, done: false });
@@ -110,7 +113,7 @@ class Subscriber implements AsyncIterableIterator<MessageDto> {
   }
 
   /** Iterator protocol: closing the consumer (e.g. `break`/`return`) releases it. */
-  return(): Promise<IteratorResult<MessageDto>> {
+  return(): Promise<IteratorResult<CompanionStreamEvent>> {
     this.close();
     return Promise.resolve({ value: undefined, done: true });
   }
@@ -126,7 +129,7 @@ class Subscriber implements AsyncIterableIterator<MessageDto> {
     this.onClose();
   }
 
-  [Symbol.asyncIterator](): AsyncIterableIterator<MessageDto> {
+  [Symbol.asyncIterator](): AsyncIterableIterator<CompanionStreamEvent> {
     return this;
   }
 }

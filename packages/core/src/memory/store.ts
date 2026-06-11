@@ -50,6 +50,12 @@ export interface MemoryStore {
   /** Most recent `limit` messages, returned oldest-first for prompt assembly. */
   getRecentMessages(companionId: string, limit: number): Promise<readonly MessageDto[]>;
   /**
+   * A single message by id, scoped to its companion — `null` if it doesn't exist
+   * or belongs to another companion. The ownership check the reactions route makes
+   * before it lets a reaction attach to a message (companion-reactions.md §8).
+   */
+  getMessageById(companionId: string, messageId: string): Promise<MessageDto | null>;
+  /**
    * Transcript turns with `seq > afterSeq`, oldest-first, capped at `limit` — the
    * window the episodic consolidation pass reflects over (Phase 2). Carries the
    * `seq` cursor unit and the raw `createdAt` Date for episode time-anchoring.
@@ -101,6 +107,15 @@ export class TranscriptMemoryStore implements MemoryStore {
       .slice()
       .sort((a, b) => a.seq - b.seq)
       .map(toMessageDto);
+  }
+
+  async getMessageById(companionId: string, messageId: string): Promise<MessageDto | null> {
+    const [row] = await this.db
+      .select()
+      .from(messages)
+      .where(and(eq(messages.companionId, companionId), eq(messages.id, messageId)))
+      .limit(1);
+    return row ? toMessageDto(row) : null;
   }
 
   async getMessagesSince(
