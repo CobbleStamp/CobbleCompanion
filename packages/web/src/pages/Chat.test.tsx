@@ -93,6 +93,7 @@ function renderChat(): void {
       onOpenMemory={() => {}}
       onOpenSources={() => {}}
       onOpenGrowth={() => {}}
+      onOpenActivity={() => {}}
     />,
   );
 }

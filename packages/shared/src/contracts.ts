@@ -270,6 +270,20 @@ export type Drive = 'curiosity' | 'bond' | 'understanding' | 'approval' | 'helpf
 export type DriveWeights = Record<Drive, number>;
 
 /**
+ * Human display names for the drives (the character card + activity log). Single-
+ * sourced here so the server, the growth mirror, and the activity view never drift
+ * (core re-exports this from `drives.ts`).
+ */
+export const DRIVE_LABELS: Record<Drive, string> = {
+  curiosity: 'Curiosity',
+  bond: 'Bond',
+  understanding: 'Understanding',
+  approval: 'Approval',
+  helpfulness: 'Helpfulness',
+  upkeep: 'Upkeep',
+};
+
+/**
  * The "creature" constants shaping a proactive burst's dynamics
  * (companion-motivation.md §6): how long it stays on a thread (`focusLength`),
  * how fast interest satiates (`boredom`), and how easily a higher-pressure drive
@@ -368,6 +382,57 @@ export interface GrowthDto {
   readonly initiative: AxisReadingDto;
   readonly character: CharacterDto;
   readonly capabilities: readonly CapabilityDto[];
+}
+
+/**
+ * The Tier-2 belief that drove a proactive burst (Phase 12), shown on its activity
+ * card as "Driven by …". Null when the burst was not belief-driven.
+ */
+export interface ProactiveBeliefDto {
+  readonly subject: string;
+  readonly predicate: string | null;
+  readonly object: string;
+}
+
+/**
+ * One autonomous initiative the companion took on its own (a `proactive_outcomes`
+ * row), shaped for the Activity view: the in-character report `note` it posted, the
+ * `drive` it served (with the `driveSnapshot` weight mix at the time), the `belief`
+ * that drove it if any, and the `reward` — the change in the user's mood across
+ * their reaction to the note. `reward` is null until the user reacts; `resolved`
+ * says whether a reaction has been scored yet. No approval gate: autonomy is autonomy.
+ */
+export interface ProactiveOutcomeDto {
+  readonly id: string;
+  /** Monotonic insertion order; doubles as the keyset-pagination cursor. */
+  readonly seq: number;
+  readonly drive: Drive;
+  /** The drive weights at initiation (attribution); null on legacy rows. */
+  readonly driveSnapshot: DriveWeights | null;
+  /** The "what I read" report note posted to the transcript; null if the note is gone. */
+  readonly note: string | null;
+  readonly belief: ProactiveBeliefDto | null;
+  /** Mood delta across the user's reaction; null until resolved. */
+  readonly reward: number | null;
+  readonly resolved: boolean;
+  readonly createdAt: string;
+}
+
+/**
+ * A page of the companion's autonomous-activity log (newest-first) plus the
+ * aggregate initiative `stats` (mirrors the Growth Initiative axis). `nextCursor`
+ * is the `seq` to pass as `before` for the next page, or null when the log is
+ * exhausted.
+ */
+export interface ProactiveActivityStats {
+  readonly total: number;
+  readonly positive: number;
+}
+
+export interface ProactiveActivityDto {
+  readonly outcomes: readonly ProactiveOutcomeDto[];
+  readonly stats: ProactiveActivityStats;
+  readonly nextCursor: number | null;
 }
 
 /** The user's food pantry — counts of each food type they hold (companion-economy.md). */

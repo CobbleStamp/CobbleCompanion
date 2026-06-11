@@ -43,6 +43,7 @@ interface ChatProps {
   readonly onOpenMemory: () => void;
   readonly onOpenSources: () => void;
   readonly onOpenGrowth: () => void;
+  readonly onOpenActivity: () => void;
 }
 
 interface ChatLine {
@@ -146,6 +147,7 @@ export function Chat({
   onOpenMemory,
   onOpenSources,
   onOpenGrowth,
+  onOpenActivity,
 }: ChatProps): JSX.Element {
   const [lines, setLines] = useState<ChatLine[]>([]);
   const [input, setInput] = useState('');
@@ -569,6 +571,9 @@ export function Chat({
           </button>
           <button type="button" onClick={onOpenGrowth}>
             Growth
+          </button>
+          <button type="button" onClick={onOpenActivity}>
+            Activity
           </button>
           <button type="button" onClick={onSignOut}>
             Sign out

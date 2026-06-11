@@ -25,15 +25,12 @@ export const DRIVES: readonly Drive[] = [
   'upkeep',
 ];
 
-/** Human labels for the drives, in `DRIVES` order — the character card's display names. */
-export const DRIVE_LABELS: Record<Drive, string> = {
-  curiosity: 'Curiosity',
-  bond: 'Bond',
-  understanding: 'Understanding',
-  approval: 'Approval',
-  helpfulness: 'Helpfulness',
-  upkeep: 'Upkeep',
-};
+/**
+ * Human labels for the drives — the character card's + activity log's display names.
+ * Single-sourced in `@cobble/shared` (the web client needs them too); re-exported
+ * here so existing `./drives.js` import sites keep working.
+ */
+export { DRIVE_LABELS } from '@cobble/shared';
 
 /** Neutral starting weight — a Cobble is raised into its disposition (§7). */
 export const NEUTRAL_WEIGHT = 0.5;

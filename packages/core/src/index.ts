@@ -352,6 +352,8 @@ export {
 // Reinforcement — outcome store, change-as-reward weight update, attribution (Phase 4)
 export {
   DrizzleProactiveOutcomeStore,
+  type ProactiveOutcomeBelief,
+  type ProactiveOutcomeDetail,
   type ProactiveOutcomeRecord,
   type ProactiveOutcomeStats,
   type ProactiveOutcomeStore,

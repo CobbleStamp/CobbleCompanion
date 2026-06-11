@@ -193,6 +193,9 @@ describe('reinforceFromDelta — claim-loss, vanished companion, and swallowed e
     async list(): Promise<readonly ProactiveOutcomeRecord[]> {
       return [];
     }
+    async listDetailed(): Promise<readonly never[]> {
+      return [];
+    }
   }
 
   /** Fake identity that records updateDriveWeights calls and an optional companion. */
@@ -251,6 +254,9 @@ describe('reinforceFromDelta — claim-loss, vanished companion, and swallowed e
         return false;
       },
       async list(): Promise<readonly ProactiveOutcomeRecord[]> {
+        return [];
+      },
+      async listDetailed(): Promise<readonly never[]> {
         return [];
       },
     };

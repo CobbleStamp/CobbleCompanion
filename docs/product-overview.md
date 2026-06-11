@@ -199,7 +199,9 @@ ladder you climb). Each axis reads as a descriptive **band**, not a level:
   temperament) and deepened by in-jokes and accumulated understanding (*New → Acquainted → Familiar
   → Close → Inseparable*).
 - **Initiative:** how much, and how well, it acts on its **own** — read from its autonomous-work log
-  and how you received those moves (*Hasn't ventured out yet → … → Self-directed*).
+  and how you received those moves (*Hasn't ventured out yet → … → Self-directed*). That log is itself
+  browsable in the **Activity view**: one card per self-directed move, showing what it read, the drive
+  (and belief) behind it, and how you reacted.
 - **Character:** the disposition it has been *raised* into — how distinctly its drive weights have
   formed away from neutral (*Still forming → … → Strongly formed*), surfaced as its own "Who I've
   become" card.

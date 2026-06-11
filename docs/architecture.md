@@ -786,10 +786,10 @@ flowchart TB
       greeting/        the bond-driven arrival reaction (social sibling of the explore burst): token-free decideGreeting gate + stamina-billed greeter, reads companions.last_seen_at — companion-greeting.md
       growth/          four mirror axes derived from substrate (§4.3 hint arm + development-plan.md §3) + the feeding economy: axis readings (band+fill), capabilities registry, growth store/service/runner, foods, the per-user food pantry/store (§4.8)
       quota/           per-companion vitality wallets (stamina + energy) (§4.8)
-    api/               BFF / surface boundary (Fastify); memory + source + usage + proposal/inventory routes; presence + proactivity (dial/energy) routes; growth + feed routes; the standing companion event-channel route (§6)
+    api/               BFF / surface boundary (Fastify); memory + source + usage + proposal/inventory routes; presence + proactivity (dial/energy) routes; growth + feed routes; the autonomous-activity log route (read-only `proactive_outcomes`); the standing companion event-channel route (§6)
       acquisition/, mcp/, cli/   API-side wiring of the runtime tool-acquisition spine + MCP/CLI executors (§9, Phases 9–10)
       tracing/         Langfuse Cloud TraceSink adapter (fetch-based; sampling + redaction before export) — runbook-tracing.md
-    web/               React web client; chat w/ citations + ingestion-status panel + approval cards (subscribe-then-snapshot establishment over the companion event channel, §6), sources page, memory browser (incl. editable user-model profile/beliefs panel), usage badge; vitality meter + proactivity dial; growth view + kitchen
+    web/               React web client; chat w/ citations + ingestion-status panel + approval cards (subscribe-then-snapshot establishment over the companion event channel, §6), sources page, memory browser (incl. editable user-model profile/beliefs panel), usage badge; vitality meter + proactivity dial; growth view + kitchen; activity view (autonomous-initiative log)
     shared/            shared TS types / contracts
     eval/              dataset/scorer/runner offline eval framework: memory-recall + stateless (affect-sense, user-extract) + injection red-team (→ companion-memory.md §5)
   db/                  migrations & schema (→ implementation.md)

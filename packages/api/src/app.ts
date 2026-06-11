@@ -47,6 +47,7 @@ import { registerUserModelRoutes } from './routes/user-model.routes.js';
 import { registerMessageRoutes } from './routes/message.routes.js';
 import { registerInventoryRoutes } from './routes/inventory.routes.js';
 import { registerPresenceRoutes } from './routes/presence.routes.js';
+import { registerProactiveActivityRoutes } from './routes/proactive-activity.routes.js';
 import { registerProactivityRoutes } from './routes/proactivity.routes.js';
 import { registerProposalRoutes } from './routes/proposal.routes.js';
 import { registerSourceRoutes } from './routes/source.routes.js';
@@ -208,6 +209,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerPresenceRoutes(app, deps, requireAuth);
   registerGreetingRoutes(app, deps, requireAuth);
   registerProactivityRoutes(app, deps, requireAuth);
+  registerProactiveActivityRoutes(app, deps, requireAuth);
   registerGrowthRoutes(app, deps, requireAuth);
   registerUsageRoutes(app, deps, requireAuth);
 

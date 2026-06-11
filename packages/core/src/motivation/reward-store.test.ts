@@ -5,6 +5,7 @@ import { createTestDatabase } from '@cobble/db/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DrizzleIdentityStore } from '../identity/store.js';
 import { TranscriptMemoryStore } from '../memory/store.js';
+import { DrizzleUserModelStore } from '../user-model/store.js';
 import { DrizzleProactiveOutcomeStore } from './reward-store.js';
 import { DEFAULT_DRIVE_WEIGHTS } from './drives.js';
 
@@ -12,8 +13,10 @@ describe('DrizzleProactiveOutcomeStore', () => {
   let db: Database;
   let close: () => Promise<void>;
   let companionId: string;
+  let userId: string;
   let rewards: DrizzleProactiveOutcomeStore;
   let memory: TranscriptMemoryStore;
+  let userModel: DrizzleUserModelStore;
 
   /** Append an assistant "report" note and return its id (the reward target). */
   async function noteId(content = 'I read a couple of things from my list.'): Promise<string> {
@@ -27,6 +30,7 @@ describe('DrizzleProactiveOutcomeStore', () => {
     close = created.close;
     const identity = new DrizzleIdentityStore(db);
     const user = await identity.ensureUserByEmail('owner@example.com');
+    userId = user.id;
     const companion = await identity.createCompanion(user.id, {
       name: 'Pip',
       form: 'fox',
@@ -35,6 +39,7 @@ describe('DrizzleProactiveOutcomeStore', () => {
     companionId = companion.id;
     rewards = new DrizzleProactiveOutcomeStore(db);
     memory = new TranscriptMemoryStore(db);
+    userModel = new DrizzleUserModelStore(db);
   });
   afterEach(async () => {
     await close();
@@ -162,5 +167,70 @@ describe('DrizzleProactiveOutcomeStore', () => {
     const list = await rewards.list(companionId, 10);
     expect(list).toHaveLength(2);
     expect(list[0]!.drive).toBe('bond'); // newest first
+  });
+
+  describe('listDetailed', () => {
+    it('joins the report note, weight snapshot, and driving belief', async () => {
+      const belief = await userModel.recordBelief({
+        userId,
+        predicate: 'interestedIn',
+        object: 'Rust',
+      });
+      const noteMessageId = await noteId('I read about Rust ownership.');
+      await rewards.record(companionId, {
+        noteMessageId,
+        drive: 'curiosity',
+        driveSnapshot: DEFAULT_DRIVE_WEIGHTS,
+        drivenByUserFactId: belief.id,
+      });
+
+      const [detail] = await rewards.listDetailed(companionId, 10);
+      expect(detail?.noteContent).toBe('I read about Rust ownership.');
+      expect(detail?.drive).toBe('curiosity');
+      expect(detail?.driveSnapshot).toEqual(DEFAULT_DRIVE_WEIGHTS);
+      expect(detail?.belief?.object).toBe('Rust');
+      expect(detail?.seq).toBeGreaterThan(0);
+    });
+
+    it('lists a non-belief-driven outcome with null belief (LEFT JOIN)', async () => {
+      await rewards.record(companionId, { noteMessageId: await noteId('plain'), drive: 'bond' });
+      const [detail] = await rewards.listDetailed(companionId, 10);
+      expect(detail?.noteContent).toBe('plain');
+      expect(detail?.belief).toBeNull();
+    });
+
+    it('paginates by seq with the beforeSeq cursor', async () => {
+      await rewards.record(companionId, { noteMessageId: await noteId('1'), drive: 'curiosity' });
+      await rewards.record(companionId, { noteMessageId: await noteId('2'), drive: 'bond' });
+      await rewards.record(companionId, {
+        noteMessageId: await noteId('3'),
+        drive: 'understanding',
+      });
+
+      const firstPage = await rewards.listDetailed(companionId, 2);
+      expect(firstPage.map((o) => o.noteContent)).toEqual(['3', '2']); // newest first
+      const nextPage = await rewards.listDetailed(companionId, 2, firstPage[1]!.seq);
+      expect(nextPage).toHaveLength(1);
+      expect(nextPage[0]!.noteContent).toBe('1');
+    });
+
+    it('scopes to the companion (tenancy)', async () => {
+      const identity = new DrizzleIdentityStore(db);
+      const other = await identity.createCompanion(userId, {
+        name: 'Moss',
+        form: 'cat',
+        temperament: 'calm',
+      });
+      const otherNote = await memory.appendMessage(other.id, 'assistant', 'Moss read something.');
+      await rewards.record(other.id, { noteMessageId: otherNote.id, drive: 'bond' });
+      await rewards.record(companionId, {
+        noteMessageId: await noteId('mine'),
+        drive: 'curiosity',
+      });
+
+      const mine = await rewards.listDetailed(companionId, 10);
+      expect(mine).toHaveLength(1);
+      expect(mine[0]!.noteContent).toBe('mine');
+    });
   });
 });

@@ -15,6 +15,7 @@ import type {
   LeadDto,
   MemorySnapshotDto,
   MessageDto,
+  ProactiveActivityDto,
   ProactivityDial,
   ProcedureDto,
   ProposalDto,
@@ -236,6 +237,18 @@ export async function getFood(): Promise<FoodInventoryDto> {
 /** The companion's four-axis growth standing (Phase 5). */
 export async function fetchGrowth(companionId: string): Promise<GrowthDto> {
   return request<GrowthDto>(`/companions/${companionId}/growth`);
+}
+
+/**
+ * A page of the companion's autonomous-activity log (Phase 4), newest-first. Pass
+ * the previous page's `nextCursor` as `before` to load older entries.
+ */
+export async function fetchActivity(
+  companionId: string,
+  before?: number,
+): Promise<ProactiveActivityDto> {
+  const query = before !== undefined ? `?before=${before}` : '';
+  return request<ProactiveActivityDto>(`/companions/${companionId}/activity${query}`);
 }
 
 /** Feed the companion a food — consumes one from the user's pantry, refills a wallet. */

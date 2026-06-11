@@ -6,9 +6,9 @@
  * not approve/reject). Also the helpful-vs-annoying measurement surface.
  */
 
-import { proactiveOutcomes, type Database } from '@cobble/db';
+import { messages, proactiveOutcomes, userFacts, type Database } from '@cobble/db';
 import type { Drive, DriveWeights } from '@cobble/shared';
-import { and, count, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, count, desc, eq, isNull, lt, sql } from 'drizzle-orm';
 
 export interface RecordOutcomeInput {
   /** The drive the move served (whose weight a reward nudges). */
@@ -53,6 +53,26 @@ export interface ProactiveOutcomeStats {
   readonly positive: number;
 }
 
+/** The Tier-2 belief that drove a burst, joined for the activity log. */
+export interface ProactiveOutcomeBelief {
+  readonly subject: string;
+  readonly predicate: string | null;
+  readonly object: string;
+}
+
+/**
+ * An outcome enriched for the activity view: the bare record plus its `seq` (the
+ * pagination cursor), the `driveSnapshot` weight mix, the joined report-note text
+ * (`noteContent`), and the `belief` that drove it. Read-only detail surface — never
+ * used on the reward-attribution path.
+ */
+export interface ProactiveOutcomeDetail extends ProactiveOutcomeRecord {
+  readonly seq: number;
+  readonly driveSnapshot: DriveWeights | null;
+  readonly noteContent: string | null;
+  readonly belief: ProactiveOutcomeBelief | null;
+}
+
 export interface ProactiveOutcomeStore {
   /** Record a fresh initiation (reward pending). */
   record(companionId: string, input: RecordOutcomeInput): Promise<ProactiveOutcomeRecord>;
@@ -73,6 +93,16 @@ export interface ProactiveOutcomeStore {
   setReward(companionId: string, id: string, reward: number): Promise<boolean>;
   /** Recent outcomes, newest-first (measurement + tests). */
   list(companionId: string, limit: number): Promise<readonly ProactiveOutcomeRecord[]>;
+  /**
+   * Recent outcomes enriched with the joined report note + driving belief, newest-
+   * first, for the read-only Activity view. Keyset-paginated: pass the last page's
+   * smallest `seq` as `beforeSeq` to fetch the next page.
+   */
+  listDetailed(
+    companionId: string,
+    limit: number,
+    beforeSeq?: number,
+  ): Promise<readonly ProactiveOutcomeDetail[]>;
 }
 
 export class DrizzleProactiveOutcomeStore implements ProactiveOutcomeStore {
@@ -149,6 +179,43 @@ export class DrizzleProactiveOutcomeStore implements ProactiveOutcomeStore {
       .limit(limit);
     return rows.map(toRecord);
   }
+
+  async listDetailed(
+    companionId: string,
+    limit: number,
+    beforeSeq?: number,
+  ): Promise<readonly ProactiveOutcomeDetail[]> {
+    // LEFT JOINs so an outcome whose note was removed (`set null`) or that was not
+    // belief-driven still lists — the joined columns just come back null.
+    const scope = eq(proactiveOutcomes.companionId, companionId);
+    const where =
+      beforeSeq !== undefined ? and(scope, lt(proactiveOutcomes.seq, beforeSeq)) : scope;
+    const rows = await this.db
+      .select({
+        id: proactiveOutcomes.id,
+        seq: proactiveOutcomes.seq,
+        companionId: proactiveOutcomes.companionId,
+        noteMessageId: proactiveOutcomes.noteMessageId,
+        proposalId: proactiveOutcomes.proposalId,
+        drive: proactiveOutcomes.drive,
+        driveSnapshot: proactiveOutcomes.driveSnapshot,
+        drivenByUserFactId: proactiveOutcomes.drivenByUserFactId,
+        reward: proactiveOutcomes.reward,
+        createdAt: proactiveOutcomes.createdAt,
+        resolvedAt: proactiveOutcomes.resolvedAt,
+        noteContent: messages.content,
+        beliefSubject: userFacts.subject,
+        beliefPredicate: userFacts.predicate,
+        beliefObject: userFacts.object,
+      })
+      .from(proactiveOutcomes)
+      .leftJoin(messages, eq(proactiveOutcomes.noteMessageId, messages.id))
+      .leftJoin(userFacts, eq(proactiveOutcomes.drivenByUserFactId, userFacts.id))
+      .where(where)
+      .orderBy(desc(proactiveOutcomes.seq))
+      .limit(limit);
+    return rows.map(toDetail);
+  }
 }
 
 type Row = typeof proactiveOutcomes.$inferSelect;
@@ -164,5 +231,32 @@ function toRecord(row: Row): ProactiveOutcomeRecord {
     reward: row.reward,
     createdAt: row.createdAt,
     resolvedAt: row.resolvedAt,
+  };
+}
+
+interface DetailRow extends Row {
+  readonly noteContent: string | null;
+  readonly beliefSubject: string | null;
+  readonly beliefPredicate: string | null;
+  readonly beliefObject: string | null;
+}
+
+function toDetail(row: DetailRow): ProactiveOutcomeDetail {
+  // A belief is present only when the join matched (subject + object are NOT NULL on
+  // user_facts, so either both are set or the row was non-belief-driven / nulled).
+  const belief: ProactiveOutcomeBelief | null =
+    row.beliefSubject !== null && row.beliefObject !== null
+      ? {
+          subject: row.beliefSubject,
+          predicate: row.beliefPredicate,
+          object: row.beliefObject,
+        }
+      : null;
+  return {
+    ...toRecord(row),
+    seq: row.seq,
+    driveSnapshot: row.driveSnapshot ?? null,
+    noteContent: row.noteContent,
+    belief,
   };
 }
