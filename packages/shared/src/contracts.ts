@@ -1052,13 +1052,30 @@ export interface ReactionDto {
 }
 
 /**
- * Request body for `POST .../messages/:id/reactions`. Validates a single,
- * well-formed emoji with a sane length cap — NOT membership in an allowed set; no
- * emoji is whitelisted on either side (companion-reactions.md §7, §8). The cap is
- * generous enough for multi-codepoint ZWJ/skin-tone sequences.
+ * Exactly one well-formed emoji: a single RGI emoji sequence, so ZWJ families,
+ * skin tones, flags, and keycaps each count as ONE. Well-formedness only — NOT
+ * membership in an allowed set; no emoji is whitelisted on either side
+ * (companion-reactions.md §7, §8). Built with the RegExp constructor because
+ * `\p{RGI_Emoji}` requires the `v` flag, which a regex literal can't carry under
+ * the repo's ES2022 target (runtime support — Node ≥22, evergreen browsers — is
+ * fine).
+ */
+const singleEmojiPattern = new RegExp('^\\p{RGI_Emoji}$', 'v');
+
+/** True when `value` is exactly one well-formed emoji (see {@link addReactionSchema}). */
+export function isSingleEmoji(value: string): boolean {
+  return value.length <= 32 && singleEmojiPattern.test(value);
+}
+
+/**
+ * Request body for `POST .../messages/:id/reactions`. Enforces a single
+ * well-formed emoji — free-text must not pass, because each novel "emoji" string
+ * is a distinct reaction row whose insert triggers a distinct billed value-read
+ * (companion-reactions.md §4), an LLM cost amplifier. The length cap is generous
+ * enough for multi-codepoint ZWJ/skin-tone sequences and bounds the regex input.
  */
 export const addReactionSchema = z.object({
-  emoji: z.string().trim().min(1).max(32),
+  emoji: z.string().trim().max(32).regex(singleEmojiPattern, 'a single emoji is required'),
 });
 export type AddReactionBody = z.infer<typeof addReactionSchema>;
 

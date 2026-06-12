@@ -78,6 +78,32 @@ describe('reaction routes', () => {
     expect(res.statusCode).toBe(400);
   });
 
+  it('rejects a non-emoji string with 400 — free text must not mint billed reads', async () => {
+    // Each distinct accepted string would be a distinct reaction row, each insert
+    // firing a billed value-read — so only a single well-formed emoji may pass.
+    for (const bad of ['abcd', 'x', '👍👍', '<script>', '👍 nice']) {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: `/companions/${companionId}/messages/${messageId}/reactions`,
+        headers: auth,
+        payload: { emoji: bad },
+      });
+      expect(res.statusCode, `expected 400 for ${JSON.stringify(bad)}`).toBe(400);
+    }
+  });
+
+  it('accepts multi-codepoint emoji (ZWJ family, skin tone) as a single emoji', async () => {
+    for (const good of ['👨‍👩‍👧‍👦', '👍🏽', '1️⃣', '🇫🇷']) {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: `/companions/${companionId}/messages/${messageId}/reactions`,
+        headers: auth,
+        payload: { emoji: good },
+      });
+      expect(res.statusCode, `expected 200 for ${JSON.stringify(good)}`).toBe(200);
+    }
+  });
+
   it('404s when the message does not belong to the companion', async () => {
     const res = await ctx.app.inject({
       method: 'POST',

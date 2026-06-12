@@ -18,6 +18,7 @@
  * emoji, guided by taste/legibility (§7).
  */
 
+import { isSingleEmoji } from '@cobble/shared';
 import type { CompanionEventBus } from '../events/bus.js';
 import type { ToolResult } from '../harness/hooks.js';
 import { consoleLogger, type Logger } from '../logging.js';
@@ -29,10 +30,6 @@ export interface ReactToolOptions {
   readonly eventBus: CompanionEventBus;
   readonly logger?: Logger;
 }
-
-/** A sane upper bound on an emoji arg (well-formedness, not a whitelist) — generous
- *  enough for multi-codepoint ZWJ/skin-tone sequences. */
-const MAX_EMOJI_LENGTH = 32;
 
 export function createReactTool(options: ReactToolOptions): Tool {
   const logger = options.logger ?? consoleLogger;
@@ -55,9 +52,11 @@ export function createReactTool(options: ReactToolOptions): Tool {
     silent: true,
     async run(args, ctx): Promise<ToolResult> {
       // Trim so a model that pads the arg (" 👀 ") stores and matches the same glyph
-      // the user route does (its schema trims) — keeps idempotency consistent.
+      // the user route does (its schema trims) — keeps idempotency consistent. Same
+      // single-well-formed-emoji check as the user route (well-formedness, not a
+      // whitelist), so a free-text arg never lands in `message_reactions`.
       const emoji = readStringArg(args, 'emoji')?.trim();
-      if (!emoji || emoji.length > MAX_EMOJI_LENGTH) {
+      if (!emoji || !isSingleEmoji(emoji)) {
         return { name: 'react', content: 'a single emoji is required', isError: true };
       }
       if (!ctx.currentUserMessageId) {

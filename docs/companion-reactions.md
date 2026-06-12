@@ -357,7 +357,12 @@ reaction placed on one surface syncs to another.
 
 **API** — `POST /companions/:id/messages/:messageId/reactions {emoji}` and
 `DELETE …/reactions/:emoji`: validate, persist, publish, **return immediately**; the inline read +
-reinforcement run after the response, best-effort.
+reinforcement run after the response, best-effort. Persisting the reaction itself is free, so the
+routes never 429 — instead the **read is wallet-gated** in the learner: an empty stamina wallet means
+no read and no learning (the same pre-flight every other billed consumer does). An un-react →
+re-react **toggle of the same emoji is debounced** in the learner — the delete takes the recorded
+reward with it, so the re-insert would otherwise re-bill the read and re-nudge the drives for a
+signal the first read already taught.
 
 **Seam — event-triggered, beside the harness.** A user reaction is _not_ a turn, so its read is
 triggered from a small **`ReactionLearner`** (body-side perception → reward), not from the harness's

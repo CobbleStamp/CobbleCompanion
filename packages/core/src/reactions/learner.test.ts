@@ -4,6 +4,8 @@
  * note resolves that outcome and nudges its served drive (by note_message_id, the
  * addressed path); a reaction on an ordinary answer nudges `approval` gently; a
  * null read teaches nothing; and an already-resolved outcome is never double-scored.
+ * The billed read is gated on the stamina wallet (empty → no read), and an
+ * un-react → re-react toggle of the same emoji is debounced (no re-bill, no re-nudge).
  */
 
 import { type Database } from '@cobble/db';
@@ -16,6 +18,7 @@ import type { Logger } from '../logging.js';
 import { TranscriptMemoryStore } from '../memory/store.js';
 import { resolveWeights } from '../motivation/drives.js';
 import { DrizzleProactiveOutcomeStore } from '../motivation/reward-store.js';
+import { DrizzleVitalityStore } from '../quota/vitality-store.js';
 import { DrizzleUserModelStore } from '../user-model/store.js';
 import { ReactionLearner } from './learner.js';
 import { DrizzleReactionStore } from './store.js';
@@ -170,6 +173,109 @@ describe('ReactionLearner', () => {
 
     const [current] = await userModel.listCurrentBeliefs(userId);
     expect(current?.salience).toBeGreaterThan(0.5); // 0.5 + 0.1·0.8
+  });
+
+  it('does not fire the billed read when the stamina wallet is empty', async () => {
+    const msg = await memory.appendMessage(companionId, 'assistant', 'the answer');
+    await reactions.add(companionId, msg.id, 'user', '👍');
+    const stamina = new DrizzleVitalityStore(db, 'stamina');
+    await stamina.spend(companionId, Number.MAX_SAFE_INTEGER); // drain the seed
+
+    const llm = new FakeLlmGateway(reportReaction(0.6));
+    const learner = new ReactionLearner({
+      rewards,
+      reactions,
+      identity,
+      memory,
+      userModel,
+      sense: { llm, model: 'fake', logger: silent, quota: stamina },
+      logger: silent,
+    });
+    learner.learn(companionId, msg.id, '👍');
+    await learner.whenIdle();
+
+    // The gate held: no LLM call was made, nothing was recorded or nudged.
+    expect(llm.calls).toHaveLength(0);
+    expect(await approvalWeight()).toBeCloseTo(NEUTRAL.approval);
+    const rows = await reactions.listForMessages(companionId, [msg.id]);
+    expect(rows[0]?.reward).toBeNull();
+  });
+
+  it('learns normally when the metered wallet has balance', async () => {
+    const msg = await memory.appendMessage(companionId, 'assistant', 'the answer');
+    await reactions.add(companionId, msg.id, 'user', '👍');
+    const stamina = new DrizzleVitalityStore(db, 'stamina');
+    await stamina.add(companionId, 100_000); // guarantee a non-empty wallet
+
+    const llm = new FakeLlmGateway(reportReaction(0.6));
+    const learner = new ReactionLearner({
+      rewards,
+      reactions,
+      identity,
+      memory,
+      userModel,
+      sense: { llm, model: 'fake', logger: silent, quota: stamina },
+      logger: silent,
+    });
+    learner.learn(companionId, msg.id, '👍');
+    await learner.whenIdle();
+
+    expect(llm.calls).toHaveLength(1);
+    expect(await approvalWeight()).toBeGreaterThan(NEUTRAL.approval);
+  });
+
+  it('does not re-learn an un-react → re-react toggle of the same emoji', async () => {
+    const msg = await memory.appendMessage(companionId, 'assistant', 'the answer');
+    await reactions.add(companionId, msg.id, 'user', '👍');
+    const llm = new FakeLlmGateway(reportReaction(0.6));
+    const learner = new ReactionLearner({
+      rewards,
+      reactions,
+      identity,
+      memory,
+      userModel,
+      sense: { llm, model: 'fake', logger: silent },
+      logger: silent,
+    });
+    learner.learn(companionId, msg.id, '👍');
+    await learner.whenIdle();
+    const afterFirst = await approvalWeight();
+    expect(llm.calls).toHaveLength(1);
+
+    // Toggle: un-react deletes the row (reward and all), re-add re-inserts fresh
+    // and the route fires learn() again — the debounce must absorb the repeat.
+    await reactions.remove(companionId, msg.id, 'user', '👍');
+    await reactions.add(companionId, msg.id, 'user', '👍');
+    learner.learn(companionId, msg.id, '👍');
+    await learner.whenIdle();
+
+    expect(llm.calls).toHaveLength(1); // no second billed read
+    expect(await approvalWeight()).toBeCloseTo(afterFirst); // no second nudge
+  });
+
+  it('a different emoji on the same message is a distinct signal and still learns', async () => {
+    const msg = await memory.appendMessage(companionId, 'assistant', 'the answer');
+    await reactions.add(companionId, msg.id, 'user', '👍');
+    const llm = new FakeLlmGateway(reportReaction(0.6));
+    const learner = new ReactionLearner({
+      rewards,
+      reactions,
+      identity,
+      memory,
+      userModel,
+      sense: { llm, model: 'fake', logger: silent },
+      logger: silent,
+    });
+    learner.learn(companionId, msg.id, '👍');
+    await learner.whenIdle();
+    const afterFirst = await approvalWeight();
+
+    await reactions.add(companionId, msg.id, 'user', '🎉');
+    learner.learn(companionId, msg.id, '🎉');
+    await learner.whenIdle();
+
+    expect(llm.calls).toHaveLength(2);
+    expect(await approvalWeight()).toBeGreaterThan(afterFirst);
   });
 
   it('does not double-score an outcome already resolved by the ambient delta', async () => {

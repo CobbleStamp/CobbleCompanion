@@ -88,9 +88,12 @@ describe('createReactTool', () => {
     expect(await reactions.listForMessages(companionId, [messageId])).toHaveLength(0);
   });
 
-  it('rejects a missing or oversized emoji', async () => {
+  it('rejects a missing, oversized, or non-emoji arg', async () => {
     expect((await tool.run({}, ctx())).isError).toBe(true);
     expect((await tool.run({ emoji: 'x'.repeat(40) }, ctx())).isError).toBe(true);
+    // Free text and multi-emoji strings are not a single well-formed emoji.
+    expect((await tool.run({ emoji: 'nope' }, ctx())).isError).toBe(true);
+    expect((await tool.run({ emoji: '👍👍' }, ctx())).isError).toBe(true);
     expect(await reactions.listForMessages(companionId, [messageId])).toHaveLength(0);
   });
 });

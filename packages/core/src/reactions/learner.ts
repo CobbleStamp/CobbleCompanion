@@ -13,7 +13,11 @@
  *
  * The read's reward is also recorded on the reaction row (the reflection corpus,
  * §6) whenever a genuine reading came back. A `null` read (failure/decline) teaches
- * nothing — never a fabricated neutral. Fire-and-forget and self-catching: it runs
+ * nothing — never a fabricated neutral. The read is billed to stamina, so it is
+ * gated on the wallet like every other LLM consumer (empty → no read, no learning),
+ * and a re-add of a just-removed reaction is debounced — an un-react → re-react
+ * toggle must not re-bill the read or re-nudge the drives for the same signal.
+ * Fire-and-forget and self-catching: it runs
  * after the reaction route has already responded, so it can never block the UI, and
  * a hiccup never surfaces (logging.md). In-flight reads are tracked so tests and a
  * graceful shutdown can drain them ({@link whenIdle}).
@@ -41,6 +45,16 @@ const APPROVAL_REACTION_RATE = 0.04;
 const BELIEF_REWARD_RATE = 0.1;
 /** Recent turns fed to the read as context. */
 const RECENT_CONTEXT_TURNS = 8;
+/**
+ * An un-react → re-react toggle replays a signal the first read already taught
+ * (the un-react deletes the row, so the recorded reward can't be consulted).
+ * Within this window the same (companion, message, emoji) is not re-read — damping
+ * a toggle loop from re-billing reads and re-nudging drives. In-memory and
+ * best-effort; the stamina gate below is the hard cost backstop.
+ */
+const RELEARN_DEBOUNCE_MS = 10 * 60 * 1000;
+/** Bound on the debounce map so it can never grow without limit. */
+const RELEARN_MAX_TRACKED = 1024;
 
 /** Context line handed to the read on a proactive act, so the value judgement knows
  *  the message was self-initiated (not a reply). */
@@ -62,6 +76,8 @@ export interface ReactionLearnerDeps {
 
 export class ReactionLearner {
   private readonly inflight = new Set<Promise<void>>();
+  /** When each (companion, message, emoji) was last read — the toggle debounce. */
+  private readonly recentlyLearned = new Map<string, number>();
 
   constructor(private readonly deps: ReactionLearnerDeps) {}
 
@@ -86,6 +102,25 @@ export class ReactionLearner {
 
   private async run(companionId: string, messageId: string, emoji: string): Promise<void> {
     try {
+      // Toggle debounce: an un-react → re-add of the same emoji re-inserts the row
+      // (the delete took the recorded reward with it), so the route fires learn()
+      // again. The first read already taught this signal — don't re-bill or
+      // re-nudge for a repeat within the window.
+      const key = `${companionId}:${messageId}:${emoji}`;
+      const lastRead = this.recentlyLearned.get(key);
+      if (lastRead !== undefined && Date.now() - lastRead < RELEARN_DEBOUNCE_MS) {
+        return;
+      }
+
+      // Don't spend stamina the companion doesn't have: the read bills post-hoc
+      // (sense.ts) and `spend` floors at 0, so without this pre-flight an empty
+      // wallet would still let billed reads through — the same gate every other
+      // LLM consumer applies (announcer, evolve, reflector, overCapGuard routes).
+      const { quota } = this.deps.sense;
+      if (quota && (await quota.isEmpty(companionId))) {
+        return;
+      }
+
       const recent = await this.deps.memory.getRecentMessages(companionId, RECENT_CONTEXT_TURNS);
       const reacted =
         recent.find((message) => message.id === messageId) ??
@@ -97,6 +132,9 @@ export class ReactionLearner {
       // Addressed attribution: was this message a proactive act's report note?
       const outcome = await this.deps.rewards.findUnresolvedByNoteMessageId(companionId, messageId);
 
+      // Mark only once the read actually fires, so a gated/blocked attempt above
+      // doesn't start the debounce window.
+      this.markLearned(key);
       const reading = await senseReaction(this.deps.sense, {
         companionId,
         recentContext: formatContext(recent),
@@ -130,6 +168,27 @@ export class ReactionLearner {
         error,
       });
     }
+  }
+
+  /** Stamp the debounce window for a key, pruning so the map stays bounded. */
+  private markLearned(key: string): void {
+    if (this.recentlyLearned.size >= RELEARN_MAX_TRACKED) {
+      const cutoff = Date.now() - RELEARN_DEBOUNCE_MS;
+      for (const [tracked, at] of this.recentlyLearned) {
+        if (at < cutoff) {
+          this.recentlyLearned.delete(tracked);
+        }
+      }
+      // Still full of in-window entries → evict oldest-inserted first.
+      while (this.recentlyLearned.size >= RELEARN_MAX_TRACKED) {
+        const oldest = this.recentlyLearned.keys().next().value;
+        if (oldest === undefined) {
+          break;
+        }
+        this.recentlyLearned.delete(oldest);
+      }
+    }
+    this.recentlyLearned.set(key, Date.now());
   }
 
   /** A reaction on a self-initiated act: resolve its outcome and nudge the served
