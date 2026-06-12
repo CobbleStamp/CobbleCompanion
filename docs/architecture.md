@@ -73,8 +73,61 @@ does not move — these are the one-way-door decisions.
 
 ## 3. Component Map
 
-The components and the layers they belong to. The diagram shows the core request path; the full
-component set follows in the table below it.
+This section maps the system at two altitudes. The **subsystem map** shows the big modules and how
+they depend on each other — each module is one opaque box whose internals are listed in the table (and,
+for the harness and the will, drawn out in §4 and §4.5). The **request-path** zoom-in then traces the
+synchronous chat turn through the core. The full component set follows in the table below.
+
+### Subsystem map
+
+```mermaid
+flowchart TB
+  USER([User])
+  subgraph SURF["Surface"]
+    WEB0["Web Client<br/>(React + Vite)"]
+  end
+  API0["API / BFF (Fastify)<br/>auth · routing · streaming · uploads"]
+  subgraph CORE0["Companion Core — surface-agnostic"]
+    H0["Harness<br/>agent loop + extension hooks (§4)"]
+    MEM0["Memory<br/>transcript · semantic · episodic · user-model"]
+    WILL0["The Will<br/>motivation · affect · lead inventory (§4.5)"]
+    SOC0["Social reactions<br/>greeting · emoji reactions"]
+    TOOL0["Tools &amp; Acquisition<br/>registry · approval gate · MCP · CLI · procedural"]
+    GROW0["Growth &amp; Economy<br/>growth axes · food pantry · vitality wallets"]
+    DELIV0["Live Delivery<br/>event bus → event channel (§6)"]
+    GW0["Gateways<br/>LLM · embedding"]
+    ID0["Identity Store<br/>companion 'home'"]
+  end
+  PG0[("Postgres + pgvector")]
+  OR0["OpenRouter<br/>(LLM + embeddings)"]
+
+  USER -->|HTTPS · SSE| WEB0
+  WEB0 -->|request| API0
+  API0 --> H0
+  H0 --> MEM0
+  H0 --> WILL0
+  H0 --> SOC0
+  H0 --> TOOL0
+  H0 --> ID0
+  H0 --> GW0
+  WILL0 -.->|spends energy| GROW0
+  GROW0 -.->|reads substrate| MEM0
+  MEM0 -.->|publish-on-append| DELIV0
+  DELIV0 -->|live push| WEB0
+  GW0 -->|HTTPS| OR0
+  CORE0 --> PG0
+
+  classDef ext fill:#1e3a5f,stroke:#3b82f6,color:#e2e8f0;
+  class OR0,USER ext;
+```
+
+> Every box is opaque at this altitude; the edges carry the story. The harness fans out to each core
+> subsystem (§4); the will spends energy and reads the lead inventory (§4.5); growth & economy reads
+> substrate that already exists without touching the loop; live delivery pushes every appended
+> transcript row back to open surfaces (§6). External systems (Google Sign-In, Langfuse) are omitted
+> here — they appear in the system-context diagram (§6).
+
+### Request path (zoom-in)
 
 ```mermaid
 flowchart TB
@@ -171,6 +224,45 @@ The **loop shape is an architectural invariant** (§2 #3): the same shape carrie
 turn (the inner loop turns once and exits), a multi-tool inner loop, and a proactive (non-human)
 entry alike. The §4.6 sequence diagram shows a concrete single-pass realization. *(Hook signatures +
 concrete context assembly: `implementation.md` §2.)*
+
+**Harness internals (component view).** The diagrams in §4.1–4.6 show the loop *in motion*; this one
+shows its *parts at rest* — the named extension hooks (the seams of invariant #3) and the subsystems
+each fans out to. Only the harness is opened up; every neighbor stays an opaque box.
+
+```mermaid
+flowchart TB
+  subgraph HARNESS["Harness"]
+    DRIVE["loop driver<br/>outer drain · inner turn (§4.1)"]
+    CTX["context assembly (§4.3)"]
+    MH{{"memory-retrieval hook"}}
+    BTC{{"beforeToolCall hook<br/>approval gate (§4.4)"}}
+    ATC{{"afterToolCall hook<br/>audit log"}}
+    INIT{{"Initiator hook (§4.5)"}}
+    PERC["per-turn perception<br/>affect + user-fact (§4.5)"]
+  end
+  GW["LLM Gateway"]
+  MEM["Memory subsystem<br/>semantic · episodic · user-model · procedural arms"]
+  TOOLS["Tool Registry + Proposals"]
+  MOT["Motivation Engine"]
+
+  DRIVE --> CTX
+  CTX --> MH
+  MH -.->|recall arms| MEM
+  CTX -->|assembled prompt| GW
+  DRIVE --> BTC
+  BTC --> TOOLS
+  BTC --> ATC
+  DRIVE --> PERC
+  PERC -.->|writes| MEM
+  MOT -.->|non-human ENTRY| INIT
+  INIT --> DRIVE
+```
+
+> The hexagons are the **extension hooks** — memory retrieval, before/after-tool, and the Initiator —
+> filled additively without changing the loop (invariant #3). The driver runs the outer + inner loops
+> (§4.1); context assembly pulls the recall arms (§4.3); the tool path runs the gate then the audit
+> log (§4.2/§4.4); per-turn perception senses affect and captures user-facts (§4.5); the Initiator is
+> the non-human entry the motivation engine drives (§4.5).
 
 ### 4.1 The loop (outer + inner)
 
@@ -373,16 +465,39 @@ motivation engine**, not only by a human. This is what makes the companion proac
 passive (`product-overview.md` §5.4).
 
 ```mermaid
-flowchart LR
-    MOT["motivation engine<br/>goals · curiosity · bond · pending work"] --> TRIG{"worth<br/>initiating?"}
-    TRIG -->|no| IDLE["idle"]
-    TRIG -->|yes| INIT["initiator → new ENTRY<br/>(no user message)"]
-    INIT --> LOOP["OUTER loop (§4.1)"]
-    LOOP --> OUT(["EXIT — proposal / question"])
-    OUT -->|"in-app when present · gentle push when away"| USER(["user"])
+flowchart TB
+  subgraph WILL["Motivation Engine — the 'will' (packages/core/src/motivation)"]
+    TRIG["trigger<br/>activity · return · periodic sweep"]
+    PRES["presence<br/>active · attentive · away · absent"]
+    DRIVES["drives<br/>interests · bond · leads · approval"]
+    GATE{"arbitration gate<br/>drive × salience × presence × energy"}
+    BURST["bounded explore burst<br/>reads leads into memory"]
+    NOTE["in-character report note"]
+    RL["reinforcement<br/>mood-change → drive/belief weight"]
+  end
+  LEAD[("Lead Inventory")]
+  ENERGY[("Energy Wallet")]
+  AFFECT["per-turn affect read<br/>(agent loop · §4.3)"]
+  LOOP["OUTER loop (§4.1)"]
+  USER([user])
 
-    classDef human fill:#1e3a5f,stroke:#3b82f6,color:#e2e8f0;
-    class USER human;
+  TRIG --> GATE
+  PRES --> GATE
+  DRIVES --> GATE
+  ENERGY -.->|caps spend| GATE
+  GATE -->|"idle (valid, free)"| IDLE([idle])
+  GATE -->|commit| BURST
+  LEAD --> BURST
+  BURST -.->|spends| ENERGY
+  BURST --> NOTE
+  NOTE -->|non-human ENTRY| LOOP
+  LOOP -->|"in-app when present · gentle push when away"| USER
+  USER -->|reaction| AFFECT
+  AFFECT --> RL
+  RL -.->|nudges| DRIVES
+
+  classDef human fill:#1e3a5f,stroke:#3b82f6,color:#e2e8f0;
+  class USER human;
 ```
 
 > The motivation engine (`packages/core/src/motivation/`) fills the `Initiator` hook
@@ -495,7 +610,7 @@ sequenceDiagram
     API->>H: ENTRY → dispatch turn
     H->>Id: load companion "home"
     H->>Mem: retrieve context (recent transcript)
-    Note over H: context assembled (§4.3); tool set empty
+    Note over H: context assembled (§4.3) — tool set empty
     H->>GW: invoke model
     GW->>LLM: HTTPS (streamed)
     LLM-->>GW: token stream
@@ -756,6 +871,27 @@ flowchart TB
     `done`, the snapshot, and the channel — so the client merges by server message id, and replaces a
     still-optimistic (id-less) line with its authoritative event rather than duplicating it. This is
     the surface realization of the §4.7 *transcript-is-truth* invariant.
+
+  The standing channel's path from any transcript append to every open surface:
+
+```mermaid
+flowchart LR
+  subgraph CORE["Core"]
+    APPEND["any transcript append<br/>turn reply · greeting · ingestion note · reaction"]
+    PUB["PublishingMemoryStore<br/>publish-on-append decorator"]
+    BUS["Companion Event Bus<br/>in-process per-companion pub/sub"]
+    CHAN["Event Channel<br/>GET /companions/:id/events (SSE)"]
+  end
+  S1["Surface A"]
+  S2["Surface B<br/>(other tab / device)"]
+
+  APPEND --> PUB
+  PUB -->|emit appended row| BUS
+  BUS --> CHAN
+  CHAN -->|"push · dedup by id"| S1
+  CHAN -->|"push · dedup by id"| S2
+```
+
 - **External services.** The **LLM Provider** (OpenRouter) is the only external dependency —
   outbound HTTPS via the LLM Gateway. User content crossing to the provider is an
   explicit trust boundary (§8).
