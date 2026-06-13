@@ -4,9 +4,29 @@ import { and, eq } from 'drizzle-orm';
 
 export interface UserRecord {
   readonly id: string;
-  readonly email: string;
+  /** How this user authenticates: `google` (email-keyed) or `service` (external_id-keyed). */
+  readonly authSource: string;
+  /** The owning service consumer (`service_registry.client_id`) when `authSource = 'service'`; null for `google`. */
+  readonly serviceClientId: string | null;
+  /** The consumer's opaque id when `authSource = 'service'`; null for `google`. */
+  readonly externalId: string | null;
+  /** Login identity when `authSource = 'google'`; null for `service` (no email). */
+  readonly email: string | null;
   readonly createdAt: string;
 }
+
+/**
+ * The identity dimension a user is provisioned/looked-up by, discriminated by
+ * `auth_source` (implementation.md §1, §5). Google Sign-In (and `dev_bypass`)
+ * resolve by verified `email`; a trusted server-to-server consumer resolves by the
+ * `(clientId, externalId)` it asserts — `clientId` namespaces `externalId` so two
+ * consumers can reuse the same id without colliding. The verifier produces this from
+ * a request; the store turns it into a `users` row via
+ * {@link IdentityStore.ensureUserByClaim}.
+ */
+export type UserClaim =
+  | { readonly authSource: 'google'; readonly email: string }
+  | { readonly authSource: 'service'; readonly clientId: string; readonly externalId: string };
 
 export interface CreateCompanionInput {
   readonly name: string;
@@ -56,11 +76,15 @@ export interface CompanionRecord {
  */
 export interface IdentityStore {
   /**
-   * JIT-provision the user for a verified email, returning the row. Idempotent — a
-   * later sign-in returns the existing row. The user's NAME is not stored here: it is
-   * a Tier-1 `user_fact` (seeded from the Google name claim by the auth boundary,
-   * then refined in conversation — companion-memory.md §4, user-model/store.ts).
+   * JIT-provision the user for a verified auth claim, returning the row. Idempotent —
+   * a later request with the same claim returns the existing row. `google` claims key
+   * on `email`; `service` claims key on `(auth_source, external_id)`. The user's NAME
+   * is not stored here: it is a Tier-1 `user_fact` (seeded from the Google name claim
+   * or the `X-User-Name` header by the auth boundary, then refined in conversation —
+   * companion-memory.md §4, user-model/store.ts).
    */
+  ensureUserByClaim(claim: UserClaim): Promise<UserRecord>;
+  /** Convenience wrapper for a Google/email claim — see {@link ensureUserByClaim}. */
   ensureUserByEmail(email: string): Promise<UserRecord>;
   getUserById(id: string): Promise<UserRecord | null>;
   createCompanion(ownerId: string, input: CreateCompanionInput): Promise<CompanionDto>;
@@ -142,15 +166,49 @@ export class DrizzleIdentityStore implements IdentityStore {
     this.startingVitalityTokens = seed;
   }
 
-  async ensureUserByEmail(email: string): Promise<UserRecord> {
+  async ensureUserByClaim(claim: UserClaim): Promise<UserRecord> {
     // `onConflictDoNothing` makes provisioning idempotent: an existing user is left
-    // untouched and re-read below. The name lives in `user_facts`, not here.
-    await this.db.insert(users).values({ email }).onConflictDoNothing();
-    const [row] = await this.db.select().from(users).where(eq(users.email, email)).limit(1);
+    // untouched and re-read below. The name lives in `user_facts`, not here. Each
+    // branch inserts and re-reads on the claim's own key (email for google; the
+    // (auth_source, external_id) partial-unique index for service).
+    if (claim.authSource === 'google') {
+      await this.db
+        .insert(users)
+        .values({ authSource: 'google', email: claim.email })
+        .onConflictDoNothing();
+      const [row] = await this.db.select().from(users).where(eq(users.email, claim.email)).limit(1);
+      if (!row) {
+        throw new Error('failed to ensure user by google claim');
+      }
+      return toUserRecord(row);
+    }
+    await this.db
+      .insert(users)
+      .values({
+        authSource: 'service',
+        serviceClientId: claim.clientId,
+        externalId: claim.externalId,
+      })
+      .onConflictDoNothing();
+    const [row] = await this.db
+      .select()
+      .from(users)
+      .where(
+        and(
+          eq(users.authSource, 'service'),
+          eq(users.serviceClientId, claim.clientId),
+          eq(users.externalId, claim.externalId),
+        ),
+      )
+      .limit(1);
     if (!row) {
-      throw new Error('failed to ensure user by email');
+      throw new Error('failed to ensure user by service claim');
     }
     return toUserRecord(row);
+  }
+
+  async ensureUserByEmail(email: string): Promise<UserRecord> {
+    return this.ensureUserByClaim({ authSource: 'google', email });
   }
 
   async getUserById(id: string): Promise<UserRecord | null> {
@@ -247,6 +305,9 @@ export class DrizzleIdentityStore implements IdentityStore {
 function toUserRecord(row: typeof users.$inferSelect): UserRecord {
   return {
     id: row.id,
+    authSource: row.authSource,
+    serviceClientId: row.serviceClientId,
+    externalId: row.externalId,
     email: row.email,
     createdAt: row.createdAt.toISOString(),
   };

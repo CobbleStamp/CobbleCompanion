@@ -111,8 +111,10 @@ export {
   type CreateCompanionInput,
   type DrizzleIdentityStoreOptions,
   type IdentityStore,
+  type UserClaim,
   type UserRecord,
 } from './identity/store.js';
+export { DrizzleServiceRegistry, type ServiceRegistry } from './identity/service-registry.js';
 
 // User Model (Phase 11 — core profile; Phase 12 — learned beliefs)
 export {

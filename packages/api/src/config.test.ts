@@ -60,6 +60,11 @@ describe('loadConfig', () => {
     expect(config.devBypassEmail).toBe('dev@cobble.local');
   });
 
+  it('accepts service_token mode with no extra env secret (the registry is the source of truth)', () => {
+    const config = loadConfig({ ...base, ...fakeProviders, AUTH_MODE: 'service_token' });
+    expect(config.authMode).toBe('service_token');
+  });
+
   it('requires an OpenRouter key when the LLM provider is openrouter', () => {
     expect(() =>
       loadConfig({

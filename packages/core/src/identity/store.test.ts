@@ -68,6 +68,60 @@ describe('DrizzleIdentityStore', () => {
     expect(second.id).toBe(first.id);
   });
 
+  it('ensureUserByClaim provisions a service user keyed by (client_id, external_id), no email', async () => {
+    const externalId = '11111111-2222-4333-8444-555555555555';
+    const user = await identity.ensureUserByClaim({
+      authSource: 'service',
+      clientId: 'sprout',
+      externalId,
+    });
+    expect(user.authSource).toBe('service');
+    expect(user.serviceClientId).toBe('sprout');
+    expect(user.externalId).toBe(externalId);
+    expect(user.email).toBeNull();
+  });
+
+  it('ensureUserByClaim is idempotent for a service claim', async () => {
+    const claim = {
+      authSource: 'service',
+      clientId: 'sprout',
+      externalId: '22222222-3333-4444-8555-666666666666',
+    } as const;
+    const first = await identity.ensureUserByClaim(claim);
+    const second = await identity.ensureUserByClaim(claim);
+    expect(second.id).toBe(first.id);
+  });
+
+  it('namespaces external_id by client_id (same id, different client = different user)', async () => {
+    const externalId = '33333333-4444-4555-8666-777777777777';
+    const sprout = await identity.ensureUserByClaim({
+      authSource: 'service',
+      clientId: 'sprout',
+      externalId,
+    });
+    const acme = await identity.ensureUserByClaim({
+      authSource: 'service',
+      clientId: 'acme',
+      externalId,
+    });
+    expect(acme.id).not.toBe(sprout.id);
+  });
+
+  it('keeps google and service identities distinct', async () => {
+    const google = await identity.ensureUserByClaim({
+      authSource: 'google',
+      email: 'shared@example.com',
+    });
+    const service = await identity.ensureUserByClaim({
+      authSource: 'service',
+      clientId: 'sprout',
+      externalId: '44444444-5555-4666-8777-888888888888',
+    });
+    expect(service.id).not.toBe(google.id);
+    expect(google.externalId).toBeNull();
+    expect(service.email).toBeNull();
+  });
+
   // The user's NAME moved out of `users` to a Tier-1 `user_fact` — its seed/set-once/
   // resurrection behaviour is now covered by user-model/store.test.ts (`seedName`).
 

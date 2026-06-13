@@ -30,6 +30,22 @@ describe('auth routes (Google)', () => {
     expect(me.json().user.email).toBe('ada@example.com');
   });
 
+  it('identifies a service consumer user via /auth/me with a null email', async () => {
+    const externalId = '44444444-5555-4666-8777-888888888888';
+    const token = `svc-${externalId}`;
+    ctx.tokenVerifier.set(token, {
+      ok: true,
+      identity: { authSource: 'service', clientId: 'sprout', externalId },
+    });
+    const me = await ctx.app.inject({
+      method: 'GET',
+      url: '/auth/me',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(me.statusCode).toBe(200);
+    expect(me.json().user.email).toBeNull();
+  });
+
   it('rejects /auth/me without a token', async () => {
     const res = await ctx.app.inject({ method: 'GET', url: '/auth/me' });
     expect(res.statusCode).toBe(401);
