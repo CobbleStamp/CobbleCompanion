@@ -1,9 +1,10 @@
 import type { ServiceRegistry } from '@cobble/core';
 import { describe, expect, it } from 'vitest';
 import {
-  DevBypassVerifier,
+  CompositeVerifier,
   GoogleIdTokenVerifier,
   ServiceTokenVerifier,
+  type AuthClaims,
   type AuthRequest,
   type TokenVerifier,
 } from './jwt-verifier.js';
@@ -26,15 +27,6 @@ function fakeRegistry(clientId: string, secret: string): ServiceRegistry {
     authenticate: async (c, s) => c === clientId && s === secret,
   };
 }
-
-describe('DevBypassVerifier', () => {
-  it('resolves to the configured google email for any request', async () => {
-    const verifier: TokenVerifier = new DevBypassVerifier('dev@cobble.local');
-    const claims = await verifier.verify(authReq({ authorization: 'Bearer anything' }));
-    expect(claims.ok).toBe(true);
-    expect(claims).toMatchObject({ identity: { authSource: 'google', email: 'dev@cobble.local' } });
-  });
-});
 
 describe('GoogleIdTokenVerifier', () => {
   it('returns a failure (does not throw) for a malformed token, without touching the network', async () => {
@@ -126,5 +118,53 @@ describe('ServiceTokenVerifier', () => {
   it('rejects a non-UUID X-User-Id with 400', async () => {
     const claims = await verifier.verify(authReq({ ...creds, 'x-user-id': 'not-a-uuid' }));
     expect(claims).toMatchObject({ ok: false, failure: { status: 400 } });
+  });
+});
+
+describe('CompositeVerifier', () => {
+  /** A verifier that records it was called and returns a tagged identity. */
+  function tagged(label: string): TokenVerifier & { called: boolean } {
+    const stub = {
+      called: false,
+      async verify(): Promise<AuthClaims> {
+        stub.called = true;
+        return { ok: true, identity: { authSource: 'google', email: `${label}@x` } };
+      },
+    };
+    return stub;
+  }
+
+  it('routes a request carrying X-Service-Client-Id to the service verifier', async () => {
+    const google = tagged('google');
+    const service = tagged('service');
+    const composite = new CompositeVerifier(google, service);
+    const claims = await composite.verify(
+      authReq({ authorization: `Bearer ${SECRET}`, 'x-service-client-id': CLIENT }),
+    );
+    expect(service.called).toBe(true);
+    expect(google.called).toBe(false);
+    expect(claims).toMatchObject({ identity: { email: 'service@x' } });
+  });
+
+  it('does NOT fall through to the browser scheme when service auth fails', async () => {
+    const google = tagged('google');
+    const failingService: TokenVerifier = {
+      async verify(): Promise<AuthClaims> {
+        return { ok: false, failure: { status: 401, kind: 'invalid', message: 'bad creds' } };
+      },
+    };
+    const composite = new CompositeVerifier(google, failingService);
+    const claims = await composite.verify(authReq({ 'x-service-client-id': 'stranger' }));
+    expect(google.called).toBe(false);
+    expect(claims).toMatchObject({ ok: false, failure: { message: 'bad creds' } });
+  });
+
+  it('routes a plain bearer (no service header) to Google', async () => {
+    const google = tagged('google');
+    const service = tagged('service');
+    const composite = new CompositeVerifier(google, service);
+    await composite.verify(authReq({ authorization: 'Bearer some-google-jwt' }));
+    expect(google.called).toBe(true);
+    expect(service.called).toBe(false);
   });
 });

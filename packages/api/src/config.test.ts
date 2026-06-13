@@ -20,7 +20,6 @@ describe('loadConfig', () => {
     expect(config.llmProvider).toBe('fake');
     expect(config.port).toBe(3000);
     expect(config.appUrl).toBe('http://localhost:3001');
-    expect(config.authMode).toBe('google');
     expect(config.isProduction).toBe(false);
     expect(config.embeddingModel).toBe('perplexity/pplx-embed-v1-0.6b');
     expect(config.embeddingDimensions).toBe(1024);
@@ -41,28 +40,19 @@ describe('loadConfig', () => {
     expect(config.startingVitalityTokens).toBe(50000);
   });
 
-  it('requires GOOGLE_CLIENT_ID when AUTH_MODE=google', () => {
+  it('requires GOOGLE_CLIENT_ID (Google is the browser scheme)', () => {
     expect(() =>
       loadConfig({
         DATABASE_URL: 'postgres://localhost/cobble',
         ...fakeProviders,
       }),
-    ).toThrow();
+    ).toThrow(/GOOGLE_CLIENT_ID is required/);
   });
 
-  it('allows a missing GOOGLE_CLIENT_ID in dev_bypass mode', () => {
-    const config = loadConfig({
-      DATABASE_URL: 'postgres://localhost/cobble',
-      ...fakeProviders,
-      AUTH_MODE: 'dev_bypass',
-    });
-    expect(config.authMode).toBe('dev_bypass');
-    expect(config.devBypassEmail).toBe('dev@cobble.local');
-  });
-
-  it('accepts service_token mode with no extra env secret (the registry is the source of truth)', () => {
-    const config = loadConfig({ ...base, ...fakeProviders, AUTH_MODE: 'service_token' });
-    expect(config.authMode).toBe('service_token');
+  it('runs in production with Google + service-token auth', () => {
+    const config = loadConfig({ ...base, ...fakeProviders, NODE_ENV: 'production' });
+    expect(config.isProduction).toBe(true);
+    expect(config.googleClientId).toBe('test-google-client-id');
   });
 
   it('requires an OpenRouter key when the LLM provider is openrouter', () => {

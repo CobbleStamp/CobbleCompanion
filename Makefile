@@ -36,9 +36,9 @@ ci: ## Run the full CI verify job locally (lint + typecheck + coverage gate)
 
 run-docker: ## Build + run the full stack (Postgres + migrate + API + web) in Docker
 	@test -f .env || { echo "✗ .env not found. Run: cp .env.example .env"; \
-	  echo "  (Compose reads .env for GOOGLE_CLIENT_ID, OPENROUTER_API_KEY, AUTH_MODE.)"; exit 1; }
-	@if grep -Eq '^AUTH_MODE=google' .env && ! grep -Eq '^GOOGLE_CLIENT_ID=.+' .env; then \
-	  echo "⚠  AUTH_MODE=google but GOOGLE_CLIENT_ID is empty in .env — sign-in will fail."; fi
+	  echo "  (Compose reads .env for GOOGLE_CLIENT_ID, OPENROUTER_API_KEY.)"; exit 1; }
+	@if ! grep -Eq '^GOOGLE_CLIENT_ID=.+' .env; then \
+	  echo "⚠  GOOGLE_CLIENT_ID is empty in .env — the API will not boot (sign-in scheme)."; fi
 	@echo "→ bringing up Postgres + API (migrates on boot) + web"
 	@echo "  open http://localhost:3001  ·  API on http://localhost:3000"
 	@echo "  Google sign-in needs http://localhost:3001 in the OAuth client's Authorized JavaScript origins."

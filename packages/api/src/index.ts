@@ -69,7 +69,7 @@ import {
 } from '@cobble/core';
 import { buildApp } from './app.js';
 import {
-  DevBypassVerifier,
+  CompositeVerifier,
   GoogleIdTokenVerifier,
   ServiceTokenVerifier,
   type TokenVerifier,
@@ -95,15 +95,14 @@ function createEmbeddingGateway(config: AppConfig): EmbeddingGateway {
   return new OpenRouterEmbeddingGateway({ apiKey: config.openrouterApiKey });
 }
 
+// Both schemes are live at once; the composite routes each request by its credentials
+// (jwt-verifier.ts): service callers by the X-Service-Client-Id header, browser bearers
+// to Google.
 function createTokenVerifier(config: AppConfig, db: Database): TokenVerifier {
-  switch (config.authMode) {
-    case 'dev_bypass':
-      return new DevBypassVerifier(config.devBypassEmail);
-    case 'service_token':
-      return new ServiceTokenVerifier(new DrizzleServiceRegistry(db));
-    case 'google':
-      return new GoogleIdTokenVerifier(config.googleClientId);
-  }
+  return new CompositeVerifier(
+    new GoogleIdTokenVerifier(config.googleClientId),
+    new ServiceTokenVerifier(new DrizzleServiceRegistry(db)),
+  );
 }
 
 async function main(): Promise<void> {

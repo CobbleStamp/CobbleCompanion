@@ -82,7 +82,7 @@ erDiagram
 | Field | Type | Notes |
 |---|---|---|
 | `id` | uuid (PK) | |
-| `auth_source` | text, default `google` | how this user authenticates: `google` (Google Sign-In / `dev_bypass` — email-keyed) \| `service` (a server-to-server consumer such as Sprout — keyed by `(service_client_id, external_id)`). Selected per-user; distinct from the server-wide `AUTH_MODE` (§3) |
+| `auth_source` | text, default `google` | how this user authenticates: `google` (Google Sign-In — email-keyed) \| `service` (a server-to-server consumer such as Sprout — keyed by `(service_client_id, external_id)`). Set per-user from the credentials each request carries — auth is per-request, not a server-wide mode (§5) |
 | `service_client_id` | text, nullable | the owning consumer (`service_registry.client_id`) when `auth_source = service`; null for `google`. Namespaces `external_id` so two consumers can reuse the same id without colliding |
 | `external_id` | text, nullable | the consumer's opaque user id (e.g. a Sprout UUID) when `auth_source = service`; null for `google`. Unique within `(auth_source, service_client_id)` |
 | `email` | text, nullable, unique | login identity when `auth_source = google`; null for `service` (a service user has no email) |
@@ -115,7 +115,7 @@ Server-to-server consumer credentials (§5). One row per `(client_id, secret)`, 
 > `email_verified === true`). The token's `name` claim (profile name, **unverified** — used only to
 > seed what the companion calls the user, never for identity/authorization) seeds a Tier-1 `name`
 > `user_fact` with `source = auth_seed` on first provision; a name stated or edited later supersedes
-> it. With `AUTH_MODE=service_token` a trusted server-to-server consumer authenticates instead with a
+> it. A trusted server-to-server consumer (routed by its `X-Service-Client-Id` header) authenticates instead with a
 > `(client_id, secret)` pair validated against the `service_registry` table and names the user via an
 > `X-User-Id` header; the row is provisioned by `(service_client_id, external_id)` rather than
 > `email`, and an optional `X-User-Name` header plays the seed role the Google `name` claim does.
@@ -827,10 +827,8 @@ Loaded from environment / a secret manager; required values validated at startup
 | `LLM_PROVIDER` | Selects the gateway backend: `openrouter` (default) \| `fake` |
 | `OPENROUTER_API_KEY` | LLM provider credential (secret — required when provider=`openrouter`) |
 | `LLM_MODEL` | Model id passed to the provider |
-| `AUTH_MODE` | `google` (default) \| `dev_bypass` (local/test — skips Google) \| `service_token` (server-to-server: a trusted backend calls on behalf of its own users — credentials live in the `service_registry` table, provisioned via the CLI or seeded from `SERVICE_REGISTRY_SEEDS`; §5) |
 | `SERVICE_REGISTRY_SEEDS` | JSON array of `{ client_id, secret, secret_type?, label? }` provisioned into `service_registry` on launch (additive + idempotent; §5). Default `[]`. Secrets are deployment-managed — never committed |
-| `GOOGLE_CLIENT_ID` | OAuth Web client ID — public, served to the SPA and used as the API's ID-token audience (required when `AUTH_MODE=google`) |
-| `DEV_BYPASS_EMAIL` | Identity resolved in `dev_bypass` mode |
+| `GOOGLE_CLIENT_ID` | OAuth Web client ID — public, served to the SPA and used as the API's ID-token audience. **Required** — Google Sign-In is the browser scheme (auth is per-request: Google + service-token coexist, §5) |
 | `APP_URL` | Web client origin (allowed CORS origin for local cross-origin dev) |
 | `PORT` | Server port (Cloud Run injects this) |
 | `EMBEDDING_PROVIDER` | `openrouter` (default) \| `fake` (tests/offline dev) |
@@ -896,17 +894,22 @@ the extractor, not as env (`companion-memory.md` §4).
 Implements the trust-model boundaries in `architecture.md` §8.
 
 - **Secrets** — never hardcoded; loaded from env / secret manager; presence validated at startup.
-- **Authentication** — **Google Sign-In** (Google as the OIDC provider). The SPA uses Google
-  Identity Services (`@react-oauth/google`) to obtain a Google **ID token** and sends it as a
-  `Bearer` header; the Fastify API validates the RS256 token against Google's JWKS
+- **Authentication** — **per-request, not a server-wide mode.** Every scheme is live at once and a
+  request is routed by the credentials it carries (a composite verifier dispatches on the
+  `X-Service-Client-Id` header — unique to service callers — else treats the request as a browser
+  bearer). So a Google-token browser client and a service-token backend hit the same endpoints
+  simultaneously. The browser sign-in is **Google Sign-In** (Google as the OIDC provider):
+  the SPA uses Google Identity Services (`@react-oauth/google`) to obtain a Google **ID token** and
+  sends it as a `Bearer` header; the Fastify API validates the RS256 token against Google's JWKS
   (issuer `accounts.google.com`, audience = `GOOGLE_CLIENT_ID`, expiry, `jose`), requires
   `email_verified === true`, and JIT-provisions the user from the verified `email` claim.
-  `AUTH_MODE=dev_bypass` skips all of this for local dev/tests. (ID tokens last ~1h, with no refresh
+  (ID tokens last ~1h, with no refresh
   token, so a session lasts within that window.) An **expired** token is an expected client condition,
   not a server fault: the API guard classifies `jose`'s `ERR_JWT_EXPIRED` and logs it at `info`
   (no stack), reserving `error`-level logs for genuine verification anomalies (bad signature, wrong
   audience, missing claims).
-- **Service-to-service auth** (`AUTH_MODE=service_token`) — a trusted backend consumer (e.g. Sprout)
+- **Service-to-service auth** — always live alongside Google (no mode switch); a request is routed
+  here whenever it carries the `X-Service-Client-Id` header. A trusted backend consumer (e.g. Sprout)
   calls CobbleCompanion on behalf of its own anonymous-UUID users. It sends `X-Service-Client-Id:
   <client_id>`, `Authorization: Bearer <secret>`, and `X-User-Id: <uuid>` on every request. The API
   validates the `(client_id, secret)` pair against the **`service_registry`** table — a constant-time

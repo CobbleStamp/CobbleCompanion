@@ -22,7 +22,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: api
-    # App config (AUTH_MODE, GOOGLE_CLIENT_ID, LLM_*, DEV_BYPASS_EMAIL) is loaded
+    # App config (GOOGLE_CLIENT_ID, LLM_*, OPENROUTER_API_KEY) is loaded
     # straight from .env — env_file is NOT shadowed by stray host-shell exports,
     # unlike ${VAR} interpolation, so .env is the single source of truth.
     env_file:

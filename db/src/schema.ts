@@ -83,10 +83,11 @@ export const users = pgTable(
   'users',
   {
     id: uuid('id').defaultRandom().primaryKey(),
-    // How this user authenticates: `google` (Google Sign-In, or `dev_bypass`) is
+    // How this user authenticates: `google` (Google Sign-In) is
     // email-keyed; `service` (a trusted server-to-server consumer such as Sprout) is
-    // external_id-keyed. Per-user — distinct from the server-wide `AUTH_MODE`
-    // (implementation.md §3). Defaults to `google` so existing rows backfill cleanly.
+    // external_id-keyed. Set per-user from the credentials each request carries —
+    // auth is per-request, not a server-wide mode (implementation.md §5). Defaults to
+    // `google` so existing rows backfill cleanly.
     authSource: text('auth_source').notNull().default('google'),
     // The service consumer this user belongs to (the `service_registry.client_id`)
     // when `auth_source = 'service'`; null for `google`. Scopes `external_id` so two

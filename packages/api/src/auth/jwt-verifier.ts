@@ -39,9 +39,9 @@ export type AuthClaims =
 
 /**
  * Authenticates a request and returns its claims. This is the testability seam
- * (fakes-over-mocks): production uses `GoogleIdTokenVerifier` or
- * `ServiceTokenVerifier` (by `AUTH_MODE`), tests inject a fake, and local dev uses
- * `DevBypassVerifier`.
+ * (fakes-over-mocks): `GoogleIdTokenVerifier` and `ServiceTokenVerifier` are composed
+ * behind a {@link CompositeVerifier} (both schemes live at once), and unit tests inject
+ * a fake.
  */
 export interface TokenVerifier {
   verify(request: AuthRequest): Promise<AuthClaims>;
@@ -128,7 +128,7 @@ export class GoogleIdTokenVerifier implements TokenVerifier {
 const serviceUserId = z.string().uuid();
 
 /**
- * Server-to-server auth (`AUTH_MODE=service_token`): a trusted backend consumer (e.g.
+ * Server-to-server auth: a trusted backend consumer (e.g.
  * Sprout) calls on behalf of its own anonymous-UUID users. It sends
  * `X-Service-Client-Id: <client_id>`, `Authorization: Bearer <secret>`, and
  * `X-User-Id: <uuid>` (plus optional `X-User-Name`). The (client_id, secret) pair is
@@ -162,11 +162,25 @@ export class ServiceTokenVerifier implements TokenVerifier {
   }
 }
 
-/** Local/dev verifier: accepts any request and resolves to a fixed email identity. */
-export class DevBypassVerifier implements TokenVerifier {
-  constructor(private readonly email: string) {}
+/**
+ * Authentication is per-request, not a server-wide mode: both schemes are live at once
+ * and a request routes by the credentials it carries. A service consumer self-identifies
+ * with `X-Service-Client-Id` — a header no other scheme uses — so its presence routes
+ * unambiguously to the service verifier, and we do **not** fall through to the browser
+ * scheme on failure (the caller declared intent; falling through would mask a bad service
+ * credential as a missing user token). Otherwise the request is a browser bearer, verified
+ * as a Google ID token.
+ */
+export class CompositeVerifier implements TokenVerifier {
+  constructor(
+    private readonly google: TokenVerifier,
+    private readonly service: TokenVerifier,
+  ) {}
 
-  async verify(): Promise<AuthClaims> {
-    return { ok: true, identity: { authSource: 'google', email: this.email } };
+  verify(request: AuthRequest): Promise<AuthClaims> {
+    if (request.header('x-service-client-id') !== undefined) {
+      return this.service.verify(request);
+    }
+    return this.google.verify(request);
   }
 }

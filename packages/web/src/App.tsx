@@ -2,7 +2,6 @@ import { googleLogout } from '@react-oauth/google';
 import type { CompanionDto } from '@cobble/shared';
 import { useEffect, useState } from 'react';
 import { fetchCurrentUser, listCompanions, setAccessTokenGetter } from './api/client.js';
-import type { AuthMode } from './auth/config.js';
 import { clearStoredToken, loadStoredToken, storeToken } from './auth/session.js';
 import { Activity } from './pages/Activity.js';
 import { Chat } from './pages/Chat.js';
@@ -12,20 +11,8 @@ import { MemoryBrowser } from './pages/MemoryBrowser.js';
 import { SignIn } from './pages/SignIn.js';
 import { Sources } from './pages/Sources.js';
 
-interface AppProps {
-  readonly authMode: AuthMode;
-}
-
-/** Top-level entry: Google owns the signed-out gate; dev_bypass skips it. */
-export function App({ authMode }: AppProps): JSX.Element {
-  if (authMode === 'dev_bypass') {
-    return <DevBypassApp />;
-  }
-  return <GoogleApp />;
-}
-
 /**
- * google mode: gate the companion flow behind Google Sign-In. The ID token from
+ * Top-level entry: gate the companion flow behind Google Sign-In. The ID token from
  * the <GoogleLogin> credential is sent as the bearer on every request (stateless
  * — the API verifies it against Google's JWKS). It is persisted to
  * `sessionStorage` so a page refresh restores the session instead of bouncing
@@ -33,7 +20,7 @@ export function App({ authMode }: AppProps): JSX.Element {
  * ./auth/session.ts). The lazy initializer wires the token getter synchronously
  * on first render, before <CompanionFlow> mounts and calls fetchCurrentUser.
  */
-function GoogleApp(): JSX.Element {
+export function App(): JSX.Element {
   const [idToken, setIdToken] = useState<string | null>(() => {
     const restored = loadStoredToken();
     if (restored !== null) {
@@ -63,14 +50,6 @@ function GoogleApp(): JSX.Element {
       }}
     />
   );
-}
-
-/** dev_bypass mode: no Google provider; send a dummy bearer the API ignores. */
-function DevBypassApp(): JSX.Element {
-  useEffect(() => {
-    setAccessTokenGetter(async () => 'dev');
-  }, []);
-  return <CompanionFlow onSignOut={() => window.location.reload()} />;
 }
 
 type Status = 'loading' | 'no-companion' | 'ready';

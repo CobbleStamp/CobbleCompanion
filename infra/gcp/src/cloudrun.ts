@@ -65,7 +65,7 @@ export const api = new gcp.cloudrunv2.Service(
           resources: { limits: { cpu: '1', memory: '512Mi' } },
           envs: [
             { name: 'NODE_ENV', value: 'production' },
-            { name: 'AUTH_MODE', value: 'google' },
+            // Auth is per-request: Google (browser) + service-token coexist, no mode env.
             { name: 'GOOGLE_CLIENT_ID', value: googleClientId },
             { name: 'LLM_PROVIDER', value: 'openrouter' },
             { name: 'LLM_MODEL', value: llmModel },

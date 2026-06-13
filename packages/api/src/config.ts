@@ -21,16 +21,14 @@ export function pathsOverlap(a: string, b: string): boolean {
 }
 
 /**
- * Authentication mode. `google` (default) gates the app behind Google Sign-In:
- * the SPA obtains a Google ID token and the API verifies it as a bearer JWT
- * against Google's JWKS. `dev_bypass` skips Google entirely so the app can run
- * locally and in tests with no live provider. `service_token` is server-to-server:
- * a trusted backend consumer authenticates with a `(client_id, secret)` pair validated
- * against the `service_registry` table and names the acting user via an `X-User-Id`
- * header (no env secret — the registry is the source of truth). Default is `google`,
- * so production is never accidentally open.
+ * Authentication is **per-request**, not a server-wide mode — both schemes are
+ * always live and a request is routed by the credentials it carries (the composite
+ * verifier, jwt-verifier.ts). Google Sign-In (a bearer Google ID token, verified
+ * against Google's JWKS) and `service_token` (a trusted backend's `(client_id,
+ * secret)` pair validated against the `service_registry`, naming the acting user via
+ * `X-User-Id`) coexist on one server: a browser client and a backend consumer hit the
+ * same endpoints simultaneously.
  */
-export type AuthMode = 'google' | 'dev_bypass' | 'service_token';
 
 /**
  * Runtime configuration (implementation.md §3). Required secrets are validated at
@@ -87,9 +85,7 @@ export interface AppConfig {
    */
   readonly cliScratchDir: string;
   readonly appUrl: string;
-  readonly authMode: AuthMode;
   readonly googleClientId: string;
-  readonly devBypassEmail: string;
   readonly port: number;
   readonly isProduction: boolean;
   // Online tracing (Phase C, runbook-tracing.md). Default OFF + strict + 0-rate,
@@ -143,10 +139,9 @@ const envSchema = z
     // Root for per-tenant ephemeral CLI working dirs; empty → the OS temp dir.
     CLI_SCRATCH_DIR: z.string().default(''),
     APP_URL: z.string().url().default('http://localhost:3001'),
-    AUTH_MODE: z.enum(['google', 'dev_bypass', 'service_token']).default('google'),
-    // Public OAuth Web client ID — shipped to the browser, not a secret.
+    // Public OAuth Web client ID — shipped to the browser, not a secret. Required:
+    // Google Sign-In is the browser scheme (validated below).
     GOOGLE_CLIENT_ID: z.string().default(''),
-    DEV_BYPASS_EMAIL: z.string().email().default('dev@cobble.local'),
     PORT: z.coerce.number().int().positive().default(3000),
     NODE_ENV: z.string().default('development'),
     TRACING_PROVIDER: z.enum(['none', 'langfuse']).default('none'),
@@ -182,10 +177,11 @@ const envSchema = z
         path: ['OPENROUTER_API_KEY'],
       });
     }
-    if (env.AUTH_MODE === 'google' && env.GOOGLE_CLIENT_ID.length === 0) {
+    // Google Sign-In is the browser scheme, so the OAuth client id is always required.
+    if (env.GOOGLE_CLIENT_ID.length === 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'GOOGLE_CLIENT_ID is required when AUTH_MODE=google',
+        message: 'GOOGLE_CLIENT_ID is required',
         path: ['GOOGLE_CLIENT_ID'],
       });
     }
@@ -305,9 +301,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     cliToolsPath: parsed.CLI_TOOLS_PATH,
     cliScratchDir: parsed.CLI_SCRATCH_DIR,
     appUrl: parsed.APP_URL,
-    authMode: parsed.AUTH_MODE,
     googleClientId: parsed.GOOGLE_CLIENT_ID,
-    devBypassEmail: parsed.DEV_BYPASS_EMAIL,
     port: parsed.PORT,
     isProduction: parsed.NODE_ENV === 'production',
     tracingProvider: parsed.TRACING_PROVIDER,
