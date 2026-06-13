@@ -1,7 +1,7 @@
 import { tmpdir } from 'node:os';
 import { isAbsolute, relative, resolve } from 'node:path';
 import type { McpWhitelistEntry, RedactionMode } from '@cobble/core';
-import { DEFAULT_STARTING_VITALITY_TOKENS } from '@cobble/db';
+import { DEFAULT_STARTING_VITALITY_TOKENS, type ServiceCredentialSeed } from '@cobble/db';
 import { z } from 'zod';
 
 /**
@@ -64,6 +64,13 @@ export interface AppConfig {
    * runtime tool acquisition off, so behaviour is unchanged unless servers are listed.
    */
   readonly mcpServers: readonly McpWhitelistEntry[];
+  /**
+   * Server-to-server consumer credentials to provision on launch (implementation.md §5).
+   * Parsed from `SERVICE_REGISTRY_SEEDS` (a JSON array of `{ client_id, secret, secret_type?,
+   * label? }`). Seeding is additive + idempotent: each pair is inserted once and re-seeding
+   * is a no-op. Empty (default) seeds nothing — the CLI remains the path for provisioning.
+   */
+  readonly serviceRegistrySeeds: readonly ServiceCredentialSeed[];
   /** Max tools a companion may carry equipped at once; the LRU evicts beyond it
    *  (companion-tools.md §4). Only meaningful when tool acquisition is configured. */
   readonly maxEquippedTools: number;
@@ -123,6 +130,10 @@ const envSchema = z
     // The MCP server whitelist as a JSON array (companion-tools.md §6); default
     // empty so runtime tool acquisition is off unless an operator lists servers.
     MCP_SERVERS: z.string().default('[]'),
+    // Server-to-server consumer credentials to provision on launch (implementation.md §5),
+    // as a JSON array of { client_id, secret, secret_type?, label? }. Default empty seeds
+    // nothing. Secrets are never committed — supply via the deployment environment.
+    SERVICE_REGISTRY_SEEDS: z.string().default('[]'),
     // Max tools a companion carries equipped at once (companion-tools.md §4); the
     // LRU evicts the least-recently-used tool beyond this.
     MAX_EQUIPPED_TOOLS: z.coerce.number().int().positive().default(8),
@@ -236,6 +247,42 @@ function parseMcpServers(raw: string): readonly McpWhitelistEntry[] {
     }));
 }
 
+/**
+ * One service-registry seed as it appears in the `SERVICE_REGISTRY_SEEDS` JSON array.
+ * `client_id`/`secret_type` use the registry's snake_case vocabulary (matching the
+ * `X-Service-Client-Id` header and the `service_registry` column); they normalize to the
+ * camelCase `ServiceCredentialSeed` shape below.
+ */
+const serviceSeedSchema = z.object({
+  client_id: z.string().min(1),
+  secret: z.string().min(1),
+  secret_type: z.string().min(1).optional(),
+  label: z.string().optional(),
+});
+
+/** Parse + validate the `SERVICE_REGISTRY_SEEDS` JSON; throws a clear error on bad input. */
+function parseServiceRegistrySeeds(raw: string): readonly ServiceCredentialSeed[] {
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch {
+    throw new Error(
+      'SERVICE_REGISTRY_SEEDS must be a JSON array of { client_id, secret, secret_type?, label? }',
+    );
+  }
+  // Conditional spreads omit optional keys (not set to `undefined`) — required under
+  // exactOptionalPropertyTypes.
+  return z
+    .array(serviceSeedSchema)
+    .parse(json)
+    .map((seed) => ({
+      clientId: seed.client_id,
+      secret: seed.secret,
+      ...(seed.secret_type !== undefined ? { secretType: seed.secret_type } : {}),
+      ...(seed.label !== undefined ? { label: seed.label } : {}),
+    }));
+}
+
 /** Load and validate config from the environment; throws on invalid config. */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const parsed = envSchema.parse(env);
@@ -253,6 +300,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     ingestionQueueMax: parsed.INGESTION_QUEUE_MAX,
     startingVitalityTokens: parsed.STARTING_VITALITY_TOKENS,
     mcpServers: parseMcpServers(parsed.MCP_SERVERS),
+    serviceRegistrySeeds: parseServiceRegistrySeeds(parsed.SERVICE_REGISTRY_SEEDS),
     maxEquippedTools: parsed.MAX_EQUIPPED_TOOLS,
     cliToolsPath: parsed.CLI_TOOLS_PATH,
     cliScratchDir: parsed.CLI_SCRATCH_DIR,

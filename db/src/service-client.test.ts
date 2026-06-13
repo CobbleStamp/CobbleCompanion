@@ -2,7 +2,12 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Database } from './client.js';
 import { serviceRegistry } from './schema.js';
-import { addCredential, listCredentials, revokeCredential } from './service-client.js';
+import {
+  addCredential,
+  listCredentials,
+  revokeCredential,
+  seedCredentials,
+} from './service-client.js';
 import { createTestDatabase } from './testing.js';
 
 describe('service-client commands', () => {
@@ -62,6 +67,61 @@ describe('service-client commands', () => {
       const sproutOnly = await listCredentials(db, 'sprout');
       expect(sproutOnly).toHaveLength(1);
       expect(sproutOnly[0]?.clientId).toBe('sprout');
+    });
+  });
+
+  describe('seedCredentials', () => {
+    it('inserts each configured credential with the right fields', async () => {
+      const { inserted, skipped } = await seedCredentials(db, [
+        { clientId: 'sprout', secret: 'sprout-secret', label: 'seed' },
+        { clientId: 'acme', secret: 'acme-secret' },
+      ]);
+      expect({ inserted, skipped }).toEqual({ inserted: 2, skipped: 0 });
+
+      const [row] = await db
+        .select()
+        .from(serviceRegistry)
+        .where(eq(serviceRegistry.clientId, 'sprout'));
+      expect(row).toMatchObject({
+        clientId: 'sprout',
+        secret: 'sprout-secret',
+        secretType: 'plaintext',
+        label: 'seed',
+      });
+      expect(row?.revokedAt).toBeNull();
+    });
+
+    it('is idempotent — re-seeding the same pairs inserts nothing', async () => {
+      const seeds = [{ clientId: 'sprout', secret: 'sprout-secret' }];
+      const first = await seedCredentials(db, seeds);
+      const second = await seedCredentials(db, seeds);
+      expect(first).toEqual({ inserted: 1, skipped: 0 });
+      expect(second).toEqual({ inserted: 0, skipped: 1 });
+      expect(await listCredentials(db, 'sprout')).toHaveLength(1);
+    });
+
+    it('inserts a second secret for an existing client (overlap rotation)', async () => {
+      await seedCredentials(db, [{ clientId: 'sprout', secret: 'old-secret' }]);
+      const result = await seedCredentials(db, [
+        { clientId: 'sprout', secret: 'old-secret' },
+        { clientId: 'sprout', secret: 'new-secret' },
+      ]);
+      expect(result).toEqual({ inserted: 1, skipped: 1 });
+      expect(await listCredentials(db, 'sprout')).toHaveLength(2);
+    });
+
+    it('honors an explicit secret_type', async () => {
+      await seedCredentials(db, [{ clientId: 'sprout', secret: 'deadbeef', secretType: 'sha256' }]);
+      const [row] = await db
+        .select()
+        .from(serviceRegistry)
+        .where(eq(serviceRegistry.clientId, 'sprout'));
+      expect(row?.secretType).toBe('sha256');
+    });
+
+    it('is a no-op for an empty seed list', async () => {
+      expect(await seedCredentials(db, [])).toEqual({ inserted: 0, skipped: 0 });
+      expect(await listCredentials(db)).toHaveLength(0);
     });
   });
 

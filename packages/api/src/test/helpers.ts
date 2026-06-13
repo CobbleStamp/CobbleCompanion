@@ -115,6 +115,7 @@ export const testConfig: AppConfig = {
   ingestionQueueMax: 100,
   startingVitalityTokens: 1_000_000,
   mcpServers: [],
+  serviceRegistrySeeds: [],
   maxEquippedTools: 8,
   cliToolsPath: '',
   cliScratchDir: '',

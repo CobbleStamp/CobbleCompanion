@@ -4,7 +4,7 @@
  * starts the Fastify server.
  */
 
-import { createPgDatabase, EMBEDDING_DIMENSIONS, type Database } from '@cobble/db';
+import { createPgDatabase, EMBEDDING_DIMENSIONS, seedCredentials, type Database } from '@cobble/db';
 import {
   composeRetrieveContext,
   ConsolidationRunner,
@@ -115,6 +115,19 @@ async function main(): Promise<void> {
     );
   }
   const { db } = createPgDatabase(config.databaseUrl);
+
+  // Provision configured server-to-server consumer credentials (implementation.md §5):
+  // additive + idempotent, so re-seeding the same pairs each launch is a no-op. A failing
+  // insert means a real DB problem, so let it propagate and fail boot (unlike the
+  // best-effort catalog refresh below). Only counts are logged — never a secret.
+  if (config.serviceRegistrySeeds.length > 0) {
+    const { inserted, skipped } = await seedCredentials(db, config.serviceRegistrySeeds);
+    consoleLogger.info('service registry seeded', {
+      operation: 'service-registry.seed',
+      inserted,
+      skipped,
+    });
+  }
 
   // New companions get both vitality wallets seeded from STARTING_VITALITY_TOKENS.
   const identity = new DrizzleIdentityStore(db, {

@@ -66,6 +66,12 @@ then send `X-Service-Client-Id: <client_id>`, `Authorization: Bearer <secret>`, 
 instead of a Google ID token. Rotate with another `service add` and `service revoke <id>` (see
 `docs/implementation.md` §5).
 
+To provision consumer credentials declaratively on launch instead of running the CLI, set
+`SERVICE_REGISTRY_SEEDS` to a JSON array of `{ client_id, secret, secret_type?, label? }` — e.g.
+`SERVICE_REGISTRY_SEEDS='[{"client_id":"sprout","secret":"<secret>","label":"seed"}]'`. Seeding is
+additive and idempotent (each pair is inserted once; re-seeding is a no-op), and never revokes rows
+it didn't seed. Secrets are deployment-managed — never commit them.
+
 ## Deployment
 
 Deployed as a single GCP Cloud Run service via Pulumi (the Fastify API serves the built SPA from
