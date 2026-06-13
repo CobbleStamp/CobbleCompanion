@@ -159,7 +159,7 @@ above it. It does five mechanical jobs, all routing/encoding, none inference:
 
 | Role | What the predicate does | Example |
 |---|---|---|
-| **Validation tag** | Extraction validates the predicate against the closed set; an unknown one is **dropped and logged**, never stored (`core/src/user-model/extractor.ts`, mirroring core-type validation in `core/src/ingestion/ontology.ts`). | a belief whose attribute ∉ the Tier-2 set is discarded |
+| **Validation tag** | Extraction validates the predicate against the closed set; an unknown one is **dropped**, never stored (`coerceCandidates` in `core/src/user-model/extractor.ts` filters silently — paralleling the core-type validation in `core/src/ingestion/ontology.ts`, where the enrich path logs the drop). | a belief whose attribute ∉ the Tier-2 set is discarded |
 | **Tier routing** | The predicate alone decides a user-fact's path: **Tier-1** rides the persona prompt every turn; **Tier-2** goes to the retrieval arm and never the always-on prompt (`core/src/harness/context.ts`). | `livesIn` → persona; `prefers` → belief arm |
 | **Cardinality** | Singular vs multi-valued is a property *of the predicate*: singular **supersedes**, multi-valued **accretes** (`MULTI_VALUED_PREDICATES`). | `name` replaces; `languages` accretes |
 | **Polarity** | Sentiment rides the predicate, so no extra column is needed. | `prefers` vs `dislikes` |

@@ -384,7 +384,7 @@ Out of scope for this release; the roadmap is owned by `development-plan.md`. (T
 - `companion-greeting.md` — the **greeting / arrival reaction**: the first `connection`-driven
   *conversational* move (edge-triggered by arrival), which reuses this engine's arbitration, dial,
   and change-as-reward loop.
-- `companion-reactions.md` — **emoji reactions** _(designed, not built)_: a second, *addressed*
+- `companion-reactions.md` — **emoji reactions**: a second, *addressed*
   reward channel that extends §7 — a user reaction resolves an outcome **by `note_message_id`** (no
   differencing needed, since the reaction is pinned to the act), and the companion's own reaction is
   a planned, free expressive agent action.

@@ -866,12 +866,13 @@ as an **addressed, value-created** reward; the companion can react to the user's
   validated at the boundary. `POST`/`DELETE …/messages/:id/reactions`.
 - **Live delivery.** `reaction_added` / `reaction_removed` on the standing event channel (§4e,
   `architecture.md` §6) so a reaction (yours, another surface's, or the companion's) appears live.
-- **User reaction → reward (the inline read).** An event-triggered `ReactionService` runs a contextual
+- **User reaction → reward (the inline read).** An event-triggered `ReactionLearner` runs a contextual
   **value-created** read — _did the companion's act create value?_, **not** a fixed emoji lexicon —
   yielding a reward + note, or `null` (no learning). Resolves the matching `proactive_outcomes` row
   **by `note_message_id`** (belief-driven acts also move the belief's salience); an ordinary-answer
-  reaction nudges **approval/competence** at a smaller α. Also nudges the rolling `companion_affect`
-  (fast-loop attune).
+  reaction nudges **approval/competence** at a smaller α. (Fast-loop attune from a reaction — writing
+  the value-created reward into the rolling `companion_affect` mood — is **deliberately deferred**: a
+  value-created reward is not a mood valence, so it would corrupt attunement; see the Deferred list.)
 - **Companion reaction → expression.** A free, ungated `react` agent-loop action emitted mid-turn
   (react-early-then-work); persists a `reactor='companion'` row, flushed live. Creates **no** outcome.
 
@@ -885,9 +886,13 @@ lexicon) — mitigated by the same `null`-is-not-neutral rule as the affect read
 guard; and not double-counting a reaction against the ambient affect delta (the atomic `reward IS NULL`
 claim already makes first-resolver-wins safe).
 
-**Deferred (designed in `companion-reactions.md` §6/§11, built later):** the **reflection** pass that
-turns accumulated reactions into beliefs/persona (v1 logs the corpus); richer context-sensitive
-*affective* companion reactions; surfacing reactions as a growth-mirror signal.
+**Deferred (designed in `companion-reactions.md` §5/§6/§11, built later):** the two §5 fast-follows —
+request-scoped **`[n]` addressing handles** (reacting to a non-latest message; v1 reacts to the
+current turn only) and reaction **read-back** (a reaction re-entering context on a later turn; v1 sees
+its own reaction only within the emitting turn) — both deferred because they tag the production
+composed recall stack; the **reflection** pass that turns accumulated reactions into beliefs/persona
+(v1 logs the corpus); **fast-loop attune** from a reaction (value-created ≠ mood valence); richer
+context-sensitive *affective* companion reactions; surfacing reactions as a growth-mirror signal.
 
 ## 5. Open Questions to Resolve (owned here)
 Owned here (single-source). Each is assigned a decision point:

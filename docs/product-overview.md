@@ -189,7 +189,7 @@ Cobble's personality, so proactivity feels like a creature with its own attentio
 into a room), and solo work while you're away that surfaces on your return. Frequency and intensity
 are **tunable** so it feels alive, not annoying.
 
-**Reactions _(designed)_:** the lightest way to be understood. You can **react to any of its messages
+**Reactions:** the lightest way to be understood. You can **react to any of its messages
 with an emoji** — an addressed nudge it learns from (and reads in context: a 😢 at a moving story is
 appreciation, not a complaint). And it **reacts back** to you — a 👀 when you ask it to look into
 something, a 🎉 when you share good news — as a natural part of how it responds, so a glance can stand

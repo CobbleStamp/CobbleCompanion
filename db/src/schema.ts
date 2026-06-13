@@ -786,8 +786,8 @@ export const messageReactions = pgTable(
       .references(() => companions.id, { onDelete: 'cascade' }),
     // 'user' | 'companion' — who placed the reaction.
     reactor: text('reactor').$type<Reactor>().notNull(),
-    // The emoji glyph; validated as a single well-formed emoji at the API boundary
-    // (not whitelisted, companion-reactions.md §7).
+    // The emoji glyph; validated at the API boundary as a single well-formed emoji
+    // (`^\p{RGI_Emoji}$`, ≤32 chars) — not whitelisted (companion-reactions.md §7, §8).
     emoji: text('emoji').notNull(),
     // The inline read's value-created reward ∈ [−1, 1]; null for companion reactions
     // or until the read resolves (a failed read leaves it null — never a fabricated 0).

@@ -25,7 +25,7 @@ export interface Tool {
    * companion's expressive `react` action, whose emoji *is* the artifact
    * (companion-reactions.md §5). Default (absent/false) records a step as usual.
    * Note: `silent` suppresses only the user-facing transcript row — the call is
-   * still recorded in the `tool_call_log` audit (afterToolCall), as every call is.
+   * still recorded in the `tool_calls` audit log (afterToolCall), as every call is.
    */
   readonly silent?: boolean;
   /** Execute the call. Must resolve (errors become an error {@link ToolResult}). */

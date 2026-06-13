@@ -56,7 +56,7 @@ redundant.
 | **Inline reaction-read** | The cheap, per-reaction structured read that turns one user reaction (in the context of the act it lands on) into a value-created reward + note. The fast path that feeds the nudge (§4, §7).       |
 | **Reflection**           | The slower, periodic pass that turns _many_ reactions + their notes into understanding — beliefs, persona, diffuse credit — feeding the user model (§6). A separate timescale from the inline read. |
 | **Expressive reaction**  | A reaction the **companion** emits as part of a turn (👀 "on it", 🎉, 🙏). Pure expression — it creates no outcome and awaits no reward (§5).                                                       |
-| **Quick-react bar**      | A curated shortcut set (❤️ 👍 😂 🎉 😮 😢 🙏 👎) shown for one-tap reacting, with a "+" to the full picker. A **convenience, not a constraint** — neither side is limited to it (§7).               |
+| **Quick-react bar**      | A curated shortcut set (❤️ 👍 😂 🎉 😮 😢 🙏 👎) shown for one-tap reacting. A **convenience, not a constraint** — neither side is limited to it on the wire, though the v1 web UI offers only these eight (a free-emoji picker is a UI fast-follow) (§7).               |
 
 ## 3. The two directions
 
@@ -184,7 +184,7 @@ flowchart TD
 
 - **Plumbed like a free `tool_step`.** The `react` action reuses the loop's tool machinery:
   **ungated** (no approval — it's not effectful, so it bypasses the propose→approve gate), **leaves no
-  `tool_step` chrome row** (`silent` — the reaction itself is the artifact; the audit `tool_call_log`
+  `tool_step` chrome row** (`silent` — the reaction itself is the artifact; the audit `tool_calls` log
   still records it), and persists a `reactor='companion'` row on the _user's_ message, pushed over the
   event channel (delivery timing per the _Built scope_ note above).
 
@@ -306,8 +306,11 @@ path, because the same glyph means opposite things depending on what the compani
 So the reward is **interpreted, not looked up**, which lands it back in the architecture already there:
 the change-as-reward loop never read keywords — it read mood _in context_. The **inline reaction-read**
 (§4) is the same machinery as the affect read (`implementation.md` §1, the `report_affect` channel),
-generalized: its inputs are _(the reacted message + recent context + the act's intent / served drive)_;
-its output is a **value-created reward ∈ [−1, 1] + a short note**, or **`null`** on failure/decline.
+generalized: its inputs are _(the reacted message + recent context + whether the act was
+self-initiated)_; its output is a **value-created reward ∈ [−1, 1] + a short note**, or **`null`** on
+failure/decline. _(The read is told only that the act was a self-directed update, not which drive it
+served — the served drive is applied afterward by `reactions/learner.ts` when it resolves the outcome,
+not handed to the read.)_
 The same body-senses / will-learns seam holds — the read is a body-side perception, `reinforce.ts`
 decides what it teaches.
 
@@ -336,7 +339,7 @@ erDiagram
         uuid companion_id FK
         text reactor "user | companion"
         text emoji
-        numeric reward "nullable — inline read"
+        real reward "nullable — inline read"
         text reward_note "nullable — reflection corpus"
     }
 ```
@@ -347,8 +350,11 @@ reflection (§6) consumes.
 
 **Contracts** (`@cobble/shared`) — a validated `emoji`, a `ReactionDto`, and a derived
 `MessageDto.reactions[]` (joined for render, never stored on the immutable row). Boundary validation
-(`security.md`) checks the value is a **single well-formed emoji** with a sane length cap — **not**
-membership in an allowed set; no emoji is whitelisted on either side (§7).
+(`security.md`) checks the value is a **single well-formed emoji** (the `^\p{RGI_Emoji}$` Unicode
+property, trimmed, with a ≤32-char cap generous enough for multi-codepoint ZWJ/skin-tone sequences) —
+**not** membership in an allowed set; no emoji is whitelisted on either side (§7). The same check
+guards the companion's `react` tool, so free-text never lands in `message_reactions` from either
+direction.
 
 **Delivery** — reactions ride the **standing companion event channel** (`architecture.md` §6): two new
 `CompanionStreamEvent` variants, `reaction_added` / `reaction_removed`, carrying

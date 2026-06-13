@@ -158,7 +158,7 @@ erDiagram
 | `companion_id` | uuid (FK → `companions.id`, **`ON DELETE CASCADE`**) | tenancy/scoping |
 | `reactor` | text | `user` \| `companion` — who placed it |
 | `emoji` | text | the reaction glyph; **unique `(message_id, reactor, emoji)`** so a re-tap is idempotent and un-reacting is a `DELETE` |
-| `reward` | numeric | nullable; the **value-created** reward the inline reaction-read assigns to a _user_ reaction (∅ for a companion reaction, or until the read resolves) |
+| `reward` | real | nullable; the **value-created** reward the inline reaction-read assigns to a _user_ reaction (∅ for a companion reaction, or until the read resolves) |
 | `reward_note` | text | nullable; the read's short note ("moved, engaged") — the corpus the **reflection** pass consumes |
 | `created_at` | timestamptz | |
 
@@ -755,35 +755,46 @@ and `companion-motivation.md`).
 ### 2.4 Event delivery — the companion event channel
 
 The standing per-companion push channel (`architecture.md` §6). No schema change — the bus is
-**in-process pub/sub**; durability lives in the `messages` table, the channel only delivers.
+**in-process pub/sub**; durability lives in the `messages` / `message_reactions` tables, the channel
+only delivers. It carries a `CompanionStreamEvent` union: a `{ type: 'message' }` for each appended
+transcript row, plus `reaction_added` / `reaction_removed` for emoji reactions (§1,
+`companion-reactions.md` §8).
 
-- **Publish point.** `appendMessage` (`memory/store.ts`) is the single chokepoint every persistence
-  path flows through (turn reply, greeting, ingestion announcer, upload turns). A
-  **`PublishingMemoryStore`** decorator wraps the real store and, after a successful append, calls
-  `CompanionEventBus.publish(companionId, dto)`. The publish is **best-effort**: wrapped in
-  `try/catch`, logged at `error` on failure, and never allowed to fail the append (a delivery hiccup
-  must not break persistence — `common/logging.md`). It is wired once at the composition root
-  (`api/src/index.ts`) — `new PublishingMemoryStore(new TranscriptMemoryStore(db), bus, logger)` — so
-  harness, greeter, and announcer all publish through the one shared instance with no call-site change.
+- **Publish points.** Transcript rows publish through `appendMessage` (`memory/store.ts`), the single
+  chokepoint every persistence path flows through (turn reply, greeting, ingestion announcer, upload
+  turns): a **`PublishingMemoryStore`** decorator wraps the real store and, after a successful append,
+  calls `CompanionEventBus.publish(companionId, { type: 'message', message })`. Reaction events are
+  published **directly** — by the reaction route (`reaction.routes.ts`, user reactions) and the
+  `react` tool (`reactions/react-tool.ts`, the companion's own), each only on an actual insert/delete
+  so a re-tap or no-op delete broadcasts nothing. The publish is **best-effort**: wrapped in
+  `try/catch`, logged at `error` on failure, and never allowed to fail the originating write (a
+  delivery hiccup must not break persistence — `common/logging.md`). The decorator is wired once at
+  the composition root (`api/src/index.ts`) — `new PublishingMemoryStore(new TranscriptMemoryStore(db),
+  bus, logger)` — so harness, greeter, and announcer all publish through the one shared instance with
+  no call-site change.
 - **Bus.** `CompanionEventBus` (`core/src/events/`) is an interface; `InProcessCompanionEventBus`
   keeps a `Map<companionId, Set<subscriber>>` and exposes `publish` + `subscribe(companionId) →
-  { events: AsyncIterableIterator<MessageDto>; close() }` (a bounded queue + waiter bridges callback →
-  async-iterable). The interface is the seam for a Postgres `LISTEN/NOTIFY` / Redis implementation
-  when the API runs on >1 replica (`architecture.md` §9) — publishers and the route are unchanged.
+  { events: AsyncIterableIterator<CompanionStreamEvent>; close() }` (a bounded queue + waiter bridges
+  callback → async-iterable). The interface is the seam for a Postgres `LISTEN/NOTIFY` / Redis
+  implementation when the API runs on >1 replica (`architecture.md` §9) — publishers and the route are
+  unchanged.
 - **Channel route.** `GET /companions/:companionId/events` (`requireAuth` + ownership check) opens an
   **open-ended** SSE (`streamChannel`, distinct from the finite `streamSse`): it subscribes to the
-  bus, writes each row as `{ type: 'message', message }`, emits a heartbeat comment (`: ping`) on an
-  interval to keep intermediaries from reaping the idle connection, and registers
-  `request.raw.on('close', …)` to **unsubscribe + clear the heartbeat + end** — the close-driven
-  cleanup the per-turn streams don't need. Published rows include `tool_step`/`proposal` kinds, so a
-  client that wasn't the turn's initiator still renders a complete transcript.
-- **Client transport + establishment.** `subscribeMessages(companionId, signal)` (`web/src/api/
+  bus and writes each event through to the wire **as-is** (the bus already carries the wire
+  `CompanionStreamEvent`), emits a heartbeat comment (`: ping`) on an interval to keep intermediaries
+  from reaping the idle connection, and registers `request.raw.on('close', …)` to **unsubscribe +
+  clear the heartbeat + end** — the close-driven cleanup the per-turn streams don't need. Published
+  message events include `tool_step`/`proposal` kinds, so a client that wasn't the turn's initiator
+  still renders a complete transcript.
+- **Client transport + establishment.** `subscribeCompanionEvents(companionId, signal)` (`web/src/api/
   client.ts`) reads the channel via the shared `fetch`-based `send()` (so the bearer header is set —
   no `EventSource` limitation) and an SSE parser, threading an `AbortSignal`. The chat's establishment
   effect: open the subscription **first** (buffering), **then** `fetchMessages` the snapshot, and feed
-  both through a `mergeMessage(lines, dto)` reducer keyed by server id — present id ⇒ ignore; an
-  id-less optimistic line matching `role`+`content`(+`sourceId`) ⇒ replace it adopting the id; else
-  insert in `createdAt` order. On stream error while mounted it reconnects with backoff, re-running the
+  both through a reducer keyed by server id — a `message` event goes through `mergeMessage(lines, dto)`
+  (present id ⇒ ignore; an id-less optimistic line matching `role`+`content`(+`sourceId`) ⇒ replace it
+  adopting the id; else insert in `createdAt` order), and a `reaction_*` event through
+  `applyReaction(lines, event)` (add/remove the chip on the addressed line, deduped by
+  `(reactor, emoji)`). On stream error while mounted it reconnects with backoff, re-running the
   snapshot each (re)connect; on unmount it aborts. Ordering uses `createdAt` (the DTO carries no
   `seq`); add `seq` to `MessageDto` if equal-timestamp ordering ever glitches.
 

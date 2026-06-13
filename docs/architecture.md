@@ -469,7 +469,7 @@ flowchart TB
   subgraph WILL["Motivation Engine — the 'will' (packages/core/src/motivation)"]
     TRIG["trigger<br/>activity · return · periodic sweep"]
     PRES["presence<br/>active · attentive · away · absent"]
-    DRIVES["drives<br/>interests · bond · leads · approval"]
+    DRIVES["drives<br/>curiosity · bond · understanding<br/>approval · helpfulness · upkeep"]
     GATE{"arbitration gate<br/>drive × salience × presence × energy"}
     BURST["bounded explore burst<br/>reads leads into memory"]
     NOTE["in-character report note"]
@@ -849,15 +849,17 @@ flowchart TB
     in-flight turn's events (`token` / `citations` / `tool_step` / `proposal` / `done`) so the UI
     shows tokens as they arrive despite multi-second model latency. It is **request-scoped**: it
     exists only for that turn, and it is owned by the component that opened it.
-  - **Companion event channel** — a **standing** `GET .../events` subscription that pushes **every
-    row appended to the transcript** (`{ type: 'message' }`), regardless of which request produced it.
-    This is the durable delivery path: a turn reply, an ingestion "finished reading…" note, a
-    proactive nudge, and a greeting all reach an open client the moment they persist — **push, not
-    poll**. It's backed by the in-process **Companion Event Bus**, fed by a publish-on-append hook on
-    the MemoryStore (§3), so nothing at the call sites changes to emit. _(Designed, not built:_ emoji
-    reactions ride this same channel as `reaction_added` / `reaction_removed` events — mutations on an
-    existing row rather than a new transcript turn — so a reaction placed on one surface, or by the
-    companion itself, appears live on every open surface; `companion-reactions.md` §8.)
+  - **Companion event channel** — a **standing** `GET .../events` subscription that pushes a
+    `CompanionStreamEvent` for every companion event, regardless of which request produced it: every
+    row appended to the transcript as a `{ type: 'message' }` event, plus `reaction_added` /
+    `reaction_removed` events for emoji reactions. This is the durable delivery path: a turn reply, an
+    ingestion "finished reading…" note, a proactive nudge, and a greeting all reach an open client the
+    moment they persist — **push, not poll**. It's backed by the in-process **Companion Event Bus**,
+    fed by a publish-on-append hook on the MemoryStore (§3) for transcript rows and by the reaction
+    route / `react` tool directly for reaction events, so nothing at the call sites changes to emit.
+    Emoji reactions are mutations on an existing row rather than new transcript turns, so a reaction
+    placed on one surface, or by the companion itself, appears live on every open surface
+    (`companion-reactions.md` §8).
   - **Establishment is subscribe-then-snapshot.** On (re)connect the client opens the channel
     **first** (buffering live events), **then** fetches the transcript snapshot, and merges both
     **deduped by message id**. Subscribe-first can only ever double-deliver (harmless under id dedup),
@@ -872,13 +874,14 @@ flowchart TB
     still-optimistic (id-less) line with its authoritative event rather than duplicating it. This is
     the surface realization of the §4.7 *transcript-is-truth* invariant.
 
-  The standing channel's path from any transcript append to every open surface:
+  The standing channel's path from any companion event to every open surface:
 
 ```mermaid
 flowchart LR
   subgraph CORE["Core"]
-    APPEND["any transcript append<br/>turn reply · greeting · ingestion note · reaction"]
+    APPEND["transcript append<br/>turn reply · greeting · ingestion note"]
     PUB["PublishingMemoryStore<br/>publish-on-append decorator"]
+    REACT["reaction route / react tool<br/>reaction_added · reaction_removed"]
     BUS["Companion Event Bus<br/>in-process per-companion pub/sub"]
     CHAN["Event Channel<br/>GET /companions/:id/events (SSE)"]
   end
@@ -886,7 +889,8 @@ flowchart LR
   S2["Surface B<br/>(other tab / device)"]
 
   APPEND --> PUB
-  PUB -->|emit appended row| BUS
+  PUB -->|"emit { type: message }"| BUS
+  REACT -->|emit reaction_* event| BUS
   BUS --> CHAN
   CHAN -->|"push · dedup by id"| S1
   CHAN -->|"push · dedup by id"| S2
