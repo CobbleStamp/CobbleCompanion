@@ -14,7 +14,8 @@
     "build": "tsc",
     "test": "vitest run",
     "generate": "drizzle-kit generate",
-    "migrate": "tsx src/migrate.ts"
+    "migrate": "tsx src/migrate.ts",
+    "service": "tsx src/service-client.ts"
   },
   "dependencies": {
     "@cobble/shared": "workspace:*",

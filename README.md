@@ -60,6 +60,12 @@ sign-in is skipped — you go straight to creating your companion. To exercise t
 Sign-In flow locally, set `AUTH_MODE=google` and `GOOGLE_CLIENT_ID` to an OAuth Web client ID
 with `http://localhost:3001` as an authorized origin (see `infra/README.md`).
 
+To run CobbleCompanion as a backend for another service, set `AUTH_MODE=service_token` and register a
+consumer credential — `pnpm --filter @cobble/db service add <client_id>` prints a secret once. Callers
+then send `X-Service-Client-Id: <client_id>`, `Authorization: Bearer <secret>`, and `X-User-Id: <uuid>`
+instead of a Google ID token. Rotate with another `service add` and `service revoke <id>` (see
+`docs/implementation.md` §5).
+
 ## Deployment
 
 Deployed as a single GCP Cloud Run service via Pulumi (the Fastify API serves the built SPA from

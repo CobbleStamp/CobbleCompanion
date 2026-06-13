@@ -4,7 +4,7 @@
  * starts the Fastify server.
  */
 
-import { createPgDatabase, EMBEDDING_DIMENSIONS } from '@cobble/db';
+import { createPgDatabase, EMBEDDING_DIMENSIONS, type Database } from '@cobble/db';
 import {
   composeRetrieveContext,
   ConsolidationRunner,
@@ -25,6 +25,7 @@ import {
   createWebFetchTool,
   DrizzleEpisodicMemoryStore,
   DrizzleIdentityStore,
+  DrizzleServiceRegistry,
   DrizzleLeadStore,
   DrizzleProceduralStore,
   DrizzleProactiveOutcomeStore,
@@ -70,6 +71,7 @@ import { buildApp } from './app.js';
 import {
   DevBypassVerifier,
   GoogleIdTokenVerifier,
+  ServiceTokenVerifier,
   type TokenVerifier,
 } from './auth/jwt-verifier.js';
 import { loadConfig, type AppConfig } from './config.js';
@@ -93,11 +95,15 @@ function createEmbeddingGateway(config: AppConfig): EmbeddingGateway {
   return new OpenRouterEmbeddingGateway({ apiKey: config.openrouterApiKey });
 }
 
-function createTokenVerifier(config: AppConfig): TokenVerifier {
-  if (config.authMode === 'dev_bypass') {
-    return new DevBypassVerifier(config.devBypassEmail);
+function createTokenVerifier(config: AppConfig, db: Database): TokenVerifier {
+  switch (config.authMode) {
+    case 'dev_bypass':
+      return new DevBypassVerifier(config.devBypassEmail);
+    case 'service_token':
+      return new ServiceTokenVerifier(new DrizzleServiceRegistry(db));
+    case 'google':
+      return new GoogleIdTokenVerifier(config.googleClientId);
   }
-  return new GoogleIdTokenVerifier(config.googleClientId);
 }
 
 async function main(): Promise<void> {
@@ -464,7 +470,7 @@ async function main(): Promise<void> {
     affect: affectStore,
     growth,
     growthStore,
-    tokenVerifier: createTokenVerifier(config),
+    tokenVerifier: createTokenVerifier(config, db),
     config,
     logger: consoleLogger,
   });

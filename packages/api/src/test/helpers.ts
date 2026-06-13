@@ -67,7 +67,12 @@ import {
 import type { FastifyInstance } from 'fastify';
 import { buildApp, type AppDeps } from '../app.js';
 import { buildToolAcquisitionWiring } from '../acquisition/wiring.js';
-import type { TokenVerifier, VerifiedClaims } from '../auth/jwt-verifier.js';
+import {
+  bearerToken,
+  type AuthClaims,
+  type AuthRequest,
+  type TokenVerifier,
+} from '../auth/jwt-verifier.js';
 import type { AppConfig } from '../config.js';
 
 export const silentLogger: Logger = { error: () => {}, warn: () => {}, info: () => {} };
@@ -78,18 +83,21 @@ export const silentLogger: Logger = { error: () => {}, warn: () => {}, info: () 
  * real RS256 tokens or touching JWKS (fakes-over-mocks).
  */
 export class FakeTokenVerifier implements TokenVerifier {
-  private readonly byToken = new Map<string, VerifiedClaims>();
+  private readonly byToken = new Map<string, AuthClaims>();
 
-  set(token: string, claims: VerifiedClaims): void {
+  set(token: string, claims: AuthClaims): void {
     this.byToken.set(token, claims);
   }
 
-  async verify(token: string): Promise<VerifiedClaims> {
-    const claims = this.byToken.get(token);
-    if (!claims) {
-      throw new Error('unknown test token');
-    }
-    return claims;
+  async verify(request: AuthRequest): Promise<AuthClaims> {
+    const token = bearerToken(request.authorization);
+    const claims = token ? this.byToken.get(token) : undefined;
+    return (
+      claims ?? {
+        ok: false,
+        failure: { status: 401, kind: 'invalid', message: 'invalid token' },
+      }
+    );
   }
 }
 
@@ -483,7 +491,7 @@ export async function makeTestApp(
 
   const bearerFor = (address: string): { authorization: string } => {
     const token = `test-${address}`;
-    tokenVerifier.set(token, { sub: `google|${address}`, email: address });
+    tokenVerifier.set(token, { ok: true, identity: { authSource: 'google', email: address } });
     return { authorization: `Bearer ${token}` };
   };
 

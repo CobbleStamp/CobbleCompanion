@@ -79,14 +79,72 @@ const tsvector = customType<{ data: string }>({
   },
 });
 
-export const users = pgTable('users', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  email: text('email').notNull().unique(),
-  // The user's NAME is not stored here — it is a Tier-1 `user_fact` (seeded from the
-  // Google name claim at the auth boundary, then refined in conversation; see
-  // `user_facts` below and docs/companion-memory.md §4).
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const users = pgTable(
+  'users',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    // How this user authenticates: `google` (Google Sign-In, or `dev_bypass`) is
+    // email-keyed; `service` (a trusted server-to-server consumer such as Sprout) is
+    // external_id-keyed. Per-user — distinct from the server-wide `AUTH_MODE`
+    // (implementation.md §3). Defaults to `google` so existing rows backfill cleanly.
+    authSource: text('auth_source').notNull().default('google'),
+    // The service consumer this user belongs to (the `service_registry.client_id`)
+    // when `auth_source = 'service'`; null for `google`. Scopes `external_id` so two
+    // consumers can reuse the same id without colliding (see the unique index below).
+    serviceClientId: text('service_client_id'),
+    // The consumer's opaque user id (e.g. a Sprout UUID) when `auth_source = 'service'`;
+    // null for `google`. Unique per `(auth_source, service_client_id)` (partial index below).
+    externalId: text('external_id'),
+    // Login identity when `auth_source = 'google'`; null for `service` (a service user
+    // has no email). The user's NAME is not stored here either — it is a Tier-1
+    // `user_fact` (seeded from the Google name claim, or the `X-User-Name` header, at
+    // the auth boundary, then refined in conversation; see `user_facts` below and
+    // docs/companion-memory.md §4).
+    email: text('email').unique(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // Service users are keyed by (auth_source, service_client_id, external_id) — the
+    // client_id namespaces external_id across consumers. Partial: `google` rows leave
+    // external_id null and are keyed by `email` instead.
+    uniqueIndex('users_auth_source_client_external_uniq')
+      .on(table.authSource, table.serviceClientId, table.externalId)
+      .where(sql`${table.externalId} is not null`),
+  ],
+);
+
+/**
+ * Server-to-server consumer credentials (implementation.md §1, §5). One row per
+ * (client_id, secret), so a consumer can hold several active secrets at once for
+ * overlap rotation: add a new secret, migrate the caller, then `revoked_at` the old
+ * one. `secret_type` selects how `secret` is matched (`plaintext` today; room for
+ * `sha256` etc. without a schema change). The `X-Service-Client-Id` header carries
+ * `client_id`; the `Authorization: Bearer` header carries the secret.
+ */
+export const serviceRegistry = pgTable(
+  'service_registry',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    // Public identifier of the consumer; matches the `X-Service-Client-Id` header.
+    // Repeats across a consumer's secrets (one row per secret).
+    clientId: text('client_id').notNull(),
+    // The stored secret representation. Interpreted per `secret_type`.
+    secret: text('secret').notNull(),
+    // How `secret` is matched against the presented bearer: `plaintext` (default) or a
+    // future digest scheme (e.g. `sha256`). An unknown type never authenticates.
+    secretType: text('secret_type').notNull().default('plaintext'),
+    // Optional human note for operators (e.g. "initial", "rotated-2026-06").
+    label: text('label'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    // Soft revoke: a revoked credential no longer authenticates but is kept for audit.
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  },
+  (table) => [
+    index('service_registry_client_idx').on(table.clientId),
+    // No duplicate credential rows for a consumer.
+    uniqueIndex('service_registry_client_secret_uniq').on(table.clientId, table.secret),
+  ],
+);
 
 /** The companion "home" — the canonical identity a surface loads from (invariant #4). */
 export const companions = pgTable(

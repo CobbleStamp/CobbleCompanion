@@ -24,10 +24,13 @@ export function pathsOverlap(a: string, b: string): boolean {
  * Authentication mode. `google` (default) gates the app behind Google Sign-In:
  * the SPA obtains a Google ID token and the API verifies it as a bearer JWT
  * against Google's JWKS. `dev_bypass` skips Google entirely so the app can run
- * locally and in tests with no live provider. Default is `google`, so
- * production is never accidentally open.
+ * locally and in tests with no live provider. `service_token` is server-to-server:
+ * a trusted backend consumer authenticates with a `(client_id, secret)` pair validated
+ * against the `service_registry` table and names the acting user via an `X-User-Id`
+ * header (no env secret — the registry is the source of truth). Default is `google`,
+ * so production is never accidentally open.
  */
-export type AuthMode = 'google' | 'dev_bypass';
+export type AuthMode = 'google' | 'dev_bypass' | 'service_token';
 
 /**
  * Runtime configuration (implementation.md §3). Required secrets are validated at
@@ -129,7 +132,7 @@ const envSchema = z
     // Root for per-tenant ephemeral CLI working dirs; empty → the OS temp dir.
     CLI_SCRATCH_DIR: z.string().default(''),
     APP_URL: z.string().url().default('http://localhost:3001'),
-    AUTH_MODE: z.enum(['google', 'dev_bypass']).default('google'),
+    AUTH_MODE: z.enum(['google', 'dev_bypass', 'service_token']).default('google'),
     // Public OAuth Web client ID — shipped to the browser, not a secret.
     GOOGLE_CLIENT_ID: z.string().default(''),
     DEV_BYPASS_EMAIL: z.string().email().default('dev@cobble.local'),

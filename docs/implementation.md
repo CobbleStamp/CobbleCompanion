@@ -82,8 +82,23 @@ erDiagram
 | Field | Type | Notes |
 |---|---|---|
 | `id` | uuid (PK) | |
-| `email` | text, unique | login identity |
+| `auth_source` | text, default `google` | how this user authenticates: `google` (Google Sign-In / `dev_bypass` — email-keyed) \| `service` (a server-to-server consumer such as Sprout — keyed by `(service_client_id, external_id)`). Selected per-user; distinct from the server-wide `AUTH_MODE` (§3) |
+| `service_client_id` | text, nullable | the owning consumer (`service_registry.client_id`) when `auth_source = service`; null for `google`. Namespaces `external_id` so two consumers can reuse the same id without colliding |
+| `external_id` | text, nullable | the consumer's opaque user id (e.g. a Sprout UUID) when `auth_source = service`; null for `google`. Unique within `(auth_source, service_client_id)` |
+| `email` | text, nullable, unique | login identity when `auth_source = google`; null for `service` (a service user has no email) |
 | `created_at` | timestamptz | |
+
+### `service_registry`
+Server-to-server consumer credentials (§5). One row per `(client_id, secret)`, so a consumer can hold several active secrets at once for **overlap rotation**.
+| Field | Type | Notes |
+|---|---|---|
+| `id` | uuid (PK) | |
+| `client_id` | text | public consumer identifier; matches the `X-Service-Client-Id` header (repeats across a consumer's secrets) |
+| `secret` | text | stored credential, interpreted per `secret_type` |
+| `secret_type` | text, default `plaintext` | how `secret` is matched (`plaintext` today; room for a digest scheme like `sha256` without a schema change). Unknown type fails closed |
+| `label` | text, nullable | operator note (e.g. "initial", "rotated-2026-06") |
+| `created_at` | timestamptz | |
+| `revoked_at` | timestamptz, nullable | soft-revoke: a revoked credential no longer authenticates but is kept for audit |
 
 > **No `display_name` column.** What the companion calls the user is **not** a `users` field — the
 > name is a Tier-1 `user_fact` (`user · name · …`) like every other identity attribute (`user_facts`
@@ -94,13 +109,17 @@ erDiagram
 > `setUserDisplayName` primitive — the name is now just one `user_fact` (`development-plan.md` §4c
 > Phase 11).
 
-> **Auth note:** there is no local credential/token table. Sign-in is **Google Sign-In**; the
-> SPA obtains a Google ID token and the API validates it against Google's JWKS, then
+> **Auth note:** there is no local credential/token table. The default sign-in is **Google
+> Sign-In**; the SPA obtains a Google ID token and the API validates it against Google's JWKS, then
 > JIT-provisions the `users` row from the verified `email` claim (Google requires
 > `email_verified === true`). The token's `name` claim (profile name, **unverified** — used only to
 > seed what the companion calls the user, never for identity/authorization) seeds a Tier-1 `name`
 > `user_fact` with `source = auth_seed` on first provision; a name stated or edited later supersedes
-> it. See §5.
+> it. With `AUTH_MODE=service_token` a trusted server-to-server consumer authenticates instead with a
+> `(client_id, secret)` pair validated against the `service_registry` table and names the user via an
+> `X-User-Id` header; the row is provisioned by `(service_client_id, external_id)` rather than
+> `email`, and an optional `X-User-Name` header plays the seed role the Google `name` claim does.
+> See §3 and §5.
 
 ### `companions` — the canonical "home"
 | Field | Type | Notes |
@@ -808,7 +827,7 @@ Loaded from environment / a secret manager; required values validated at startup
 | `LLM_PROVIDER` | Selects the gateway backend: `openrouter` (default) \| `fake` |
 | `OPENROUTER_API_KEY` | LLM provider credential (secret — required when provider=`openrouter`) |
 | `LLM_MODEL` | Model id passed to the provider |
-| `AUTH_MODE` | `google` (default) \| `dev_bypass` (local/test — skips Google) |
+| `AUTH_MODE` | `google` (default) \| `dev_bypass` (local/test — skips Google) \| `service_token` (server-to-server: a trusted backend calls on behalf of its own users — credentials live in the `service_registry` table, **not** in env; §5) |
 | `GOOGLE_CLIENT_ID` | OAuth Web client ID — public, served to the SPA and used as the API's ID-token audience (required when `AUTH_MODE=google`) |
 | `DEV_BYPASS_EMAIL` | Identity resolved in `dev_bypass` mode |
 | `APP_URL` | Web client origin (allowed CORS origin for local cross-origin dev) |
@@ -886,6 +905,20 @@ Implements the trust-model boundaries in `architecture.md` §8.
   not a server fault: the API guard classifies `jose`'s `ERR_JWT_EXPIRED` and logs it at `info`
   (no stack), reserving `error`-level logs for genuine verification anomalies (bad signature, wrong
   audience, missing claims).
+- **Service-to-service auth** (`AUTH_MODE=service_token`) — a trusted backend consumer (e.g. Sprout)
+  calls CobbleCompanion on behalf of its own anonymous-UUID users. It sends `X-Service-Client-Id:
+  <client_id>`, `Authorization: Bearer <secret>`, and `X-User-Id: <uuid>` on every request. The API
+  validates the `(client_id, secret)` pair against the **`service_registry`** table — a constant-time
+  compare per the row's `secret_type` (`plaintext` today) over the consumer's non-revoked secrets —
+  and only then trusts the user headers, provisioning/looking up the `users` row by
+  `(service_client_id, external_id)` (`auth_source = service`). The `client_id` namespaces
+  `external_id`, so two consumers' UUIDs never collide. A missing/invalid credential → `401`; a
+  missing or non-UUID `X-User-Id` → `400`. An optional `X-User-Name` header seeds the Tier-1 `name`
+  fact exactly as the Google `name` claim does. **Rotation:** add a new secret row for the same
+  `client_id` (`pnpm --filter @cobble/db service add <client_id>` prints it once), migrate the caller,
+  then revoke the old row (`service revoke <id>`) — both authenticate during cutover. Secrets are
+  deployment-managed, never committed, and TLS is required (§8). No per-route changes: once
+  `request.userId` is resolved, all tenancy scoping is identical across modes.
 - **Client session persistence** — the SPA persists the ID token to **`sessionStorage`**
   (`packages/web/src/auth/session.ts`) so a page refresh restores the session instead of bouncing to
   the sign-in gate. On load the token is restored synchronously before the first authenticated
