@@ -10,6 +10,7 @@
 
 import { type Database } from '@cobble/db';
 import { createTestDatabase } from '@cobble/db/testing';
+import type { MessageDto } from '@cobble/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DrizzleIdentityStore } from '../identity/store.js';
 import { FakeLlmGateway } from '../llm/fake.js';
@@ -21,6 +22,7 @@ import { DrizzleProactiveOutcomeStore } from '../motivation/reward-store.js';
 import { DrizzleVitalityStore } from '../quota/vitality-store.js';
 import { DrizzleUserModelStore } from '../user-model/store.js';
 import { ReactionLearner } from './learner.js';
+import { asReactableMessage, type ReactableMessage } from './reactable.js';
 import { DrizzleReactionStore } from './store.js';
 
 const silent: Logger = { error: () => {}, warn: () => {}, info: () => {} };
@@ -28,6 +30,15 @@ const NEUTRAL = resolveWeights(null);
 
 function reportReaction(reward: number, note = 'ok'): readonly [{ toolCalls: ToolCall[] }] {
   return [{ toolCalls: [{ name: 'report_reaction', args: { reward, note } }] }];
+}
+
+/** Parse a test message into the proof-carrying type `learn()` requires. */
+function reactable(message: MessageDto): ReactableMessage {
+  const parsed = asReactableMessage(message);
+  if (!parsed) {
+    throw new Error('test message is not reactable');
+  }
+  return parsed;
 }
 
 describe('ReactionLearner', () => {
@@ -98,7 +109,7 @@ describe('ReactionLearner', () => {
     await reactions.add(companionId, note.id, 'user', '❤️');
 
     const learner = learnerFor(0.8);
-    learner.learn(companionId, note.id, '❤️');
+    learner.learn(reactable(note), '❤️');
     await learner.whenIdle();
 
     // The outcome is resolved with the value-created reward.
@@ -118,7 +129,7 @@ describe('ReactionLearner', () => {
     await reactions.add(companionId, msg.id, 'user', '👍');
 
     const learner = learnerFor(0.6);
-    learner.learn(companionId, msg.id, '👍');
+    learner.learn(reactable(msg), '👍');
     await learner.whenIdle();
 
     expect(await approvalWeight()).toBeGreaterThan(NEUTRAL.approval);
@@ -131,7 +142,7 @@ describe('ReactionLearner', () => {
     await reactions.add(companionId, msg.id, 'user', '👍');
 
     const learner = learnerFor(null);
-    learner.learn(companionId, msg.id, '👍');
+    learner.learn(reactable(msg), '👍');
     await learner.whenIdle();
 
     expect(await approvalWeight()).toBeCloseTo(NEUTRAL.approval);
@@ -145,7 +156,7 @@ describe('ReactionLearner', () => {
     await reactions.add(companionId, note.id, 'user', '😐');
 
     const learner = learnerFor(0);
-    learner.learn(companionId, note.id, '😐');
+    learner.learn(reactable(note), '😐');
     await learner.whenIdle();
 
     const [resolved] = await rewards.list(companionId, 1);
@@ -168,7 +179,7 @@ describe('ReactionLearner', () => {
     await reactions.add(companionId, note.id, 'user', '❤️');
 
     const learner = learnerFor(0.8);
-    learner.learn(companionId, note.id, '❤️');
+    learner.learn(reactable(note), '❤️');
     await learner.whenIdle();
 
     const [current] = await userModel.listCurrentBeliefs(userId);
@@ -191,7 +202,7 @@ describe('ReactionLearner', () => {
       sense: { llm, model: 'fake', logger: silent, quota: stamina },
       logger: silent,
     });
-    learner.learn(companionId, msg.id, '👍');
+    learner.learn(reactable(msg), '👍');
     await learner.whenIdle();
 
     // The gate held: no LLM call was made, nothing was recorded or nudged.
@@ -217,7 +228,7 @@ describe('ReactionLearner', () => {
       sense: { llm, model: 'fake', logger: silent, quota: stamina },
       logger: silent,
     });
-    learner.learn(companionId, msg.id, '👍');
+    learner.learn(reactable(msg), '👍');
     await learner.whenIdle();
 
     expect(llm.calls).toHaveLength(1);
@@ -237,7 +248,7 @@ describe('ReactionLearner', () => {
       sense: { llm, model: 'fake', logger: silent },
       logger: silent,
     });
-    learner.learn(companionId, msg.id, '👍');
+    learner.learn(reactable(msg), '👍');
     await learner.whenIdle();
     const afterFirst = await approvalWeight();
     expect(llm.calls).toHaveLength(1);
@@ -246,7 +257,7 @@ describe('ReactionLearner', () => {
     // and the route fires learn() again — the debounce must absorb the repeat.
     await reactions.remove(companionId, msg.id, 'user', '👍');
     await reactions.add(companionId, msg.id, 'user', '👍');
-    learner.learn(companionId, msg.id, '👍');
+    learner.learn(reactable(msg), '👍');
     await learner.whenIdle();
 
     expect(llm.calls).toHaveLength(1); // no second billed read
@@ -266,12 +277,12 @@ describe('ReactionLearner', () => {
       sense: { llm, model: 'fake', logger: silent },
       logger: silent,
     });
-    learner.learn(companionId, msg.id, '👍');
+    learner.learn(reactable(msg), '👍');
     await learner.whenIdle();
     const afterFirst = await approvalWeight();
 
     await reactions.add(companionId, msg.id, 'user', '🎉');
-    learner.learn(companionId, msg.id, '🎉');
+    learner.learn(reactable(msg), '🎉');
     await learner.whenIdle();
 
     expect(llm.calls).toHaveLength(2);
@@ -289,7 +300,7 @@ describe('ReactionLearner', () => {
     await reactions.add(companionId, note.id, 'user', '❤️');
 
     const learner = learnerFor(0.9);
-    learner.learn(companionId, note.id, '❤️');
+    learner.learn(reactable(note), '❤️');
     await learner.whenIdle();
 
     // The claim fails, so the reaction does not move the weight a second time.

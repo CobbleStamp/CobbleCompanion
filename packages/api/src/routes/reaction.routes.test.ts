@@ -104,6 +104,36 @@ describe('reaction routes', () => {
     }
   });
 
+  it('400s a reaction on tool_step / proposal chrome — only message-kind rows are reactable', async () => {
+    for (const kind of ['tool_step', 'proposal'] as const) {
+      const chrome = await ctx.deps.memory.appendMessage(companionId, 'assistant', 'chrome row', {
+        kind,
+      });
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: `/companions/${companionId}/messages/${chrome.id}/reactions`,
+        headers: auth,
+        payload: { emoji: '❤️' },
+      });
+      expect(res.statusCode, `expected 400 for kind=${kind}`).toBe(400);
+      expect(await reactionsFor(chrome.id)).toEqual([]);
+    }
+  });
+
+  it("400s a reaction on the user's own message — only assistant messages are reactable", async () => {
+    // A self-reaction would make the learner judge "did the companion create
+    // value" against the user's own words and nudge approval from garbage.
+    const own = await ctx.deps.memory.appendMessage(companionId, 'user', 'my own words');
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/companions/${companionId}/messages/${own.id}/reactions`,
+      headers: auth,
+      payload: { emoji: '👍' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(await reactionsFor(own.id)).toEqual([]);
+  });
+
   it('404s when the message does not belong to the companion', async () => {
     const res = await ctx.app.inject({
       method: 'POST',

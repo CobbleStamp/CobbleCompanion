@@ -1,3 +1,4 @@
+import { asReactableMessage } from '@cobble/core';
 import { addReactionSchema } from '@cobble/shared';
 import type { FastifyInstance } from 'fastify';
 import type { AppDeps } from '../app.js';
@@ -51,6 +52,15 @@ export function registerReactionRoutes(
       if (!message) {
         return reply.code(404).send({ error: 'message not found' });
       }
+      // Only the companion's own `message`-kind turns are reactable
+      // (companion-reactions.md §3): tool_step/proposal chrome is not a reward
+      // target, and a reaction on the user's own words would make the learner
+      // judge "did the companion create value" against the user's own text.
+      // Parsed once here; the proof-carrying result is what learn() accepts.
+      const reactable = asReactableMessage(message);
+      if (!reactable) {
+        return reply.code(400).send({ error: 'message is not reactable' });
+      }
       try {
         const { inserted } = await reactions.add(
           companion.id,
@@ -72,7 +82,7 @@ export function registerReactionRoutes(
           // read its value and learn AFTER responding — fire-and-forget, self-catching,
           // billed to stamina — so it never blocks the tap. Only an *added* reaction
           // teaches; removing one doesn't.
-          reactionLearner.learn(companion.id, messageId, parsed.data.emoji);
+          reactionLearner.learn(reactable, parsed.data.emoji);
         }
         return reply.send({ ok: true });
       } catch (error) {

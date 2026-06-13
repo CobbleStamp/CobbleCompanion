@@ -31,6 +31,7 @@ import { resolveWeights } from '../motivation/drives.js';
 import type { ProactiveOutcomeRecord, ProactiveOutcomeStore } from '../motivation/reward-store.js';
 import { nudgeDriveWeight } from '../motivation/weights.js';
 import type { UserModelStore } from '../user-model/store.js';
+import type { ReactableMessage } from './reactable.js';
 import { senseReaction, type ReactionSenseDeps } from './sense.js';
 import type { ReactionStore } from './store.js';
 
@@ -84,10 +85,12 @@ export class ReactionLearner {
   /**
    * Read the value a user reaction signals and learn from it. Fire-and-forget: the
    * route has already responded, so this runs detached and never throws. Tracked so
-   * {@link whenIdle} can drain it.
+   * {@link whenIdle} can drain it. Takes the {@link ReactableMessage} the boundary
+   * already fetched and parsed — the signature is the constraint, so a chrome row
+   * or the user's own words can't reach the read (companion-reactions.md §3).
    */
-  learn(companionId: string, messageId: string, emoji: string): void {
-    const task = this.run(companionId, messageId, emoji).finally(() => {
+  learn(message: ReactableMessage, emoji: string): void {
+    const task = this.run(message, emoji).finally(() => {
       this.inflight.delete(task);
     });
     this.inflight.add(task);
@@ -100,7 +103,8 @@ export class ReactionLearner {
     }
   }
 
-  private async run(companionId: string, messageId: string, emoji: string): Promise<void> {
+  private async run(message: ReactableMessage, emoji: string): Promise<void> {
+    const { companionId, id: messageId } = message;
     try {
       // Toggle debounce: an un-react → re-add of the same emoji re-inserts the row
       // (the delete took the recorded reward with it), so the route fires learn()
@@ -122,12 +126,6 @@ export class ReactionLearner {
       }
 
       const recent = await this.deps.memory.getRecentMessages(companionId, RECENT_CONTEXT_TURNS);
-      const reacted =
-        recent.find((message) => message.id === messageId) ??
-        (await this.deps.memory.getMessageById(companionId, messageId));
-      if (!reacted) {
-        return; // the message is gone — nothing to read
-      }
 
       // Addressed attribution: was this message a proactive act's report note?
       const outcome = await this.deps.rewards.findUnresolvedByNoteMessageId(companionId, messageId);
@@ -138,7 +136,7 @@ export class ReactionLearner {
       const reading = await senseReaction(this.deps.sense, {
         companionId,
         recentContext: formatContext(recent),
-        reactedMessage: reacted.content,
+        reactedMessage: message.content,
         emoji,
         actContext: outcome ? PROACTIVE_ACT_CONTEXT : '',
       });
