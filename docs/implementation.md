@@ -827,7 +827,8 @@ Loaded from environment / a secret manager; required values validated at startup
 | `LLM_PROVIDER` | Selects the gateway backend: `openrouter` (default) \| `fake` |
 | `OPENROUTER_API_KEY` | LLM provider credential (secret — required when provider=`openrouter`) |
 | `LLM_MODEL` | Model id passed to the provider |
-| `AUTH_MODE` | `google` (default) \| `dev_bypass` (local/test — skips Google) \| `service_token` (server-to-server: a trusted backend calls on behalf of its own users — credentials live in the `service_registry` table, **not** in env; §5) |
+| `AUTH_MODE` | `google` (default) \| `dev_bypass` (local/test — skips Google) \| `service_token` (server-to-server: a trusted backend calls on behalf of its own users — credentials live in the `service_registry` table, provisioned via the CLI or seeded from `SERVICE_REGISTRY_SEEDS`; §5) |
+| `SERVICE_REGISTRY_SEEDS` | JSON array of `{ client_id, secret, secret_type?, label? }` provisioned into `service_registry` on launch (additive + idempotent; §5). Default `[]`. Secrets are deployment-managed — never committed |
 | `GOOGLE_CLIENT_ID` | OAuth Web client ID — public, served to the SPA and used as the API's ID-token audience (required when `AUTH_MODE=google`) |
 | `DEV_BYPASS_EMAIL` | Identity resolved in `dev_bypass` mode |
 | `APP_URL` | Web client origin (allowed CORS origin for local cross-origin dev) |
@@ -916,7 +917,13 @@ Implements the trust-model boundaries in `architecture.md` §8.
   missing or non-UUID `X-User-Id` → `400`. An optional `X-User-Name` header seeds the Tier-1 `name`
   fact exactly as the Google `name` claim does. **Rotation:** add a new secret row for the same
   `client_id` (`pnpm --filter @cobble/db service add <client_id>` prints it once), migrate the caller,
-  then revoke the old row (`service revoke <id>`) — both authenticate during cutover. Secrets are
+  then revoke the old row (`service revoke <id>`) — both authenticate during cutover. **Boot-time
+  seeding:** a deployment can declare its trusted consumers in `SERVICE_REGISTRY_SEEDS` (a JSON array
+  of `{ client_id, secret, secret_type?, label? }`); on launch the API inserts any pair not already
+  present (`seedCredentials`, on-conflict-do-nothing over the `(client_id, secret)` unique index). It
+  is **additive and idempotent** — re-seeding the same pairs every boot is a no-op and it never
+  touches or revokes rows it didn't seed, so CLI-added and rotated secrets are preserved; the CLI
+  remains the path for rotation/revocation. Only counts are logged, never a secret. Secrets are
   deployment-managed, never committed, and TLS is required (§8). No per-route changes: once
   `request.userId` is resolved, all tenancy scoping is identical across modes.
 - **Client session persistence** — the SPA persists the ID token to **`sessionStorage`**

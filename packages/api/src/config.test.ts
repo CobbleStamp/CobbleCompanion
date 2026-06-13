@@ -261,4 +261,49 @@ describe('loadConfig', () => {
       ).toThrow();
     });
   });
+
+  describe('SERVICE_REGISTRY_SEEDS', () => {
+    it('defaults to no seeds', () => {
+      expect(loadConfig({ ...base, ...fakeProviders }).serviceRegistrySeeds).toEqual([]);
+    });
+
+    it('parses a valid array, normalizing snake_case keys and carrying optionals through', () => {
+      const config = loadConfig({
+        ...base,
+        ...fakeProviders,
+        SERVICE_REGISTRY_SEEDS: JSON.stringify([
+          { client_id: 'sprout', secret: 's3cret', secret_type: 'sha256', label: 'seed' },
+        ]),
+      });
+      expect(config.serviceRegistrySeeds).toEqual([
+        { clientId: 'sprout', secret: 's3cret', secretType: 'sha256', label: 'seed' },
+      ]);
+    });
+
+    it('omits absent optional keys rather than setting them undefined', () => {
+      const [seed] = loadConfig({
+        ...base,
+        ...fakeProviders,
+        SERVICE_REGISTRY_SEEDS: JSON.stringify([{ client_id: 'sprout', secret: 's3cret' }]),
+      }).serviceRegistrySeeds;
+      expect(seed && 'secretType' in seed).toBe(false);
+      expect(seed && 'label' in seed).toBe(false);
+    });
+
+    it('throws a clear error on malformed JSON', () => {
+      expect(() =>
+        loadConfig({ ...base, ...fakeProviders, SERVICE_REGISTRY_SEEDS: 'not json' }),
+      ).toThrow(/SERVICE_REGISTRY_SEEDS must be a JSON array/);
+    });
+
+    it('rejects an entry missing the required secret', () => {
+      expect(() =>
+        loadConfig({
+          ...base,
+          ...fakeProviders,
+          SERVICE_REGISTRY_SEEDS: JSON.stringify([{ client_id: 'sprout' }]),
+        }),
+      ).toThrow();
+    });
+  });
 });

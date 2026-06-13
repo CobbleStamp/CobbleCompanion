@@ -54,6 +54,48 @@ export async function addCredential(
   return { id: row.id, secret };
 }
 
+/** One credential to provision on launch (boot-time seeding, implementation.md §5). */
+export interface ServiceCredentialSeed {
+  readonly clientId: string;
+  readonly secret: string;
+  /** How `secret` is matched; defaults to `plaintext` (the schema default). */
+  readonly secretType?: string;
+  /** Optional operator note (e.g. "seed"). */
+  readonly label?: string;
+}
+
+/**
+ * Idempotently provision a fixed set of consumer credentials (boot-time seeding). Unlike
+ * `addCredential`, each secret is supplied EXPLICITLY so re-seeding the same pairs every
+ * launch is a no-op: the `(client_id, secret)` unique index makes the insert
+ * on-conflict-do-nothing. Additive only — never touches or revokes rows not in `seeds`,
+ * so CLI-added and rotated secrets are preserved. Returns how many rows were newly
+ * inserted vs. already present (no secret is ever returned).
+ */
+export async function seedCredentials(
+  db: Database,
+  seeds: readonly ServiceCredentialSeed[],
+): Promise<{ inserted: number; skipped: number }> {
+  if (seeds.length === 0) {
+    return { inserted: 0, skipped: 0 };
+  }
+  const inserted = await db
+    .insert(serviceRegistry)
+    .values(
+      seeds.map((seed) => ({
+        clientId: seed.clientId,
+        secret: seed.secret,
+        ...(seed.secretType !== undefined ? { secretType: seed.secretType } : {}),
+        ...(seed.label !== undefined ? { label: seed.label } : {}),
+      })),
+    )
+    .onConflictDoNothing({
+      target: [serviceRegistry.clientId, serviceRegistry.secret],
+    })
+    .returning();
+  return { inserted: inserted.length, skipped: seeds.length - inserted.length };
+}
+
 /** List credential metadata (all clients, or one), never the secret itself. */
 export async function listCredentials(
   db: Database,
