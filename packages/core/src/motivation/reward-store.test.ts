@@ -111,6 +111,28 @@ describe('DrizzleProactiveOutcomeStore', () => {
     expect(found?.reward).toBeNull();
   });
 
+  it('finds the unresolved outcome by its note message id (the addressed path)', async () => {
+    const noteMessageId = await noteId();
+    const outcome = await rewards.record(companionId, { noteMessageId, drive: 'curiosity' });
+    const found = await rewards.findUnresolvedByNoteMessageId(companionId, noteMessageId);
+    expect(found?.id).toBe(outcome.id);
+    // An unrelated message id, and a foreign companion, both find nothing.
+    expect(await rewards.findUnresolvedByNoteMessageId(companionId, await noteId())).toBeNull();
+    expect(
+      await rewards.findUnresolvedByNoteMessageId(
+        '00000000-0000-0000-0000-000000000000',
+        noteMessageId,
+      ),
+    ).toBeNull();
+  });
+
+  it('does not return a note-addressed outcome once it is resolved', async () => {
+    const noteMessageId = await noteId();
+    const outcome = await rewards.record(companionId, { noteMessageId, drive: 'curiosity' });
+    await rewards.setReward(companionId, outcome.id, 0.5);
+    expect(await rewards.findUnresolvedByNoteMessageId(companionId, noteMessageId)).toBeNull();
+  });
+
   it("a real companion cannot claim or read another's pending outcome (tenancy isolation)", async () => {
     // The zero-UUID case above only proves "an id owning no rows matches nothing".
     // This proves the actual invariant the companion-scope fix protects: with TWO

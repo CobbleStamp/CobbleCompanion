@@ -64,6 +64,31 @@ recall** the same way, **without touching the loop**. How sources become semanti
 memory (the two-pass ingestion flow): [`architecture.md`](./architecture.md) §4.8;
 the fact overlay's contract: [`ontology.md`](./ontology.md).
 
+**Retrieval substrate — which memory uses what.** Not every memory kind is recalled the same way.
+Each enters a turn through one of three substrates: a **vector embedding** (semantic similarity,
+hybrid-fused with full-text search by reciprocal rank), the **typed fact overlay** (the `ontology.md`
+predicates), or **plain text** (carried whole into the prompt, or matched by recency/keyword — no
+embedding step). Most kinds use one; **semantic memory and the User Model use both** an embedding
+*and* the ontology. The one place you might expect an embedding and find none is **procedural
+memory** — routines are short and few, so they are matched cheaply by title/keyword overlap.
+
+| Memory kind | Vector embedding | Ontology (typed facts) | Plain text |
+| --- | :---: | :---: | --- |
+| **Transcript** (episodic substrate) | — | — | ✅ recency window |
+| **Semantic** (sources → sections) | ✅ vector + FTS | ✅ fact overlay | ✅ verbatim sections stored |
+| **Episodic** (consolidated episodes) | ✅ vector + FTS | — | — |
+| **Procedural** (learned workflows) | — | — | ✅ title/keyword match |
+| **User Model — Tier-1** (core profile) | — | ✅ typed predicates | ✅ rendered in persona prompt |
+| **User Model — Tier-2** (learned beliefs) | ✅ vector + FTS | ✅ typed predicates | — |
+| **User Model — Tier-3** (user persona) | — | — | ✅ synthesized prose |
+
+> **"Plain text" means no embedding step** — the memory is either carried whole into the prompt
+> (Tier-1/Tier-3, the recency window) or matched lexically (procedural). The two arms that carry
+> **both** substrates: semantic recall grounds verbatim text whose entities are *also* indexed as
+> ontology facts; the User Model stores typed predicates (`user_facts`) that Tier-2 recalls by
+> embedding. The recall arms in motion: [`architecture.md`](./architecture.md) §4.3; the overlay
+> contract: [`ontology.md`](./ontology.md).
+
 ## 3. What the memory system holds
 
 The companion holds all three long-term memories plus the lead-inventory substrate:

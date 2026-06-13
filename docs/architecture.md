@@ -73,8 +73,61 @@ does not move — these are the one-way-door decisions.
 
 ## 3. Component Map
 
-The components and the layers they belong to. The diagram shows the core request path; the full
-component set follows in the table below it.
+This section maps the system at two altitudes. The **subsystem map** shows the big modules and how
+they depend on each other — each module is one opaque box whose internals are listed in the table (and,
+for the harness and the will, drawn out in §4 and §4.5). The **request-path** zoom-in then traces the
+synchronous chat turn through the core. The full component set follows in the table below.
+
+### Subsystem map
+
+```mermaid
+flowchart TB
+  USER([User])
+  subgraph SURF["Surface"]
+    WEB0["Web Client<br/>(React + Vite)"]
+  end
+  API0["API / BFF (Fastify)<br/>auth · routing · streaming · uploads"]
+  subgraph CORE0["Companion Core — surface-agnostic"]
+    H0["Harness<br/>agent loop + extension hooks (§4)"]
+    MEM0["Memory<br/>transcript · semantic · episodic · user-model"]
+    WILL0["The Will<br/>motivation · affect · lead inventory (§4.5)"]
+    SOC0["Social reactions<br/>greeting · emoji reactions"]
+    TOOL0["Tools &amp; Acquisition<br/>registry · approval gate · MCP · CLI · procedural"]
+    GROW0["Growth &amp; Economy<br/>growth axes · food pantry · vitality wallets"]
+    DELIV0["Live Delivery<br/>event bus → event channel (§6)"]
+    GW0["Gateways<br/>LLM · embedding"]
+    ID0["Identity Store<br/>companion 'home'"]
+  end
+  PG0[("Postgres + pgvector")]
+  OR0["OpenRouter<br/>(LLM + embeddings)"]
+
+  USER -->|HTTPS · SSE| WEB0
+  WEB0 -->|request| API0
+  API0 --> H0
+  H0 --> MEM0
+  H0 --> WILL0
+  H0 --> SOC0
+  H0 --> TOOL0
+  H0 --> ID0
+  H0 --> GW0
+  WILL0 -.->|spends energy| GROW0
+  GROW0 -.->|reads substrate| MEM0
+  MEM0 -.->|publish-on-append| DELIV0
+  DELIV0 -->|live push| WEB0
+  GW0 -->|HTTPS| OR0
+  CORE0 --> PG0
+
+  classDef ext fill:#1e3a5f,stroke:#3b82f6,color:#e2e8f0;
+  class OR0,USER ext;
+```
+
+> Every box is opaque at this altitude; the edges carry the story. The harness fans out to each core
+> subsystem (§4); the will spends energy and reads the lead inventory (§4.5); growth & economy reads
+> substrate that already exists without touching the loop; live delivery pushes every appended
+> transcript row back to open surfaces (§6). External systems (Google Sign-In, Langfuse) are omitted
+> here — they appear in the system-context diagram (§6).
+
+### Request path (zoom-in)
 
 ```mermaid
 flowchart TB
@@ -152,6 +205,7 @@ flowchart TB
 | **Procedural Store** | Learned, reusable workflows seeded from approved actions (`procedural_memories`) | Browseable, and surfaced as a `RetrieveContext` hint arm (§4.3) so a routine resurfaces and is reused |
 | **Motivation Engine** | Fills the `Initiator` seam — drives × presence → bounded autonomous explore burst | Reads the lead inventory into memory on its own (no approval), bounded by energy; posts an in-character report note. Includes presence, change-as-reward reinforcement, and an off-request runner/sweep. Mechanism → §4.5, `companion-motivation.md` |
 | **Greeting Service** | The bond-driven reaction to the user *arriving* (`packages/core/src/greeting/`) — the social sibling of the explore burst | A token-free `decideGreeting` gate (first-meeting override → dial → continuation floor → gap × open loop) + a service that voices one in-character greeting billed to **stamina** (or a fixed exhausted line), recording a `bond` outcome. Reads the durable `companions.last_seen_at` clock; streamed to the client (`composing` → `done`) by `POST /companions/:id/greeting`. Mechanism → `companion-greeting.md` |
+| **Reaction Service** | Emoji reactions both ways (`message_reactions`) — a second reward channel beside the affect loop | A user reaction triggers an event-scoped **inline value-created read** (the `report_affect` machinery generalized) → a reward attributed **by `note_message_id`**, nudging the served drive (or approval/competence on an ordinary answer); the companion's own reaction is a **planned, free, ungated agent action** emitted mid-turn (react-early-then-work). Delivered live over the event channel (§6). Mechanism → `companion-reactions.md` |
 | **Energy Wallet** | The self-initiated half of the §4.8 two-wallet vitality (`companions.energy_balance_tokens`) | Per-companion token balance; a separate wallet from stamina (the `Stamina Wallet` above), metered by the same `VitalityStore`, so autonomy can't starve interaction |
 | **Food Pantry** | The user's seeded inventory of typed foods (`user_food`) — the feeding economy's supply | Per-user counts of `ration`/`spark`/`treat`; `POST /feed` consumes one and refills the fed companion's wallet(s) (`companion-economy.md`) |
 | **Growth Service** | Derives the four MIRROR axes (knowledge, bond, initiative, character) + the observed-capabilities checklist from substrate | Growth is DERIVED — a readout that may move either way, never scored or floored. Recompute is post-turn and token-free; the read is a snapshot. Decoupled from feeding. The procedural retrieval-as-hint arm that makes a capability *functional* is §4.3; the axis-derivation mechanism → `development-plan.md` §3 (Phase 5); data model → `implementation.md` §1 |
@@ -170,6 +224,45 @@ The **loop shape is an architectural invariant** (§2 #3): the same shape carrie
 turn (the inner loop turns once and exits), a multi-tool inner loop, and a proactive (non-human)
 entry alike. The §4.6 sequence diagram shows a concrete single-pass realization. *(Hook signatures +
 concrete context assembly: `implementation.md` §2.)*
+
+**Harness internals (component view).** The diagrams in §4.1–4.6 show the loop *in motion*; this one
+shows its *parts at rest* — the named extension hooks (the seams of invariant #3) and the subsystems
+each fans out to. Only the harness is opened up; every neighbor stays an opaque box.
+
+```mermaid
+flowchart TB
+  subgraph HARNESS["Harness"]
+    DRIVE["loop driver<br/>outer drain · inner turn (§4.1)"]
+    CTX["context assembly (§4.3)"]
+    MH{{"memory-retrieval hook"}}
+    BTC{{"beforeToolCall hook<br/>approval gate (§4.4)"}}
+    ATC{{"afterToolCall hook<br/>audit log"}}
+    INIT{{"Initiator hook (§4.5)"}}
+    PERC["per-turn perception<br/>affect + user-fact (§4.5)"]
+  end
+  GW["LLM Gateway"]
+  MEM["Memory subsystem<br/>semantic · episodic · user-model · procedural arms"]
+  TOOLS["Tool Registry + Proposals"]
+  MOT["Motivation Engine"]
+
+  DRIVE --> CTX
+  CTX --> MH
+  MH -.->|recall arms| MEM
+  CTX -->|assembled prompt| GW
+  DRIVE --> BTC
+  BTC --> TOOLS
+  BTC --> ATC
+  DRIVE --> PERC
+  PERC -.->|writes| MEM
+  MOT -.->|non-human ENTRY| INIT
+  INIT --> DRIVE
+```
+
+> The hexagons are the **extension hooks** — memory retrieval, before/after-tool, and the Initiator —
+> filled additively without changing the loop (invariant #3). The driver runs the outer + inner loops
+> (§4.1); context assembly pulls the recall arms (§4.3); the tool path runs the gate then the audit
+> log (§4.2/§4.4); per-turn perception senses affect and captures user-facts (§4.5); the Initiator is
+> the non-human entry the motivation engine drives (§4.5).
 
 ### 4.1 The loop (outer + inner)
 
@@ -372,16 +465,39 @@ motivation engine**, not only by a human. This is what makes the companion proac
 passive (`product-overview.md` §5.4).
 
 ```mermaid
-flowchart LR
-    MOT["motivation engine<br/>goals · curiosity · bond · pending work"] --> TRIG{"worth<br/>initiating?"}
-    TRIG -->|no| IDLE["idle"]
-    TRIG -->|yes| INIT["initiator → new ENTRY<br/>(no user message)"]
-    INIT --> LOOP["OUTER loop (§4.1)"]
-    LOOP --> OUT(["EXIT — proposal / question"])
-    OUT -->|"in-app when present · gentle push when away"| USER(["user"])
+flowchart TB
+  subgraph WILL["Motivation Engine — the 'will' (packages/core/src/motivation)"]
+    TRIG["trigger<br/>activity · return · periodic sweep"]
+    PRES["presence<br/>active · attentive · away · absent"]
+    DRIVES["drives<br/>curiosity · bond · understanding<br/>approval · helpfulness · upkeep"]
+    GATE{"arbitration gate<br/>drive × salience × presence × energy"}
+    BURST["bounded explore burst<br/>reads leads into memory"]
+    NOTE["in-character report note"]
+    RL["reinforcement<br/>mood-change → drive/belief weight"]
+  end
+  LEAD[("Lead Inventory")]
+  ENERGY[("Energy Wallet")]
+  AFFECT["per-turn affect read<br/>(agent loop · §4.3)"]
+  LOOP["OUTER loop (§4.1)"]
+  USER([user])
 
-    classDef human fill:#1e3a5f,stroke:#3b82f6,color:#e2e8f0;
-    class USER human;
+  TRIG --> GATE
+  PRES --> GATE
+  DRIVES --> GATE
+  ENERGY -.->|caps spend| GATE
+  GATE -->|"idle (valid, free)"| IDLE([idle])
+  GATE -->|commit| BURST
+  LEAD --> BURST
+  BURST -.->|spends| ENERGY
+  BURST --> NOTE
+  NOTE -->|non-human ENTRY| LOOP
+  LOOP -->|"in-app when present · gentle push when away"| USER
+  USER -->|reaction| AFFECT
+  AFFECT --> RL
+  RL -.->|nudges| DRIVES
+
+  classDef human fill:#1e3a5f,stroke:#3b82f6,color:#e2e8f0;
+  class USER human;
 ```
 
 > The motivation engine (`packages/core/src/motivation/`) fills the `Initiator` hook
@@ -494,7 +610,7 @@ sequenceDiagram
     API->>H: ENTRY → dispatch turn
     H->>Id: load companion "home"
     H->>Mem: retrieve context (recent transcript)
-    Note over H: context assembled (§4.3); tool set empty
+    Note over H: context assembled (§4.3) — tool set empty
     H->>GW: invoke model
     GW->>LLM: HTTPS (streamed)
     LLM-->>GW: token stream
@@ -733,12 +849,17 @@ flowchart TB
     in-flight turn's events (`token` / `citations` / `tool_step` / `proposal` / `done`) so the UI
     shows tokens as they arrive despite multi-second model latency. It is **request-scoped**: it
     exists only for that turn, and it is owned by the component that opened it.
-  - **Companion event channel** — a **standing** `GET .../events` subscription that pushes **every
-    row appended to the transcript** (`{ type: 'message' }`), regardless of which request produced it.
-    This is the durable delivery path: a turn reply, an ingestion "finished reading…" note, a
-    proactive nudge, and a greeting all reach an open client the moment they persist — **push, not
-    poll**. It's backed by the in-process **Companion Event Bus**, fed by a publish-on-append hook on
-    the MemoryStore (§3), so nothing at the call sites changes to emit.
+  - **Companion event channel** — a **standing** `GET .../events` subscription that pushes a
+    `CompanionStreamEvent` for every companion event, regardless of which request produced it: every
+    row appended to the transcript as a `{ type: 'message' }` event, plus `reaction_added` /
+    `reaction_removed` events for emoji reactions. This is the durable delivery path: a turn reply, an
+    ingestion "finished reading…" note, a proactive nudge, and a greeting all reach an open client the
+    moment they persist — **push, not poll**. It's backed by the in-process **Companion Event Bus**,
+    fed by a publish-on-append hook on the MemoryStore (§3) for transcript rows and by the reaction
+    route / `react` tool directly for reaction events, so nothing at the call sites changes to emit.
+    Emoji reactions are mutations on an existing row rather than new transcript turns, so a reaction
+    placed on one surface, or by the companion itself, appears live on every open surface
+    (`companion-reactions.md` §8).
   - **Establishment is subscribe-then-snapshot.** On (re)connect the client opens the channel
     **first** (buffering live events), **then** fetches the transcript snapshot, and merges both
     **deduped by message id**. Subscribe-first can only ever double-deliver (harmless under id dedup),
@@ -752,6 +873,29 @@ flowchart TB
     `done`, the snapshot, and the channel — so the client merges by server message id, and replaces a
     still-optimistic (id-less) line with its authoritative event rather than duplicating it. This is
     the surface realization of the §4.7 *transcript-is-truth* invariant.
+
+  The standing channel's path from any companion event to every open surface:
+
+```mermaid
+flowchart LR
+  subgraph CORE["Core"]
+    APPEND["transcript append<br/>turn reply · greeting · ingestion note"]
+    PUB["PublishingMemoryStore<br/>publish-on-append decorator"]
+    REACT["reaction route / react tool<br/>reaction_added · reaction_removed"]
+    BUS["Companion Event Bus<br/>in-process per-companion pub/sub"]
+    CHAN["Event Channel<br/>GET /companions/:id/events (SSE)"]
+  end
+  S1["Surface A"]
+  S2["Surface B<br/>(other tab / device)"]
+
+  APPEND --> PUB
+  PUB -->|"emit { type: message }"| BUS
+  REACT -->|emit reaction_* event| BUS
+  BUS --> CHAN
+  CHAN -->|"push · dedup by id"| S1
+  CHAN -->|"push · dedup by id"| S2
+```
+
 - **External services.** The **LLM Provider** (OpenRouter) is the only external dependency —
   outbound HTTPS via the LLM Gateway. User content crossing to the provider is an
   explicit trust boundary (§8).
@@ -784,6 +928,7 @@ flowchart TB
       identity/        companion "home" model + store
       motivation/      the "will" (§4.4–§4.5): drives × presence arbitration, autonomous explore burst, engine runner/sweep, affect perception + change-as-reward reinforcement
       greeting/        the bond-driven arrival reaction (social sibling of the explore burst): token-free decideGreeting gate + stamina-billed greeter, reads companions.last_seen_at — companion-greeting.md
+      reactions/       emoji reactions: ReactionStore (mutable rows) + senseReaction/ReactionLearner (the value-created read → reward by note_message_id); the companion's react action is a free agent-loop emit (Phase D) — companion-reactions.md
       growth/          four mirror axes derived from substrate (§4.3 hint arm + development-plan.md §3) + the feeding economy: axis readings (band+fill), capabilities registry, growth store/service/runner, foods, the per-user food pantry/store (§4.8)
       quota/           per-companion vitality wallets (stamina + energy) (§4.8)
     api/               BFF / surface boundary (Fastify); memory + source + usage + proposal/inventory routes; presence + proactivity (dial/energy) routes; growth + feed routes; the autonomous-activity log route (read-only `proactive_outcomes`); the standing companion event-channel route (§6)

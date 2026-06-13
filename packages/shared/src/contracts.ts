@@ -83,6 +83,14 @@ export interface MessageDto {
    */
   readonly sourceId: string | null;
   readonly createdAt: string;
+  /**
+   * Emoji reactions on this row, joined for render (companion-reactions.md §8).
+   * Mutable annotations that live in their own table, never on the immutable
+   * transcript row — so they are hydrated onto the DTO at read time and pushed
+   * live as their own events, not as message rows. Absent on rows that carry
+   * none; never persisted here.
+   */
+  readonly reactions?: readonly ReactionDto[];
 }
 
 /**
@@ -994,8 +1002,82 @@ export interface StreamMessageEvent {
   readonly message: MessageDto;
 }
 
+/**
+ * A reaction added to or removed from a transcript message, pushed over the
+ * standing companion event channel (companion-reactions.md §8). Unlike a
+ * {@link StreamMessageEvent} this is a *mutation* on an existing row, not a new
+ * turn — the client applies it to the message's reaction set rather than
+ * appending. Carries the same `reaction_*` shape in both directions and for both
+ * reactors, so a reaction placed on one surface (or by the companion itself) shows
+ * up live everywhere.
+ */
+export interface StreamReactionAddedEvent {
+  readonly type: 'reaction_added';
+  readonly messageId: string;
+  readonly reactor: Reactor;
+  readonly emoji: string;
+}
+
+export interface StreamReactionRemovedEvent {
+  readonly type: 'reaction_removed';
+  readonly messageId: string;
+  readonly reactor: Reactor;
+  readonly emoji: string;
+}
+
 /** Events carried by the standing companion event channel (`GET .../events`). */
-export type CompanionStreamEvent = StreamMessageEvent;
+export type CompanionStreamEvent =
+  | StreamMessageEvent
+  | StreamReactionAddedEvent
+  | StreamReactionRemovedEvent;
+
+// --- Emoji reactions (companion-reactions.md) ---
+
+/** Who placed a reaction — the user, or the companion itself. */
+export const reactorSchema = z.enum(['user', 'companion']);
+export type Reactor = z.infer<typeof reactorSchema>;
+
+/**
+ * An emoji reaction on a transcript message, as projected to a surface for render.
+ * A mutable annotation living OUTSIDE the append-only transcript (its own table),
+ * so it crosses the boundary joined onto {@link MessageDto.reactions} or as a
+ * `reaction_*` stream event — never as a message row. The inline value-created
+ * read's `reward`/`note` (user reactions only) stay server-side and are not
+ * exposed here.
+ */
+export interface ReactionDto {
+  readonly messageId: string;
+  readonly reactor: Reactor;
+  readonly emoji: string;
+}
+
+/**
+ * Exactly one well-formed emoji: a single RGI emoji sequence, so ZWJ families,
+ * skin tones, flags, and keycaps each count as ONE. Well-formedness only — NOT
+ * membership in an allowed set; no emoji is whitelisted on either side
+ * (companion-reactions.md §7, §8). Built with the RegExp constructor because
+ * `\p{RGI_Emoji}` requires the `v` flag, which a regex literal can't carry under
+ * the repo's ES2022 target (runtime support — Node ≥22, evergreen browsers — is
+ * fine).
+ */
+const singleEmojiPattern = new RegExp('^\\p{RGI_Emoji}$', 'v');
+
+/** True when `value` is exactly one well-formed emoji (see {@link addReactionSchema}). */
+export function isSingleEmoji(value: string): boolean {
+  return value.length <= 32 && singleEmojiPattern.test(value);
+}
+
+/**
+ * Request body for `POST .../messages/:id/reactions`. Enforces a single
+ * well-formed emoji — free-text must not pass, because each novel "emoji" string
+ * is a distinct reaction row whose insert triggers a distinct billed value-read
+ * (companion-reactions.md §4), an LLM cost amplifier. The length cap is generous
+ * enough for multi-codepoint ZWJ/skin-tone sequences and bounds the regex input.
+ */
+export const addReactionSchema = z.object({
+  emoji: z.string().trim().max(32).regex(singleEmojiPattern, 'a single emoji is required'),
+});
+export type AddReactionBody = z.infer<typeof addReactionSchema>;
 
 // --- Generic API envelope (patterns.md "API Response Format") ---
 

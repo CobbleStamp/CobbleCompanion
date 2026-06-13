@@ -15,6 +15,13 @@
       "when": 1781165788363,
       "tag": "0001_flat_viper",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1781179532878,
+      "tag": "0002_round_clint_barton",
+      "breakpoints": true
     }
   ]
 }

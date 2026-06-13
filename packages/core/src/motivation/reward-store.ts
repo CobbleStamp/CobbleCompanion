@@ -99,6 +99,18 @@ export interface ProactiveOutcomeStore {
    */
   findLatestUnresolved(companionId: string): Promise<ProactiveOutcomeRecord | null>;
   /**
+   * The unresolved outcome whose report note is `noteMessageId`, if any — the
+   * ADDRESSED attribution path an emoji reaction takes (companion-reactions.md §4).
+   * Strictly better-attributed than {@link findLatestUnresolved}: a reaction is
+   * pinned to the exact message it lands on, so it resolves *that* act's outcome
+   * rather than "the latest". Null when the message was never a proactive note, or
+   * its outcome is already resolved.
+   */
+  findUnresolvedByNoteMessageId(
+    companionId: string,
+    noteMessageId: string,
+  ): Promise<ProactiveOutcomeRecord | null>;
+  /**
    * Atomically claim an unresolved outcome and fill in its reward (companion-
    * scoped). Returns `true` iff THIS call claimed it — the update is conditioned on
    * `reward IS NULL`, so when two reactions race only one wins and only that caller
@@ -164,6 +176,24 @@ export class DrizzleProactiveOutcomeStore implements ProactiveOutcomeStore {
       .from(proactiveOutcomes)
       .where(and(eq(proactiveOutcomes.companionId, companionId), isNull(proactiveOutcomes.reward)))
       .orderBy(desc(proactiveOutcomes.seq))
+      .limit(1);
+    return row ? toRecord(row) : null;
+  }
+
+  async findUnresolvedByNoteMessageId(
+    companionId: string,
+    noteMessageId: string,
+  ): Promise<ProactiveOutcomeRecord | null> {
+    const [row] = await this.db
+      .select()
+      .from(proactiveOutcomes)
+      .where(
+        and(
+          eq(proactiveOutcomes.companionId, companionId),
+          eq(proactiveOutcomes.noteMessageId, noteMessageId),
+          isNull(proactiveOutcomes.reward),
+        ),
+      )
       .limit(1);
     return row ? toRecord(row) : null;
   }

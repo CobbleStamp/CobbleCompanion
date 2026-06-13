@@ -133,10 +133,11 @@ export async function streamChannel(
   request.raw.on('close', cleanup);
 
   try {
-    for await (const message of subscription.events) {
+    for await (const event of subscription.events) {
       if (reply.raw.writableEnded || reply.raw.destroyed) break;
       try {
-        const event: CompanionStreamEvent = { type: 'message', message };
+        // The bus carries the wire event already (`message` | `reaction_*`,
+        // companion-reactions.md §8) — write it through as-is.
         reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
       } catch (error) {
         logger?.info('event-channel write failed; client likely disconnected', {

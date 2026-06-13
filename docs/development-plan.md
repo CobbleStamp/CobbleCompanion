@@ -50,6 +50,7 @@ being is proven, because they add platform cost without changing whether the cor
 | **13** | User Model — understanding & hygiene | Web | Synthesized user-persona; decay & sensitive attributes; full edit/forget UI | ✅ **Done** (§4c) |
 | **14** | Greeting / arrival reaction | Web | Companion notices you arrive and reacts — greets in context, picks up open threads, or rests when spent | ✅ **Done** (§4d) |
 | **15** | Realtime delivery — standing event channel | Web | New messages (replies, proactive notes, greetings) reach an open client by push; navigating away and back is always current — no forced refresh | ✅ **Done** (PR #16, §4e) |
+| **16** | Emoji reactions | Web | You react to the companion's messages (an addressed reward signal it learns from); the companion reacts to yours as a planned expressive act | ✅ **Built** (§4f) — two designed fast-follows (ref handles, read-back) |
 
 ⭐ = the differentiators the web PoC exists to prove. **Phases 0–5 are the PoC.**
 
@@ -841,6 +842,57 @@ differentiator is *mechanical*: convergence without a refetch trigger): the bus 
 reducer are unit-tested (subscription lifecycle, close-cleanup, id dedup, optimistic-line
 reconciliation), and the event route + publishing store have integration coverage. Full monorepo green
 at ≥80% coverage.
+
+## 4f. Reactions Workstream (emoji reactions)
+
+Through Phase 15 the companion learns from the user's mood **ambiently** — it senses every turn and,
+when a report note is awaiting a reaction, learns from the *change* in mood (`companion-motivation.md`
+§7). That signal is implicit and has to *infer* what the user is reacting to. This workstream adds an
+**explicit, _addressed_** signal: an emoji reaction is pinned to one message, so it isolates the
+companion's effect without differencing and attributes the reward by message id. It also gives the
+companion an **expressive** affordance — reacting to the user's messages as a planned part of a turn
+(👀 "on it" before it goes to work). Like §4b–§4e the numbering is a label, not a strict ordering; it
+extends the web surface and depends only on the PoC spine and the standing event channel (Phase 15).
+Full mechanism → `companion-reactions.md`.
+
+### Phase 16 — Emoji Reactions
+**Goal:** the user can react to any assistant `message` with an emoji, and the companion learns from it
+as an **addressed, value-created** reward; the companion can react to the user's messages as a
+**planned expressive act** within a turn, delivered live to every open surface.
+
+**Scope** (full mechanism → `companion-reactions.md`)
+- **`message_reactions` table + contracts.** A mutable annotation table outside the append-only
+  transcript (`implementation.md` §1); `ReactionDto` + a derived `MessageDto.reactions[]`; emoji
+  validated at the boundary. `POST`/`DELETE …/messages/:id/reactions`.
+- **Live delivery.** `reaction_added` / `reaction_removed` on the standing event channel (§4e,
+  `architecture.md` §6) so a reaction (yours, another surface's, or the companion's) appears live.
+- **User reaction → reward (the inline read).** An event-triggered `ReactionLearner` runs a contextual
+  **value-created** read — _did the companion's act create value?_, **not** a fixed emoji lexicon —
+  yielding a reward + note, or `null` (no learning). Resolves the matching `proactive_outcomes` row
+  **by `note_message_id`** (belief-driven acts also move the belief's salience); an ordinary-answer
+  reaction nudges **approval/competence** at a smaller α. (Fast-loop attune from a reaction — writing
+  the value-created reward into the rolling `companion_affect` mood — is **deliberately deferred**: a
+  value-created reward is not a mood valence, so it would corrupt attunement; see the Deferred list.)
+- **Companion reaction → expression.** A free, ungated `react` agent-loop action emitted mid-turn
+  (react-early-then-work); persists a `reactor='companion'` row, flushed live. Creates **no** outcome.
+
+**Done when:** a user reaction on a report note resolves that exact outcome and nudges its drive; a
+reaction on an ordinary answer nudges approval/competence; a failed read learns nothing (no fabricated
+neutral); the companion can emit a reaction before continuing a turn, visible live on a second tab;
+un-reacting doesn't oscillate weights. Full monorepo green at ≥80% coverage.
+
+**Key risk:** the value-created read's quality (a soft model judgement replacing a deterministic
+lexicon) — mitigated by the same `null`-is-not-neutral rule as the affect read and the claim-once
+guard; and not double-counting a reaction against the ambient affect delta (the atomic `reward IS NULL`
+claim already makes first-resolver-wins safe).
+
+**Deferred (designed in `companion-reactions.md` §5/§6/§11, built later):** the two §5 fast-follows —
+request-scoped **`[n]` addressing handles** (reacting to a non-latest message; v1 reacts to the
+current turn only) and reaction **read-back** (a reaction re-entering context on a later turn; v1 sees
+its own reaction only within the emitting turn) — both deferred because they tag the production
+composed recall stack; the **reflection** pass that turns accumulated reactions into beliefs/persona
+(v1 logs the corpus); **fast-loop attune** from a reaction (value-created ≠ mood valence); richer
+context-sensitive *affective* companion reactions; surfacing reactions as a growth-mirror signal.
 
 ## 5. Open Questions to Resolve (owned here)
 Owned here (single-source). Each is assigned a decision point:

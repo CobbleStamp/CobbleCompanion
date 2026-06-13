@@ -111,6 +111,17 @@ Documentation here is **visual-first**. When a structure, flow, or set of relati
 - **Behavioral:** sequence (request/response, the agent loop), state (lifecycles, e.g. approval-queue states), flowchart (decision logic).
 - **Relational:** ERD (data models and their relationships), plus class/type and component-dependency diagrams where they clarify design.
 
+**Match altitude to the message.** A diagram exists to teach one thing — decide what the reader should learn, pick the zoom level that teaches it, and resist showing more. Detail is not clarity; internals that don't serve the diagram's point are noise.
+
+- **High-level views show modules, not their guts.** At the Context/Container altitude the question is "what are the big modules, and how do they depend on each other?" Draw each module as one opaque box and let the *edges* carry the story — direction of dependency, coupling, cohesion. Do not crack the boxes open here.
+- **Zoom in only when the question changes.** To explain how *one* module works, draw a separate Component diagram for that single container, expand its internals, and keep every sibling and neighbor as an opaque box. One diagram = one altitude — never show one fully-exploded module beside untouched peers.
+
+**Show containment, don't flatten it.** When a module contains sub-components, the picture must make "A is inside B" visually unambiguous. Never draw a container and its own components as sibling nodes at the same level — that is the most common way these diagrams mislead.
+
+- In **C4 diagrams**, use the boundary constructs — `System_Boundary` / `Container_Boundary` / `Component_Boundary` — to wrap children so containment is explicit.
+- In **flowcharts**, wrap a container's internals in a `subgraph` named for the container; the enclosing box *is* the "belongs to" relationship. Edges between modules connect at the boundary — they do not reach into a sibling's internals.
+- Label the boundary with the container's name and each child with its role, so a reader can read the whole and its parts in one glance.
+
 Which diagrams belong in which doc is listed in each type's **Contains** above. Keep each diagram to one idea, let prose annotate rather than restate it, and update it in the same change as the thing it depicts.
 
 ---

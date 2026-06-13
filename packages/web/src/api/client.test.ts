@@ -1,21 +1,24 @@
 import type {
   ChatStreamEvent,
+  CompanionStreamEvent,
   FoodInventoryDto,
   MessageDto,
   StaminaEnergyDto,
 } from '@cobble/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  addReaction,
   confirmProposal,
   createCompanion,
   fetchBudget,
   fetchMessages,
   getFood,
+  removeReaction,
   sendHeartbeat,
   sendMessage,
   setAccessTokenGetter,
   setProactivityDial,
-  subscribeMessages,
+  subscribeCompanionEvents,
 } from './client.js';
 
 /**
@@ -280,7 +283,7 @@ describe('phase 4 budget/dial/heartbeat methods', () => {
  * `{ type: 'message' }` rows, skips `: ping` heartbeat comments, and treats an
  * abort as a clean stop rather than an error (the caller owns reconnect).
  */
-describe('subscribeMessages event channel', () => {
+describe('subscribeCompanionEvents event channel', () => {
   beforeEach(() => {
     setAccessTokenGetter(async () => 'tok');
   });
@@ -319,27 +322,34 @@ describe('subscribeMessages event channel', () => {
     );
   }
 
-  it('yields pushed message rows and ignores heartbeat comments', async () => {
+  it('yields message and reaction events, ignoring heartbeat comments', async () => {
     stubChannel([
       ': ping\n\n',
       `data: ${JSON.stringify({ type: 'message', message: row('m1') })}\n\n`,
-      ': ping\n\n' + `data: ${JSON.stringify({ type: 'message', message: row('m2') })}\n\n`,
+      ': ping\n\n' +
+        `data: ${JSON.stringify({ type: 'reaction_added', messageId: 'm1', reactor: 'user', emoji: '❤️' })}\n\n`,
     ]);
 
-    const got: MessageDto[] = [];
-    for await (const message of subscribeMessages('companion-1', new AbortController().signal)) {
-      got.push(message);
+    const got: CompanionStreamEvent[] = [];
+    for await (const event of subscribeCompanionEvents(
+      'companion-1',
+      new AbortController().signal,
+    )) {
+      got.push(event);
     }
 
-    expect(got.map((m) => m.id)).toEqual(['m1', 'm2']);
+    expect(got).toEqual([
+      { type: 'message', message: row('m1') },
+      { type: 'reaction_added', messageId: 'm1', reactor: 'user', emoji: '❤️' },
+    ]);
   });
 
   it('GETs the events endpoint with the abort signal', async () => {
     stubChannel([]); // empty stream → the generator connects, yields nothing, ends
     const controller = new AbortController();
-    const got: MessageDto[] = [];
-    for await (const message of subscribeMessages('companion-1', controller.signal)) {
-      got.push(message);
+    const got: CompanionStreamEvent[] = [];
+    for await (const event of subscribeCompanionEvents('companion-1', controller.signal)) {
+      got.push(event);
     }
     expect(got).toEqual([]);
     const [url, init] = vi.mocked(fetch).mock.calls[0]!;
@@ -358,14 +368,14 @@ describe('subscribeMessages event channel', () => {
       }),
     );
 
-    const got: MessageDto[] = [];
-    for await (const message of subscribeMessages('companion-1', controller.signal)) {
-      got.push(message);
+    const got: CompanionStreamEvent[] = [];
+    for await (const event of subscribeCompanionEvents('companion-1', controller.signal)) {
+      got.push(event);
     }
     expect(got).toEqual([]);
   });
 
-  it('ends quietly when aborted mid-stream after delivering rows', async () => {
+  it('ends quietly when aborted mid-stream after delivering events', async () => {
     const controller = new AbortController();
     const encoder = new TextEncoder();
     let reads = 0;
@@ -385,11 +395,48 @@ describe('subscribeMessages event channel', () => {
       vi.fn(async () => ({ ok: true, body: { getReader: () => reader } })),
     );
 
-    const got: MessageDto[] = [];
-    for await (const message of subscribeMessages('companion-1', controller.signal)) {
-      got.push(message);
-      controller.abort(); // unmount after the first row → next read throws AbortError
+    const got: CompanionStreamEvent[] = [];
+    for await (const event of subscribeCompanionEvents('companion-1', controller.signal)) {
+      got.push(event);
+      controller.abort(); // unmount after the first event → next read throws AbortError
     }
-    expect(got.map((m) => m.id)).toEqual(['m1']);
+    expect(got).toHaveLength(1);
+  });
+});
+
+describe('reaction calls', () => {
+  beforeEach(() => {
+    setAccessTokenGetter(async () => 'tok');
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    setAccessTokenGetter(async () => null);
+  });
+
+  function stubOk(): void {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, json: async () => ({ ok: true }) })),
+    );
+  }
+
+  it('POSTs the emoji to add a reaction', async () => {
+    stubOk();
+    await addReaction('companion-1', 'm1', '🎉');
+    const [url, init] = vi.mocked(fetch).mock.calls[0]!;
+    expect(url).toContain('/companions/companion-1/messages/m1/reactions');
+    expect(init?.method).toBe('POST');
+    expect(JSON.parse(init?.body as string)).toEqual({ emoji: '🎉' });
+  });
+
+  it('DELETEs a URL-encoded emoji to remove a reaction', async () => {
+    stubOk();
+    // A multi-codepoint emoji (U+2764 U+FE0F) must be percent-encoded in the path.
+    await removeReaction('companion-1', 'm1', '❤️');
+    const [url, init] = vi.mocked(fetch).mock.calls[0]!;
+    expect(url).toContain(
+      `/companions/companion-1/messages/m1/reactions/${encodeURIComponent('❤️')}`,
+    );
+    expect(init?.method).toBe('DELETE');
   });
 });

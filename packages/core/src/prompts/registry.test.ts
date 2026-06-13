@@ -14,6 +14,7 @@ const ALL_IDS: readonly PromptId[] = [
   'segmenter',
   'enricher',
   'affect-sense',
+  'reaction-sense',
   'autonomous-note',
   'greeting',
   'judge',

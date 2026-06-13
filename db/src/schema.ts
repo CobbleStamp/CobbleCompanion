@@ -13,6 +13,7 @@ import type {
   ProactiveReadSourceRef,
   ProposalOrigin,
   ProposalStatus,
+  Reactor,
   SourceKind,
   ToolSource,
   UserFactSource,
@@ -761,10 +762,54 @@ export const equippedTools = pgTable(
   ],
 );
 
+/**
+ * Emoji reactions (companion-reactions.md) — mutable annotations on immutable
+ * transcript messages, both directions. The user's reaction is an addressed reward
+ * signal the companion learns from; the companion's is a planned expressive act.
+ * Kept OUT of `messages` (which is append-only, architecture.md §4.7) so adding or
+ * removing a reaction never mutates a transcript turn. One row per
+ * (message, reactor, emoji): a re-tap is idempotent and un-reacting deletes the row;
+ * different emoji on one message are distinct rows, so a message can hold several.
+ * `reward`/`reward_note` are filled by the inline value-created read for USER
+ * reactions only (null for a companion reaction, or until the read resolves) — the
+ * corpus the reflection pass consumes. Only `kind='message'` rows are reacted to.
+ */
+export const messageReactions = pgTable(
+  'message_reactions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    messageId: uuid('message_id')
+      .notNull()
+      .references(() => messages.id, { onDelete: 'cascade' }),
+    companionId: uuid('companion_id')
+      .notNull()
+      .references(() => companions.id, { onDelete: 'cascade' }),
+    // 'user' | 'companion' — who placed the reaction.
+    reactor: text('reactor').$type<Reactor>().notNull(),
+    // The emoji glyph; validated at the API boundary as a single well-formed emoji
+    // (`^\p{RGI_Emoji}$`, ≤32 chars) — not whitelisted (companion-reactions.md §7, §8).
+    emoji: text('emoji').notNull(),
+    // The inline read's value-created reward ∈ [−1, 1]; null for companion reactions
+    // or until the read resolves (a failed read leaves it null — never a fabricated 0).
+    reward: real('reward'),
+    // The read's short note ("moved, engaged") — the reflection corpus. Null as above.
+    rewardNote: text('reward_note'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // Idempotent toggle: a re-tap conflicts, un-react deletes. Different emoji or a
+    // different reactor are distinct rows (so user + companion can both react, and a
+    // message can carry several emoji).
+    uniqueIndex('message_reactions_uniq').on(table.messageId, table.reactor, table.emoji),
+    index('message_reactions_companion_idx').on(table.companionId),
+  ],
+);
+
 export const schema = {
   users,
   companions,
   messages,
+  messageReactions,
   episodes,
   sources,
   ingestionJobs,

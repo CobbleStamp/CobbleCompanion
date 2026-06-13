@@ -7,6 +7,7 @@
 
 import { affectAttunementTemplate } from './catalog/affect-attunement.js';
 import { affectSenseTemplate } from './catalog/affect-sense.js';
+import { reactionSenseTemplate } from './catalog/reaction-sense.js';
 import { autonomousNoteTemplate } from './catalog/autonomous-note.js';
 import { greetingTemplate } from './catalog/greeting.js';
 import { consolidationTemplate } from './catalog/consolidation.js';
@@ -53,6 +54,7 @@ const ENTRIES: readonly PromptEntry[] = [
   toEntry(segmenterTemplate),
   toEntry(enricherTemplate),
   toEntry(affectSenseTemplate),
+  toEntry(reactionSenseTemplate),
   toEntry(autonomousNoteTemplate),
   toEntry(greetingTemplate),
   toEntry(judgeTemplate),

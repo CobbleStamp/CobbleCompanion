@@ -19,6 +19,15 @@ export interface Tool {
    * approval gate blocks an effectful call; a read-only tool runs immediately.
    */
   readonly effectful: boolean;
+  /**
+   * When true, running this tool records NO `tool_step` chrome row — the tool's
+   * own artifact is the user-visible record, not a "Used …" line. Used by the
+   * companion's expressive `react` action, whose emoji *is* the artifact
+   * (companion-reactions.md §5). Default (absent/false) records a step as usual.
+   * Note: `silent` suppresses only the user-facing transcript row — the call is
+   * still recorded in the `tool_calls` audit log (afterToolCall), as every call is.
+   */
+  readonly silent?: boolean;
   /** Execute the call. Must resolve (errors become an error {@link ToolResult}). */
   run(args: Record<string, unknown>, ctx: TurnCtx): Promise<ToolResult>;
   /**

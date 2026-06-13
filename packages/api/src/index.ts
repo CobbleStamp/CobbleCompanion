@@ -17,6 +17,7 @@ import {
   createIngestSourceTool,
   createLoggingAfterToolCall,
   createMemorySearchTool,
+  createReactTool,
   createProceduralRetrieveContext,
   createSemanticRetrieveContext,
   createUserModelRetrieveContext,
@@ -28,6 +29,8 @@ import {
   DrizzleProceduralStore,
   DrizzleProactiveOutcomeStore,
   DrizzleProposalStore,
+  DrizzleReactionStore,
+  ReactionLearner,
   DrizzleSemanticMemoryStore,
   DrizzleCompanionAffectStore,
   DrizzleVitalityStore,
@@ -124,11 +127,24 @@ async function main(): Promise<void> {
   // sense the user's mood each turn (Phase 4.2) and the will can learn from it.
   const rewards = new DrizzleProactiveOutcomeStore(db);
   const affectStore = new DrizzleCompanionAffectStore(db);
+  const reactions = new DrizzleReactionStore(db);
   const semantic = new DrizzleSemanticMemoryStore(db);
   const episodic = new DrizzleEpisodicMemoryStore(db);
   const quota = new DrizzleVitalityStore(db, 'stamina');
   const llmGateway = createGateway(config);
   const embeddings = createEmbeddingGateway(config);
+  // The will's half of the reaction loop (companion-reactions.md §4): reads a user
+  // reaction's value (cheap ingestion model, billed to stamina) and learns from it
+  // after the route responds. Same body-senses/will-learns split as the affect loop.
+  const reactionLearner = new ReactionLearner({
+    rewards,
+    reactions,
+    identity,
+    memory,
+    userModel,
+    sense: { llm: llmGateway, model: config.ingestionModel, logger: consoleLogger, quota },
+    logger: consoleLogger,
+  });
   // Shared by the retrieve-context arms only: collapses each turn's duplicate
   // query embedding into one provider call. Ingestion keeps the raw gateway —
   // it embeds distinct chunks, so a one-entry memo would only ever miss.
@@ -185,6 +201,9 @@ async function main(): Promise<void> {
       logger: consoleLogger,
     }),
     createIngestSourceTool({ semantic, ingestion, logger: consoleLogger }),
+    // The companion's expressive emoji reaction (companion-reactions.md §5): free,
+    // ungated, silent; binds to the message that triggered the turn.
+    createReactTool({ reactions, eventBus, logger: consoleLogger }),
   ];
   // Phases 9–10: runtime tool acquisition. Off unless MCP_SERVERS and/or
   // CLI_TOOLS_PATH is configured — then search_tools/load_tool join the native core
@@ -440,6 +459,8 @@ async function main(): Promise<void> {
     energy,
     food,
     rewards,
+    reactions,
+    reactionLearner,
     affect: affectStore,
     growth,
     growthStore,

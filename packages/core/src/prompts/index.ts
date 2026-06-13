@@ -36,6 +36,12 @@ export {
   REPORT_AFFECT_TOOL,
 } from './catalog/affect-sense.js';
 export {
+  reactionSenseTemplate,
+  type ReactionSenseInput,
+  REPORT_REACTION,
+  REPORT_REACTION_TOOL,
+} from './catalog/reaction-sense.js';
+export {
   autonomousNoteTemplate,
   type AutonomousNoteInput,
   type ReadSourceDigest,

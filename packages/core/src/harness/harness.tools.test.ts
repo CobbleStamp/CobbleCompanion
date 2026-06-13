@@ -68,6 +68,9 @@ function memory(): MemoryStore & { appended: MessageDto[] } {
     async getRecentMessages(): Promise<readonly MessageDto[]> {
       return [];
     },
+    async getMessageById(): Promise<MessageDto | null> {
+      return null;
+    },
     async getMessagesSince(): Promise<readonly TranscriptEntry[]> {
       return [];
     },

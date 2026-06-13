@@ -60,7 +60,7 @@ export async function enrichSection(
   }
 
   const fallbackHeader = `[${input.sourceTitle} — ${input.topicTitle}]`;
-  const parsed = parseEnrichment(raw);
+  const parsed = parseEnrichment(raw, logger);
   if (!parsed) {
     logger.error('enrichment output invalid; using metadata header without facts', {
       operation: 'ingestion.enrichSection',
@@ -128,7 +128,7 @@ function truncateSectionText(
 }
 
 /** Parse the model's enrichment JSON; null when structurally unusable. */
-export function parseEnrichment(raw: string): Enrichment | null {
+export function parseEnrichment(raw: string, logger: Logger): Enrichment | null {
   const jsonMatch = raw.match(/\{[\s\S]*\}/);
   if (!jsonMatch) return null;
   let parsed: {
@@ -143,7 +143,11 @@ export function parseEnrichment(raw: string): Enrichment | null {
   };
   try {
     parsed = JSON.parse(jsonMatch[0]) as typeof parsed;
-  } catch {
+  } catch (error) {
+    logger.error('enrichment output JSON parse error; using metadata header without facts', {
+      operation: 'ingestion.enrichSection',
+      error: (error as Error).message,
+    });
     return null;
   }
   if (typeof parsed.context !== 'string') return null;

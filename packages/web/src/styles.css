@@ -111,6 +111,61 @@ button:disabled {
   font-size: 0.9rem;
 }
 
+/* Emoji reactions (companion-reactions.md §8): chips under a message, plus a
+   quick-react bar that fades in on hover over the companion's turns. */
+.line .reactions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  margin-top: 0.15rem;
+}
+.line.user .reactions {
+  align-self: flex-end;
+}
+.reaction-chip {
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  border-radius: 999px;
+  padding: 0.05rem 0.4rem;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+.reaction-chip.mine {
+  border-color: #c7d2fe;
+  background: #eef2ff;
+}
+.reaction-chip:not(:disabled) {
+  cursor: pointer;
+}
+.quick-react {
+  display: inline-flex;
+  gap: 0.1rem;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.line:hover .quick-react,
+.quick-react:focus-within {
+  opacity: 0.9;
+}
+.quick-react-btn {
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  padding: 0.05rem 0.2rem;
+  font-size: 0.95rem;
+  cursor: pointer;
+  filter: grayscale(0.4);
+}
+.quick-react-btn:hover {
+  background: #f1f5f9;
+  filter: none;
+}
+.quick-react-btn.active {
+  background: #eef2ff;
+  filter: none;
+}
+
 /* Markdown-rendered assistant replies. Tame default block margins so a single
    paragraph sits flush in its bubble, while lists/code/tables keep readable
    spacing. */

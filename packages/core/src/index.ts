@@ -360,6 +360,22 @@ export {
   type RecordOutcomeInput,
 } from './motivation/reward-store.js';
 export {
+  DrizzleReactionStore,
+  type AddReactionResult,
+  type ReactionRecord,
+  type ReactionStore,
+} from './reactions/store.js';
+export {
+  senseReaction,
+  coerceReactionReading,
+  type ReactionReading,
+  type ReactionSenseDeps,
+  type ReactionSenseParams,
+} from './reactions/sense.js';
+export { ReactionLearner, type ReactionLearnerDeps } from './reactions/learner.js';
+export { asReactableMessage, type ReactableMessage } from './reactions/reactable.js';
+export { createReactTool, type ReactToolOptions } from './reactions/react-tool.js';
+export {
   DEFAULT_LEARNING_RATE,
   nudgeDriveWeight,
   WEIGHT_CEILING,

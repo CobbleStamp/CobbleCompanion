@@ -8,9 +8,13 @@ import type {
   ChatStreamEvent,
   Citation,
   CompanionDto,
+  CompanionStreamEvent,
   MessageDto,
   MessageKind,
   MessageRole,
+  ReactionDto,
+  StreamReactionAddedEvent,
+  StreamReactionRemovedEvent,
 } from '@cobble/shared';
 import {
   UPLOAD_ACCEPT_ATTR,
@@ -19,11 +23,13 @@ import {
 } from '@cobble/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  addReaction,
   confirmProposal,
   fetchMessages,
+  removeReaction,
   sendMessage,
   streamGreeting,
-  subscribeMessages,
+  subscribeCompanionEvents,
   uploadFileSource,
 } from '../api/client.js';
 import { IngestionPanel } from '../components/IngestionPanel.js';
@@ -76,6 +82,66 @@ interface ChatLine {
    * presence is what renders the "View status →" affordance on that line.
    */
   readonly sourceId?: string;
+  /**
+   * Emoji reactions on this line (companion-reactions.md §8) — the user's on the
+   * companion's messages, and the companion's on the user's. Joined onto the
+   * snapshot and kept current by live `reaction_*` channel events.
+   */
+  readonly reactions?: readonly ReactionDto[];
+}
+
+/** The curated one-tap reactions — a shortcut, not a constraint (§7). */
+const QUICK_REACTIONS = ['❤️', '👍', '😂', '🎉', '😮', '😢', '🙏', '👎'] as const;
+
+/**
+ * A message's reactions: existing chips (both reactors), plus — on the companion's
+ * own messages — a quick-react bar so the user can react. The user reacts only to
+ * the companion's turns; their own turns show the companion's reactions read-only.
+ */
+function MessageReactions({
+  line,
+  onToggle,
+}: {
+  readonly line: ChatLine;
+  readonly onToggle: (emoji: string) => void;
+}): JSX.Element | null {
+  const reactions = line.reactions ?? [];
+  const canReact = line.role === 'assistant' && line.id !== undefined;
+  if (reactions.length === 0 && !canReact) return null;
+  const mine = new Set(
+    reactions.filter((reaction) => reaction.reactor === 'user').map((reaction) => reaction.emoji),
+  );
+  return (
+    <span className="reactions">
+      {reactions.map((reaction) => (
+        <button
+          key={`${reaction.reactor}-${reaction.emoji}`}
+          type="button"
+          className={`reaction-chip${reaction.reactor === 'user' ? ' mine' : ''}`}
+          onClick={canReact ? () => onToggle(reaction.emoji) : undefined}
+          disabled={!canReact}
+          aria-label={`${reaction.reactor === 'user' ? 'You' : 'Companion'} reacted ${reaction.emoji}`}
+        >
+          {reaction.emoji}
+        </button>
+      ))}
+      {canReact && (
+        <span className="quick-react">
+          {QUICK_REACTIONS.map((emoji) => (
+            <button
+              key={emoji}
+              type="button"
+              className={`quick-react-btn${mine.has(emoji) ? ' active' : ''}`}
+              onClick={() => onToggle(emoji)}
+              aria-label={`React ${emoji}`}
+            >
+              {emoji}
+            </button>
+          ))}
+        </span>
+      )}
+    </span>
+  );
 }
 
 /**
@@ -93,8 +159,47 @@ function messageToLine(m: MessageDto): ChatLine {
     ...(m.metadata?.citations ? { citations: m.metadata.citations } : {}),
     ...(m.metadata?.proposalId ? { proposalId: m.metadata.proposalId } : {}),
     ...(m.sourceId !== null ? { sourceId: m.sourceId } : {}),
+    ...(m.reactions && m.reactions.length > 0 ? { reactions: m.reactions } : {}),
     attachment: m.role === 'user' && m.sourceId !== null,
   };
+}
+
+/**
+ * Apply a live reaction event to the rendered lines (companion-reactions.md §8):
+ * add/remove the emoji on the matching message. Idempotent — re-adding an emoji
+ * already present, or removing one already gone, is a no-op (so an optimistic
+ * update and its channel echo converge). A target not currently rendered is
+ * dropped (its reactions ride the snapshot when it loads).
+ */
+function applyReaction(
+  lines: ChatLine[],
+  event: StreamReactionAddedEvent | StreamReactionRemovedEvent,
+): ChatLine[] {
+  const index = lines.findIndex((line) => line.id === event.messageId);
+  if (index < 0) return lines;
+  const line = lines[index]!;
+  const current = line.reactions ?? [];
+  const present = current.some((r) => r.reactor === event.reactor && r.emoji === event.emoji);
+  if (event.type === 'reaction_added' ? present : !present) return lines;
+  const reactions: readonly ReactionDto[] =
+    event.type === 'reaction_added'
+      ? [...current, { messageId: event.messageId, reactor: event.reactor, emoji: event.emoji }]
+      : current.filter((r) => !(r.reactor === event.reactor && r.emoji === event.emoji));
+  return [...lines.slice(0, index), { ...line, reactions }, ...lines.slice(index + 1)];
+}
+
+/**
+ * Whether two reaction sets are equal as sets, order-independent and keyed by
+ * reactor+emoji (a message can't carry the same pair twice). Lets
+ * {@link mergeMessage} adopt a snapshot's authoritative reactions for an
+ * already-rendered row only when they actually differ, so an idle re-sync still
+ * returns the unchanged array reference and doesn't churn.
+ */
+function reactionsEqual(a: readonly ReactionDto[], b: readonly ReactionDto[]): boolean {
+  if (a.length !== b.length) return false;
+  const key = (r: ReactionDto): string => `${r.reactor}:${r.emoji}`;
+  const seen = new Set(a.map(key));
+  return b.every((r) => seen.has(key(r)));
 }
 
 /** Reconnect backoff bounds for the standing event channel (implementation.md §3). */
@@ -104,14 +209,26 @@ const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 
 /**
  * Merge one pushed/persisted row into the rendered lines, keyed by server id
- * (architecture.md §6). Already present by id → no-op: the per-turn stream, the
- * snapshot, and the channel can each deliver the same row. Otherwise reconcile the
- * optimistic, id-less echo of a row this client just sent — a user line matched by
- * content — by adopting the authoritative row in place; a genuinely new row is
- * appended (the channel and snapshot both deliver in chronological order).
+ * (architecture.md §6). Already present by id → reconcile its reactions: the row's
+ * content is immutable, but reactions are a mutable overlay (companion-reactions.md
+ * §8) and the snapshot is authoritative, so a re-sync must adopt the server's set
+ * (the only repair path for a reaction whose live channel echo was lost — the bus
+ * carries no replay). Unchanged reactions return the same array reference, so the
+ * idle re-sync stays a no-op. Otherwise reconcile the optimistic, id-less echo of a
+ * row this client just sent — a user line matched by content — by adopting the
+ * authoritative row in place; a genuinely new row is appended (the channel and
+ * snapshot both deliver in chronological order).
  */
 function mergeMessage(lines: ChatLine[], message: MessageDto): ChatLine[] {
-  if (lines.some((line) => line.id === message.id)) return lines;
+  const present = lines.findIndex((line) => line.id === message.id);
+  if (present >= 0) {
+    const line = lines[present]!;
+    const server = message.reactions ?? [];
+    if (reactionsEqual(line.reactions ?? [], server)) return lines;
+    const { reactions: _dropped, ...rest } = line;
+    const reconciled: ChatLine = server.length > 0 ? { ...rest, reactions: server } : rest;
+    return [...lines.slice(0, present), reconciled, ...lines.slice(present + 1)];
+  }
   if (message.role === 'user') {
     const optimistic = lines.findIndex(
       (line) => line.id === undefined && line.role === 'user' && line.content === message.content,
@@ -141,6 +258,15 @@ function mergeSnapshot(lines: ChatLine[], history: readonly MessageDto[]): ChatL
   return history.reduce(mergeMessage, lines);
 }
 
+/** Fold one channel event into the lines: a `message` merges by id, a `reaction_*`
+ *  mutates its target message's reaction set. The single reducer the live channel
+ *  and the buffered-flush both apply. */
+function reduceEvent(lines: ChatLine[], event: CompanionStreamEvent): ChatLine[] {
+  return event.type === 'message'
+    ? mergeMessage(lines, event.message)
+    : applyReaction(lines, event);
+}
+
 export function Chat({
   companion,
   onSignOut,
@@ -164,7 +290,7 @@ export function Chat({
   const greetingRef = useRef(false);
   // Channel rows that arrived before the snapshot landed or while a turn is in
   // flight, held until it's safe to merge them (see the establishment effect).
-  const bufferedRef = useRef<MessageDto[]>([]);
+  const bufferedRef = useRef<CompanionStreamEvent[]>([]);
   // Mirrors of `ready`/`locked` the long-lived channel consumer reads — its closure
   // can't see fresh React state.
   const readyRef = useRef(false);
@@ -187,6 +313,53 @@ export function Chat({
   // Keep the refs the async channel consumer reads in step with render.
   readyRef.current = ready;
   lockedRef.current = locked;
+
+  // Re-sync against the transcript snapshot, reconciling rows we already have
+  // (merged by id, so it never duplicates) and adopting the server's authoritative
+  // reactions. The standing event channel (architecture.md §6) is the primary
+  // delivery path; this is the belt-and-suspenders re-sync on tab-return — and the
+  // repair after a failed reaction toggle — in case the connection silently died or
+  // a reaction's live echo was lost.
+  const refreshTranscript = useCallback(async (): Promise<void> => {
+    try {
+      const history = await fetchMessages(companion.id);
+      setLines((prev) => mergeSnapshot(prev, history));
+    } catch (err) {
+      console.error('transcript refresh failed', { companionId: companion.id, error: err });
+    }
+  }, [companion.id]);
+
+  // Toggle a user reaction on one of the companion's messages (companion-reactions.md
+  // §8): optimistically flip it for instant feedback, fire the API call, and let the
+  // server's `reaction_*` echo over the channel confirm it (a no-op under idempotent
+  // `applyReaction`). On failure, reconcile against the server rather than blindly
+  // flipping back — a rejected request may have committed server-side with only its
+  // response lost, so a blind rollback would leave the client permanently disagreeing
+  // with the server (now repairable, since mergeMessage adopts the snapshot's set).
+  const toggleReaction = useCallback(
+    (messageId: string, emoji: string): void => {
+      const line = lines.find((candidate) => candidate.id === messageId);
+      const has = line?.reactions?.some((r) => r.reactor === 'user' && r.emoji === emoji) ?? false;
+      const flip = (added: boolean): void =>
+        setLines((prev) =>
+          applyReaction(prev, {
+            type: added ? 'reaction_added' : 'reaction_removed',
+            messageId,
+            reactor: 'user',
+            emoji,
+          }),
+        );
+      flip(!has);
+      const action = has
+        ? removeReaction(companion.id, messageId, emoji)
+        : addReaction(companion.id, messageId, emoji);
+      action.catch((err) => {
+        console.error('reaction toggle failed', { messageId, emoji, error: err });
+        void refreshTranscript(); // adopt server truth instead of assuming the flip failed
+      });
+    },
+    [lines, companion.id, refreshTranscript],
+  );
 
   // Grow the composer with its content (Gemini-style), up to the CSS max-height,
   // then scroll. Runs on every input change — including the reset to '' after a
@@ -213,11 +386,20 @@ export function Chat({
     // Hold rows until the snapshot has landed and no turn is mid-flight (the
     // per-turn stream owns its optimistic lines until then); the buffer is flushed,
     // deduped by id, once it's safe (the effect below).
-    const applyOrBuffer = (message: MessageDto): void => {
+    const applyOrBuffer = (event: CompanionStreamEvent): void => {
       if (!readyRef.current || lockedRef.current) {
-        bufferedRef.current.push(message);
+        bufferedRef.current.push(event);
       } else {
-        setLines((prev) => mergeMessage(prev, message));
+        // Drain anything buffered ahead of this event in one ordered pass. The refs
+        // flip to unlocked during render but the flush effect runs post-paint, so an
+        // event arriving in that window would otherwise apply ahead of still-buffered
+        // events — reordering the order-sensitive reaction_added/removed toggles and
+        // resurrecting a removed chip. Draining FIFO here keeps arrival order.
+        const pending = bufferedRef.current;
+        bufferedRef.current = [];
+        setLines((prev) =>
+          (pending.length > 0 ? [...pending, event] : [event]).reduce(reduceEvent, prev),
+        );
       }
     };
 
@@ -226,9 +408,9 @@ export function Chat({
       let backoff = CHANNEL_INITIAL_BACKOFF_MS;
       while (!cancelled) {
         try {
-          for await (const message of subscribeMessages(companion.id, controller.signal)) {
+          for await (const event of subscribeCompanionEvents(companion.id, controller.signal)) {
             if (cancelled) break;
-            applyOrBuffer(message);
+            applyOrBuffer(event);
             backoff = CHANNEL_INITIAL_BACKOFF_MS; // a healthy frame resets backoff
           }
         } catch (err) {
@@ -291,24 +473,8 @@ export function Chat({
     if (bufferedRef.current.length === 0) return;
     const pending = bufferedRef.current;
     bufferedRef.current = [];
-    setLines((prev) => pending.reduce(mergeMessage, prev));
+    setLines((prev) => pending.reduce(reduceEvent, prev));
   }, [ready, locked]);
-
-  /**
-   * Re-sync against the transcript snapshot, appending any rows we don't already
-   * have (merged by id, so it never duplicates). The standing event channel
-   * (architecture.md §6) is the primary delivery path; this is the belt-and-
-   * suspenders re-sync on tab-return, in case the connection silently died while
-   * the tab was hidden and reconnect hasn't fired yet.
-   */
-  const refreshTranscript = useCallback(async (): Promise<void> => {
-    try {
-      const history = await fetchMessages(companion.id);
-      setLines((prev) => mergeSnapshot(prev, history));
-    } catch (err) {
-      console.error('transcript refresh failed', { companionId: companion.id, error: err });
-    }
-  }, [companion.id]);
 
   /**
    * Ask the companion to react to the user's arrival (P14). The server decides
@@ -628,6 +794,10 @@ export function Chat({
                     .join(' · ')}
                 </span>
               )}
+              <MessageReactions
+                line={line}
+                onToggle={(emoji) => line.id && toggleReaction(line.id, emoji)}
+              />
             </li>
           );
         })}

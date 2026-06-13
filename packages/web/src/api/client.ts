@@ -117,6 +117,30 @@ export async function fetchMessages(companionId: string): Promise<MessageDto[]> 
   return body.messages;
 }
 
+/** Add an emoji reaction to one of the companion's messages (companion-reactions.md §8). */
+export async function addReaction(
+  companionId: string,
+  messageId: string,
+  emoji: string,
+): Promise<void> {
+  await send(`/companions/${companionId}/messages/${messageId}/reactions`, {
+    method: 'POST',
+    body: JSON.stringify({ emoji }),
+  });
+}
+
+/** Remove a previously added reaction. Idempotent — un-reacting a gone reaction is fine. */
+export async function removeReaction(
+  companionId: string,
+  messageId: string,
+  emoji: string,
+): Promise<void> {
+  await send(
+    `/companions/${companionId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`,
+    { method: 'DELETE' },
+  );
+}
+
 /** Read-only snapshot of everything the companion holds (the memory browser). */
 export async function getCompanionMemory(companionId: string): Promise<MemorySnapshotDto> {
   const body = await request<{ memory: MemorySnapshotDto }>(`/companions/${companionId}/memory`);
@@ -387,10 +411,10 @@ export async function* streamGreeting(companionId: string): AsyncGenerator<ChatS
  * any reconnect. GET (no side effects); the bearer rides the `Authorization`
  * header via `send`, so no `EventSource` cookie workaround is needed.
  */
-export async function* subscribeMessages(
+export async function* subscribeCompanionEvents(
   companionId: string,
   signal: AbortSignal,
-): AsyncGenerator<MessageDto> {
+): AsyncGenerator<CompanionStreamEvent> {
   let response: Response;
   try {
     response = await send(`/companions/${companionId}/events`, { method: 'GET', signal });
@@ -401,8 +425,7 @@ export async function* subscribeMessages(
   if (!response.body) throw new Error('event channel response has no body');
   try {
     for await (const payload of readSseData(response)) {
-      const event = JSON.parse(payload) as CompanionStreamEvent;
-      if (event.type === 'message') yield event.message;
+      yield JSON.parse(payload) as CompanionStreamEvent;
     }
   } catch (error) {
     if (signal.aborted) return;

@@ -243,7 +243,7 @@ export class Harness {
     });
     let traceError: string | undefined;
     try {
-      await this.memory.appendMessage(companion.id, 'user', userContent);
+      const userMessage = await this.memory.appendMessage(companion.id, 'user', userContent);
       const prep = await this.prepare(companion, userContent, trace, ownerId);
       // Snapshot the transcript for the post-turn perception reads (affect + user-fact
       // capture) NOW, while the user's message is still the final row. Once the reply
@@ -256,7 +256,7 @@ export class Harness {
         this.affect || capturesUserFacts
           ? await this.memory.getRecentMessages(companion.id, this.recentLimit)
           : [];
-      yield* this.runLoop(companion, ownerId, prep, signal, trace);
+      yield* this.runLoop(companion, ownerId, prep, signal, trace, userMessage.id);
       // Perception + learning (Phase 4.2) — launched AFTER the reply has fully
       // streamed (all tokens + `done` already yielded) and deliberately NOT
       // awaited: the generator returns immediately so the SSE socket closes on
@@ -643,6 +643,7 @@ export class Harness {
     prep: PreparedTurn,
     signal: AbortSignal | undefined,
     trace: TraceHandle,
+    currentUserMessageId?: string,
   ): AsyncGenerator<ChatStreamEvent> {
     const { messages, citations, retrievalUsage, coPromptRefs } = prep;
     // Citations are retrieval-time data: surface the grounding sources as soon
@@ -655,7 +656,11 @@ export class Harness {
     // into `acc`, so a multi-turn tool run is debited once, at exit.
     const acc = createUsageAccumulator();
     const llm = meteredLlmGateway(this.gateway, acc.sink, trace);
-    const ctx: TurnCtx = { companionId: companion.id, ownerId: ownerId ?? '' };
+    const ctx: TurnCtx = {
+      companionId: companion.id,
+      ownerId: ownerId ?? '',
+      ...(currentUserMessageId ? { currentUserMessageId } : {}),
+    };
 
     // A finish path debits once and sets this; any other exit (a client
     // disconnect that `.return()`s the generator, or a provider/infra fault that
@@ -776,7 +781,9 @@ export class Harness {
           // nothing: a "Searched memory for…" row for a lookup that errored would
           // misreport failure as success. The model still sees the error via the
           // tool message pushed above.
-          if (result.isError !== true) {
+          // A `silent` tool (the companion's `react` emit) records no chrome row —
+          // its own artifact is the user-visible record (companion-reactions.md §5).
+          if (result.isError !== true && registry.get(gated.name)?.silent !== true) {
             yield* this.recordToolStep(registry, companion.id, gated.name, gated.args);
           }
         }

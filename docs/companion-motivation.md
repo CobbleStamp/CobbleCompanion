@@ -384,6 +384,10 @@ Out of scope for this release; the roadmap is owned by `development-plan.md`. (T
 - `companion-greeting.md` — the **greeting / arrival reaction**: the first `connection`-driven
   *conversational* move (edge-triggered by arrival), which reuses this engine's arbitration, dial,
   and change-as-reward loop.
+- `companion-reactions.md` — **emoji reactions**: a second, *addressed*
+  reward channel that extends §7 — a user reaction resolves an outcome **by `note_message_id`** (no
+  differencing needed, since the reaction is pinned to the act), and the companion's own reaction is
+  a planned, free expressive agent action.
 - `architecture.md` §4.5 — the `Initiator` seam, body-then-will, loop integration.
 - `architecture.md` §4.4 — propose→approve gate + the `origin` resolution.
 - `architecture.md` §4.8 — stamina/energy two-wallet vitality.

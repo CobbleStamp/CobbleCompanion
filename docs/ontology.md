@@ -34,6 +34,9 @@ Its position in the architecture is fixed by two invariants:
    (`sources.raw_text` for source-facts, the transcript for user-facts) must lose nothing
    canonical. A wrong fact is a quality bug, not data corruption.
 
+> **How these typed fields are actually *used* downstream — and the deliberate limit on that use
+> (the overlay is a controlled vocabulary, **not** a reasoning engine) — is §6.**
+
 ## 2. The Fixed Core (closed set)
 
 Every fact has a `fact_type` drawn from a **closed set of core types**. Extraction validates
@@ -126,3 +129,89 @@ Within a core type, extraction may qualify facts with finer-grained **leaf subty
     additive evolution (it changes retrieval quality, not the contract).
   - **Cross-source relations** — relations whose subject and object come from different sources
     (knowledge-graph linking) build on entity normalization.
+
+## 6. How typed facts are used — and what this overlay is *not*
+
+> **Why this section.** "Typed fact overlay" invites a false expectation — that the system
+> performs ontological *reasoning* (subsumption, entailment, graph queries). It does **not**. The
+> types are a **controlled vocabulary** that routes, reconciles, and renders facts; the *semantic*
+> work is carried by embeddings and the LLM. This section makes that division explicit.
+
+### Two orthogonal typed axes
+
+A fact carries **two** independent typed fields — don't conflate them:
+
+- **`fact_type`** — the coarse **core type** (§2): one of the five closed kinds
+  (`entity` … `definition`). Answers *what kind of statement is this?*
+- **`predicate`** — the **relation** in `subject · predicate · object`. Answers *what specific
+  relationship?* For a source-fact the predicate is proposed bottom-up (§3); for the **user as
+  privileged entity** the predicate is itself drawn from a **closed, load-bearing set** — the
+  Tier-1 identity predicates and Tier-2 belief predicates (enumerated in code, `@cobble/shared`;
+  mechanism `companion-memory.md` §4).
+
+So `user · prefers · aisle seats` is `fact_type = attribute`, `predicate = prefers`. The two axes
+are set independently.
+
+### What the predicate does (its jobs)
+
+For the user-model predicates the predicate is **the whole index** — there is no symbolic layer
+above it. It does five mechanical jobs, all routing/encoding, none inference:
+
+| Role | What the predicate does | Example |
+|---|---|---|
+| **Validation tag** | Extraction validates the predicate against the closed set; an unknown one is **dropped**, never stored (`coerceCandidates` in `core/src/user-model/extractor.ts` filters silently — paralleling the core-type validation in `core/src/ingestion/ontology.ts`, where the enrich path logs the drop). | a belief whose attribute ∉ the Tier-2 set is discarded |
+| **Tier routing** | The predicate alone decides a user-fact's path: **Tier-1** rides the persona prompt every turn; **Tier-2** goes to the retrieval arm and never the always-on prompt (`core/src/harness/context.ts`). | `livesIn` → persona; `prefers` → belief arm |
+| **Cardinality** | Singular vs multi-valued is a property *of the predicate*: singular **supersedes**, multi-valued **accretes** (`MULTI_VALUED_PREDICATES`). | `name` replaces; `languages` accretes |
+| **Polarity** | Sentiment rides the predicate, so no extra column is needed. | `prefers` vs `dislikes` |
+| **Rendering** | Each predicate maps to a fixed natural-language phrase, used **symmetrically** for the write-side embedding text and the read-side recall line (`core/src/user-model/phrasing.ts`, `core/src/harness/context.ts`). | `interestedIn` → "the user is interested in …" |
+
+### What this is *not* — no reasoning engine
+
+The overlay is a typed vocabulary with **provenance and tenancy invariants** (§4), not a
+description-logic or knowledge-graph engine. Concretely, the system does **not**:
+
+- **reason over a type hierarchy** — no subsumption, no leaf-type entailment; a leaf only matters
+  when code explicitly depends on it (§3), and then as a branch, not an inference;
+- **query the live recall path by predicate** — Tier-2 recall is **embedding similarity + FTS**
+  (`searchBeliefs`), not "select facts where predicate = X"; the predicate filters *tier*, not
+  *relevance*;
+- **resolve entities or traverse a graph** — `subject`/`object` are **denormalized strings**
+  matched literally; entity normalization and cross-source relations are explicitly **deferred**
+  (§5).
+
+The genuinely *semantic* operations live elsewhere:
+
+- **"is this the same matter?"** (dedup) → **vector similarity** over current beliefs
+  (`findSimilarBeliefs`), not a predicate match;
+- **"does this supersede that?"** (`add` / `reinforce` / `replace`) → **one LLM reconciliation
+  read** (`core/src/user-model/reflector.ts`), not a rule;
+- **"what implicit belief does this conversation support?"** → **LLM extraction** over the raw
+  transcript, not pattern logic.
+
+The predicate gives these operations a clean, typed surface to *act on*; it never does the
+inferring itself. This is deliberate (§3, §5): types stay **data and labels**, so embeddings and
+the LLM carry the fuzzy semantics where they outperform symbolic rules, and a predicate becomes
+load-bearing only through a reviewed contract change.
+
+```mermaid
+flowchart LR
+  FACT["typed fact<br/>subject · predicate · object<br/>(+ fact_type)"]
+  subgraph LABEL["The predicate = a typed label — deterministic"]
+    V["validate<br/>(closed-set gate)"]
+    R["route<br/>(Tier-1 persona / Tier-2 arm)"]
+    C["cardinality<br/>(supersede / accrete)"]
+    P["polarity + render<br/>(fixed phrase)"]
+  end
+  subgraph SEM["The semantics = embeddings + LLM — fuzzy"]
+    E["vector similarity<br/>(recall · dedup)"]
+    L["LLM read<br/>(reconcile · infer implicit)"]
+  end
+  NOTE["NOT done: subsumption · entailment · entity graph<br/>(deferred, §5)"]
+
+  FACT --> LABEL
+  FACT --> SEM
+  SEM -.-> NOTE
+
+  classDef off fill:#3a1e1e,stroke:#b91c1c,color:#fee2e2;
+  class NOTE off;
+```

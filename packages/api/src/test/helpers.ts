@@ -16,6 +16,7 @@ import {
   createIngestSourceTool,
   createLoggingAfterToolCall,
   createMemorySearchTool,
+  createReactTool,
   createProceduralRetrieveContext,
   createSemanticRetrieveContext,
   createUserModelRetrieveContext,
@@ -47,6 +48,8 @@ import {
   IngestionRunner,
   type IngestionTarget,
   DrizzleProactiveOutcomeStore,
+  DrizzleReactionStore,
+  ReactionLearner,
   LlmIngestionAnnouncer,
   type McpGateway,
   LlmUserModelReflector,
@@ -202,6 +205,7 @@ export async function makeTestApp(
   // transcript store so tests exercise the same event-channel publish path.
   const eventBus = new InProcessCompanionEventBus();
   const memory = new PublishingMemoryStore(new TranscriptMemoryStore(db), eventBus, silentLogger);
+  const reactions = new DrizzleReactionStore(db);
   const semantic = new DrizzleSemanticMemoryStore(db);
   const episodic = new DrizzleEpisodicMemoryStore(db);
   const quota = new DrizzleVitalityStore(db, 'stamina');
@@ -287,6 +291,7 @@ export async function makeTestApp(
       logger: silentLogger,
     }),
     createIngestSourceTool({ semantic, ingestion, logger: silentLogger }),
+    createReactTool({ reactions, eventBus, logger: silentLogger }),
   ];
   // Phases 9–10: wire tool acquisition when the test configures a source — an MCP
   // whitelist + a (fake) gateway, and/or a CLI tools path + an injected store +
@@ -317,6 +322,15 @@ export async function makeTestApp(
   const food = new DrizzleFoodStore(db, { initialFood: DEFAULT_GROWTH_CONFIG.initialFood });
   const rewards = new DrizzleProactiveOutcomeStore(db);
   const affectStore = new DrizzleCompanionAffectStore(db);
+  const reactionLearner = new ReactionLearner({
+    rewards,
+    reactions,
+    identity,
+    memory,
+    userModel,
+    sense: { llm: llmGateway, model: config.ingestionModel, logger: silentLogger, quota },
+    logger: silentLogger,
+  });
   // Growth (P5) — derived four-axis growth over the same db (decoupled from feeding).
   const growthStore = new DrizzleGrowthStore(db);
   const growth = new GrowthService({
@@ -385,6 +399,8 @@ export async function makeTestApp(
     energy,
     food,
     rewards,
+    reactions,
+    reactionLearner,
     growth,
     growthStore,
     harness: new Harness({
@@ -483,6 +499,9 @@ export async function makeTestApp(
       // Drain proactive ticks (GET/POST messages request them) before the db
       // closes, so a background tick can't write to a torn-down database.
       await motivation.close();
+      // Drain fire-and-forget reaction reads (the POST reaction route floats one)
+      // for the same reason — a detached read must not outlive the db.
+      await reactionLearner.whenIdle();
       // Growth recompute runs inline as the tail of each turn's stream, so there's
       // no background runner to drain here.
       await app.close();
