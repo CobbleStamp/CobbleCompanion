@@ -15,7 +15,6 @@ describe('auth routes (Google)', () => {
     const res = await ctx.app.inject({ method: 'GET', url: '/auth/config' });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({
-      mode: 'google',
       google_client_id: 'test-google-client-id',
     });
   });

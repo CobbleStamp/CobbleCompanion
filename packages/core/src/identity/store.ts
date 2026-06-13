@@ -17,8 +17,8 @@ export interface UserRecord {
 
 /**
  * The identity dimension a user is provisioned/looked-up by, discriminated by
- * `auth_source` (implementation.md §1, §5). Google Sign-In (and `dev_bypass`)
- * resolve by verified `email`; a trusted server-to-server consumer resolves by the
+ * `auth_source` (implementation.md §1, §5). Google Sign-In resolves
+ * by verified `email`; a trusted server-to-server consumer resolves by the
  * `(clientId, externalId)` it asserts — `clientId` namespaces `externalId` so two
  * consumers can reuse the same id without colliding. The verifier produces this from
  * a request; the store turns it into a `users` row via

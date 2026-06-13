@@ -43,7 +43,7 @@ Prerequisites: Node ≥22, pnpm 10, Docker (for local Postgres).
 ```bash
 pnpm install
 pnpm db:generate              # generate SQL migrations from the schema
-cp .env.example .env          # AUTH_MODE=dev_bypass by default; fill in OPENROUTER_API_KEY
+cp .env.example .env          # set GOOGLE_CLIENT_ID + OPENROUTER_API_KEY
                               # (or set LLM_PROVIDER=fake)
 
 # one-shot: start Postgres, migrate, run API + web
@@ -55,16 +55,16 @@ pnpm db:migrate
 pnpm dev                      # API on :3000, web on :3001
 ```
 
-Then open <http://localhost:3001>. With `AUTH_MODE=dev_bypass` (the default in `.env.example`)
-sign-in is skipped — you go straight to creating your companion. To exercise the real Google
-Sign-In flow locally, set `AUTH_MODE=google` and `GOOGLE_CLIENT_ID` to an OAuth Web client ID
-with `http://localhost:3001` as an authorized origin (see `infra/README.md`).
+Then open <http://localhost:3001>. The web client signs in with **Google Sign-In**, so set
+`GOOGLE_CLIENT_ID` to an OAuth Web client ID with `http://localhost:3001` as an authorized origin
+(see `infra/README.md`) — the API will not boot without it.
 
-To run CobbleCompanion as a backend for another service, set `AUTH_MODE=service_token` and register a
-consumer credential — `pnpm --filter @cobble/db service add <client_id>` prints a secret once. Callers
-then send `X-Service-Client-Id: <client_id>`, `Authorization: Bearer <secret>`, and `X-User-Id: <uuid>`
-instead of a Google ID token. Rotate with another `service add` and `service revoke <id>` (see
-`docs/implementation.md` §5).
+Auth is per-request, not a server-wide mode: Google Sign-In and service-token auth are always live at
+once, so CobbleCompanion can back another service while also serving browser clients. Register a
+consumer credential — `pnpm --filter @cobble/db service add <client_id>` prints a secret once. Such
+callers send `X-Service-Client-Id: <client_id>`, `Authorization: Bearer <secret>`, and `X-User-Id:
+<uuid>` instead of a Google ID token, and are routed to service-token auth by the `X-Service-Client-Id`
+header. Rotate with another `service add` and `service revoke <id>` (see `docs/implementation.md` §5).
 
 To provision consumer credentials declaratively on launch instead of running the CLI, set
 `SERVICE_REGISTRY_SEEDS` to a JSON array of `{ client_id, secret, secret_type?, label? }` — e.g.

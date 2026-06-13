@@ -14,8 +14,9 @@ export function registerAuthRoutes(
   // snake_case to match the web parser (packages/web/src/auth/config.ts).
   app.get('/auth/config', async (_request, reply) => {
     reply.header('cache-control', 'public, max-age=300');
+    // The browser signs in with Google; service-token auth is a backend concern the
+    // SPA never sees. The client only needs the public OAuth client id.
     return {
-      mode: config.authMode,
       google_client_id: config.googleClientId,
     };
   });

@@ -129,7 +129,18 @@ const API_PREFIXES = ['/auth', '/companions', '/food', '/health'] as const;
 
 /** Build the Fastify app — the only surface↔core boundary (invariant #1). */
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
+  const app = Fastify({
+    // Request access logging — every request/response (method, url, status,
+    // remoteAddress, responseTime). Fastify's default serializers do NOT log
+    // headers, so the Authorization bearer never lands in the access log.
+    // Application/business logging still flows through deps.logger.
+    logger: true,
+    // Behind a reverse proxy (Caddy) terminating TLS on the same host: honour the
+    // X-Forwarded-* headers so request.ip / request.protocol reflect the real
+    // client, not the proxy. Safe because the Node listener binds localhost and is
+    // only reachable through the proxy — no untrusted client can spoof the headers.
+    trustProxy: true,
+  });
 
   // Bearer-token auth (Google ID token): no cookies, so CORS credentials are
   // unneeded.
@@ -165,12 +176,13 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     }
   });
 
-  // Central error logging (common/logging.md: never swallow an error). Fastify's
-  // own logger is off, so without this 5xx failures would vanish silently. Log
-  // unexpected (5xx) errors at `error` severity with full context — including the
-  // error itself (message + stack) — and return a generic message so internals
-  // never leak. Client errors (4xx: validation, bad content-type) are logged at
-  // `info` for visibility and pass their message through.
+  // Central error logging (common/logging.md: never swallow an error). This routes
+  // failures through the structured app logger (deps.logger) with full business
+  // context — distinct from Fastify's request access log. Log unexpected (5xx)
+  // errors at `error` severity with full context — including the error itself
+  // (message + stack) — and return a generic message so internals never leak.
+  // Client errors (4xx: validation, bad content-type) are logged at `info` for
+  // visibility and pass their message through.
   app.setErrorHandler((error: FastifyError, request, reply) => {
     // A debit/feed against a missing (or deleted) companion is a 404, wherever it
     // surfaces — map it centrally so every route is uniform (the core error stays

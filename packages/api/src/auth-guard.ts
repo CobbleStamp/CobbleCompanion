@@ -19,8 +19,8 @@ function toAuthRequest(request: FastifyRequest): AuthRequest {
 }
 
 /**
- * Build the auth preHandler. It delegates to the injected verifier (selected by
- * `AUTH_MODE`), which returns a total {@link AuthClaims} result — so the guard is one
+ * Build the auth preHandler. It delegates to the injected verifier (the composite
+ * that routes per request), which returns a total {@link AuthClaims} result — so the guard is one
  * generic branch with no try/catch. On success it JIT-provisions the user from the
  * verifier's claim and sets `request.userId` for tenancy scoping (architecture.md §8:
  * authorization at the API boundary before the core).

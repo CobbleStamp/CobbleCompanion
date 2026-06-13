@@ -11,8 +11,8 @@ type BootstrapState =
   | { readonly kind: 'error'; readonly error: Error };
 
 /**
- * Fetch the auth config, then mount the right tree: <GoogleOAuthProvider/> for
- * google mode (Google Identity Services), or the bare app for dev_bypass.
+ * Fetch the auth config, then mount the app behind <GoogleOAuthProvider/>
+ * (Google Identity Services).
  */
 function Bootstrap(): JSX.Element {
   const [state, setState] = useState<BootstrapState>({ kind: 'loading' });
@@ -37,13 +37,9 @@ function Bootstrap(): JSX.Element {
     );
   }
 
-  if (state.cfg.mode === 'dev_bypass') {
-    return <App authMode="dev_bypass" />;
-  }
-
   return (
     <GoogleOAuthProvider clientId={state.cfg.googleClientId}>
-      <App authMode="google" />
+      <App />
     </GoogleOAuthProvider>
   );
 }
