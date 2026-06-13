@@ -26,7 +26,7 @@ describe('parseEnrichment', () => {
   it('parses a context header and well-formed facts', () => {
     const raw = `{"context":"[Peru: A History — the conquest; Pizarro moves the capital to Lima]",
       "facts":[{"type":"event","subject":"Pizarro","predicate":"founded","object":"Lima","confidence":0.9}]}`;
-    const enrichment = parseEnrichment(raw);
+    const enrichment = parseEnrichment(raw, silentLogger);
     expect(enrichment?.contextHeader).toContain('Pizarro');
     expect(enrichment?.facts).toEqual([
       {
@@ -43,14 +43,14 @@ describe('parseEnrichment', () => {
     const raw = `{"context":"ok","facts":[
       {"type":"event","subject":"","object":"Lima"},
       {"type":"entity","subject":"Lima","object":"city"}]}`;
-    expect(parseEnrichment(raw)?.facts).toEqual([
+    expect(parseEnrichment(raw, silentLogger)?.facts).toEqual([
       { factType: 'entity', subject: 'Lima', object: 'city' },
     ]);
   });
 
   it('returns null without a context string or JSON object', () => {
-    expect(parseEnrichment('{"facts":[]}')).toBeNull();
-    expect(parseEnrichment('no json here')).toBeNull();
+    expect(parseEnrichment('{"facts":[]}', silentLogger)).toBeNull();
+    expect(parseEnrichment('no json here', silentLogger)).toBeNull();
   });
 
   it('clamps an out-of-range finite confidence into [0,1]', () => {
@@ -58,7 +58,7 @@ describe('parseEnrichment', () => {
       '{"context":"ok","facts":[' +
       '{"type":"entity","subject":"a","object":"b","confidence":1.7},' +
       '{"type":"entity","subject":"c","object":"d","confidence":-0.5}]}';
-    expect(parseEnrichment(raw)?.facts).toEqual([
+    expect(parseEnrichment(raw, silentLogger)?.facts).toEqual([
       { factType: 'entity', subject: 'a', object: 'b', confidence: 1 },
       { factType: 'entity', subject: 'c', object: 'd', confidence: 0 },
     ]);
@@ -70,7 +70,7 @@ describe('parseEnrichment', () => {
     const raw =
       '{"context":"ok","facts":[' +
       '{"type":"entity","subject":"a","object":"b","confidence":1e999}]}';
-    const [fact] = parseEnrichment(raw)!.facts;
+    const [fact] = parseEnrichment(raw, silentLogger)!.facts;
     expect(fact).toEqual({ factType: 'entity', subject: 'a', object: 'b' });
     expect('confidence' in fact!).toBe(false);
   });
