@@ -1207,4 +1207,92 @@ describe('Chat reactions', () => {
     // It's a read-only chip — the user can't toggle the companion's own reaction.
     expect((chip as HTMLButtonElement).disabled).toBe(true);
   });
+
+  it('repairs a reaction on an already-rendered row from a re-sync snapshot', async () => {
+    // A reaction placed on another surface while this client's channel was down:
+    // the live `reaction_added` echo was lost (the bus carries no replay), so the
+    // re-sync snapshot is its only delivery path. The merge must adopt the server's
+    // reaction set for the already-rendered row, not no-op on it.
+    const bare: MessageDto = {
+      id: 'a1',
+      companionId: companion.id,
+      sourceId: null,
+      role: 'assistant',
+      content: 'an answer',
+      createdAt: '2026-01-03T00:00:02.000Z',
+    };
+    vi.mocked(fetchMessages)
+      .mockReset()
+      .mockResolvedValueOnce([bare])
+      .mockResolvedValue([
+        { ...bare, reactions: [{ messageId: 'a1', reactor: 'user', emoji: '❤️' }] },
+      ]);
+
+    renderChat();
+    await waitFor(() => expect(screen.getByText('an answer')).toBeTruthy());
+    expect(screen.queryByLabelText('You reacted ❤️')).toBeNull();
+
+    // Tab-return re-sync → refreshTranscript → mergeSnapshot adopts the server's set.
+    fireEvent(window, new Event('focus'));
+    await waitFor(() => expect(screen.getByLabelText('You reacted ❤️')).toBeTruthy());
+  });
+
+  it('clears a stale reaction on an already-rendered row from a re-sync snapshot', async () => {
+    // The mirror case: a reaction removed elsewhere while disconnected. The re-sync
+    // must drop the stale chip, not keep showing it until reload.
+    const reacted: MessageDto = {
+      id: 'a1',
+      companionId: companion.id,
+      sourceId: null,
+      role: 'assistant',
+      content: 'an answer',
+      createdAt: '2026-01-03T00:00:02.000Z',
+      reactions: [{ messageId: 'a1', reactor: 'user', emoji: '❤️' }],
+    };
+    vi.mocked(fetchMessages)
+      .mockReset()
+      .mockResolvedValueOnce([reacted])
+      .mockResolvedValue([{ ...reacted, reactions: [] }]);
+
+    renderChat();
+    await waitFor(() => expect(screen.getByLabelText('You reacted ❤️')).toBeTruthy());
+
+    fireEvent(window, new Event('focus'));
+    await waitFor(() => expect(screen.queryByLabelText('You reacted ❤️')).toBeNull());
+  });
+
+  it('reconciles against the server instead of rolling back when a toggle request fails', async () => {
+    // The toggle's POST commits server-side but its response is lost. A blind
+    // rollback would leave the client permanently disagreeing with the server; the
+    // catch must instead re-sync and adopt the server's set (which has the reaction).
+    const bare: MessageDto = {
+      id: 'a1',
+      companionId: companion.id,
+      sourceId: null,
+      role: 'assistant',
+      content: 'an answer',
+      createdAt: '2026-01-03T00:00:02.000Z',
+    };
+    vi.mocked(fetchMessages)
+      .mockReset()
+      .mockResolvedValueOnce([bare])
+      .mockResolvedValue([
+        { ...bare, reactions: [{ messageId: 'a1', reactor: 'user', emoji: '🎉' }] },
+      ]);
+    vi.mocked(addReaction).mockReset().mockRejectedValue(new Error('response lost'));
+
+    renderChat();
+    await waitFor(() => expect(screen.getByText('an answer')).toBeTruthy());
+
+    fireEvent.click(screen.getByLabelText('React 🎉'));
+    expect(addReaction).toHaveBeenCalledWith(companion.id, 'a1', '🎉');
+
+    // Wait until the failure has driven a re-sync (the second fetch) — otherwise we'd
+    // be reading the optimistic chip before the catch even runs. A blind rollback
+    // would never re-sync, so this is what isolates the reconciliation behavior.
+    await waitFor(() => expect(fetchMessages).toHaveBeenCalledTimes(2));
+    // The server had committed — the re-sync keeps the chip rather than the rollback
+    // erasing a reaction that actually exists.
+    expect(screen.getByLabelText('You reacted 🎉')).toBeTruthy();
+  });
 });
