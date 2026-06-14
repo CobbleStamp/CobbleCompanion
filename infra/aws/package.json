@@ -1,0 +1,15 @@
+{
+  "name": "cobblecompanion-aws",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Pulumi project that provisions CobbleCompanion's AWS deployment: one EC2 t3.micro (Fastify API + built SPA behind Caddy), ECR, SSM Parameter Store secrets, VPC/IAM. Postgres is on Supabase (external).",
+  "main": "index.ts",
+  "dependencies": {
+    "@pulumi/aws": "7.32.0",
+    "@pulumi/pulumi": "3.246.0"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.10",
+    "typescript": "5.5.3"
+  }
+}

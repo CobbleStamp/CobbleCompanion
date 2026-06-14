@@ -947,15 +947,23 @@ flowchart LR
 
 ## 8. Deployment & Trust Model
 
-**Deployment approach.** A single **GCP Cloud Run** service (the Fastify API, which also serves the
-built React SPA from the same origin) runs the container image; `min_instances = 1` keeps the hot
-chat **API** warm so the first message after idle isn't a cold start. **Background workers** (later:
-ingestion, proactivity) will be async and scale to zero for cost. The workload is I/O-bound (mostly
-awaiting the LLM), so a single Node process holds many concurrent conversations and scales
-horizontally with replicas; CPU-heavy work (future PDF parse/embedding) moves off the request path
-to workers. Infrastructure is managed as code with **Pulumi** under `infra/` (`infra/gcp` for Cloud
-Run + Artifact Registry + Secret Manager); auth is Google Sign-In (no auth service to provision);
-managed Postgres is Supabase (pgvector). (Specific tuning params, image build → `implementation.md` and `infra/*/README.md`.)
+**Deployment approach.** The same container (the Fastify API, which also serves the built React SPA
+from the same origin via `@fastify/static`) deploys to **one of two clouds** — choose per environment:
+
+- **AWS EC2 `t3.micro`** (canonical): one always-on box runs the container with **Caddy** in front
+  terminating TLS and reverse-proxying to it on localhost; a keep-alive timer pings Supabase so the
+  free tier doesn't auto-pause. IaC in `infra/aws` (VPC, EC2, ECR, SSM Parameter Store secrets, IAM).
+- **GCP Cloud Run** (alternative): the container runs as a serverless service with `minInstances=1`
+  to keep the hot chat path warm; Secret Manager supplies secrets and the `*.run.app` URL is the
+  entry point. IaC in `infra/gcp` (Cloud Run, Artifact Registry, Secret Manager, IAM).
+
+Either way the workload is I/O-bound (mostly awaiting the LLM), so one Node process holds many
+concurrent conversations; CPU-heavy work (future PDF parse/embedding) moves off the request path to
+workers later. **Postgres is managed by Supabase** (`pgvector`), external to both clouds.
+Infrastructure is managed as code with **Pulumi** under `infra/` (`infra/aws` + `infra/gcp` for the
+deploy targets; `infra/github` for branch protection). Auth is per-request Google Sign-In +
+service-token (no auth service to provision). (Deployment diagrams, resource catalogs, and cost →
+`docs/infra-setup.md`; apply runbooks → `infra/aws/README.md` and `infra/gcp/README.md`.)
 
 **Trust model.** Design-level boundaries; the security _implementation_ lives in
 `implementation.md`, and hardening that is out of scope here is collected in §9.

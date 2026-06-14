@@ -87,12 +87,13 @@ export GCP_PROJECT=cobblecompanion
 export GCP_REGION=<region>                # must match Pulumi.dev.yaml
 export PULUMI_CONFIG_PASSPHRASE=<...>
 
-make deploy-dev                           # build + push + bump imageTag + pulumi up
+make deploy-gcp                           # build + push + bump imageTag + pulumi up
 ```
 
-`make deploy-dev` tags the image with `git rev-parse --short HEAD`, pushes it,
-sets `cobblecompanion-gcp:imageTag`, and runs `pulumi up`. Pass `TAG=<sha>` to
-skip the rebuild and just re-apply.
+`make deploy-gcp` builds the Dockerfile `server` target, tags the image with
+`git rev-parse --short HEAD`, pushes it to Artifact Registry, sets
+`cobblecompanion-gcp:imageTag`, and runs `pulumi up`. Pass `TAG=<sha>` to skip
+the rebuild and just re-apply.
 
 ---
 
@@ -112,7 +113,7 @@ Smoke test:
 ```bash
 APIURL=$(pulumi stack output apiUrl)
 curl -sS "$APIURL/health"               # → {"status":"ok"}
-curl -sS "$APIURL/auth/config" | jq .   # → { "mode": "google", "google_client_id": "..." }
+curl -sS "$APIURL/auth/config" | jq .   # → { "google_client_id": "..." }
 ```
 
 ---

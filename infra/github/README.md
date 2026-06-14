@@ -4,8 +4,8 @@ This Pulumi (TypeScript) project owns CobbleCompanion's **GitHub branch
 protection**. Its single job: a pull request cannot be merged into `main` until
 the CI `verify` check passes.
 
-It is intentionally separate from [`../gcp`](../gcp/README.md) so the GitHub
-admin token never lives in the GCP stack. Same S3 state backend and
+It is intentionally a separate Pulumi stack so the GitHub admin token never lives
+in the deploy (cloud-infra) stack. Same S3 state backend and
 `PULUMI_CONFIG_PASSPHRASE` as the rest of `infra/`.
 
 ## What it enforces
@@ -28,9 +28,9 @@ tests at ≥80% coverage):
 
 ## One-time bootstrap
 
-Like the GCP project + OAuth client, the credential Pulumi authenticates *with*
-must exist first. The GitHub provider needs a token with admin rights on the
-repo:
+Like your cloud account (AWS or GCP) + Google OAuth client, the credential Pulumi
+authenticates *with* must exist first. The GitHub provider needs a token with
+admin rights on the repo:
 
 1. Create a token at <https://github.com/settings/tokens>:
    - **Fine-grained** (recommended): repository access = `CobbleStamp/CobbleCompanion`,

@@ -830,7 +830,7 @@ Loaded from environment / a secret manager; required values validated at startup
 | `SERVICE_REGISTRY_SEEDS` | JSON array of `{ client_id, secret, secret_type?, label? }` provisioned into `service_registry` on launch (additive + idempotent; §5). Default `[]`. Secrets are deployment-managed — never committed |
 | `GOOGLE_CLIENT_ID` | OAuth Web client ID — public, served to the SPA and used as the API's ID-token audience. **Required** — Google Sign-In is the browser scheme (auth is per-request: Google + service-token coexist, §5) |
 | `APP_URL` | Web client origin (allowed CORS origin for local cross-origin dev) |
-| `PORT` | Server port (Cloud Run injects this) |
+| `PORT` | Server port the Fastify API binds (default 3000; behind Caddy on the EC2 deploy, or injected as 8080 by GCP Cloud Run) |
 | `EMBEDDING_PROVIDER` | `openrouter` (default) \| `fake` (tests/offline dev) |
 | `EMBEDDING_MODEL` | Embedding model id (default `perplexity/pplx-embed-v1-0.6b`) |
 | `EMBEDDING_DIM` | Requested embedding dimensionality (default 1024) — **must equal** the `sections.embedding` `vector()` column dimension; the API fails fast at startup on mismatch, and changing it requires a migration |

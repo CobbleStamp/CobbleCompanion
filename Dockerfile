@@ -29,15 +29,18 @@ FROM source AS api
 EXPOSE 3000
 CMD ["sh", "-c", "pnpm db:migrate && pnpm --filter @cobble/api run serve"]
 
-# --- Single Cloud Run service: build the SPA, then serve API + SPA on one origin ---
+# --- Single-origin server: build the SPA, then serve API + SPA on one origin ---
 # The Fastify API serves packages/web/dist via @fastify/static (see
 # packages/api/src/app.ts). VITE_API_URL is empty so the SPA calls its own
-# origin. Cloud Run injects PORT=8080 to match the listener (config.ts reads PORT).
-FROM source AS cloudrun
+# origin. The host sets PORT (config.ts reads it): GCP Cloud Run injects
+# PORT=8080; the AWS EC2 deploy runs this image behind Caddy on localhost:3000.
+# EXPOSE is cosmetic (Cloud Run ignores it). Both clouds run this same target —
+# see docs/infra-setup.md.
+FROM source AS server
 ARG VITE_API_URL=
 ENV VITE_API_URL=$VITE_API_URL
 RUN pnpm --filter @cobble/web build
-EXPOSE 8080
+EXPOSE 3000
 CMD ["sh", "-c", "pnpm db:migrate && pnpm --filter @cobble/api run serve"]
 
 # --- Web build: compile the SPA (API URL baked in at build time) ---
