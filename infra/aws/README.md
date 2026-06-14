@@ -52,7 +52,7 @@ These exist before Pulumi runs:
 ```bash
 cd infra/aws
 cp Pulumi.dev.yaml.example Pulumi.dev.yaml
-$EDITOR Pulumi.dev.yaml          # aws:region, googleClientId, domain, llmModel
+$EDITOR Pulumi.dev.yaml          # aws:region, googleClientId, domain, llmModel, [letsencryptEmail]
 
 export PULUMI_CONFIG_PASSPHRASE='<shared backend passphrase>'
 pulumi login s3://<shared-state-bucket>
@@ -103,7 +103,11 @@ pulls the new image. Pass `TAG=<sha>` to skip the rebuild and just re-apply.
 
 Caddy's Let's Encrypt state lives on a separate EBS volume that is *not* replaced,
 so certs are re-attached (not re-issued) across redeploys — this is what keeps
-frequent deploys from hitting Let's Encrypt's duplicate-cert rate limit. Note that
+frequent deploys from hitting Let's Encrypt's duplicate-cert rate limit. The
+instance is set to `deleteBeforeReplace`, so the old box (and its volume
+attachment) is torn down before the replacement boots; otherwise the new box would
+start while the single cert volume is still attached to the old one, fail to mount
+it, and re-issue the cert anyway. Note that
 a redeploy snapshots the SSM secrets into the container at boot, so a secret
 changed in SSM only takes effect on the next redeploy.
 

@@ -26,6 +26,11 @@ const imageTag = cfg.get('imageTag') ?? 'latest';
 const googleClientId = cfg.require('googleClientId');
 const llmModel = cfg.get('llmModel') ?? 'anthropic/claude-3.5-sonnet';
 const domain = cfg.require('domain');
+// Optional ACME contact email. Caddy issues certs fine without one, but setting
+// it opts into Let's Encrypt expiry/issue notifications. Emitted as a global
+// Caddy options block only when configured.
+const acmeEmail = cfg.get('letsencryptEmail');
+const caddyGlobalBlock = acmeEmail ? `{\n    email ${acmeEmail}\n}\n` : '';
 
 // Block-device name for the persistent Caddy data volume (Let's Encrypt certs +
 // ACME account). On Nitro instances (t3) this is exposed as an NVMe device; the
@@ -126,6 +131,11 @@ docker run -d --restart=always --name cobble-app \\
 for i in $(seq 1 30); do [ -e ${dataDevice} ] && break; sleep 2; done
 if ! blkid ${dataDevice} >/dev/null 2>&1; then
   mkfs.ext4 -L caddydata ${dataDevice}
+else
+  # The volume can detach uncleanly when an instance is replaced (forceDetach),
+  # leaving the ext4 journal dirty; replay/repair it before mounting so a dirty
+  # filesystem can't silently fall back to an empty /data and re-issue the cert.
+  fsck.ext4 -p ${dataDevice} || true
 fi
 mkdir -p /var/lib/caddy/data
 grep -q '/var/lib/caddy/data' /etc/fstab \\
@@ -138,7 +148,7 @@ mount /var/lib/caddy/data
 #    derived state, so a named volume is fine there.
 mkdir -p /etc/caddy
 cat > /etc/caddy/Caddyfile <<EOF
-$DOMAIN {
+${caddyGlobalBlock}$DOMAIN {
     reverse_proxy 127.0.0.1:3000
 }
 EOF
@@ -174,23 +184,37 @@ systemctl daemon-reload
 systemctl enable --now supabase-keepalive.timer
 `;
 
-const instance = new aws.ec2.Instance('cc-app', {
-  ami: ami.id,
-  instanceType,
-  subnetId: publicSubnet.id,
-  vpcSecurityGroupIds: [webSg.id],
-  iamInstanceProfile: instanceProfile.name,
-  rootBlockDevice: {
-    volumeSize: 16,
-    volumeType: 'gp3',
-    deleteOnTermination: true,
-    encrypted: true,
+const instance = new aws.ec2.Instance(
+  'cc-app',
+  {
+    ami: ami.id,
+    instanceType,
+    subnetId: publicSubnet.id,
+    vpcSecurityGroupIds: [webSg.id],
+    iamInstanceProfile: instanceProfile.name,
+    rootBlockDevice: {
+      volumeSize: 16,
+      volumeType: 'gp3',
+      deleteOnTermination: true,
+      encrypted: true,
+    },
+    userData,
+    // Redeploy = replace the instance so it re-runs bootstrap with the new image.
+    userDataReplaceOnChange: true,
+    tags: { ...tags, Name: 'cobblecompanion' },
   },
-  userData,
-  // Redeploy = replace the instance so it re-runs bootstrap with the new image.
-  userDataReplaceOnChange: true,
-  tags: { ...tags, Name: 'cobblecompanion' },
-});
+  // Tear the old instance down BEFORE creating the replacement. The single Caddy
+  // data volume (below) can only be attached to one instance at a time, so the
+  // default create-before-delete would boot the new instance while the volume is
+  // still on the old one: the VolumeAttachment can't move, the bootstrap's wait
+  // for /dev/sdf times out, and Caddy comes up with an empty /data and RE-ISSUES
+  // the cert — the exact duplicate-cert-rate-limit failure the persistent volume
+  // exists to prevent. Deleting first frees the volume (and the Elastic IP), so
+  // the new instance attaches cleanly and re-mounts the existing certs. It also
+  // means only one instance runs `db:migrate` at a time. The tradeoff is a brief
+  // gap during redeploy, which a Phase-0 micro tolerates.
+  { deleteBeforeReplace: true },
+);
 
 // Persistent EBS volume for Caddy's Let's Encrypt state. It is a standalone
 // resource (not part of the instance's block-device mapping), so it survives the

@@ -13,6 +13,10 @@ config:
   # DNS A record for it must point at the instance's Elastic IP.
   cobblecompanion-aws:domain: companion.example.com
 
+  # Optional ACME contact email — opts into Let's Encrypt expiry/issue
+  # notifications. Caddy issues certs fine without it; omit to skip.
+  # cobblecompanion-aws:letsencryptEmail: you@example.com
+
   # Default LLM model id passed to OpenRouter (non-secret runtime config).
   cobblecompanion-aws:llmModel: anthropic/claude-3.5-sonnet
 

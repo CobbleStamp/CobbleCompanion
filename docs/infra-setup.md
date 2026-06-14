@@ -112,7 +112,8 @@ instance:
 4. logs in to ECR, pulls the image, and runs `cobble-app` published to
    `127.0.0.1:3000` only (never exposed — the SG has no `:3000`);
 5. mounts the **persistent Caddy data volume** at `/var/lib/caddy/data`
-   (formatted only if blank, so existing certs are never wiped) — this EBS volume
+   (formatted only if blank, so existing certs are never wiped; `fsck`'d first if
+   it already has a filesystem, in case it detached uncleanly) — this EBS volume
    is separate from the instance and survives the redeploy replacement, so certs
    are kept instead of re-issued every deploy;
 6. runs **Caddy** (`caddy:2`, host network) with a `Caddyfile` that reverse-proxies
@@ -134,9 +135,12 @@ and the first-apply sequence):
    git short SHA;
 2. set `cobblecompanion-aws:imageTag` and run `pulumi up`;
 3. because the tag is baked into `user-data` and the instance has
-   `userDataReplaceOnChange`, Pulumi **replaces the instance**, which
-   re-bootstraps and pulls the new image (a Phase-0 micro tolerates the brief
-   downtime). `make deploy-dev TAG=<sha>` re-applies a tag without rebuilding.
+   `userDataReplaceOnChange`, Pulumi **replaces the instance** (`deleteBeforeReplace`:
+   the old box is torn down first so the single Caddy cert volume frees and the new
+   box re-attaches it cleanly — rather than booting alongside the old box and
+   re-issuing the cert), which re-bootstraps and pulls the new image (a Phase-0
+   micro tolerates the brief downtime). `make deploy-dev TAG=<sha>` re-applies a
+   tag without rebuilding.
 
 ### Cost (AWS)
 
