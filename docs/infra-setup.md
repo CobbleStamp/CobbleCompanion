@@ -89,7 +89,7 @@ gateway.
 | `src/registry.ts` | ECR repo `cobblecompanion` (scan-on-push) + lifecycle policy (expire untagged after 1 day; keep the 10 most recent) |
 | `src/secrets.ts` | SSM Parameter Store `SecureString` params `/cobblecompanion/OPENROUTER_API_KEY` + `/cobblecompanion/DATABASE_URL` (free Standard tier, AWS-managed KMS key), each with a `REPLACE_ME` placeholder (`ignoreChanges` on the value, so out-of-band values are never reverted) |
 | `src/iam.ts` | EC2 IAM role + instance profile: `AmazonSSMManagedInstanceCore` (Session Manager), scoped ECR pull, `ssm:GetParameter(s)` on exactly the two params + `kms:Decrypt` scoped to SSM (`ViaService`) |
-| `src/compute.ts` | `t3.micro` (Amazon Linux 2023, 16 GB gp3); Elastic IP + association; `user-data` bootstrap (below); `userDataReplaceOnChange` so a new image tag replaces the instance |
+| `src/compute.ts` | `t3.micro` (Amazon Linux 2023, 16 GB gp3 encrypted root); separate 2 GB encrypted gp3 data volume for Caddy's Let's Encrypt state (survives instance replacement so certs aren't re-issued every deploy); Elastic IP + association; `user-data` bootstrap (below); `userDataReplaceOnChange` so a new image tag replaces the instance |
 
 Stack outputs (`pulumi stack output`): `ecrRepoUrl`, `instancePublicIp`, `url`.
 
@@ -111,9 +111,14 @@ instance:
    (`aws ssm get-parameter --with-decryption`; no plaintext in user-data or state);
 4. logs in to ECR, pulls the image, and runs `cobble-app` published to
    `127.0.0.1:3000` only (never exposed — the SG has no `:3000`);
-5. runs **Caddy** (`caddy:2`, host network) with a `Caddyfile` that reverse-proxies
-   the domain to `127.0.0.1:3000` and obtains/renews a Let's Encrypt cert;
-6. installs the **Supabase keep-alive** systemd timer (`OnCalendar` every ~2 days,
+5. mounts the **persistent Caddy data volume** at `/var/lib/caddy/data`
+   (formatted only if blank, so existing certs are never wiped) — this EBS volume
+   is separate from the instance and survives the redeploy replacement, so certs
+   are kept instead of re-issued every deploy;
+6. runs **Caddy** (`caddy:2`, host network) with a `Caddyfile` that reverse-proxies
+   the domain to `127.0.0.1:3000` and obtains/renews a Let's Encrypt cert, with
+   `/data` bind-mounted from the persistent volume above;
+7. installs the **Supabase keep-alive** systemd timer (`OnCalendar` every ~2 days,
    `Persistent=true` to catch a missed tick after a reboot) that runs `SELECT 1`
    against the DSN. It loads `DATABASE_URL` via systemd `EnvironmentFile` (literal
    `KEY=VALUE`, no shell parsing) so DSN metacharacters (`& ? =`) are safe.
@@ -140,6 +145,7 @@ and the first-apply sequence):
 | EC2 `t3.micro` | on-demand, 24/7 | ~$8 |
 | Public IPv4 (Elastic IP) | 1 address × $0.005/hr | ~$3.65 |
 | EBS root | 16 GB gp3 | ~$1.30 |
+| EBS Caddy data | 2 GB gp3 (persistent cert store) | ~$0.16 |
 | ECR storage | ~3 GB of images (free 500 MB/mo for the first year) | ~$0.30 |
 | Secrets (SSM Parameter Store, SecureString Standard) | 2 params | $0 |
 | Data transfer | low (personal) | ~$0–2 |

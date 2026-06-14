@@ -31,7 +31,7 @@ deployment diagram, resource catalog, and runtime layout are in
 | `src/registry.ts` | ECR repo + lifecycle policy + `imageUri`/`registryHost` helpers |
 | `src/secrets.ts` | SSM Parameter Store `SecureString` params `OPENROUTER_API_KEY` + `DATABASE_URL` (placeholder value, set out of band; free Standard tier) |
 | `src/iam.ts` | EC2 instance role + profile (ECR pull; `ssm:GetParameter(s)` + scoped `kms:Decrypt`; SSM Session Manager) |
-| `src/compute.ts` | EC2 instance, EIP, `user-data` (swap, Docker app + Caddy, keep-alive timer) |
+| `src/compute.ts` | EC2 instance (encrypted root), persistent encrypted EBS volume for Caddy certs (survives redeploy), EIP, `user-data` (swap, Docker app + Caddy, keep-alive timer) |
 
 ---
 
@@ -100,6 +100,12 @@ it to ECR tagged with the git short SHA, sets `cobblecompanion-aws:imageTag`, an
 runs `pulumi up`. Because the tag is baked into `user-data` and the instance has
 `userDataReplaceOnChange`, this **replaces the instance**, which re-bootstraps and
 pulls the new image. Pass `TAG=<sha>` to skip the rebuild and just re-apply.
+
+Caddy's Let's Encrypt state lives on a separate EBS volume that is *not* replaced,
+so certs are re-attached (not re-issued) across redeploys — this is what keeps
+frequent deploys from hitting Let's Encrypt's duplicate-cert rate limit. Note that
+a redeploy snapshots the SSM secrets into the container at boot, so a secret
+changed in SSM only takes effect on the next redeploy.
 
 ---
 

@@ -27,6 +27,12 @@ const googleClientId = cfg.require('googleClientId');
 const llmModel = cfg.get('llmModel') ?? 'anthropic/claude-3.5-sonnet';
 const domain = cfg.require('domain');
 
+// Block-device name for the persistent Caddy data volume (Let's Encrypt certs +
+// ACME account). On Nitro instances (t3) this is exposed as an NVMe device; the
+// amazon-ec2-utils udev rules on Amazon Linux 2023 create a /dev/sdf symlink for
+// it, which the bootstrap waits on and mounts.
+const dataDevice = '/dev/sdf';
+
 // Latest Amazon Linux 2023 x86_64 AMI (matches the t3.micro / linux-amd64 image).
 const ami = aws.ec2.getAmiOutput({
   owners: ['amazon'],
@@ -40,8 +46,12 @@ const ami = aws.ec2.getAmiOutput({
 
 // Boot-time secret fetch: one line per managed parameter, appended to
 // /etc/cobble.env. Best-effort (`|| true`) so a not-yet-populated parameter
-// doesn't abort the whole bootstrap — the box, Caddy, and SSM still come up; the
-// app retries via `--restart=always` once the value is set.
+// doesn't abort the whole bootstrap — the box, Caddy, and SSM still come up.
+// NOTE: the env file is snapshotted into the container at `docker run` time
+// (`--env-file`), so secrets must be populated in SSM *before* first boot.
+// Populating or changing a parameter afterwards does NOT propagate to the
+// running app — trigger a redeploy (image-tag bump replaces the instance and
+// re-runs this bootstrap) to pick up the new value.
 const secretFetchScript = pulumi
   .all(parameters.map((p) => pulumi.interpolate`${p.envVar}\t${p.parameter.name}`))
   .apply((pairs) =>
@@ -90,15 +100,42 @@ GOOGLE_CLIENT_ID=${googleClientId}
 EOF
 ${secretFetchScript}
 
-# 4. Pull the image from ECR and run the app on loopback only.
-aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$REGISTRY"
-docker pull "$IMAGE"
+# 4. Pull the image from ECR and run the app on loopback only. Retry login+pull:
+#    instance-profile credentials can take a few seconds to propagate at first
+#    boot, and a transient pull failure would otherwise leave the app uncreated
+#    (no container for --restart=always to revive).
+for i in $(seq 1 10); do
+  if aws ecr get-login-password --region "$REGION" \\
+       | docker login --username AWS --password-stdin "$REGISTRY" \\
+     && docker pull "$IMAGE"; then
+    break
+  fi
+  echo "ECR login/pull attempt $i failed; retrying in 15s..."
+  sleep 15
+done
 docker rm -f cobble-app 2>/dev/null || true
 docker run -d --restart=always --name cobble-app \\
   -p 127.0.0.1:3000:3000 --env-file /etc/cobble.env "$IMAGE"
 
-# 5. Caddy: automatic HTTPS + reverse proxy to the app. Host network so it binds
+# 5. Persistent Caddy data volume. The instance is replaced on every redeploy
+#    (userDataReplaceOnChange), so Let's Encrypt certs + the ACME account must
+#    live on a separate EBS volume that survives replacement — otherwise every
+#    deploy re-issues the cert and hits the Let's Encrypt duplicate-cert limit.
+#    Wait for the attachment, format only if blank (never reformat — that would
+#    wipe the certs), then mount.
+for i in $(seq 1 30); do [ -e ${dataDevice} ] && break; sleep 2; done
+if ! blkid ${dataDevice} >/dev/null 2>&1; then
+  mkfs.ext4 -L caddydata ${dataDevice}
+fi
+mkdir -p /var/lib/caddy/data
+grep -q '/var/lib/caddy/data' /etc/fstab \\
+  || echo 'LABEL=caddydata /var/lib/caddy/data ext4 defaults,nofail 0 2' >> /etc/fstab
+mount /var/lib/caddy/data
+
+# 6. Caddy: automatic HTTPS + reverse proxy to the app. Host network so it binds
 #    80/443 on the instance and can reach the app's loopback-published port.
+#    /data (certs) is bind-mounted from the persistent volume; /config holds only
+#    derived state, so a named volume is fine there.
 mkdir -p /etc/caddy
 cat > /etc/caddy/Caddyfile <<EOF
 $DOMAIN {
@@ -108,10 +145,10 @@ EOF
 docker rm -f caddy 2>/dev/null || true
 docker run -d --restart=always --name caddy --network host \\
   -v /etc/caddy/Caddyfile:/etc/caddy/Caddyfile:ro \\
-  -v caddy_data:/data -v caddy_config:/config \\
+  -v /var/lib/caddy/data:/data -v caddy_config:/config \\
   caddy:2
 
-# 6. Supabase keep-alive: a oneshot timer runs SELECT 1 every ~2 days (well under
+# 7. Supabase keep-alive: a oneshot timer runs SELECT 1 every ~2 days (well under
 #    the 7-day free-tier pause window). EnvironmentFile loads DATABASE_URL without
 #    shell interpretation, so DSN metacharacters (& ? =) are safe.
 cat > /etc/systemd/system/supabase-keepalive.service <<'EOF'
@@ -143,11 +180,36 @@ const instance = new aws.ec2.Instance('cc-app', {
   subnetId: publicSubnet.id,
   vpcSecurityGroupIds: [webSg.id],
   iamInstanceProfile: instanceProfile.name,
-  rootBlockDevice: { volumeSize: 16, volumeType: 'gp3', deleteOnTermination: true },
+  rootBlockDevice: {
+    volumeSize: 16,
+    volumeType: 'gp3',
+    deleteOnTermination: true,
+    encrypted: true,
+  },
   userData,
   // Redeploy = replace the instance so it re-runs bootstrap with the new image.
   userDataReplaceOnChange: true,
   tags: { ...tags, Name: 'cobblecompanion' },
+});
+
+// Persistent EBS volume for Caddy's Let's Encrypt state. It is a standalone
+// resource (not part of the instance's block-device mapping), so it survives the
+// instance replacement that every redeploy triggers — keeping the issued certs
+// and ACME account across deploys. Same AZ as the instance's subnet, encrypted.
+const caddyDataVolume = new aws.ebs.Volume('cc-caddy-data', {
+  availabilityZone: publicSubnet.availabilityZone,
+  size: 2,
+  type: 'gp3',
+  encrypted: true,
+  tags: { ...tags, Name: 'cobblecompanion-caddy-data' },
+});
+
+new aws.ec2.VolumeAttachment('cc-caddy-data-attach', {
+  deviceName: dataDevice,
+  volumeId: caddyDataVolume.id,
+  instanceId: instance.id,
+  // Let the volume detach cleanly when the instance is replaced on redeploy.
+  forceDetach: true,
 });
 
 // Stable public address across instance replacement.
