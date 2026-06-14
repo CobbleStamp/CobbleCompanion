@@ -14,7 +14,8 @@ For the full product vision see [`docs/product-overview.md`](./docs/product-over
 > messages over a **standing event channel** (Phase 15). Native mobile/desktop surfaces (Phases 6–8)
 > are the next frontier. A TypeScript monorepo (`packages/{shared,core,api,web}` + `db/`) with the
 > agent-loop harness, provider-agnostic LLM and embedding gateways, and an ≥80%-coverage test suite.
-> Cloud Run deployment lives in `infra/` (Pulumi). See `docs/development-plan.md` §2.
+> Deployment is managed with Pulumi under `infra/` — two options, AWS EC2 micro or
+> GCP Cloud Run (see `docs/infra-setup.md`). See `docs/development-plan.md` §2.
 
 ## Documentation
 
@@ -74,9 +75,11 @@ it didn't seed. Secrets are deployment-managed — never commit them.
 
 ## Deployment
 
-Deployed as a single GCP Cloud Run service via Pulumi (the Fastify API serves the built SPA from
-one origin). Full setup — components, the OAuth client, and `make deploy-dev` — lives in
-[`infra/README.md`](./infra/README.md) and [`infra/gcp/README.md`](./infra/gcp/README.md).
+The same container (Fastify API + built SPA, one origin) deploys to **either** of two clouds, both via
+Pulumi with Postgres on **Supabase**: a single **AWS EC2 `t3.micro`** behind **Caddy** (`infra/aws`,
+canonical) or a **GCP Cloud Run** service (`infra/gcp`). The deployment diagrams, resource catalogs,
+and cost for both live in [`docs/infra-setup.md`](./docs/infra-setup.md); the apply runbooks are in
+[`infra/aws/README.md`](./infra/aws/README.md) and [`infra/gcp/README.md`](./infra/gcp/README.md).
 
 ### Verify
 

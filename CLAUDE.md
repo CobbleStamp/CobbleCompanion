@@ -37,6 +37,7 @@ read docs/product-overview.md
 | Running evals (offline harness) | `docs/howto-run-evals.md`         |
 | Online tracing / observability | `docs/runbook-tracing.md`          |
 | Local dev setup               | `README.md`                         |
+| Infrastructure & deployment (two options — AWS EC2 micro or GCP Cloud Run; diagrams, resources, cost) | `docs/infra-setup.md` (apply runbooks: `infra/aws/README.md`, `infra/gcp/README.md`) |
 
 
 ## Development Environment
@@ -61,6 +62,7 @@ read docs/product-overview.md
 - New feature → update `docs/product-overview.md` (and `docs/development-plan.md` if it changes scope/priorities) and relevant component docs
 - Internal mechanism, data model, or config changed → update `docs/implementation.md`
 - Dev setup changed → update `README.md`
+- Infrastructure / deployment changed (AWS or GCP resources, Pulumi, deploy flow) → update `docs/infra-setup.md` (and `infra/aws/README.md` / `infra/gcp/README.md` for apply steps)
 - File structure changed → update `docs/architecture.md`
 - Tests added → update test files and this section
 

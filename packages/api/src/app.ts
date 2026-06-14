@@ -240,9 +240,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 }
 
 /**
- * Serve the built React SPA from the same origin as the API (single Cloud Run
- * service). Skipped when the bundle isn't present (local dev runs Vite
- * separately). Non-API GETs fall through to index.html for client-side routing.
+ * Serve the built React SPA from the same origin as the API (one process serves
+ * both). Skipped when the bundle isn't present (local dev runs Vite separately).
+ * Non-API GETs fall through to index.html for client-side routing.
  */
 function registerSpa(app: FastifyInstance): void {
   const here = dirname(fileURLToPath(import.meta.url));

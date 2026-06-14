@@ -4,13 +4,21 @@
 # direnv loads this on `cd` into the repo and UNLOADS it on the way out, so
 # CobbleCompanion's values are scoped to this directory.
 
-# Project-scoped deploy vars consumed by the Makefile (cloud targets).
-export GCP_PROJECT=cobblecompanion
-export GCP_REGION=europe-west2
+# Project-scoped deploy vars. CobbleCompanion deploys to one of two clouds (see
+# docs/infra-setup.md) — set the vars for whichever you use so another project's
+# globals can't leak in.
+#
+# AWS (canonical — infra/aws):
+export AWS_REGION=eu-west-2
+# export AWS_PROFILE=cobblecompanion
+#
+# GCP Cloud Run (alternative — infra/gcp). Override CobbleBrowse's globals here:
+# export GCP_PROJECT=cobblecompanion
+# export GCP_REGION=europe-west2
 
-# Load this repo's .env (app config, incl. GOOGLE_CLIENT_ID for google-mode dev).
+# Load this repo's .env (app config, incl. GOOGLE_CLIENT_ID for local sign-in).
 # .env is gitignored; .env can override the exports above if you set them there.
 dotenv_if_exists .env
 
-# PULUMI_CONFIG_PASSPHRASE + AWS creds stay global in ~/.zshrc — they're shared
-# across projects and not CobbleCompanion-specific.
+# PULUMI_CONFIG_PASSPHRASE + AWS creds for the S3 state backend stay global in
+# ~/.zshrc — they're shared across projects and not CobbleCompanion-specific.

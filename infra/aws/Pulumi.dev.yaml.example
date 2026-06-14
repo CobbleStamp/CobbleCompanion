@@ -1,0 +1,27 @@
+# Copy to Pulumi.dev.yaml, then fill in. The real file is created/managed by
+# `pulumi config set` and carries an `encryptionsalt` — see infra/aws/README.md.
+config:
+  # AWS region the stack deploys into. Read by the @pulumi/aws provider AND by
+  # this stack's code (ECR login host, secret fetch, AMI lookup).
+  aws:region: eu-west-2
+
+  # Public OAuth Web client ID — served to the SPA via /auth/config and used by
+  # the API to verify Google ID tokens (aud). Public, not a secret.
+  cobblecompanion-aws:googleClientId: REPLACE_WITH_OAUTH_WEB_CLIENT_ID
+
+  # The domain Caddy obtains a Let's Encrypt cert for and serves the app on. A
+  # DNS A record for it must point at the instance's Elastic IP.
+  cobblecompanion-aws:domain: companion.example.com
+
+  # Optional ACME contact email — opts into Let's Encrypt expiry/issue
+  # notifications. Caddy issues certs fine without it; omit to skip.
+  # cobblecompanion-aws:letsencryptEmail: you@example.com
+
+  # Default LLM model id passed to OpenRouter (non-secret runtime config).
+  cobblecompanion-aws:llmModel: anthropic/claude-3.5-sonnet
+
+  # Container image tag to run (git short SHA). `make deploy-dev` bumps this.
+  cobblecompanion-aws:imageTag: latest
+
+  # EC2 instance type. The plan targets the smallest viable box.
+  cobblecompanion-aws:instanceType: t3.micro

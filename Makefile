@@ -1,7 +1,8 @@
 .DEFAULT_GOAL := help
 .PHONY: help install dev test typecheck lint coverage ci \
         run-docker build-docker stop-docker clean-docker logs-docker \
-        pulumi-preview pulumi push-image-dev deploy-dev
+        pulumi-preview pulumi push-image-dev deploy-dev \
+        pulumi-preview-gcp pulumi-gcp push-image-gcp deploy-gcp
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -60,36 +61,92 @@ clean-docker: ## Stop containers and delete the DB (bind-mounted ./data/postgres
 logs-docker: ## Tail logs from all running containers
 	docker compose logs -f
 
-# --- Cloud deploy (GCP Cloud Run via Pulumi) ---
-# Prereqs: gcloud auth + project (cobblecompanion), AWS creds for the S3 state
-# backend, PULUMI_CONFIG_PASSPHRASE exported, infra/gcp/Pulumi.dev.yaml filled
-# in. See infra/gcp/README.md.
+# --- Cloud deploy (Pulumi) — two options, pick one (docs/infra-setup.md) ---
+# AWS EC2 micro is canonical (unsuffixed targets below); GCP Cloud Run is the
+# alternative (-gcp targets further down). Both build the Dockerfile `server`
+# target and use the same S3 state backend + PULUMI_CONFIG_PASSPHRASE.
+#
+# AWS prereqs: AWS creds (also the S3 state backend), PULUMI_CONFIG_PASSPHRASE
+# exported, AWS_REGION set, infra/aws/Pulumi.dev.yaml filled in. See
+# infra/aws/README.md and docs/infra-setup.md.
 
+PULUMI_AWS_DIR := infra/aws
 PULUMI_GCP_DIR := infra/gcp
 DEV_STACK := dev
 GCP_REGION ?= us-central1
 
-pulumi-preview: ## Pulumi preview against the GCP dev stack (no changes applied)
+pulumi-preview: ## Pulumi preview against the AWS dev stack (no changes applied)
+	@command -v pulumi >/dev/null || (echo "pulumi CLI not on PATH"; exit 1)
+	@test -n "$$PULUMI_CONFIG_PASSPHRASE" || (echo "PULUMI_CONFIG_PASSPHRASE not set"; exit 1)
+	@cd $(PULUMI_AWS_DIR) && pulumi stack select $(DEV_STACK) && pulumi preview
+
+pulumi: ## Pulumi up against the AWS dev stack (re-applies; does NOT rebuild the image)
+	@command -v pulumi >/dev/null || (echo "pulumi CLI not on PATH"; exit 1)
+	@test -n "$$PULUMI_CONFIG_PASSPHRASE" || (echo "PULUMI_CONFIG_PASSPHRASE not set"; exit 1)
+	@cd $(PULUMI_AWS_DIR) && pulumi stack select $(DEV_STACK) && pulumi up
+
+push-image-dev: ## Build + push the server image to ECR with a git-sha tag
+	@command -v docker >/dev/null || (echo "docker CLI not on PATH"; exit 1)
+	@test -n "$$AWS_REGION" || (echo "AWS_REGION env var required"; exit 1)
+	@REPO=$$(cd $(PULUMI_AWS_DIR) && pulumi stack select $(DEV_STACK) >/dev/null && pulumi stack output ecrRepoUrl) || \
+	  (echo "no ecrRepoUrl output — run 'make pulumi' first"; exit 1); \
+	  REGISTRY=$${REPO%%/*}; TAG=$$(git rev-parse --short HEAD); \
+	  echo "→ login + build + push $$REPO:$$TAG (linux/amd64)"; \
+	  aws ecr get-login-password --region $$AWS_REGION \
+	    | docker login --username AWS --password-stdin $$REGISTRY || exit 1; \
+	  docker buildx build --platform linux/amd64 --provenance=false \
+	    --target server -t $$REPO:$$TAG --push . || exit 1; \
+	  echo "Pushed tag: $$TAG → roll with: make deploy-dev TAG=$$TAG"
+
+deploy-dev: ## End-to-end dev deploy: build + push image, bump imageTag, pulumi up (TAG=<sha> skips rebuild)
+	@command -v docker >/dev/null || (echo "docker CLI not on PATH"; exit 1)
+	@command -v pulumi >/dev/null || (echo "pulumi CLI not on PATH"; exit 1)
+	@test -n "$$AWS_REGION" || (echo "AWS_REGION env var required"; exit 1)
+	@test -n "$$PULUMI_CONFIG_PASSPHRASE" || (echo "PULUMI_CONFIG_PASSPHRASE not set"; exit 1)
+	@cd $(PULUMI_AWS_DIR) && pulumi stack select $(DEV_STACK) >/dev/null || exit 1
+	@if [ -n "$$TAG" ]; then \
+	    DEPLOY_TAG="$$TAG"; \
+	    echo "→ using existing tag: $$DEPLOY_TAG (skipping build + push)"; \
+	  else \
+	    REPO=$$(cd $(PULUMI_AWS_DIR) && pulumi stack output ecrRepoUrl) || exit 1; \
+	    REGISTRY=$${REPO%%/*}; DEPLOY_TAG=$$(git rev-parse --short HEAD); \
+	    echo "→ shipping tag: $$DEPLOY_TAG"; \
+	    aws ecr get-login-password --region $$AWS_REGION \
+	      | docker login --username AWS --password-stdin $$REGISTRY || exit 1; \
+	    docker buildx build --platform linux/amd64 --provenance=false \
+	      --target server -t $$REPO:$$DEPLOY_TAG --push . || exit 1; \
+	  fi; \
+	  echo "→ bumping Pulumi imageTag → $$DEPLOY_TAG (replaces the instance)"; \
+	  cd $(PULUMI_AWS_DIR) && \
+	  pulumi config set cobblecompanion-aws:imageTag "$$DEPLOY_TAG" && \
+	  pulumi up
+
+# --- Cloud deploy: GCP Cloud Run (alternative) ---
+# Prereqs: gcloud auth + project, AWS creds for the S3 state backend,
+# PULUMI_CONFIG_PASSPHRASE + GCP_PROJECT + GCP_REGION set, infra/gcp/Pulumi.dev.yaml
+# filled in. See infra/gcp/README.md.
+
+pulumi-preview-gcp: ## Pulumi preview against the GCP dev stack (no changes applied)
 	@command -v pulumi >/dev/null || (echo "pulumi CLI not on PATH"; exit 1)
 	@test -n "$$PULUMI_CONFIG_PASSPHRASE" || (echo "PULUMI_CONFIG_PASSPHRASE not set"; exit 1)
 	@cd $(PULUMI_GCP_DIR) && pulumi stack select $(DEV_STACK) && pulumi preview
 
-pulumi: ## Pulumi up against the GCP dev stack (re-applies; does NOT rebuild the image)
+pulumi-gcp: ## Pulumi up against the GCP dev stack (re-applies; does NOT rebuild the image)
 	@command -v pulumi >/dev/null || (echo "pulumi CLI not on PATH"; exit 1)
 	@test -n "$$PULUMI_CONFIG_PASSPHRASE" || (echo "PULUMI_CONFIG_PASSPHRASE not set"; exit 1)
 	@cd $(PULUMI_GCP_DIR) && pulumi stack select $(DEV_STACK) && pulumi up
 
-push-image-dev: ## Build + push the api image to Artifact Registry with a git-sha tag
+push-image-gcp: ## Build + push the server image to Artifact Registry with a git-sha tag
 	@command -v docker >/dev/null || (echo "docker CLI not on PATH"; exit 1)
 	@test -n "$$GCP_PROJECT" || (echo "GCP_PROJECT env var required"; exit 1)
 	@TAG=$$(git rev-parse --short HEAD); \
 	  REPO=$(GCP_REGION)-docker.pkg.dev/$$GCP_PROJECT/cobblecompanion; \
 	  echo "→ build + push api:$$TAG (linux/amd64)"; \
 	  docker buildx build --platform linux/amd64 --provenance=false \
-	    --target cloudrun -t $$REPO/api:$$TAG --push . || exit 1; \
-	  echo "Pushed tag: $$TAG → roll with: make deploy-dev TAG=$$TAG"
+	    --target server -t $$REPO/api:$$TAG --push . || exit 1; \
+	  echo "Pushed tag: $$TAG → roll with: make deploy-gcp TAG=$$TAG"
 
-deploy-dev: ## End-to-end dev deploy: build + push image, bump imageTag, pulumi up (TAG=<sha> skips rebuild)
+deploy-gcp: ## End-to-end GCP deploy: build + push image, bump imageTag, pulumi up (TAG=<sha> skips rebuild)
 	@command -v docker >/dev/null || (echo "docker CLI not on PATH"; exit 1)
 	@command -v pulumi >/dev/null || (echo "pulumi CLI not on PATH"; exit 1)
 	@test -n "$$GCP_PROJECT" || (echo "GCP_PROJECT env var required"; exit 1)
@@ -102,7 +159,7 @@ deploy-dev: ## End-to-end dev deploy: build + push image, bump imageTag, pulumi 
 	    REPO=$(GCP_REGION)-docker.pkg.dev/$$GCP_PROJECT/cobblecompanion; \
 	    echo "→ shipping tag: $$DEPLOY_TAG"; \
 	    docker buildx build --platform linux/amd64 --provenance=false \
-	      --target cloudrun -t $$REPO/api:$$DEPLOY_TAG --push . || exit 1; \
+	      --target server -t $$REPO/api:$$DEPLOY_TAG --push . || exit 1; \
 	  fi; \
 	  echo "→ bumping Pulumi imageTag → $$DEPLOY_TAG"; \
 	  cd $(PULUMI_GCP_DIR) && pulumi stack select $(DEV_STACK) >/dev/null && \

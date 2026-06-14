@@ -32,3 +32,31 @@ jobs:
 
       - name: Test with coverage (>=80%)
         run: pnpm run test:coverage
+
+  # The Pulumi infra projects live outside the pnpm workspace (own lockfiles), so
+  # the workspace typecheck above never compiles them. Typecheck each so a change
+  # that breaks an infra build — e.g. renaming a Dockerfile target or a config
+  # key — fails CI instead of surfacing only at deploy time.
+  infra-typecheck:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        project: [infra/aws, infra/gcp]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-workspace
+        working-directory: ${{ matrix.project }}
+
+      - name: Typecheck
+        run: pnpm exec tsc --noEmit
+        working-directory: ${{ matrix.project }}
