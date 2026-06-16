@@ -661,3 +661,59 @@ as a documented known gap.
 > **Known gap (Q1):** the queue's claim/lease/fencing concurrency is **not** covered
 > by automated tests until a real-Postgres integration suite is added. Track as
 > future work before this is trusted under real multi-node production load.
+
+## 8. Phase A — atomic-write audit results
+
+Audit run on review (branch `feat/horizontal-scalability`). **Verdict: the
+turn-path is already concurrency-safe; every remaining read-modify-write is on a
+background path that Phase B's companion claim serializes.**
+
+### Turn-path (the actual Problem-1 gate) — clean
+
+- **Vitality `spend`/`add`** (`quota/vitality-store.ts:103,124`) — **ATOMIC**
+  (`GREATEST`/`LEAST` in SQL). The only per-companion field two concurrent *turns*
+  write; safe.
+- **Growth high-water** (`growth/growth-store.ts:66`) — **CAS** (guards on the
+  bands it read; the loser writes nothing).
+- **Proactive-outcome reward** (`motivation/reward-store.ts:201`) — **CAS**
+  (`WHERE reward IS NULL RETURNING`).
+
+→ **Phase A's DoD ("no turn-path RMW") is met as-is.** No turn-path conversion needed.
+
+### Background-path RMWs — correctness owned by the Phase B claim
+
+Written only by background paths (consolidation cascade, reflector, synthesizer,
+motivation reinforce, reaction learning). Once those run as claim-serialized jobs
+(§5.1), one processor touches a companion at a time, so they don't race. Listed
+with the cheap hardening that would make each safe *independent* of the claim:
+
+| Field / site | Writers | Note |
+|---|---|---|
+| `consolidatedThroughSeq` (`memory/episodic-store.ts:162`) | consolidation (in txn) | monotonic CAS `WHERE seq < $new` |
+| `personaUpdatedThroughSeq` + `evolvedPersona` (`identity/store.ts:260`) | evolver | CAS on the cursor |
+| `userFactsThroughSeq` (`identity/store.ts:271`) | reflector | monotonic CAS |
+| `userModelUpdatedThroughSeq` + `userPersona` (`identity/store.ts:278`) | synthesizer | CAS on the cursor |
+| `driveWeights` jsonb (`identity/store.ts:300`) | motivation reinforce, reaction learning | **claim-covered** — the only *critical* RMW today (lost personality learning under concurrent reactions); atomic-jsonb rewrite is fiddly, so rely on the claim (these become `affect`/`reaction_learn`/`motivation` jobs) |
+| `message_reactions.reward` (`reactions/store.ts:148`) | reaction learning | claim-covered; low risk (companion reactions carry no reward) |
+| belief salience / `recordBelief` (`user-model/store.ts:380,509`) | reflector, reaction learning | claim-covered + per-user transaction |
+
+### Accepted last-writer-wins (no fix)
+
+- `lastSeenAt` (`identity/store.ts:289`) — documented intentional LWW
+  (`greeter.ts:224`); Phase D single-embodiment makes concurrent arrivals
+  impossible anyway.
+- `proactivityDial` (`identity/store.ts:293`) — user tuning; LWW is fine.
+
+### Recommendation
+
+- **Cursors:** apply monotonic CAS (`WHERE cursor < $new`) — 1-line each,
+  transparent (no caller change; a stale advance becomes a safe no-op), makes the
+  monotonic contract explicit and safe regardless of claim correctness. Cheap
+  belt-and-suspenders.
+- **`driveWeights` / belief / reaction reward:** no code change — correctness is
+  delivered by the Phase B companion claim; re-confirm when those become job types.
+- **`lastSeenAt` / `proactivityDial`:** accept LWW.
+
+> **Decision point:** apply the cursor CAS hardening now (closing out Phase A), or
+> fold all RMW handling into Phase B (where the claim makes it moot and the cursors
+> are touched anyway)? See conversation.

@@ -100,6 +100,16 @@ describe('DrizzleEpisodicMemoryStore', () => {
     expect(await store.consolidatedThroughSeq(companionId)).toBe(20);
   });
 
+  it('never rewinds the consolidation cursor on a stale run (monotonic CAS)', async () => {
+    await store.appendEpisodes(companionId, [], 20);
+    // A stale/duplicate run (throughSeq <= stored) must not move the cursor back.
+    await store.appendEpisodes(companionId, [], 10);
+    expect(await store.consolidatedThroughSeq(companionId)).toBe(20);
+    // A genuine advance still applies.
+    await store.appendEpisodes(companionId, [], 25);
+    expect(await store.consolidatedThroughSeq(companionId)).toBe(25);
+  });
+
   it('recalls the semantically closest episode first (vector arm)', async () => {
     const lima = await seed('You loved the ceviche in Lima', { seqStart: 1, seqEnd: 8, ...jan });
     await seed('We debugged your printer for an hour', { seqStart: 9, seqEnd: 20, ...mar });

@@ -16,7 +16,7 @@
  */
 
 import { companions, episodes, messages, type Database } from '@cobble/db';
-import { and, count, desc, eq, gt, sql } from 'drizzle-orm';
+import { and, count, desc, eq, gt, lte, sql } from 'drizzle-orm';
 import { stripNul } from '../text/sanitize.js';
 import { reciprocalRankFusion } from './rrf.js';
 
@@ -162,7 +162,15 @@ export class DrizzleEpisodicMemoryStore implements EpisodicMemoryStore {
       await tx
         .update(companions)
         .set({ consolidatedThroughSeq: throughSeq })
-        .where(eq(companions.id, companionId));
+        .where(
+          and(
+            eq(companions.id, companionId),
+            // Monotonic guard: never rewind the cursor on a stale run
+            // (deliver-scalability.md §8). Allows equal/higher (so the initial
+            // advance from 0 lands); a lower stale seq is a safe no-op.
+            lte(companions.consolidatedThroughSeq, throughSeq),
+          ),
+        );
       return inserted;
     });
   }
