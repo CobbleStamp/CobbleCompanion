@@ -4,10 +4,10 @@
  * starts the Fastify server.
  */
 
+import { hostname } from 'node:os';
 import { createPgDatabase, EMBEDDING_DIMENSIONS, seedCredentials, type Database } from '@cobble/db';
 import {
   composeRetrieveContext,
-  ConsolidationRunner,
   ConsolidationService,
   consoleLogger,
   createEpisodicRetrieveContext,
@@ -53,7 +53,6 @@ import {
   LlmUserModelReflector,
   LlmUserPersonaSynthesizer,
   MotivationEngine,
-  MotivationRunner,
   OpenRouterEmbeddingGateway,
   OpenRouterGateway,
   reinforceFromDelta,
@@ -64,6 +63,9 @@ import {
   InProcessCompanionEventBus,
   PublishingMemoryStore,
   TranscriptMemoryStore,
+  DrizzleJobQueue,
+  JobProcessorPool,
+  makeCompanionWorkRequester,
   type EmbeddingGateway,
   type LlmGateway,
 } from '@cobble/core';
@@ -396,7 +398,6 @@ async function main(): Promise<void> {
     reflector: userModelReflector,
     userPersonaSynthesizer,
   });
-  const consolidation = new ConsolidationRunner(consolidationService, consoleLogger);
 
   // Motivation engine (P4): the "will" that works the lead inventory on idle.
   // Self-initiated work spends the per-companion ENERGY wallet (a separate wallet
@@ -418,7 +419,36 @@ async function main(): Promise<void> {
     model: config.ingestionModel,
     logger: consoleLogger,
   });
-  const motivation = new MotivationRunner(motivationEngine, consoleLogger);
+
+  // Background job queue (deliver-scalability.md §5.1, Phase B): the durable,
+  // fleet-coherent replacement for the in-process consolidation + motivation
+  // runners and their per-process coalescing Sets. `consolidate`/`motivation` now
+  // run as claim-serialised jobs drained by a bounded pool on every node, so the
+  // old setInterval sweeps can no longer run the same work N times across
+  // replicas. (Ingestion + reaction_learn stay on their existing paths for now —
+  // see deliver-scalability.md §6/§8.)
+  const jobQueue = new DrizzleJobQueue(db);
+  const jobPool = new JobProcessorPool(
+    jobQueue,
+    {
+      consolidate: (job) => consolidationService.consolidate(job.companionId),
+      motivation: async (job) => {
+        await motivationEngine.tick(job.companionId);
+      },
+    },
+    {
+      owner: `${hostname()}-${process.pid}`,
+      concurrency: JOB_CONCURRENCY,
+      leaseMs: JOB_LEASE_MS,
+      pollMs: JOB_POLL_INTERVAL_MS,
+      logger: consoleLogger,
+    },
+  );
+  // Inline triggers (message routes) + the catch-up sweeps enqueue through these —
+  // the same `.request(companionId)` shape they already call — coalesced, and they
+  // nudge the local pool for low latency.
+  const consolidation = makeCompanionWorkRequester(jobPool, 'consolidate');
+  const motivation = makeCompanionWorkRequester(jobPool, 'motivation');
 
   // Greeting on arrival (P14): the bond-driven reaction to the user returning.
   // Voiced greetings are interaction, so they spend STAMINA (the `quota` wallet),
@@ -531,6 +561,11 @@ async function main(): Promise<void> {
   }, MOTIVATION_SWEEP_INTERVAL_MS);
   motivationTimer.unref();
 
+  // Start draining the job queue: a bounded pool of ephemeral processors that
+  // claim companions and run their due consolidate/motivation jobs, with a coarse
+  // poll as the clock for idle / future-dated work (deliver-scalability.md §5.1).
+  jobPool.start();
+
   // Graceful shutdown: stop the catch-up timers and drain in-flight background
   // work before exit so nothing is killed mid-write. Fastify runs onClose after
   // it has stopped accepting requests, so no new turns trigger work past here.
@@ -538,10 +573,9 @@ async function main(): Promise<void> {
     clearInterval(sweepTimer);
     clearInterval(consolidationTimer);
     clearInterval(motivationTimer);
+    await jobPool.close();
     await ingestion.whenIdle();
     await harness.whenIdle();
-    await consolidation.close();
-    await motivation.close();
     await mcpGateway.close();
   });
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
@@ -566,6 +600,16 @@ const CONSOLIDATION_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 /** How often to catch up proactive ticks (cheap; a leads-pending scan). */
 const MOTIVATION_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+
+/**
+ * Job-queue tuning (deliver-scalability.md §5.1.6). Lease is generous — longer
+ * than any single background LLM pass — because it is renewed *between* jobs, not
+ * mid-job. Poll is the coarse clock for idle/future work. Concurrency is the
+ * per-node instantaneous cap (K), sized to resource ceilings, not population.
+ */
+const JOB_LEASE_MS = 5 * 60 * 1000;
+const JOB_POLL_INTERVAL_MS = 30 * 1000;
+const JOB_CONCURRENCY = 4;
 
 main().catch((error: unknown) => {
   consoleLogger.error('api failed to start', { error });

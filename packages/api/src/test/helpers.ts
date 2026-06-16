@@ -8,8 +8,10 @@ import { EMBEDDING_DIMENSIONS } from '@cobble/db';
 import { createTestDatabase } from '@cobble/db/testing';
 import {
   composeRetrieveContext,
-  ConsolidationRunner,
   ConsolidationService,
+  DrizzleJobQueue,
+  JobProcessorPool,
+  makeCompanionWorkRequester,
   createEpisodicRetrieveContext,
   createMemoizingEmbeddingGateway,
   createApprovalGate,
@@ -55,7 +57,6 @@ import {
   LlmUserModelReflector,
   LlmUserPersonaSynthesizer,
   MotivationEngine,
-  MotivationRunner,
   reinforceFromDelta,
   InProcessCompanionEventBus,
   PublishingMemoryStore,
@@ -269,23 +270,20 @@ export async function makeTestApp(
     quota,
     logger: silentLogger,
   });
-  const consolidation = new ConsolidationRunner(
-    new ConsolidationService({
-      episodic,
-      memory,
-      identity,
-      llm: llmGateway,
-      embeddings,
-      consolidationModel: config.ingestionModel,
-      embeddingModel: config.embeddingModel,
-      embeddingDimensions: config.embeddingDimensions,
-      quota,
-      logger: silentLogger,
-      reflector: userModelReflector,
-      userPersonaSynthesizer,
-    }),
-    silentLogger,
-  );
+  const consolidationService = new ConsolidationService({
+    episodic,
+    memory,
+    identity,
+    llm: llmGateway,
+    embeddings,
+    consolidationModel: config.ingestionModel,
+    embeddingModel: config.embeddingModel,
+    embeddingDimensions: config.embeddingDimensions,
+    quota,
+    logger: silentLogger,
+    reflector: userModelReflector,
+    userPersonaSynthesizer,
+  });
   // The Phase 3 tool surface: read-only memory_search + effectful ingest_source
   // (web_fetch is omitted here — it needs a live resolver and isn't exercised by
   // route tests). The proposal store + audit log back the approval queue.
@@ -352,27 +350,40 @@ export async function makeTestApp(
     memory,
     logger: silentLogger,
   });
-  const motivation = new MotivationRunner(
-    new MotivationEngine(
-      {
-        identity,
-        presence,
-        energy,
-        leads,
-        semantic,
-        pipeline: options.motivationPipeline ?? ingestionPipeline,
-        memory,
-        rewards,
-        // Phase 12: curiosity sources its topics from the user's interest beliefs.
-        userModel,
-        llm: llmGateway,
-        model: config.ingestionModel,
-        logger: silentLogger,
-      },
-      {},
-    ),
-    silentLogger,
+  const motivationEngine = new MotivationEngine(
+    {
+      identity,
+      presence,
+      energy,
+      leads,
+      semantic,
+      pipeline: options.motivationPipeline ?? ingestionPipeline,
+      memory,
+      rewards,
+      // Phase 12: curiosity sources its topics from the user's interest beliefs.
+      userModel,
+      llm: llmGateway,
+      model: config.ingestionModel,
+      logger: silentLogger,
+    },
+    {},
   );
+  // Background job queue (Phase B) — same wiring as production (index.ts): the
+  // queue + a bounded pool drain consolidate/motivation as claim-serialised jobs.
+  // No poll started here; the requester nudges, and close() drains on teardown.
+  const jobQueue = new DrizzleJobQueue(db);
+  const jobPool = new JobProcessorPool(
+    jobQueue,
+    {
+      consolidate: (job) => consolidationService.consolidate(job.companionId),
+      motivation: async (job) => {
+        await motivationEngine.tick(job.companionId);
+      },
+    },
+    { owner: 'test', concurrency: 4, leaseMs: 60_000, pollMs: 60_000, logger: silentLogger },
+  );
+  const consolidation = makeCompanionWorkRequester(jobPool, 'consolidate');
+  const motivation = makeCompanionWorkRequester(jobPool, 'motivation');
   // Greeting on arrival (P14) — voiced greetings spend STAMINA (the `quota` wallet).
   const greeting = new GreetingService({
     identity,
@@ -502,10 +513,9 @@ export async function makeTestApp(
     bearerFor,
     close: async () => {
       await ingestion.whenIdle();
-      await consolidation.whenIdle();
-      // Drain proactive ticks (GET/POST messages request them) before the db
-      // closes, so a background tick can't write to a torn-down database.
-      await motivation.close();
+      // Drain the job pool (consolidate + motivation) before the db closes, so a
+      // background job can't write to a torn-down database.
+      await jobPool.close();
       // Drain fire-and-forget reaction reads (the POST reaction route floats one)
       // for the same reason — a detached read must not outlive the db.
       await reactionLearner.whenIdle();

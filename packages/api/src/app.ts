@@ -2,7 +2,7 @@ import { CompanionNotFoundError } from '@cobble/core';
 import type {
   CompanionAffectStore,
   CompanionEventBus,
-  ConsolidationRunner,
+  CompanionWorkRequester,
   EmbeddingGateway,
   EpisodicMemoryStore,
   FoodStore,
@@ -15,7 +15,6 @@ import type {
   LeadStore,
   Logger,
   MemoryStore,
-  MotivationRunner,
   PresenceStore,
   ProactiveOutcomeStore,
   ProceduralStore,
@@ -78,7 +77,7 @@ export interface AppDeps {
   readonly embeddings: EmbeddingGateway;
   readonly ingestion: IngestionRunner;
   /** Off-request episodic reflection — the message route requests it post-turn. */
-  readonly consolidation: ConsolidationRunner;
+  readonly consolidation: CompanionWorkRequester;
   readonly harness: Harness;
   /** The tools available to the companion (P3) — also used to run approved calls. */
   readonly tools: ToolRegistry;
@@ -93,7 +92,7 @@ export interface AppDeps {
   /** Volatile presence signal per companion — the motivation engine's environment (P4). */
   readonly presence: PresenceStore;
   /** Off-request proactive ticks — routes request it on activity/return (P4). */
-  readonly motivation: MotivationRunner;
+  readonly motivation: CompanionWorkRequester;
   /** The arrival greeting — the bond-driven reaction to the user returning (P14). */
   readonly greeting: GreetingService;
   /** Per-companion STAMINA wallet — the user-initiated budget (chat/search/tasks). */

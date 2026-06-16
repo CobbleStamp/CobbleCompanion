@@ -179,6 +179,8 @@ export {
 } from './jobs/job-queue.js';
 export {
   JobProcessorPool,
+  makeCompanionWorkRequester,
+  type CompanionWorkRequester,
   type JobHandler,
   type JobHandlers,
   type JobProcessorOptions,

@@ -1,6 +1,6 @@
 import type { JobType } from '@cobble/shared';
 import type { Logger } from '../logging.js';
-import type { ClaimedCompanion, JobQueue, QueuedJob } from './job-queue.js';
+import type { ClaimedCompanion, EnqueueParams, JobQueue, QueuedJob } from './job-queue.js';
 
 /**
  * Runs one job. Throwing marks the job failed (and logs); returning marks it done.
@@ -34,6 +34,7 @@ export interface JobProcessorOptions {
  */
 export class JobProcessorPool {
   private readonly running = new Set<Promise<void>>();
+  private readonly pendingEnqueues = new Set<Promise<void>>();
   private stopping = false;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -60,14 +61,38 @@ export class JobProcessorPool {
     }
   }
 
-  /** Resolve once all in-flight drain loops have settled. */
+  /**
+   * Enqueue a (coalesced) job and nudge the pool — fire-and-forget, but the
+   * in-flight enqueue is tracked so {@link whenIdle} / {@link close} settle it
+   * (deterministic test teardown; clean prod shutdown).
+   */
+  enqueueAndNudge(params: EnqueueParams): void {
+    const p = this.queue
+      .enqueue(params)
+      .then(() => this.nudge())
+      .catch((error: unknown) =>
+        this.opts.logger.error('job enqueue failed', {
+          type: params.type,
+          companionId: params.companionId,
+          error,
+        }),
+      )
+      .finally(() => this.pendingEnqueues.delete(p));
+    this.pendingEnqueues.add(p);
+  }
+
+  /** Resolve once all pending enqueues and in-flight drain loops have settled. */
   async whenIdle(): Promise<void> {
-    while (this.running.size > 0) {
-      await Promise.allSettled([...this.running]);
+    while (this.pendingEnqueues.size > 0 || this.running.size > 0) {
+      await Promise.allSettled([...this.pendingEnqueues, ...this.running]);
     }
   }
 
-  /** Stop accepting work, stop polling, and drain in-flight loops. */
+  /**
+   * Graceful shutdown: refuse new nudges, stop polling, and let in-flight drains
+   * (and pending enqueues) settle. Enqueued-but-unstarted jobs stay durable in
+   * the queue and resume on the next boot's poll — so they need no draining here.
+   */
   async close(): Promise<void> {
     this.stopping = true;
     if (this.pollTimer) {
@@ -136,4 +161,31 @@ export class JobProcessorPool {
       await this.queue.markFailed(job.id, error instanceof Error ? error.message : String(error));
     }
   }
+}
+
+/** The fire-and-forget trigger interface the inline triggers + catch-up sweeps call. */
+export interface CompanionWorkRequester {
+  request(companionId: string): void;
+  /** Drain the backing pool (enqueues + in-flight work) — for deterministic tests. */
+  whenIdle(): Promise<void>;
+}
+
+/**
+ * Adapt the pool to the `.request(companionId)` interface the routes and sweeps
+ * already use: enqueue a coalesced job of `type` (dedupe key defaults to the
+ * type) and nudge the local pool. This is the swap that turns the old in-process
+ * runner trigger into a durable, fleet-coherent enqueue.
+ */
+export function makeCompanionWorkRequester(
+  pool: JobProcessorPool,
+  type: JobType,
+): CompanionWorkRequester {
+  return {
+    request(companionId: string): void {
+      pool.enqueueAndNudge({ companionId, type });
+    },
+    whenIdle(): Promise<void> {
+      return pool.whenIdle();
+    },
+  };
 }

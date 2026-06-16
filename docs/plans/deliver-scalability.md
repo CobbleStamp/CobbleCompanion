@@ -571,28 +571,55 @@ statement; convert any that isn't.
 - Tests: single-statement atomicity (PGlite ok); true 2-writer race → Q1.
 - **DoD:** no turn-path write is read-modify-write; each field documented.
 
-### Phase B — Problem 2: the job queue *(release gate, the bulk)*
+### Phase B — Problem 2: the job queue *(release gate, the bulk)* — ✅ DELIVERED
 
-- **B1 Schema.** `jobs` (`companion_id, type, payload jsonb, run_at, status,
-  attempts, last_error, timestamps`) + partial unique index
-  `(companion_id, type) WHERE status='pending'` (coalescing). `companion_claims`
-  (`companion_id pk, owner, generation, claimed_until`) + index for "due &
-  unclaimed". Generalize/retire `ingestion_jobs` → `ingest` type — **DB reset, no
-  data migration** (not yet deployed; Q6).
-- **B2 Core (`packages/core/src/jobs/`).** `JobQueue` store (enqueue+coalesce,
-  claim-companion via `FOR UPDATE SKIP LOCKED` + lease, next-due-job, mark
-  done/failed, heartbeat/renew, reclaim-expired). `JobProcessor`
-  (claim → drain in `run_at` order → heartbeat → release → exit) + bounded **pool**
-  (K) per node. Handlers wrapping existing logic: `consolidate` (runs the existing
-  cascade inside), `motivation`, `ingest`, `reaction_learn` (candidates `affect`,
-  `user_facts` — Q via §5.1.8).
-- **B3 API wiring (`index.ts`).** Replace the three `setInterval` sweeps with a
-  coarse poll loop + processor pool; inline `request()` calls become enqueue +
-  local nudge; `onClose` drains the local pool.
-- **B4 Tests.** Coalescing, lease expiry/reclaim, drain-on-close, handler
-  idempotency. Two-pool claim contention → Q1.
-- **DoD:** no per-process coalescing `Set`; all background work flows through the
-  queue; ingestion fully on `ingest`; single-node behavior unchanged.
+**Delivered scope.** The job queue migrates the two `setInterval`-sweep N-times
+offenders — **`consolidate` and `motivation`** (companion-keyed, tiny/no payload).
+`reaction_learn` and `ingest` were **deliberately deferred** (see "Deferred" below)
+because they are per-event work with external payloads, not duplicate-sweep
+offenders, and need their own refactors.
+
+- **B1 Schema** (`db/src/schema.ts`, migration `0004_lonely_gorgon`). `jobs`
+  (`companion_id, type, dedupe_key, payload jsonb, run_at, status, attempts,
+  last_error, timestamps`) + partial unique index
+  `(companion_id, dedupe_key) WHERE status='pending'` (coalescing). The
+  **`dedupe_key`** discriminates per-event work from companion-wide work so
+  distinct reactions don't collapse (a refinement over the planned
+  `(companion_id, type)`). `companion_claims` (`companion_id pk, owner, generation,
+  claimed_until`) = the lease. `ingestion_jobs` kept as-is (not generalized — see
+  Deferred). DB reset, no data migration (Q6).
+- **B2 Core** (`packages/core/src/jobs/`). `DrizzleJobQueue` (coalescing enqueue,
+  atomic claim via conditional `ON CONFLICT … WHERE claimed_until < now()`,
+  next-due-job, mark done/failed, heartbeat renew, release, due count).
+  `JobProcessorPool` (bounded ephemeral drain loops: claim → drain in `run_at`
+  order → heartbeat between jobs → release → exit; coarse poll + tracked
+  enqueue+nudge). `makeCompanionWorkRequester` adapts it to the `.request(id)`
+  interface the routes/sweeps already call.
+- **B3 Handlers.** `consolidate` → `ConsolidationService.consolidate`; `motivation`
+  → `MotivationEngine.tick` (wired inline in `index.ts`).
+- **B4 API wiring** (`index.ts`, `app.ts`, `test/helpers.ts`). The consolidation +
+  motivation `setInterval` sweeps now **enqueue** (coalesced, idempotent across
+  nodes) instead of poking in-process runners; the pool drains; `onClose` →
+  `jobPool.close()`. The `ConsolidationRunner`/`MotivationRunner` classes are kept
+  (still unit-tested) but no longer used in production wiring. The
+  motivation-sweep `runner` type was relaxed to structural.
+- **B5 Tests.** 10 PGlite tests (coalescing, per-event dedupe, exclusive claim,
+  lease-expiry reclaim, distinct-companion fan-out, run_at gating, earliest-wins,
+  heartbeat ownership, pool drain, failed-job isolation). Full suite green (168
+  files / 1491 tests). Concurrent claim races remain a documented gap (Q1).
+- **DoD met:** the consolidation + motivation in-process coalescing `Set`s are out
+  of the production path; their work flows through the durable queue; single-node
+  behavior unchanged.
+
+**Deferred from Phase B (tracked):**
+- **`ingest`** — its in-memory payload is file *bytes*; a DB-backed queue needs them
+  durable on any node, which is exactly the Phase D two-part upload (Q3). Ingestion
+  also isn't an N-times offender (an upload lands on one node, runs once). Folds
+  into Phase D.
+- **`reaction_learn`** — per-event; needs an awaitable `ReactionLearner` refactor +
+  message reconstruction. Until done, the `driveWeights` write from a reaction
+  stays a (documented) race; the motivation-driven `driveWeights` write *is* now
+  claim-serialised. Follow-on.
 
 ### Phase C — Problems 3 & 4 *(overlaps B's tail)*
 

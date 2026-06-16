@@ -87,7 +87,7 @@ describe('DrizzleJobQueue', () => {
     });
 
     await queue.claimNextCompanion('node-1', 60_000);
-    expect((await drainClaimed(companionA)).sort()).toEqual(
+    expect([...(await drainClaimed(companionA))].sort()).toEqual(
       [reactionLearnDedupeKey('m1', '👍'), reactionLearnDedupeKey('m2', '🎉')].sort(),
     );
   });
