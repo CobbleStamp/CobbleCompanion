@@ -621,7 +621,11 @@ offenders, and need their own refactors.
   stays a (documented) race; the motivation-driven `driveWeights` write *is* now
   claim-serialised. Follow-on.
 
-### Phase C — Problems 3 & 4 *(overlaps B's tail)*
+### Phase C — Problems 3 & 4 *(overlaps B's tail)* — NOT STARTED (deployment-time)
+
+Both genuinely need the live multi-node environment to be meaningful, so they are
+deferred to deployment time (and C is itself gated by Phase D for *actual*
+multi-node). The queue exposes `duePendingCount()` as a first observability hook.
 
 - **C1 DB budget.** Measure the Supabase connection ceiling; route queries through
   the transaction pooler; size pool/K/N with headroom; document.
@@ -629,7 +633,13 @@ offenders, and need their own refactors.
   failed/poison, reclaim count) via a read-only `/admin/queue` route + structured
   logs; alert on oldest-pending age and failed count.
 
-### Phase D — Problems 5 & 6: WebSocket embodiment *(release gate, the big rewrite)*
+### Phase D — Problems 5 & 6: WebSocket embodiment *(release gate, the big rewrite)* — NOT STARTED
+
+> **Stopping point.** This is a large, self-contained effort — it rewrites the
+> *entire* client↔server transport onto WebSockets (big-bang, Q3), rewrites the
+> web client, adds the embodiment claim + fencing + handoff, and adds NLB infra.
+> It warrants its own focused branch + review rather than being bundled into the
+> Phase A/B PR. Sub-steps D1–D7 below are the plan for that effort.
 
 - **D1 Transport & auth.** WS endpoint; authenticate **once at handshake** (reuse
   `CompositeVerifier`); derive `userId` for the connection's life.
