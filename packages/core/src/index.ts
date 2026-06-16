@@ -168,6 +168,21 @@ export {
   type CompanionEventBus,
   type CompanionSubscription,
 } from './events/bus.js';
+// Background job queue (deliver-scalability.md §5.1, Phase B)
+export {
+  DrizzleJobQueue,
+  reactionLearnDedupeKey,
+  type ClaimedCompanion,
+  type EnqueueParams,
+  type JobQueue,
+  type QueuedJob,
+} from './jobs/job-queue.js';
+export {
+  JobProcessorPool,
+  type JobHandler,
+  type JobHandlers,
+  type JobProcessorOptions,
+} from './jobs/job-processor.js';
 export {
   consolidateWindow,
   parseEpisodes,

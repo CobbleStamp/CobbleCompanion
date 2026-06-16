@@ -218,6 +218,28 @@ export type IngestionStatus =
   | 'done'
   | 'failed';
 
+/**
+ * Background job-queue types (deliver-scalability.md §5.1, Phase B). The queue
+ * serialises a companion's off-request-path work fleet-wide via a leased
+ * per-companion claim. Phase B covers the companion-keyed runners that had the
+ * duplicate-sweep / racing-write problems; ingestion keeps its own durable table
+ * until the Phase D upload split makes its byte payload durable.
+ */
+export type JobType = 'consolidate' | 'motivation' | 'reaction_learn';
+
+/** Terminal-or-pending lifecycle of a queued job. */
+export type JobStatus = 'pending' | 'done' | 'failed';
+
+/**
+ * Type-specific job reference — never bulk data. `reaction_learn` carries the
+ * reacted message id + emoji (the learner re-reads the message); `consolidate`
+ * and `motivation` need only the companion id, so their payload is empty.
+ */
+export interface JobPayload {
+  readonly messageId?: string;
+  readonly emoji?: string;
+}
+
 /** A source the user fed the companion (the verbatim text is fetched on demand). */
 export interface SourceDto {
   readonly id: string;

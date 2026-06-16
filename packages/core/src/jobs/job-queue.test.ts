@@ -1,0 +1,247 @@
+import { DrizzleIdentityStore } from '../identity/store.js';
+import type { Logger } from '../logging.js';
+import { DrizzleJobQueue, reactionLearnDedupeKey } from './job-queue.js';
+import { JobProcessorPool, type JobHandlers } from './job-processor.js';
+import { createTestDatabase } from '@cobble/db/testing';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+const silentLogger: Logger = { error() {}, warn() {}, info() {} };
+
+/**
+ * Logic-level tests on in-memory PGlite. NOTE: PGlite is single-connection, so
+ * the *concurrent* claim races (two nodes contending) are NOT exercised here —
+ * that's the documented known gap (deliver-scalability.md §7 Q1). These cover the
+ * SQL shape and the single-threaded semantics.
+ */
+describe('DrizzleJobQueue', () => {
+  let queue: DrizzleJobQueue;
+  let close: () => Promise<void>;
+  let companionA: string;
+  let companionB: string;
+
+  beforeEach(async () => {
+    const created = await createTestDatabase();
+    close = created.close;
+    queue = new DrizzleJobQueue(created.db);
+    const identity = new DrizzleIdentityStore(created.db);
+    const user = await identity.ensureUserByEmail('owner@example.com');
+    const a = await identity.createCompanion(user.id, {
+      name: 'Pebble',
+      form: 'fox',
+      temperament: 'curious',
+    });
+    const b = await identity.createCompanion(user.id, {
+      name: 'Cobble',
+      form: 'dog',
+      temperament: 'playful',
+    });
+    companionA = a.id;
+    companionB = b.id;
+  });
+
+  afterEach(async () => {
+    await close();
+  });
+
+  async function drainClaimed(companionId: string): Promise<readonly string[]> {
+    const seen: string[] = [];
+    for (
+      let job = await queue.nextDueJob(companionId);
+      job;
+      job = await queue.nextDueJob(companionId)
+    ) {
+      seen.push(job.dedupeKey);
+      await queue.markDone(job.id);
+    }
+    return seen;
+  }
+
+  it('coalesces repeated pending jobs of the same (companion, type)', async () => {
+    await queue.enqueue({ companionId: companionA, type: 'consolidate' });
+    await queue.enqueue({ companionId: companionA, type: 'consolidate' });
+    await queue.enqueue({ companionId: companionA, type: 'consolidate' });
+
+    await queue.claimNextCompanion('node-1', 60_000);
+    expect(await drainClaimed(companionA)).toEqual(['consolidate']); // collapsed to one
+  });
+
+  it('does not coalesce distinct reaction_learn events, but dedupes a re-react', async () => {
+    await queue.enqueue({
+      companionId: companionA,
+      type: 'reaction_learn',
+      dedupeKey: reactionLearnDedupeKey('m1', '👍'),
+      payload: { messageId: 'm1', emoji: '👍' },
+    });
+    await queue.enqueue({
+      companionId: companionA,
+      type: 'reaction_learn',
+      dedupeKey: reactionLearnDedupeKey('m2', '🎉'),
+      payload: { messageId: 'm2', emoji: '🎉' },
+    });
+    // Re-react to m1/👍 while still pending → dedupes onto the first row.
+    await queue.enqueue({
+      companionId: companionA,
+      type: 'reaction_learn',
+      dedupeKey: reactionLearnDedupeKey('m1', '👍'),
+      payload: { messageId: 'm1', emoji: '👍' },
+    });
+
+    await queue.claimNextCompanion('node-1', 60_000);
+    expect((await drainClaimed(companionA)).sort()).toEqual(
+      [reactionLearnDedupeKey('m1', '👍'), reactionLearnDedupeKey('m2', '🎉')].sort(),
+    );
+  });
+
+  it('claims a companion exclusively until released', async () => {
+    await queue.enqueue({ companionId: companionA, type: 'consolidate' });
+
+    const a = await queue.claimNextCompanion('node-1', 60_000);
+    expect(a?.companionId).toBe(companionA);
+    // companionA is the only one with work and it is now claimed → nothing left.
+    expect(await queue.claimNextCompanion('node-2', 60_000)).toBeNull();
+
+    await queue.releaseClaim(companionA, 'node-1');
+    const c = await queue.claimNextCompanion('node-2', 60_000);
+    expect(c?.companionId).toBe(companionA);
+  });
+
+  it('reclaims a companion after its lease expires, bumping the generation', async () => {
+    await queue.enqueue({ companionId: companionA, type: 'consolidate' });
+
+    const a = await queue.claimNextCompanion('node-1', 0); // already-expired lease
+    expect(a?.companionId).toBe(companionA);
+    const b = await queue.claimNextCompanion('node-2', 60_000);
+    expect(b?.companionId).toBe(companionA);
+    expect(b!.generation).toBeGreaterThan(a!.generation);
+  });
+
+  it('hands distinct companions to distinct claimants', async () => {
+    await queue.enqueue({ companionId: companionA, type: 'consolidate' });
+    await queue.enqueue({ companionId: companionB, type: 'motivation' });
+
+    const a = await queue.claimNextCompanion('node-1', 60_000);
+    const b = await queue.claimNextCompanion('node-2', 60_000);
+    expect(new Set([a?.companionId, b?.companionId])).toEqual(new Set([companionA, companionB]));
+  });
+
+  it('does not claim a job whose run_at is in the future', async () => {
+    await queue.enqueue({
+      companionId: companionA,
+      type: 'consolidate',
+      runAt: new Date(Date.now() + 60_000),
+    });
+    expect(await queue.duePendingCount()).toBe(0);
+    expect(await queue.claimNextCompanion('node-1', 60_000)).toBeNull();
+  });
+
+  it('coalescing keeps the earliest run_at, so a sooner trigger wins', async () => {
+    await queue.enqueue({
+      companionId: companionA,
+      type: 'consolidate',
+      runAt: new Date(Date.now() + 60_000), // far future
+    });
+    await queue.enqueue({
+      companionId: companionA,
+      type: 'consolidate',
+      runAt: new Date(Date.now() - 1000), // already due
+    });
+    // The two collapse onto one row carrying the earlier (due) run_at.
+    expect(await queue.duePendingCount()).toBe(1);
+    expect((await queue.claimNextCompanion('node-1', 60_000))?.companionId).toBe(companionA);
+  });
+
+  it('renewClaim extends our lease and rejects a non-owner', async () => {
+    await queue.enqueue({ companionId: companionA, type: 'consolidate' });
+    await queue.claimNextCompanion('node-1', 60_000);
+    expect(await queue.renewClaim(companionA, 'node-1', 60_000)).toBe(true);
+    expect(await queue.renewClaim(companionA, 'node-2', 60_000)).toBe(false);
+  });
+});
+
+describe('JobProcessorPool', () => {
+  let queue: DrizzleJobQueue;
+  let close: () => Promise<void>;
+  let companionA: string;
+  let companionB: string;
+
+  beforeEach(async () => {
+    const created = await createTestDatabase();
+    close = created.close;
+    queue = new DrizzleJobQueue(created.db);
+    const identity = new DrizzleIdentityStore(created.db);
+    const user = await identity.ensureUserByEmail('owner@example.com');
+    companionA = (
+      await identity.createCompanion(user.id, {
+        name: 'Pebble',
+        form: 'fox',
+        temperament: 'curious',
+      })
+    ).id;
+    companionB = (
+      await identity.createCompanion(user.id, {
+        name: 'Cobble',
+        form: 'dog',
+        temperament: 'playful',
+      })
+    ).id;
+  });
+
+  afterEach(async () => {
+    await close();
+  });
+
+  it('drains queued jobs across companions via the handler, then marks them done', async () => {
+    const handled: string[] = [];
+    const handlers: JobHandlers = {
+      consolidate: async (job) => {
+        handled.push(`${job.companionId}:${job.type}`);
+      },
+    };
+    const pool = new JobProcessorPool(queue, handlers, {
+      owner: 'node-1',
+      concurrency: 2,
+      leaseMs: 60_000,
+      pollMs: 60_000,
+      logger: silentLogger,
+    });
+
+    await queue.enqueue({ companionId: companionA, type: 'consolidate' });
+    await queue.enqueue({ companionId: companionB, type: 'consolidate' });
+
+    pool.nudge();
+    await pool.whenIdle();
+
+    expect(handled.sort()).toEqual(
+      [`${companionA}:consolidate`, `${companionB}:consolidate`].sort(),
+    );
+    expect(await queue.duePendingCount()).toBe(0);
+  });
+
+  it('marks a job failed (terminal) when its handler throws, and moves on', async () => {
+    const handlers: JobHandlers = {
+      consolidate: async () => {
+        throw new Error('boom');
+      },
+      motivation: async () => {
+        /* succeeds */
+      },
+    };
+    const pool = new JobProcessorPool(queue, handlers, {
+      owner: 'node-1',
+      concurrency: 1,
+      leaseMs: 60_000,
+      pollMs: 60_000,
+      logger: silentLogger,
+    });
+
+    await queue.enqueue({ companionId: companionA, type: 'consolidate' });
+    await queue.enqueue({ companionId: companionA, type: 'motivation' });
+
+    pool.nudge();
+    await pool.whenIdle();
+
+    // Both terminal (one failed, one done) → none left pending/due, and the
+    // failure didn't block the sibling job.
+    expect(await queue.duePendingCount()).toBe(0);
+  });
+});

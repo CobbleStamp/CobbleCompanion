@@ -3,6 +3,9 @@ import type {
   Drive,
   DriveWeights,
   IngestionStatus,
+  JobPayload,
+  JobStatus,
+  JobType,
   LeadStatus,
   McpToolSnapshot,
   MessageKind,
@@ -367,6 +370,82 @@ export const ingestionJobs = pgTable(
   },
   (table) => [index('ingestion_jobs_companion_idx').on(table.companionId, table.status)],
 );
+
+/**
+ * Generic background-work queue (deliver-scalability.md §5.1, Phase B). One row =
+ * one unit of off-request-path work for one companion. Ephemeral processor pools
+ * on any node claim a whole companion (see {@link companionClaims}) and drain its
+ * due jobs in `run_at` order, so duplicate setInterval sweeps across nodes can no
+ * longer run the same work N times.
+ *
+ * Coalesced by `dedupe_key`: at most one PENDING job per (companion, dedupe_key)
+ * via the partial unique index, so repeated triggers collapse onto one row (the
+ * fleet-wide replacement for the old in-process coalescing Set). The key is the
+ * bare type for idempotent companion-wide work (`consolidate`, `motivation` →
+ * one pending each), but discriminated for per-event work (`reaction_learn` →
+ * `reaction:{messageId}:{emoji}`, so distinct reactions don't collapse while a
+ * re-react dedupes). Phase B covers `consolidate`, `motivation`, `reaction_learn`;
+ * ingestion keeps {@link ingestionJobs} until the Phase D upload split makes its
+ * byte payload durable.
+ */
+export const jobs = pgTable(
+  'jobs',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companionId: uuid('companion_id')
+      .notNull()
+      .references(() => companions.id, { onDelete: 'cascade' }),
+    type: text('type').$type<JobType>().notNull(),
+    // Coalescing key (see table doc): bare type for companion-wide work,
+    // discriminated by payload for per-event work.
+    dedupeKey: text('dedupe_key').notNull(),
+    // Type-specific reference, never bulk data (e.g. reaction_learn → messageId +
+    // emoji); empty for companion-only jobs.
+    payload: jsonb('payload').$type<JobPayload>().notNull().default({}),
+    // Earliest time the job is eligible to run (now() for immediate work; a future
+    // time for backoff / "deferred").
+    runAt: timestamp('run_at', { withTimezone: true }).notNull().defaultNow(),
+    status: text('status').$type<JobStatus>().notNull().default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    // User-/operator-safe last failure reason; internal detail stays in logs.
+    lastError: text('last_error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // Coalescing: at most one PENDING job per (companion, dedupe_key). Repeat
+    // triggers upsert onto this row (bumping run_at to the earlier time) rather
+    // than piling up duplicates.
+    uniqueIndex('jobs_pending_companion_dedupe_idx')
+      .on(table.companionId, table.dedupeKey)
+      .where(sql`status = 'pending'`),
+    // Claiming scan: "due, pending work, oldest first".
+    index('jobs_due_idx').on(table.status, table.runAt),
+  ],
+);
+
+/**
+ * Per-companion work lease (deliver-scalability.md §5.1). A processor claims a
+ * whole companion before draining its jobs, so exactly one processor fleet-wide
+ * touches a companion's background state at a time (the single-writer invariant
+ * the runners used to get from an in-process Set). `claimedUntil` is a lease: a
+ * crashed processor's claim lapses and another node reclaims it.
+ *
+ * Distinct from the WS embodiment claim (Phase D) and from atomic writes — three
+ * independent mechanisms, never conflated (deliver-scalability.md §7 Q4).
+ */
+export const companionClaims = pgTable('companion_claims', {
+  companionId: uuid('companion_id')
+    .primaryKey()
+    .references(() => companions.id, { onDelete: 'cascade' }),
+  // Opaque id of the processor/node holding the lease (observability/debugging).
+  owner: text('owner').notNull(),
+  // Monotonic claim counter, bumped on each (re)claim — a fencing token.
+  generation: bigint('generation', { mode: 'number' }).notNull().default(0),
+  // The claim is live only while now() < claimedUntil.
+  claimedUntil: timestamp('claimed_until', { withTimezone: true }).notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
 
 /**
  * Layer 1 — sections: the retrieval units. `original_text` is a PURE VERBATIM
