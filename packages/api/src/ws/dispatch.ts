@@ -78,10 +78,16 @@ export async function dispatchMessage(
       userId: connection.userId,
       error,
     });
+    // Allowlist client-facing messages: a `code`-carrying error is a tagged,
+    // intentionally client-safe failure (e.g. NotEmbodiedError) — pass its message
+    // through. An untagged error from the DB driver / gateway / harness could leak
+    // internal detail, so report it generically (mirrors the HTTP 5xx handler in
+    // app.ts). The full error is logged above regardless.
     const code =
       typeof (error as { code?: unknown }).code === 'string'
         ? (error as { code: string }).code
         : undefined;
-    connection.fail(parsed.id, error instanceof Error ? error.message : 'internal error', code);
+    const message = code !== undefined && error instanceof Error ? error.message : 'internal error';
+    connection.fail(parsed.id, message, code);
   }
 }
