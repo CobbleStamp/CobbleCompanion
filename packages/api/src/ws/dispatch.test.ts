@@ -38,7 +38,7 @@ async function dispatch(
   logger: Logger,
 ): Promise<WsServerMessage> {
   const sent: WsServerMessage[] = [];
-  const connection = new WsConnection(fakeSocket(sent), 'user-1', logger);
+  const connection = new WsConnection(fakeSocket(sent), 'user-1', logger, 32);
   await dispatchMessage(methods, connection, JSON.stringify(request), logger);
   const [reply] = sent;
   if (reply === undefined) {

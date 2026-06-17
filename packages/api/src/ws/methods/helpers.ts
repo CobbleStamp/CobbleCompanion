@@ -43,6 +43,21 @@ export class OverCapError extends Error {
 }
 
 /**
+ * The shared ingest queue is at capacity — a transient, retryable refusal (the WS
+ * analogue of the HTTP route's 429, and distinct from the per-companion vitality
+ * {@link OverCapError}). Tagging the core `IngestionQueueFullError` at the WS boundary
+ * keeps its already-client-safe message reaching the client: the dispatcher only
+ * forwards messages from `code`-carrying errors (`dispatch.ts`).
+ */
+export class QueueFullError extends Error {
+  readonly code = 'queue_full';
+  constructor(message: string) {
+    super(message);
+    this.name = 'QueueFullError';
+  }
+}
+
+/**
  * Embed a search query for the recall methods, mirroring the routes: gate on the
  * stamina wallet (throw {@link OverCapError} if empty), then embed — degrading to a
  * lexical-only (empty) embedding if the provider fails — and best-effort spend the

@@ -123,6 +123,8 @@ export const testConfig: AppConfig = {
   // Short WS embodiment timers so handoff/supersession is observable in tests.
   wsHeartbeatMs: 40,
   wsClaimTtlMs: 200,
+  wsMaxPayloadBytes: 256 * 1024,
+  wsMaxInFlight: 32,
   startingVitalityTokens: 1_000_000,
   mcpServers: [],
   serviceRegistrySeeds: [],

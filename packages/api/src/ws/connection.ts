@@ -22,11 +22,16 @@ export class WsConnection {
   private boundEmbodiment: EmbodimentBinding | undefined;
   /** Tail of the per-connection serial chain — D2′ turn serialization. */
   private serialTail: Promise<unknown> = Promise.resolve();
+  /** Requests currently dispatching on this connection (frames multiplex, so this
+   *  can exceed 1); bounded by `maxInFlight` to shed load (S3). */
+  private inFlight = 0;
 
   constructor(
     private readonly socket: WebSocket,
     readonly userId: string,
     private readonly logger: Logger,
+    /** Max concurrent in-flight requests before frames are shed (`AppConfig.wsMaxInFlight`). */
+    private readonly maxInFlight: number,
   ) {}
 
   get embodiment(): EmbodimentBinding | undefined {
@@ -51,6 +56,27 @@ export class WsConnection {
       () => undefined,
     );
     return result;
+  }
+
+  /**
+   * Reserve an in-flight slot for one inbound request (S3 load-shedding). Returns
+   * false when the connection is already at `maxInFlight` — the caller must shed the
+   * frame (reply `rate_limited`) and NOT dispatch it. Every `true` must be paired
+   * with exactly one {@link endRequest} when the dispatch settles.
+   */
+  beginRequest(): boolean {
+    if (this.inFlight >= this.maxInFlight) {
+      return false;
+    }
+    this.inFlight += 1;
+    return true;
+  }
+
+  /** Release the in-flight slot reserved by a prior {@link beginRequest} that returned true. */
+  endRequest(): void {
+    if (this.inFlight > 0) {
+      this.inFlight -= 1;
+    }
   }
 
   private send(message: WsServerMessage): void {

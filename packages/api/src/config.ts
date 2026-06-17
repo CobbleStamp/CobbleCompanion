@@ -57,6 +57,16 @@ export interface AppConfig {
   /** WS embodiment claim TTL — a claim with no heartbeat for this long is dead and
    *  reclaimable (crash backstop). A small multiple of the heartbeat. */
   readonly wsClaimTtlMs: number;
+  /** Max bytes for a single inbound WS frame. Frames are JSON control envelopes, so
+   *  this is small — it caps the synchronous `JSON.parse` cost and rejects an
+   *  oversized frame at the transport before any work (security: bounds event-loop
+   *  stall from a giant frame). */
+  readonly wsMaxPayloadBytes: number;
+  /** Max requests dispatched concurrently on one connection. Frames multiplex, so
+   *  one socket can fan out many handlers; this sheds load past the cap (a frame
+   *  over it gets a `rate_limited` error, never dispatched) so a single authed
+   *  client can't exhaust CPU / the DB pool. */
+  readonly wsMaxInFlight: number;
   /**
    * The token balance a new companion is seeded with in **each** vitality wallet
    * (stamina + energy). Not a cap — wallets only refill by feeding (architecture.md §4.8).
@@ -126,6 +136,15 @@ const envSchema = z
     INGESTION_QUEUE_MAX: z.coerce.number().int().positive().default(100),
     WS_HEARTBEAT_MS: z.coerce.number().int().positive().default(10_000),
     WS_CLAIM_TTL_MS: z.coerce.number().int().positive().default(30_000),
+    // A WS frame is a JSON control envelope; 256 KiB is generous for any message
+    // (e.g. pasted chat content) while bounding the per-frame JSON.parse cost.
+    WS_MAX_PAYLOAD_BYTES: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(256 * 1024),
+    // Per-connection in-flight dispatch cap (load-shedding backstop).
+    WS_MAX_IN_FLIGHT: z.coerce.number().int().positive().default(32),
     STARTING_VITALITY_TOKENS: z.coerce
       .number()
       .int()
@@ -304,6 +323,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     ingestionQueueMax: parsed.INGESTION_QUEUE_MAX,
     wsHeartbeatMs: parsed.WS_HEARTBEAT_MS,
     wsClaimTtlMs: parsed.WS_CLAIM_TTL_MS,
+    wsMaxPayloadBytes: parsed.WS_MAX_PAYLOAD_BYTES,
+    wsMaxInFlight: parsed.WS_MAX_IN_FLIGHT,
     startingVitalityTokens: parsed.STARTING_VITALITY_TOKENS,
     mcpServers: parseMcpServers(parsed.MCP_SERVERS),
     serviceRegistrySeeds: parseServiceRegistrySeeds(parsed.SERVICE_REGISTRY_SEEDS),

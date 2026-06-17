@@ -853,7 +853,11 @@ flowchart TB
   unsolicited events arrive as `{ event, data }` pushes. This one socket **replaced the former REST
   routes and the two SSE channels**. The only HTTP left is the public `/auth/config`, the multipart
   **file upload** (`POST .../sources/file` — bulk bytes don't belong in a JSON frame), `/health`,
-  the admin-only **`/admin/queue`** observability read, and the SPA static serve.
+  the admin-only **`/admin/queue`** observability read, and the SPA static serve. The socket is
+  hardened against a single authed client: a **frame-size cap** (`WS_MAX_PAYLOAD_BYTES`) rejects an
+  oversized frame at the transport before any parse, and a **per-connection in-flight cap**
+  (`WS_MAX_IN_FLIGHT`) sheds load past N concurrently-dispatching requests (frames multiplex, so one
+  socket can otherwise fan out unbounded work against CPU / the DB pool).
 - **Connecting claims the companion (embodiment).** A WS that names a companion takes **exclusive
   embodiment** — one live connection per companion, the product's "one room at a time" rule
   (`product-overview.md` §2.2). The claim is a row in **`active_embodiment`** keyed by a sortable

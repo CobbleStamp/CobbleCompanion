@@ -16,7 +16,7 @@ import {
 import { z } from 'zod';
 import type { AppDeps } from '../../app.js';
 import type { WsMethods } from '../dispatch.js';
-import { companionOf, NotFoundError, parseParams } from './helpers.js';
+import { companionOf, NotFoundError, parseParams, QueueFullError } from './helpers.js';
 
 const sourceIdParams = z.object({ sourceId: z.string().min(1) });
 
@@ -36,7 +36,10 @@ export function sourceMethods(deps: AppDeps): WsMethods {
     payload: IngestionPayload,
   ): Promise<{ source: SourceDto; job: IngestionJobDto }> {
     if (await ingest.isFull()) {
-      throw new IngestionQueueFullError();
+      // Re-tag the core queue-full error as a `code`-carrying WS error so its
+      // client-safe "busy reading" message survives the dispatcher's allowlist
+      // (which forwards messages only from tagged errors — dispatch.ts).
+      throw new QueueFullError(new IngestionQueueFullError().message);
     }
     const source = await semantic.createSource(companionId, {
       kind: input.kind,

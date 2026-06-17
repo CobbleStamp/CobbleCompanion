@@ -36,7 +36,11 @@ export async function registerWebSocket(
   deps: AppDeps,
   methods: WsMethods,
 ): Promise<void> {
-  await app.register(websocketPlugin);
+  // Cap inbound frame size at the transport: an oversized frame is rejected by `ws`
+  // (close 1009) before we ever `JSON.parse` it, bounding event-loop stall (S3).
+  await app.register(websocketPlugin, {
+    options: { maxPayload: deps.config.wsMaxPayloadBytes },
+  });
   const wsAuth = makeWsAuth(deps);
   const node = `${hostname()}-${process.pid}`;
 
@@ -46,13 +50,22 @@ export async function registerWebSocket(
       socket.close(4001, 'unauthenticated'); // preValidation guarantees a userId; defensive.
       return;
     }
-    const connection = new WsConnection(socket, userId, deps.logger);
+    const connection = new WsConnection(socket, userId, deps.logger, deps.config.wsMaxInFlight);
 
     // Dispatch frames immediately (don't await the claim below) so none are lost;
     // methods that mutate fence on the DB claim, so they're correct regardless of
-    // the claim/first-frame ordering.
+    // the claim/first-frame ordering. Frames multiplex, so each spawns a concurrent
+    // handler — bound that concurrency per connection (S3): past the cap a frame is
+    // shed with a `rate_limited` reply, so one authed client can't fan out unbounded
+    // work and exhaust CPU / the DB pool.
     socket.on('message', (data: Buffer) => {
-      void dispatchMessage(methods, connection, data.toString(), deps.logger);
+      if (!connection.beginRequest()) {
+        connection.fail('', 'too many concurrent requests; retry shortly', 'rate_limited');
+        return;
+      }
+      void dispatchMessage(methods, connection, data.toString(), deps.logger).finally(() => {
+        connection.endRequest();
+      });
     });
     socket.on('error', (error: Error) => {
       deps.logger.error('ws socket error', { operation: 'ws.socket', userId, error });
