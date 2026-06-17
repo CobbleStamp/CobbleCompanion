@@ -633,44 +633,114 @@ multi-node). The queue exposes `duePendingCount()` as a first observability hook
   failed/poison, reclaim count) via a read-only `/admin/queue` route + structured
   logs; alert on oldest-pending age and failed count.
 
-### Phase D — Problems 5 & 6: WebSocket embodiment *(release gate, the big rewrite)* — NOT STARTED
+### Phase D — Problems 5 & 6: WebSocket embodiment *(release gate, the big rewrite)* — IN PROGRESS
 
-> **Stopping point.** This is a large, self-contained effort — it rewrites the
-> *entire* client↔server transport onto WebSockets (big-bang, Q3), rewrites the
-> web client, adds the embodiment claim + fencing + handoff, and adds NLB infra.
-> It warrants its own focused branch + review rather than being bundled into the
-> Phase A/B PR. Sub-steps D1–D7 below are the plan for that effort.
+> **Scope.** A large, self-contained effort on its own branch
+> (`feat/ws-embodiment`, stacked on Phase B's `feat/horizontal-scalability`): it
+> rewrites the *entire* client↔server transport onto WebSockets (big-bang, Q3),
+> rewrites the web client, adds the embodiment claim + fencing + handoff, and adds
+> NLB infra. Each sub-phase below is **independently shippable while still
+> single-node** and committed separately.
+>
+> **Build-order note — D-A goes first.** The only Phase-B background path still
+> blocked is `ingest` (its payload is file *bytes*, which need the two-part
+> upload). `reaction_learn` is **not** blocked by WS at all — it only needs the
+> awaitable-learner refactor. And the two-part upload (the D3 carve-out) is fully
+> independent of the WS transport. So we pull that work forward as **D-A**, which
+> *finishes Phase B*, closes the `driveWeights`-from-reaction race, and ships
+> single-node — before any WS work.
 
-- **D1 Transport & auth.** WS endpoint; authenticate **once at handshake** (reuse
-  `CompositeVerifier`); derive `userId` for the connection's life.
-- **D2 Embodiment claim.** `active_embodiment` (owner ULID, node, generation,
+**Decisions for this phase (defaults chosen; stated so they can be redirected):**
+
+- **Byte storage for the two-part upload:** a Postgres `upload_staging` table
+  (`bytea` + owner + `expires_at` TTL). Cleanest, no new infra, keeps the DB as the
+  single source of truth (consistent with the whole design). Object storage (S3) is
+  a later optimization, explicitly a non-goal here (§4).
+- **Branch / PR:** `feat/ws-embodiment` off `feat/horizontal-scalability`; the
+  Phase D PR is **based on the Phase B branch** (stacked) so its diff is clean while
+  PR #22 is still open.
+
+#### D-A — Finish Phase B: two-part upload + `ingest` & `reaction_learn` on the queue *(ships single-node)*
+
+- **Schema.** `upload_staging` (`id`, `owner_id` → users, `bytes bytea`,
+  `byte_size`, `kind`, `expires_at`, `created_at`). Extend `JobType` with `ingest`;
+  extend `JobPayload` with `sourceId`, `jobId`, `uploadId` (a *reference*, never
+  bytes).
+- **Two-part upload.** New stateless HTTP `POST /companions/:id/uploads`
+  (multipart, any node, no embodiment): validate magic bytes (reuse
+  `source.routes` validation), store bytes in `upload_staging`, return
+  `{ uploadId, byteSize, kind }`. The file-source creation then takes an
+  `uploadId` (no bytes): create source + `ingestion_jobs` row, enqueue an `ingest`
+  job whose payload references the staging row.
+- **`ingest` handler.** Fetches the staging bytes (or note/link from the source
+  row), builds `IngestionRunParams`, runs the existing `IngestionPipeline.run`,
+  deletes the staging row on success. Retires the in-memory `IngestionRunner`
+  queue; **backpressure becomes a fleet-wide pending-`ingest` count** (replaces the
+  per-process `isFull()` / `IngestionQueueFullError`, still a 429).
+- **`reaction_learn` handler.** Refactor `ReactionLearner` to expose an awaitable
+  `run(message, emoji)`; the reaction route **enqueues** (`reactionLearnDedupeKey`
+  coalesces toggles) instead of fire-and-forget. Handler reconstructs the reactable
+  message + runs the learner. Closes the documented `driveWeights`-from-reaction
+  race (now claim-serialised like motivation).
+- **DoD:** all four background paths (`consolidate`, `motivation`, `ingest`,
+  `reaction_learn`) flow through the durable queue; `IngestionRunner` in-memory
+  queue gone; single-node behaviour unchanged; suite green.
+
+#### D1 — WS transport & handshake auth
+
+- WS endpoint; authenticate **once at handshake** (reuse `CompositeVerifier`);
+  derive `userId` for the connection's life. Envelope: `{id, method, params}` ⇄
+  `{id, result|error}` plus server-push `{event}`. Request/response correlation +
+  concurrent multiplexing over the one socket.
+
+#### D2 — Embodiment claim + fencing + handoff
+
+- `active_embodiment` (`companion_id` pk, owner ULID, node, generation,
   `last_heartbeat`); force-claim on connect; **fencing** check on every
-  state-mutating op; self-fence + close on supersession; TTL backstop; heartbeat
-  (liveness + TTL refresh + supersession + event-read).
-- **D2′ Turn serialization (Q5).** The embodiment node processes a connection's
-  turn-producing messages **one at a time** (a per-companion in-process chain), so
-  a rapid double-send can't run two agent loops at once. Trivial — all of a
-  companion's turns arrive on one connection on one node; no DB lock needed.
-- **D3 RPC-over-WS (big-bang, Q3).** Move **all** routes onto WS message types in
-  one pass — request/response correlation + concurrent multiplexing over the one
-  socket. **Uploads are the one carve-out, split in two:** (1) a stateless
-  authenticated **HTTP upload** stores the bytes and writes a *doc record* to
-  shared storage (DB/object store) — any node, no embodiment; (2) the client then
-  sends a small **WS reference message** that enqueues the `ingest` job. Binary
-  never crosses the WS.
-- **D4 Delivery.** Add a **`companion_events`** append-log (own monotonic `seq`)
-  that every publish point writes to (Q2); remove `InProcessCompanionEventBus` +
-  the SSE event route; the active connection's heartbeat reads `companion_events`
-  since its cursor and pushes over the WS. Per-turn reply still streams over the
-  same WS.
-- **D5 Presence.** Drop the per-node `InMemoryPresenceStore` (Q7); **derive
-  presence from the `active_embodiment` claim** (a live, non-expired claim = the
-  user is present). Add `last_activity_at` only if a finer idle signal is needed.
-- **D6 Client.** Web client → WS (preserve subscribe → snapshot → merge-by-id);
-  reconnect + re-claim UX ("your companion is moving rooms").
-- **D7 Infra.** NLB in `infra/aws`; idle timeout > heartbeat; drain on deploy.
-- **DoD:** one embodiment per companion enforced fleet-wide; live delivery works
-  cross-node; SSE bus + standing channel removed.
+  state-mutating op; self-fence + close on supersession; TTL crash backstop;
+  heartbeat = liveness + TTL refresh + supersession + event-read cursor.
+- **D2′ turn serialization (Q5).** The embodiment node processes a connection's
+  turn-producing messages **one at a time** (per-companion in-process chain) — all
+  of a companion's turns arrive on one connection on one node, so no DB lock.
+
+#### D3 — RPC-over-WS (big-bang, Q3)
+
+- Move **all** ~34 routes onto WS method types in one pass; the 4 streaming routes
+  (`POST /messages`, `POST /greeting`, `POST /proposals/:id/confirm`, the events
+  channel) become **server-push event sequences correlated by request id**. Uploads
+  already carved out in **D-A** (HTTP store + WS reference). Keep a thin HTTP
+  surface: `/health`, `/auth/config`, and `POST /uploads`.
+
+#### D4 — Delivery via `companion_events` append-log (Q2)
+
+- New `companion_events` table (own monotonic `seq`); every publish point
+  (`PublishingMemoryStore.appendMessage`, reaction add/remove routes, `react-tool`)
+  writes a row. Remove `InProcessCompanionEventBus` + the SSE event route; the
+  active connection's heartbeat reads `companion_events` since its cursor and pushes
+  over the WS. Per-turn reply still streams over the same WS.
+
+#### D5 — Presence from the claim (Q7)
+
+- Drop the per-node `InMemoryPresenceStore`; **derive presence from
+  `active_embodiment`** (a live, non-expired claim = present). Add `last_activity_at`
+  only if a finer idle signal is needed. The HTTP heartbeat route folds into the WS
+  heartbeat.
+
+#### D6 — Web client → WS
+
+- Rewrite `packages/web/src/api/client.ts` onto one WS connection with RPC
+  correlation + reconnect/re-claim UX ("your companion is moving rooms"). Preserve
+  subscribe → snapshot → merge-by-id (`Chat.tsx`); consume `companion_events` by
+  cursor over the WS.
+
+#### D7 — NLB infra + flip to multi-node
+
+- NLB (L4) in `infra/aws`; idle timeout > heartbeat; drain on deploy. Then §6.5
+  flip: set N > 1, run under load, verify single-embodiment + handoff + no duplicate
+  background work via the C2 metrics.
+
+- **Phase DoD:** one embodiment per companion enforced fleet-wide; live delivery
+  works cross-node; SSE bus + standing channel removed.
 
 ### 6.5 Flip to multi-node
 
