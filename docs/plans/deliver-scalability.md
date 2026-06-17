@@ -1,8 +1,11 @@
 # Deliver: Stateless API & Horizontal Scalability
 
-> **Status:** building. Working plan, not canonical architecture — once shipped,
-> fold durable decisions into `docs/architecture.md` §6/§8 and delete superseded
-> parts here.
+> **Status:** code-complete for the MVP (single-node). The stateless WS backend
+> (D-A→D6 + cleanup) is delivered, green, and runs on one micro instance behind
+> Caddy with no infra change. Multi-node (D7 NLB, the §6.5 flip, Phase C
+> observability, the Q1 concurrency suite) is **deferred until scale is needed**.
+> Working plan, not canonical architecture — fold the durable decisions into
+> `docs/architecture.md` §6/§8 and delete superseded parts here when convenient.
 >
 > ### ▶ Resume here (the whole code side of Phase D is done — only ops remain)
 > - **Branch:** `feat/ws-embodiment` (stacked on Phase B's `feat/horizontal-scalability`).
@@ -18,12 +21,14 @@
 >   (`POST /companions/:id/sources/file` — D-A's two-part upload), `/health`, and the
 >   SPA static serve. Every test (incl. all seven phase-DoD suites) drives the
 >   product over a WS test harness (`packages/api/src/test/ws-client.ts`).
-> - **Next (ops only):** **D7** — NLB (L4) in `infra/aws`, idle timeout > heartbeat,
->   drain on deploy; then §6.5 flip (set N > 1, run under load, verify
->   single-embodiment + handoff + no duplicate background work). **Phase C** rides
->   with it: C1 DB connection budget, C2 queue/embodiment observability
->   (`/admin/queue` — note: that admin read would be a *new* WS method or a small
->   internal HTTP route, since the public HTTP surface is now gone).
+> - **D7 / multi-node: DEFERRED (not needed for the MVP).** Decision 2026-06-17 —
+>   the backend runs on **one micro instance** until scale is actually needed. No
+>   NLB, no flip. The existing `infra/aws` deploy already serves the WS surface
+>   (Caddy `reverse_proxy` upgrades WebSockets transparently; the 10s heartbeat keeps
+>   sockets alive) — **no infra change for the MVP.** When scale is needed: NLB (L4)
+>   + drain on deploy + the §6.5 flip, plus **Phase C** (C1 DB connection budget, C2
+>   queue/embodiment observability — that admin read would be a new WS method or a
+>   small internal HTTP route) and the **Q1** real-Postgres concurrency suite first.
 > - **WS surface map:** transport in `packages/api/src/ws/` (`register`,
 >   `handshake`, `connection`, `dispatch`, `fencing`, `methods.ts`); per-domain
 >   methods in `packages/api/src/ws/methods/` (incl. `presence.ts`). Envelope types
@@ -840,7 +845,21 @@ Backpressure is a fleet-wide pending-`ingest` count; deferred jobs resume via
   `CompanionEventBus` to a publish-only sink; `DurableCompanionEventBus` appends to
   the log alone. Verification: core 974 + 1 todo, api 152, web 139 green.
 
-#### D7 — NLB infra + flip to multi-node
+#### D7 — NLB infra + flip to multi-node — ⏸️ DEFERRED (not needed for the MVP)
+
+> **Decision (2026-06-17):** the MVP runs the whole backend on **one micro
+> instance** — no NLB, no multi-node, until there are enough users to need scale.
+> The Phase D code is correct single-node (one embodiment per companion, the
+> `companion_events` log, and the job queue all work on one node), and the existing
+> `infra/aws` deploy serves the WS surface as-is: **Caddy's `reverse_proxy`
+> handles the WebSocket upgrade transparently** (forwards `Upgrade`/`Connection`,
+> streams automatically — no config change), and there's no idle reaper that would
+> drop an idle socket (the 10s app heartbeat keeps it live regardless). So nothing
+> in `infra/` changes for the MVP.
+>
+> When scale is needed, the below applies — plus **session affinity** (an NLB is L4,
+> so a reconnect can land on any node and re-claim from the DB; that's by design,
+> §5.2) and the **Q1 real-Postgres concurrency suite** before trusting the flip.
 
 - NLB (L4) in `infra/aws`; idle timeout > heartbeat; drain on deploy. Then §6.5
   flip: set N > 1, run under load, verify single-embodiment + handoff + no duplicate
