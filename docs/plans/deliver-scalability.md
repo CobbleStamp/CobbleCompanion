@@ -4,30 +4,36 @@
 > fold durable decisions into `docs/architecture.md` §6/§8 and delete superseded
 > parts here.
 >
-> ### ▶ Resume here (as of D5)
+> ### ▶ Resume here (as of D6)
 > - **Branch:** `feat/ws-embodiment` (stacked on Phase B's `feat/horizontal-scalability`).
 >   **PR #23** (based on the Phase B branch) carries all of the below.
 > - **Delivered + pushed:** **D-A** (finish Phase B: queue + two-part upload),
 >   **D1** (WS transport + handshake auth), **D2** (embodiment claim + fencing +
 >   handoff), **D3** (every route available as a WS method, *additive*), **D4**
 >   (cross-node live delivery via `companion_events`), **D5** (presence from the
->   claim). Each phase has a `✅ DELIVERED` marker in §6. Migrations `0005`–`0008`.
-> - **Server-side scalability gates are met** (stateless backend; one-embodiment +
->   fencing + handoff; cross-node delivery). Remaining work is client + ops.
-> - **Next:** **D6** (rewrite the web client `packages/web/src/api/client.ts` onto
->   the single WS — the last large piece), then **D7** (NLB + multi-node flip), then
->   the **final cleanup** (remove the now-parallel HTTP routes + SSE bus +
->   `sse.ts` + re-home/delete their tests; fold the HTTP heartbeat into the WS).
+>   claim), **D6** (web client onto the single WS). Each phase has a `✅ DELIVERED`
+>   marker in §6. Migrations `0005`–`0008`.
+> - **Server + client are now both on the WS.** The web client opens one socket per
+>   embodied companion (`packages/web/src/api/ws.ts`), keeps every `client.ts`
+>   signature, and only the multipart file upload stays HTTP. The HTTP routes + SSE
+>   are still mounted (strangler) but the web client no longer calls them.
+> - **Next:** the **final cleanup** (remove the now-dead parallel HTTP routes +
+>   `InProcessCompanionEventBus` + the SSE event route + `sse.ts` + re-home/delete
+>   their tests; the HTTP heartbeat route is superseded by `presence.heartbeat`),
+>   then **D7** (NLB + multi-node flip + §6.5 verify via C2 metrics). **Phase C**
+>   (C1 DB connection budget, C2 queue/embodiment observability) rides with D7.
 > - **WS surface map:** transport in `packages/api/src/ws/` (`register`,
 >   `handshake`, `connection`, `dispatch`, `fencing`, `methods.ts`); per-domain
->   methods in `packages/api/src/ws/methods/`. Envelope types in `packages/shared`
->   (`Ws*Message`). Embodiment store + claim-presence in
->   `packages/core/src/embodiment/`; event log in `packages/core/src/events/`.
+>   methods in `packages/api/src/ws/methods/` (incl. `presence.ts`). Envelope types
+>   in `packages/shared` (`Ws*Message`). Web transport singleton in
+>   `packages/web/src/api/ws.ts` (`wsClient`, `SupersededError`). Embodiment store +
+>   claim-presence in `packages/core/src/embodiment/`; event log in
+>   `packages/core/src/events/`.
 > - **Known gap (Q1):** the job-queue lease-expiry test is a wall-clock flake on
 >   PGlite under full-suite load (passes in isolation); claim/lease/fencing
 >   concurrency needs a real-Postgres/testcontainers suite before trusting at N nodes.
-> - **Verification at pause:** all packages typecheck; api 285 green; core green
->   modulo that one flake.
+> - **Verification at D6:** all packages typecheck; api 287 green; web 139 green;
+>   core green modulo that one flake.
 
 ## 1. Goal
 
@@ -796,12 +802,23 @@ Backpressure is a fleet-wide pending-`ingest` count; deferred jobs resume via
   TTL-lapse. (The HTTP heartbeat route stays through the strangler; it folds into the
   WS heartbeat at the final cleanup.)
 
-#### D6 — Web client → WS
+#### D6 — Web client → WS — ✅ DELIVERED
 
-- Rewrite `packages/web/src/api/client.ts` onto one WS connection with RPC
-  correlation + reconnect/re-claim UX ("your companion is moving rooms"). Preserve
-  subscribe → snapshot → merge-by-id (`Chat.tsx`); consume `companion_events` by
-  cursor over the WS.
+- `packages/web/src/api/ws.ts` is the transport singleton: one WS per embodied
+  companion, RPC correlation by id, streaming methods, and the live-event channel.
+  `client.ts` keeps every exported signature (so `Chat.tsx` + all components/hooks
+  are untouched) and only the multipart file upload stays HTTP (D-A's two-part
+  upload). The subscribe → snapshot → merge-by-id flow in `Chat.tsx` is preserved;
+  `companion_events` arrive as pushed `companion` events over the WS.
+- Reconnect/re-claim UX: a takeover by a newer connection (another tab/device)
+  yields the room — the owner stops reconnecting (no claim war) and `Chat.tsx`
+  shows a "use here" banner that reclaims and force-claims back (`SupersededError`,
+  `onEmbodimentMoved`, `reclaimEmbodiment`).
+- Server-side support added: `presence.heartbeat` WS method (records tab visibility
+  on the claim, D5; not a motivation trigger), and `auth.me` now returns the email
+  (parity with `GET /auth/me`).
+- Tests: `client.test.ts` rewritten for the WS transport over a drivable fake
+  socket; new WS-method tests for `presence.heartbeat` + `auth.me`. No migration.
 
 #### D7 — NLB infra + flip to multi-node
 
