@@ -24,8 +24,9 @@ import {
   type EmbeddingResult,
   type IngestionRunParams,
 } from '@cobble/core';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { makeTestApp, type TestApp } from '../test/helpers.js';
+import { openWs, type WsTestClient } from '../test/ws-client.js';
 
 const TOKENS_PER_READ = 120;
 
@@ -53,38 +54,35 @@ class TopicalEmbeddingGateway extends FakeEmbeddingGateway {
 
 describe('Phase 12 DoD — learned beliefs', () => {
   let ctx: TestApp;
-  let auth: { authorization: string };
   let userId: string;
   let companionId: string;
+  let ws: WsTestClient;
 
   async function setup(
     chunks: ConstructorParameters<typeof FakeLlmGateway>[0],
     options?: Parameters<typeof makeTestApp>[2],
   ): Promise<void> {
     ctx = await makeTestApp(chunks, undefined, options);
-    auth = ctx.bearerFor('owner@example.com');
     const user = await ctx.deps.identity.ensureUserByEmail('owner@example.com');
     userId = user.id;
-    const created = await ctx.app.inject({
-      method: 'POST',
-      url: '/companions',
-      headers: auth,
-      payload: { name: 'Pebble', form: 'fox', temperament: 'curious' },
+    const anon = await openWs(ctx, 'owner@example.com');
+    const { companion } = await anon.call<{ companion: { id: string } }>('companions.create', {
+      name: 'Pebble',
+      form: 'fox',
+      temperament: 'curious',
     });
-    companionId = created.json().companion.id;
+    await anon.close();
+    companionId = companion.id;
+    ws = await openWs(ctx, 'owner@example.com', companionId);
   }
 
   afterEach(async () => {
+    await ws.close();
     await ctx.close();
   });
 
   async function sendMessage(content: string): Promise<void> {
-    await ctx.app.inject({
-      method: 'POST',
-      url: `/companions/${companionId}/messages`,
-      headers: auth,
-      payload: { content },
-    });
+    await ws.stream('messages.send', { content });
     await ctx.deps.harness.whenIdle();
   }
 

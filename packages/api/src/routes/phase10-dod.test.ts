@@ -25,6 +25,7 @@ import { createTestDatabase } from '@cobble/db/testing';
 import { FileSystemCliToolStore } from '../cli/fs-tool-store.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { makeTestApp, silentLogger, type TestApp } from '../test/helpers.js';
+import { openWs } from '../test/ws-client.js';
 
 const QUOTE_ID = 'cli__quote';
 
@@ -64,23 +65,14 @@ const quoteSandbox = (): FakeCommandSandbox =>
     }),
   );
 
-async function send(
-  ctx: TestApp,
-  companionId: string,
-  auth: { authorization: string },
-  content: string,
-) {
-  const res = await ctx.app.inject({
-    method: 'POST',
-    url: `/companions/${companionId}/messages`,
-    headers: auth,
-    payload: { content },
-  });
-  return res.payload
-    .split('\n\n')
-    .map((frame) => frame.trim())
-    .filter((frame) => frame.startsWith('data:'))
-    .map((frame) => JSON.parse(frame.slice('data:'.length).trim()) as ChatStreamEvent);
+/** Drive one turn over a fresh embodied WS (claim → stream → release). */
+async function send(ctx: TestApp, companionId: string, content: string) {
+  const ws = await openWs(ctx, 'owner@example.com', companionId);
+  try {
+    return await ws.stream<ChatStreamEvent>('messages.send', { content });
+  } finally {
+    await ws.close();
+  }
 }
 
 function doneText(events: readonly ChatStreamEvent[]): string {
@@ -88,19 +80,22 @@ function doneText(events: readonly ChatStreamEvent[]): string {
   return done && done.type === 'done' ? done.message.content : '';
 }
 
-async function createCompanion(ctx: TestApp, auth: { authorization: string }): Promise<string> {
-  const created = await ctx.app.inject({
-    method: 'POST',
-    url: '/companions',
-    headers: auth,
-    payload: { name: 'Pebble', form: 'fox', temperament: 'curious' },
-  });
-  return created.json().companion.id;
+async function createCompanion(ctx: TestApp): Promise<string> {
+  const anon = await openWs(ctx, 'owner@example.com');
+  try {
+    const { companion } = await anon.call<{ companion: { id: string } }>('companions.create', {
+      name: 'Pebble',
+      form: 'fox',
+      temperament: 'curious',
+    });
+    return companion.id;
+  } finally {
+    await anon.close();
+  }
 }
 
 describe('Phase 10 DoD — runtime CLI tool acquisition', () => {
   let ctx: TestApp;
-  let auth: { authorization: string };
   let companionId: string;
   let cleanupDir: () => Promise<void>;
 
@@ -122,8 +117,7 @@ describe('Phase 10 DoD — runtime CLI tool acquisition', () => {
       cliSandbox: sandbox,
       disableAffect: true,
     });
-    auth = ctx.bearerFor('owner@example.com');
-    companionId = await createCompanion(ctx, auth);
+    companionId = await createCompanion(ctx);
   }
 
   it('discovers a CLI tool, loads it, and calls it on the next iteration', async () => {
@@ -154,7 +148,7 @@ describe('Phase 10 DoD — runtime CLI tool acquisition', () => {
       sandbox,
     );
 
-    const events = await send(ctx, companionId, auth, 'What is the AAPL stock quote?');
+    const events = await send(ctx, companionId, 'What is the AAPL stock quote?');
     expect(doneText(events)).toContain('$190.12');
 
     // The equipped CLI tool actually ran in the sandbox with the rendered argv.
@@ -181,7 +175,7 @@ describe('Phase 10 DoD — runtime CLI tool acquisition', () => {
       sandbox,
     );
 
-    const events = await send(ctx, companionId, auth, 'Use the evil tool.');
+    const events = await send(ctx, companionId, 'Use the evil tool.');
     expect(doneText(events)).toContain('could not load');
     // The catalog denied it before any command ran.
     expect(sandbox.calls).toHaveLength(0);
@@ -193,7 +187,7 @@ describe('Phase 10 DoD — runtime CLI tool acquisition', () => {
   it('advertises only the small core set regardless of catalog size (scaling)', async () => {
     const sandbox = quoteSandbox();
     await setup([{ chunks: ['Hello!'] }], sandbox);
-    await send(ctx, companionId, auth, 'Just say hi.');
+    await send(ctx, companionId, 'Just say hi.');
 
     // The core set advertised every turn is only the native tools + the two
     // discovery meta-tools. No catalog (cli__) tool is advertised until loaded.
@@ -232,9 +226,8 @@ describe('Phase 10 DoD — equipped CLI tool survives a process restart', () => 
           database: shared,
         },
       );
-      const auth = app1.bearerFor('owner@example.com');
-      const companionId = await createCompanion(app1, auth);
-      const loadEvents = await send(app1, companionId, auth, 'Get me a quote tool.');
+      const companionId = await createCompanion(app1);
+      const loadEvents = await send(app1, companionId, 'Get me a quote tool.');
       expect(doneText(loadEvents)).toContain('Loaded');
       await app1.close();
 
@@ -258,10 +251,9 @@ describe('Phase 10 DoD — equipped CLI tool survives a process restart', () => 
         },
       );
       try {
-        const auth2 = app2.bearerFor('owner@example.com');
         // Callable on a cold instance only because the resolver rebuilt the registry
         // from the equipped row app #1 persisted — no re-discovery.
-        const quoteEvents = await send(app2, companionId, auth2, 'What is the AAPL stock quote?');
+        const quoteEvents = await send(app2, companionId, 'What is the AAPL stock quote?');
         expect(doneText(quoteEvents)).toContain('$190.12');
         expect(sandbox2.calls).toHaveLength(1);
         expect(sandbox2.calls[0]).toMatchObject({ binary: 'quote-cli', argv: ['get', 'AAPL'] });

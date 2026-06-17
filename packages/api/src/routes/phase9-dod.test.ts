@@ -18,6 +18,7 @@ import { FakeMcpGateway } from '@cobble/core';
 import { createTestDatabase } from '@cobble/db/testing';
 import { afterEach, describe, expect, it } from 'vitest';
 import { makeTestApp, silentLogger, type TestApp } from '../test/helpers.js';
+import { openWs } from '../test/ws-client.js';
 
 const STOCKS = { ref: 'stocks', endpoint: 'https://mcp.example.com' };
 const QUOTE_ID = 'mcp__stocks__get_quote';
@@ -27,23 +28,14 @@ const getQuote: McpToolSnapshot = {
   inputSchema: { type: 'object', properties: { symbol: { type: 'string' } } },
 };
 
-async function send(
-  ctx: TestApp,
-  companionId: string,
-  auth: { authorization: string },
-  content: string,
-) {
-  const res = await ctx.app.inject({
-    method: 'POST',
-    url: `/companions/${companionId}/messages`,
-    headers: auth,
-    payload: { content },
-  });
-  return res.payload
-    .split('\n\n')
-    .map((frame) => frame.trim())
-    .filter((frame) => frame.startsWith('data:'))
-    .map((frame) => JSON.parse(frame.slice('data:'.length).trim()) as ChatStreamEvent);
+/** Drive one turn over a fresh embodied WS (claim → stream → release). */
+async function send(ctx: TestApp, companionId: string, content: string) {
+  const ws = await openWs(ctx, 'owner@example.com', companionId);
+  try {
+    return await ws.stream<ChatStreamEvent>('messages.send', { content });
+  } finally {
+    await ws.close();
+  }
 }
 
 function doneText(events: readonly ChatStreamEvent[]): string {
@@ -51,19 +43,22 @@ function doneText(events: readonly ChatStreamEvent[]): string {
   return done && done.type === 'done' ? done.message.content : '';
 }
 
-async function createCompanion(ctx: TestApp, auth: { authorization: string }): Promise<string> {
-  const created = await ctx.app.inject({
-    method: 'POST',
-    url: '/companions',
-    headers: auth,
-    payload: { name: 'Pebble', form: 'fox', temperament: 'curious' },
-  });
-  return created.json().companion.id;
+async function createCompanion(ctx: TestApp): Promise<string> {
+  const anon = await openWs(ctx, 'owner@example.com');
+  try {
+    const { companion } = await anon.call<{ companion: { id: string } }>('companions.create', {
+      name: 'Pebble',
+      form: 'fox',
+      temperament: 'curious',
+    });
+    return companion.id;
+  } finally {
+    await anon.close();
+  }
 }
 
 describe('Phase 9 DoD — runtime MCP tool acquisition', () => {
   let ctx: TestApp;
-  let auth: { authorization: string };
   let companionId: string;
 
   afterEach(async () => {
@@ -81,8 +76,7 @@ describe('Phase 9 DoD — runtime MCP tool acquisition', () => {
       disableAffect: true,
       ...config,
     });
-    auth = ctx.bearerFor('owner@example.com');
-    companionId = await createCompanion(ctx, auth);
+    companionId = await createCompanion(ctx);
   }
 
   it('discovers a tool, loads it, and calls it on the next iteration', async () => {
@@ -115,7 +109,7 @@ describe('Phase 9 DoD — runtime MCP tool acquisition', () => {
       gateway,
     );
 
-    const events = await send(ctx, companionId, auth, 'What is the AAPL stock quote?');
+    const events = await send(ctx, companionId, 'What is the AAPL stock quote?');
     expect(doneText(events)).toContain('$190.12');
 
     // The equipped MCP tool was actually invoked over the gateway with the args.
@@ -141,7 +135,7 @@ describe('Phase 9 DoD — runtime MCP tool acquisition', () => {
       gateway,
     );
 
-    const events = await send(ctx, companionId, auth, 'Use the evil tool.');
+    const events = await send(ctx, companionId, 'Use the evil tool.');
     expect(doneText(events)).toContain('could not load');
     // The catalog/whitelist denied it before any tool call reached the gateway.
     expect(gateway.calls).toHaveLength(0);
@@ -170,7 +164,7 @@ describe('Phase 9 DoD — runtime MCP tool acquisition', () => {
         ],
       },
     });
-    await send(ctx, companionId, auth, 'Just say hi.');
+    await send(ctx, companionId, 'Just say hi.');
 
     // …yet the core set advertised every turn is only the native tools + the two
     // discovery meta-tools. No catalog (mcp__) tool is advertised until loaded.
@@ -208,9 +202,8 @@ describe('Phase 9 DoD — equipped tool survives a process restart', () => {
           database: shared,
         },
       );
-      const auth = app1.bearerFor('owner@example.com');
-      const companionId = await createCompanion(app1, auth);
-      const loadEvents = await send(app1, companionId, auth, 'Get me a stock tool.');
+      const companionId = await createCompanion(app1);
+      const loadEvents = await send(app1, companionId, 'Get me a stock tool.');
       expect(doneText(loadEvents)).toContain('Loaded');
       await app1.close();
 
@@ -235,10 +228,9 @@ describe('Phase 9 DoD — equipped tool survives a process restart', () => {
         },
       );
       try {
-        const auth2 = app2.bearerFor('owner@example.com');
         // The tool is callable on a cold instance only because the resolver rebuilt
         // the registry from the equipped row app #1 persisted — no re-discovery.
-        const quoteEvents = await send(app2, companionId, auth2, 'What is the AAPL stock quote?');
+        const quoteEvents = await send(app2, companionId, 'What is the AAPL stock quote?');
         expect(doneText(quoteEvents)).toContain('$190.12');
         expect(gateway2.calls).toEqual([
           { ref: 'stocks', name: 'get_quote', args: { symbol: 'AAPL' } },
