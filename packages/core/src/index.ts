@@ -180,7 +180,9 @@ export {
 export {
   JobProcessorPool,
   makeCompanionWorkRequester,
+  makeReactionWorkRequester,
   type CompanionWorkRequester,
+  type ReactionWorkRequester,
   type JobHandler,
   type JobHandlers,
   type JobProcessorOptions,

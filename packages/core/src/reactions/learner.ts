@@ -31,7 +31,7 @@ import { resolveWeights } from '../motivation/drives.js';
 import type { ProactiveOutcomeRecord, ProactiveOutcomeStore } from '../motivation/reward-store.js';
 import { nudgeDriveWeight } from '../motivation/weights.js';
 import type { UserModelStore } from '../user-model/store.js';
-import type { ReactableMessage } from './reactable.js';
+import { asReactableMessage, type ReactableMessage } from './reactable.js';
 import { senseReaction, type ReactionSenseDeps } from './sense.js';
 import type { ReactionStore } from './store.js';
 
@@ -101,6 +101,28 @@ export class ReactionLearner {
     while (this.inflight.size > 0) {
       await Promise.allSettled([...this.inflight]);
     }
+  }
+
+  /**
+   * The job-queue entry (deliver-scalability.md §5.1): a `reaction_learn` job
+   * carries only the reacted message id + emoji, so reconstruct the
+   * {@link ReactableMessage} from the transcript and run the read. Awaitable — the
+   * processor drains it under the companion claim, so a reaction's drive-weight
+   * write is fleet-serialised like the other background paths (closing the
+   * concurrent-reaction `driveWeights` race the fire-and-forget path left open).
+   * A message that was deleted, or is not a reactable companion turn, teaches
+   * nothing — the same guard the route applies before enqueuing.
+   */
+  async learnForMessage(companionId: string, messageId: string, emoji: string): Promise<void> {
+    const message = await this.deps.memory.getMessageById(companionId, messageId);
+    if (!message) {
+      return;
+    }
+    const reactable = asReactableMessage(message);
+    if (!reactable) {
+      return;
+    }
+    await this.run(reactable, emoji);
   }
 
   private async run(message: ReactableMessage, emoji: string): Promise<void> {

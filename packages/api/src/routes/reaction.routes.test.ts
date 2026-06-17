@@ -266,9 +266,9 @@ describe('reaction routes', () => {
       });
       expect(res.statusCode).toBe(200);
 
-      // The route floats the read; drain it, then the outcome is resolved by the
-      // reaction's value (addressed by note_message_id).
-      await learnCtx.deps.reactionLearner.whenIdle();
+      // The route enqueues a reaction_learn job; drain the pool, then the outcome
+      // is resolved by the reaction's value (addressed by note_message_id).
+      await learnCtx.deps.reactionLearn.whenIdle();
       const [resolved] = await learnCtx.deps.rewards.list(cid, 1);
       expect(resolved?.reward).toBeCloseTo(0.8);
     } finally {

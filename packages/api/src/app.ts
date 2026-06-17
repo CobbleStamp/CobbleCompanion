@@ -19,8 +19,8 @@ import type {
   ProactiveOutcomeStore,
   ProceduralStore,
   ProposalStore,
-  ReactionLearner,
   ReactionStore,
+  ReactionWorkRequester,
   SemanticMemoryStore,
   ToolCallLog,
   ToolRegistry,
@@ -105,9 +105,10 @@ export interface AppDeps {
   readonly rewards: ProactiveOutcomeStore;
   /** Emoji reactions on transcript messages, both directions (companion-reactions.md). */
   readonly reactions: ReactionStore;
-  /** The will's half of the reaction loop — reads a user reaction's value and
-   *  learns from it after the route responds (companion-reactions.md §4). */
-  readonly reactionLearner: ReactionLearner;
+  /** The will's half of the reaction loop — enqueues a `reaction_learn` job so the
+   *  read + drive-weight learning runs off-request under the companion claim
+   *  (companion-reactions.md §4; deliver-scalability.md §5.1). */
+  readonly reactionLearn: ReactionWorkRequester;
   /** The rolling read of the user's mood, sensed in the agent loop (P4.2). */
   readonly affect: CompanionAffectStore;
   /**

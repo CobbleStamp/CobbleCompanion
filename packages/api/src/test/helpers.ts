@@ -12,6 +12,7 @@ import {
   DrizzleJobQueue,
   JobProcessorPool,
   makeCompanionWorkRequester,
+  makeReactionWorkRequester,
   createEpisodicRetrieveContext,
   createMemoizingEmbeddingGateway,
   createApprovalGate,
@@ -379,11 +380,19 @@ export async function makeTestApp(
       motivation: async (job) => {
         await motivationEngine.tick(job.companionId);
       },
+      reaction_learn: async (job) => {
+        const { messageId, emoji } = job.payload;
+        if (!messageId || !emoji) {
+          return;
+        }
+        await reactionLearner.learnForMessage(job.companionId, messageId, emoji);
+      },
     },
     { owner: 'test', concurrency: 4, leaseMs: 60_000, pollMs: 60_000, logger: silentLogger },
   );
   const consolidation = makeCompanionWorkRequester(jobPool, 'consolidate');
   const motivation = makeCompanionWorkRequester(jobPool, 'motivation');
+  const reactionLearn = makeReactionWorkRequester(jobPool);
   // Greeting on arrival (P14) — voiced greetings spend STAMINA (the `quota` wallet).
   const greeting = new GreetingService({
     identity,
@@ -418,7 +427,7 @@ export async function makeTestApp(
     food,
     rewards,
     reactions,
-    reactionLearner,
+    reactionLearn,
     growth,
     growthStore,
     harness: new Harness({
@@ -513,12 +522,10 @@ export async function makeTestApp(
     bearerFor,
     close: async () => {
       await ingestion.whenIdle();
-      // Drain the job pool (consolidate + motivation) before the db closes, so a
-      // background job can't write to a torn-down database.
+      // Drain the job pool (consolidate + motivation + reaction_learn) before the
+      // db closes, so a background job can't write to a torn-down database. The
+      // reaction read now runs as a queued job, so the pool drain covers it too.
       await jobPool.close();
-      // Drain fire-and-forget reaction reads (the POST reaction route floats one)
-      // for the same reason — a detached read must not outlive the db.
-      await reactionLearner.whenIdle();
       // Growth recompute runs inline as the tail of each turn's stream, so there's
       // no background runner to drain here.
       await app.close();

@@ -66,6 +66,7 @@ import {
   DrizzleJobQueue,
   JobProcessorPool,
   makeCompanionWorkRequester,
+  makeReactionWorkRequester,
   type EmbeddingGateway,
   type LlmGateway,
 } from '@cobble/core';
@@ -420,13 +421,13 @@ async function main(): Promise<void> {
     logger: consoleLogger,
   });
 
-  // Background job queue (deliver-scalability.md §5.1, Phase B): the durable,
-  // fleet-coherent replacement for the in-process consolidation + motivation
-  // runners and their per-process coalescing Sets. `consolidate`/`motivation` now
-  // run as claim-serialised jobs drained by a bounded pool on every node, so the
-  // old setInterval sweeps can no longer run the same work N times across
-  // replicas. (Ingestion + reaction_learn stay on their existing paths for now —
-  // see deliver-scalability.md §6/§8.)
+  // Background job queue (deliver-scalability.md §5.1): the durable, fleet-coherent
+  // replacement for the in-process runners + their per-process coalescing Sets.
+  // `consolidate`/`motivation`/`reaction_learn` run as claim-serialised jobs drained
+  // by a bounded pool on every node, so the old setInterval sweeps can no longer run
+  // the same work N times across replicas, and a reaction's drive-weight write can't
+  // race a concurrent one. (Ingestion keeps its own durable table until the upload
+  // split makes its byte payload durable — Phase D D-A.2.)
   const jobQueue = new DrizzleJobQueue(db);
   const jobPool = new JobProcessorPool(
     jobQueue,
@@ -434,6 +435,13 @@ async function main(): Promise<void> {
       consolidate: (job) => consolidationService.consolidate(job.companionId),
       motivation: async (job) => {
         await motivationEngine.tick(job.companionId);
+      },
+      reaction_learn: async (job) => {
+        const { messageId, emoji } = job.payload;
+        if (!messageId || !emoji) {
+          return;
+        }
+        await reactionLearner.learnForMessage(job.companionId, messageId, emoji);
       },
     },
     {
@@ -449,6 +457,9 @@ async function main(): Promise<void> {
   // nudge the local pool for low latency.
   const consolidation = makeCompanionWorkRequester(jobPool, 'consolidate');
   const motivation = makeCompanionWorkRequester(jobPool, 'motivation');
+  // The reaction route enqueues a `reaction_learn` job (per-event payload) instead
+  // of floating a detached read.
+  const reactionLearn = makeReactionWorkRequester(jobPool);
 
   // Greeting on arrival (P14): the bond-driven reaction to the user returning.
   // Voiced greetings are interaction, so they spend STAMINA (the `quota` wallet),
@@ -508,7 +519,7 @@ async function main(): Promise<void> {
     food,
     rewards,
     reactions,
-    reactionLearner,
+    reactionLearn,
     affect: affectStore,
     growth,
     growthStore,

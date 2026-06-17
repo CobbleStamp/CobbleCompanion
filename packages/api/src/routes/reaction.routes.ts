@@ -29,7 +29,7 @@ export function registerReactionRoutes(
   deps: AppDeps,
   requireAuth: RequireAuth,
 ): void {
-  const { identity, memory, reactions, reactionLearner, eventBus, logger } = deps;
+  const { identity, memory, reactions, reactionLearn, eventBus, logger } = deps;
 
   // Add a reaction to a message.
   app.post(
@@ -79,10 +79,12 @@ export function registerReactionRoutes(
             emoji: parsed.data.emoji,
           });
           // The reaction is the addressed reward signal (companion-reactions.md §4):
-          // read its value and learn AFTER responding — fire-and-forget, self-catching,
-          // billed to stamina — so it never blocks the tap. Only an *added* reaction
-          // teaches; removing one doesn't.
-          reactionLearner.learn(reactable, parsed.data.emoji);
+          // enqueue a `reaction_learn` job so the (billed) read + drive-weight
+          // learning runs off-request under the companion claim — never blocking the
+          // tap, and fleet-serialised so concurrent reactions can't race the
+          // `driveWeights` write (deliver-scalability.md §5.1). Only an *added*
+          // reaction teaches; removing one doesn't.
+          reactionLearn.request(companion.id, messageId, parsed.data.emoji);
         }
         return reply.send({ ok: true });
       } catch (error) {

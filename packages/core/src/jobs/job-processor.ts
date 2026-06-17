@@ -1,6 +1,12 @@
 import type { JobType } from '@cobble/shared';
 import type { Logger } from '../logging.js';
-import type { ClaimedCompanion, EnqueueParams, JobQueue, QueuedJob } from './job-queue.js';
+import {
+  reactionLearnDedupeKey,
+  type ClaimedCompanion,
+  type EnqueueParams,
+  type JobQueue,
+  type QueuedJob,
+} from './job-queue.js';
 
 /**
  * Runs one job. Throwing marks the job failed (and logs); returning marks it done.
@@ -183,6 +189,35 @@ export function makeCompanionWorkRequester(
   return {
     request(companionId: string): void {
       pool.enqueueAndNudge({ companionId, type });
+    },
+    whenIdle(): Promise<void> {
+      return pool.whenIdle();
+    },
+  };
+}
+
+/** The trigger interface the reaction route calls — per-event, so it carries the
+ *  reacted message id + emoji (unlike the companion-only consolidate/motivation). */
+export interface ReactionWorkRequester {
+  request(companionId: string, messageId: string, emoji: string): void;
+  /** Drain the backing pool — for deterministic tests. */
+  whenIdle(): Promise<void>;
+}
+
+/**
+ * Adapt the pool to the reaction route's trigger. Each distinct reaction
+ * coalesces on its own `reaction:{messageId}:{emoji}` key (a re-tap dedupes; two
+ * different reactions don't collapse), then nudges the local pool.
+ */
+export function makeReactionWorkRequester(pool: JobProcessorPool): ReactionWorkRequester {
+  return {
+    request(companionId: string, messageId: string, emoji: string): void {
+      pool.enqueueAndNudge({
+        companionId,
+        type: 'reaction_learn',
+        dedupeKey: reactionLearnDedupeKey(messageId, emoji),
+        payload: { messageId, emoji },
+      });
     },
     whenIdle(): Promise<void> {
       return pool.whenIdle();
