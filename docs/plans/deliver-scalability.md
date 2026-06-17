@@ -4,35 +4,38 @@
 > fold durable decisions into `docs/architecture.md` §6/§8 and delete superseded
 > parts here.
 >
-> ### ▶ Resume here (as of D6)
+> ### ▶ Resume here (the whole code side of Phase D is done — only ops remain)
 > - **Branch:** `feat/ws-embodiment` (stacked on Phase B's `feat/horizontal-scalability`).
 >   **PR #23** (based on the Phase B branch) carries all of the below.
 > - **Delivered + pushed:** **D-A** (finish Phase B: queue + two-part upload),
 >   **D1** (WS transport + handshake auth), **D2** (embodiment claim + fencing +
->   handoff), **D3** (every route available as a WS method, *additive*), **D4**
->   (cross-node live delivery via `companion_events`), **D5** (presence from the
->   claim), **D6** (web client onto the single WS). Each phase has a `✅ DELIVERED`
->   marker in §6. Migrations `0005`–`0008`.
-> - **Server + client are now both on the WS.** The web client opens one socket per
->   embodied companion (`packages/web/src/api/ws.ts`), keeps every `client.ts`
->   signature, and only the multipart file upload stays HTTP. The HTTP routes + SSE
->   are still mounted (strangler) but the web client no longer calls them.
-> - **Next:** the **final cleanup** (remove the now-dead parallel HTTP routes +
->   `InProcessCompanionEventBus` + the SSE event route + `sse.ts` + re-home/delete
->   their tests; the HTTP heartbeat route is superseded by `presence.heartbeat`),
->   then **D7** (NLB + multi-node flip + §6.5 verify via C2 metrics). **Phase C**
->   (C1 DB connection budget, C2 queue/embodiment observability) rides with D7.
+>   handoff), **D3** (route → WS methods), **D4** (cross-node delivery via
+>   `companion_events`), **D5** (presence from the claim), **D6** (web client onto
+>   the single WS), and the **final cleanup** (HTTP routes + SSE + in-process bus
+>   removed). Each phase has a `✅ DELIVERED` marker in §6. Migrations `0005`–`0008`.
+> - **One surface.** The product runs entirely over the WS. The only HTTP routes
+>   left are `/auth/config` (public bootstrap, pre-auth), the multipart file upload
+>   (`POST /companions/:id/sources/file` — D-A's two-part upload), `/health`, and the
+>   SPA static serve. Every test (incl. all seven phase-DoD suites) drives the
+>   product over a WS test harness (`packages/api/src/test/ws-client.ts`).
+> - **Next (ops only):** **D7** — NLB (L4) in `infra/aws`, idle timeout > heartbeat,
+>   drain on deploy; then §6.5 flip (set N > 1, run under load, verify
+>   single-embodiment + handoff + no duplicate background work). **Phase C** rides
+>   with it: C1 DB connection budget, C2 queue/embodiment observability
+>   (`/admin/queue` — note: that admin read would be a *new* WS method or a small
+>   internal HTTP route, since the public HTTP surface is now gone).
 > - **WS surface map:** transport in `packages/api/src/ws/` (`register`,
 >   `handshake`, `connection`, `dispatch`, `fencing`, `methods.ts`); per-domain
 >   methods in `packages/api/src/ws/methods/` (incl. `presence.ts`). Envelope types
 >   in `packages/shared` (`Ws*Message`). Web transport singleton in
 >   `packages/web/src/api/ws.ts` (`wsClient`, `SupersededError`). Embodiment store +
->   claim-presence in `packages/core/src/embodiment/`; event log in
->   `packages/core/src/events/`.
+>   claim-presence in `packages/core/src/embodiment/`; durable event log + bus in
+>   `packages/core/src/events/` (the in-process bus is gone — the log is the sole sink).
 > - **Known gap (Q1):** the job-queue lease-expiry test is a wall-clock flake on
 >   PGlite under full-suite load (passes in isolation); claim/lease/fencing
 >   concurrency needs a real-Postgres/testcontainers suite before trusting at N nodes.
-> - **Verification at D6:** all packages typecheck; api 287 green; web 139 green;
+> - **Verification at cleanup:** all packages typecheck; core 974 + 1 todo green; api
+>   152 green; web 139 green (modulo the Q1 flake).
 >   core green modulo that one flake.
 
 ## 1. Goal
@@ -820,6 +823,23 @@ Backpressure is a fleet-wide pending-`ingest` count; deferred jobs resume via
 - Tests: `client.test.ts` rewritten for the WS transport over a drivable fake
   socket; new WS-method tests for `presence.heartbeat` + `auth.me`. No migration.
 
+#### Final cleanup — remove the HTTP + SSE surface — ✅ DELIVERED
+
+- All tests (incl. the seven phase-DoD acceptance suites) ported onto a WS test
+  harness (`packages/api/src/test/ws-client.ts`); the per-route HTTP tests deleted
+  (covered by core + WS-method + DoD coverage).
+- Deleted the duplicated request/response routes (companion, message, reaction,
+  memory, user-model, episode, proposal, inventory, presence, proactivity,
+  proactive-activity, growth, usage, greeting) and the SSE event channel
+  (`sse.ts` + the standing event route). The turn-running HTTP routes that bypassed
+  embodiment serialization went with them.
+- Kept the two non-WS routes: `/auth/config` (pre-auth bootstrap) and the multipart
+  file upload; reduced `auth.routes`/`source.routes` to just those (moved source
+  behaviors re-covered over WS in `source.routes.test`).
+- Dropped `InProcessCompanionEventBus` + `CompanionSubscription`; narrowed
+  `CompanionEventBus` to a publish-only sink; `DurableCompanionEventBus` appends to
+  the log alone. Verification: core 974 + 1 todo, api 152, web 139 green.
+
 #### D7 — NLB infra + flip to multi-node
 
 - NLB (L4) in `infra/aws`; idle timeout > heartbeat; drain on deploy. Then §6.5
@@ -827,7 +847,9 @@ Backpressure is a fleet-wide pending-`ingest` count; deferred jobs resume via
   background work via the C2 metrics.
 
 - **Phase DoD:** one embodiment per companion enforced fleet-wide; live delivery
-  works cross-node; SSE bus + standing channel removed.
+  works cross-node; SSE bus + standing channel removed ✅ (the code-side DoD is met;
+  the *fleet-wide* claim is proven once N > 1 runs under load — D7 + Q1's real-PG
+  concurrency suite).
 
 ### 6.5 Flip to multi-node
 
