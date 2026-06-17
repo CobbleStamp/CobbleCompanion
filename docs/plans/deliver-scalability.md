@@ -690,12 +690,17 @@ Backpressure is a fleet-wide pending-`ingest` count; deferred jobs resume via
   `reaction_learn`) flow through the durable queue; `IngestionRunner` in-memory
   queue gone; single-node behaviour unchanged; suite green.
 
-#### D1 — WS transport & handshake auth
+#### D1 — WS transport & handshake auth — ✅ DELIVERED
 
-- WS endpoint; authenticate **once at handshake** (reuse `CompositeVerifier`);
-  derive `userId` for the connection's life. Envelope: `{id, method, params}` ⇄
-  `{id, result|error}` plus server-push `{event}`. Request/response correlation +
-  concurrent multiplexing over the one socket.
+- WS endpoint `/ws` (`@fastify/websocket`), authenticated **once at the handshake**
+  (`makeWsAuth` reuses the `CompositeVerifier`; bearer via header *or* `?access_token=`
+  for browsers); `userId` fixed for the connection's life. Envelope
+  (`packages/shared`): `{id, method, params}` ⇄ `{id, result|error}` plus server-push
+  `{event}`. `dispatchMessage` routes by method and is fired without awaiting, so
+  requests multiplex concurrently over the one socket. Seed methods `ping` +
+  `auth.me`; routes move onto the table in D3. **Additive** — HTTP routes stay
+  mounted, so single-node behaviour is unchanged. Tests run against a real listener
+  (5 cases); full api suite green (276).
 
 #### D2 — Embodiment claim + fencing + handoff
 

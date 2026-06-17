@@ -231,6 +231,37 @@ export type JobType = 'consolidate' | 'motivation' | 'reaction_learn' | 'ingest'
 export type JobStatus = 'pending' | 'done' | 'failed';
 
 /**
+ * Realtime WebSocket transport envelope (deliver-scalability.md §5.2, Phase D). A
+ * client sends a {@link WsRequestMessage} and correlates the reply by `id`; the
+ * server replies with a result or error carrying that `id`, and also pushes
+ * unsolicited {@link WsEventMessage}s (no `id`) — the live channel that replaces SSE.
+ * Many requests can be in flight at once over the one socket (multiplexed by `id`).
+ */
+export interface WsRequestMessage {
+  readonly id: string;
+  readonly method: string;
+  readonly params?: unknown;
+}
+
+export interface WsResultMessage {
+  readonly id: string;
+  readonly result: unknown;
+}
+
+export interface WsErrorMessage {
+  readonly id: string;
+  readonly error: { readonly message: string; readonly code?: string };
+}
+
+/** A server-initiated push (proactive note, reaction, etc.) — no request `id`. */
+export interface WsEventMessage {
+  readonly event: string;
+  readonly data: unknown;
+}
+
+export type WsServerMessage = WsResultMessage | WsErrorMessage | WsEventMessage;
+
+/**
  * Type-specific job reference — never bulk data. `reaction_learn` carries the
  * reacted message id + emoji (the learner re-reads the message); `ingest` carries
  * the source + ingestion-job ids and, for a fresh run, the `upload_staging` id

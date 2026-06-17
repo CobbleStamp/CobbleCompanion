@@ -56,6 +56,8 @@ import { registerReactionRoutes } from './routes/reaction.routes.js';
 import { registerSourceRoutes } from './routes/source.routes.js';
 import { registerUsageRoutes } from './routes/usage.routes.js';
 import { registerUuidParamGuard } from './uuid.js';
+import { registerWebSocket } from './ws/register.js';
+import { buildWsMethods } from './ws/methods.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -238,6 +240,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerProactiveActivityRoutes(app, deps, requireAuth);
   registerGrowthRoutes(app, deps, requireAuth);
   registerUsageRoutes(app, deps, requireAuth);
+
+  // Realtime WS transport (Phase D D1): authenticated at the handshake, request/
+  // response correlated by id, with server-push events. Additive — the HTTP routes
+  // above stay mounted until D3 migrates them onto WS methods.
+  await registerWebSocket(app, deps, buildWsMethods(deps));
 
   registerSpa(app);
 
