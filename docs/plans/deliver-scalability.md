@@ -1,8 +1,33 @@
 # Deliver: Stateless API & Horizontal Scalability
 
-> **Status:** planning. This is a working plan, not canonical architecture. Once
-> a direction is chosen and shipped, fold the durable decisions into
-> `docs/architecture.md` §6/§8 and delete the superseded parts here.
+> **Status:** building. Working plan, not canonical architecture — once shipped,
+> fold durable decisions into `docs/architecture.md` §6/§8 and delete superseded
+> parts here.
+>
+> ### ▶ Resume here (as of D5)
+> - **Branch:** `feat/ws-embodiment` (stacked on Phase B's `feat/horizontal-scalability`).
+>   **PR #23** (based on the Phase B branch) carries all of the below.
+> - **Delivered + pushed:** **D-A** (finish Phase B: queue + two-part upload),
+>   **D1** (WS transport + handshake auth), **D2** (embodiment claim + fencing +
+>   handoff), **D3** (every route available as a WS method, *additive*), **D4**
+>   (cross-node live delivery via `companion_events`), **D5** (presence from the
+>   claim). Each phase has a `✅ DELIVERED` marker in §6. Migrations `0005`–`0008`.
+> - **Server-side scalability gates are met** (stateless backend; one-embodiment +
+>   fencing + handoff; cross-node delivery). Remaining work is client + ops.
+> - **Next:** **D6** (rewrite the web client `packages/web/src/api/client.ts` onto
+>   the single WS — the last large piece), then **D7** (NLB + multi-node flip), then
+>   the **final cleanup** (remove the now-parallel HTTP routes + SSE bus +
+>   `sse.ts` + re-home/delete their tests; fold the HTTP heartbeat into the WS).
+> - **WS surface map:** transport in `packages/api/src/ws/` (`register`,
+>   `handshake`, `connection`, `dispatch`, `fencing`, `methods.ts`); per-domain
+>   methods in `packages/api/src/ws/methods/`. Envelope types in `packages/shared`
+>   (`Ws*Message`). Embodiment store + claim-presence in
+>   `packages/core/src/embodiment/`; event log in `packages/core/src/events/`.
+> - **Known gap (Q1):** the job-queue lease-expiry test is a wall-clock flake on
+>   PGlite under full-suite load (passes in isolation); claim/lease/fencing
+>   concurrency needs a real-Postgres/testcontainers suite before trusting at N nodes.
+> - **Verification at pause:** all packages typecheck; api 285 green; core green
+>   modulo that one flake.
 
 ## 1. Goal
 
