@@ -9,12 +9,14 @@
 > `docs/architecture.md` §6/§8 and delete superseded parts here when convenient.
 >
 > ### ▶ Resume here (the whole code side of Phase D is done — only ops remain)
+>
 > - **Branch:** `feat/ws-embodiment` (stacked on Phase B's `feat/horizontal-scalability`).
 >   **PR #23** (based on the Phase B branch) carries all of the below.
 > - **Delivered + pushed:** **D-A** (finish Phase B: queue + two-part upload),
 >   **D1** (WS transport + handshake auth), **D2** (embodiment claim + fencing +
 >   handoff), **D3** (route → WS methods), **D4** (cross-node delivery via
->   `companion_events`), **D5** (presence from the claim), **D6** (web client onto
+>   `companion_events`, incl. the **visibility-gap guard** — see below), **D5**
+>   (presence from the claim), **D6** (web client onto
 >   the single WS), and the **final cleanup** (HTTP routes + SSE + in-process bus
 >   removed). Each phase has a `✅ DELIVERED` marker in §6. Migrations `0005`–`0008`.
 > - **One surface.** The product runs entirely over the WS. The only HTTP routes
@@ -27,10 +29,10 @@
 >   NLB, no flip. The existing `infra/aws` deploy already serves the WS surface
 >   (Caddy `reverse_proxy` upgrades WebSockets transparently; the 10s heartbeat keeps
 >   sockets alive) — **no infra change for the MVP.** When scale is needed: NLB (L4)
->   + drain on deploy + the §6.5 flip, plus **Phase C1** (DB connection budget) and
->   the **Q1** real-Postgres concurrency suite first. **Phase C2 (queue/embodiment
->   observability) is DONE** — a read-only `GET /admin/queue` gated behind a
->   `users.is_admin` flag (migration `0009`); see §C below.
+>   - drain on deploy + the §6.5 flip, plus **Phase C1** (DB connection budget) and
+>     the **Q1** real-Postgres concurrency suite first. **Phase C2 (queue/embodiment
+>     observability) is DONE** — a read-only `GET /admin/queue` gated behind a
+>     `users.is_admin` flag (migration `0009`); see §C below.
 > - **WS surface map:** transport in `packages/api/src/ws/` (`register`,
 >   `handshake`, `connection`, `dispatch`, `fencing`, `methods.ts`); per-domain
 >   methods in `packages/api/src/ws/methods/` (incl. `presence.ts`). Envelope types
@@ -38,11 +40,24 @@
 >   `packages/web/src/api/ws.ts` (`wsClient`, `SupersededError`). Embodiment store +
 >   claim-presence in `packages/core/src/embodiment/`; durable event log + bus in
 >   `packages/core/src/events/` (the in-process bus is gone — the log is the sole sink).
+> - **D4 visibility-gap guard (delivery correctness fix).** `companion_events.seq`
+>   is a `bigserial` assigned at INSERT but visible at COMMIT, and commits can land
+>   out of `seq` order — so the naïve `seq > cursor` reader could leap past a lower
+>   seq that committed late and **drop the event permanently**. Fixed by stamping each
+>   row's inserting transaction id (`xid`, migration `0010`) and gating live reads on
+>   the visibility horizon: deliver only rows whose `xid <
+pg_snapshot_xmin(pg_current_snapshot())`, so any row that could still have an
+>   uncommitted predecessor is held back (correct because appends are single-statement
+>   autocommit ⇒ `xid` order matches `seq` order). The connect cursor uses
+>   `latestSettledSeq` for the same reason. `core/src/events/log.ts`; deterministic
+>   guard test in `log.test.ts` (forces `xid` to model in-flight rows).
 > - **Known gap (Q1):** the job-queue lease-expiry test is a wall-clock flake on
 >   PGlite under full-suite load (passes in isolation); claim/lease/fencing
->   concurrency needs a real-Postgres/testcontainers suite before trusting at N nodes.
-> - **Verification at cleanup:** all packages typecheck; core 974 + 1 todo green; api
->   152 green; web 139 green (modulo the Q1 flake).
+>   concurrency **and the D4 gap-guard's true cross-commit interleaving** need a
+>   real-Postgres/testcontainers suite before trusting at N nodes (PGlite is
+>   single-connection, so the gap-guard test simulates the horizon via forced `xid`).
+> - **Verification:** all packages typecheck; core 983 + 1 todo green; api 155 green;
+>   db 29 green; web 139 green (modulo the Q1 flake).
 >   core green modulo that one flake.
 
 ## 1. Goal
@@ -54,7 +69,7 @@ node reads from and writes to shared Postgres.
 
 **Connections are the one deliberate exception to "no affinity."** Each client
 holds a **permanent WebSocket pinned to one node** — the companion's live
-*embodiment* (§5.2) — so there *is* connection-level affinity. But it costs no
+_embodiment_ (§5.2) — so there _is_ connection-level affinity. But it costs no
 durable state: a dropped connection re-establishes on **any** node and re-claims
 from the DB. Affinity lasts only for the connection's life; authority always lives
 in Postgres. (This reverses the earlier "no session affinity" framing — see §5.2
@@ -81,8 +96,8 @@ The **turn execution path is genuinely stateless by design** — this is invaria
 - Every turn loads companion identity + transcript from Postgres (Supabase,
   `pgvector`), assembles context, calls the LLM, and writes the result back.
   Nothing persists in process heap between requests.
-- The transcript is append-only and the rendered conversation is *a projection
-  of the transcript* — no per-user in-memory session cache a turn depends on.
+- The transcript is append-only and the rendered conversation is _a projection
+  of the transcript_ — no per-user in-memory session cache a turn depends on.
 - All state is scoped by `user`/`companion` in Postgres; authorization is
   enforced at the API boundary.
 
@@ -98,18 +113,18 @@ the job-queue design** in §5 — the cost of adopting it (**design-induced**).
 
 The **#** below is both **priority and recommended build order**. Note that
 **build order ≠ release gate**: you cannot serve users from multiple nodes until
-every *gate* item is done, even ones built last.
+every _gate_ item is done, even ones built last.
 
 ### 3.1 The prioritised list
 
-| # | Problem | Origin | Gate? |
-|---|---|---|---|
-| **1** | Unsafe concurrent writes (e.g. wallet double-spend) | carried-over | ✅ release gate |
-| **2** | Background work runs N times → build the job queue (§5) | carried-over | ✅ release gate |
-| **3** | Database connection / load budget on Supabase | design-induced | feasibility — may constrain #2 |
-| **4** | Queue observability | design-induced | ops, before prod trust |
-| **5** | Cross-node live updates don't arrive (SSE fan-out) | carried-over | ✅ release gate (built last) |
-| **6** | SSE connection lifetime + load-balancer tuning | carried-over | config, rides with #5 |
+| #     | Problem                                                 | Origin         | Gate?                          |
+| ----- | ------------------------------------------------------- | -------------- | ------------------------------ |
+| **1** | Unsafe concurrent writes (e.g. wallet double-spend)     | carried-over   | ✅ release gate                |
+| **2** | Background work runs N times → build the job queue (§5) | carried-over   | ✅ release gate                |
+| **3** | Database connection / load budget on Supabase           | design-induced | feasibility — may constrain #2 |
+| **4** | Queue observability                                     | design-induced | ops, before prod trust         |
+| **5** | Cross-node live updates don't arrive (SSE fan-out)      | carried-over   | ✅ release gate (built last)   |
+| **6** | SSE connection lifetime + load-balancer tuning          | carried-over   | config, rides with #5          |
 
 Building #2 also carries its own internal correctness concerns (lease, retry,
 graceful drain, turn-vs-background) — see §3.3.
@@ -143,7 +158,7 @@ Making (or confirming) these writes atomic is what lets turns run **lock-free** 
 **#2 — Background work runs N times.**
 Timers fire the slow background work (memory consolidation, proactivity,
 ingestion, reaction learning) every few minutes, and an in-memory `Set` dedups it
-*within one process* (`packages/api/src/index.ts:502–532`,
+_within one process_ (`packages/api/src/index.ts:502–532`,
 `consolidation-runner.ts:26`). With N nodes, every node runs the timer and the
 per-process dedup is blind to the others → the same work runs N times: N× the LLM
 spend, duplicate "the companion reached out" notes, and write races. **The full
@@ -172,7 +187,7 @@ reconnect handling, not data loss. Rides with #5.
 
 ### 3.3 Concerns introduced by the job-queue design (§5)
 
-Adopting §5 isn't free. Most of these are handled *inside building #2*; two of
+Adopting §5 isn't free. Most of these are handled _inside building #2_; two of
 them (#3 and #4 above) are promoted into the prioritised list because they are
 independent gates.
 
@@ -180,13 +195,13 @@ independent gates.
   heartbeat slips lets another node re-claim the companion → the duplicate run the
   queue exists to prevent. A crashed processor's claim is also held until the
   lease lapses, delaying that companion.
-- **Retry / poison jobs.** A failing job must retry with backoff *or* go terminal;
+- **Retry / poison jobs.** A failing job must retry with backoff _or_ go terminal;
   a permanently-failing job must not spin.
 - **Graceful scale-in.** A shutting-down node must release its claims; if draining
   outlasts the deploy grace window, the claim lapses and another node resumes
   mid-work.
 - **Turn-vs-background — OPEN DECISION.** The companion claim serializes
-  *background* work only. Does a live turn also take the claim (safe, but
+  _background_ work only. Does a live turn also take the claim (safe, but
   serializes turns behind slow background work — bad latency), or run claim-free
   and rely on #1's atomic writes? **Lean: claim-free + atomic writes.** Must be
   settled before building #2.
@@ -200,8 +215,8 @@ independent gates.
 
 - Multi-region / geo-distribution.
 - Moving CPU-heavy ingestion (PDF parse/embedding) to a separate worker tier —
-  related but tracked as its own workstream; here we only need the *queue* to be
-  fleet-coherent, not the *compute* to be relocated.
+  related but tracked as its own workstream; here we only need the _queue_ to be
+  fleet-coherent, not the _compute_ to be relocated.
 - Autoscaling policy/metrics tuning (that follows once correctness holds).
 
 ## 5. Solution design
@@ -221,7 +236,7 @@ scoped in §3 and resolved during the build.
 with a **durable job queue in Postgres**, drained by **bounded pools of ephemeral
 processors running on every node**, which claim work at **companion granularity**
 under a **lease**. There is **no leader and no separate worker tier** — the
-database *is* the coordinator.
+database _is_ the coordinator.
 
 #### 5.1.1 First principles that drive the design
 
@@ -234,7 +249,7 @@ database *is* the coordinator.
    already relies on a **single-writer-per-companion** invariant (enforced today
    by per-process promise chains for affect and a per-process coalescing `Set`).
    → If we make "claim a companion" the unit of mutual exclusion, that invariant
-   becomes fleet-wide *for free*, and two ad-hoc in-process mechanisms collapse
+   becomes fleet-wide _for free_, and two ad-hoc in-process mechanisms collapse
    into one DB primitive.
 3. **Event-driven triggering handles everything except "act when nothing is
    happening."** Idle-time proactivity is, by definition, the absence of events,
@@ -293,11 +308,11 @@ jobs (
 )
 ```
 
-**b. Companion-granularity leased claim.** A processor claims a *companion*, not a
+**b. Companion-granularity leased claim.** A processor claims a _companion_, not a
 job. It then drains that companion's due jobs **serially, in `run_at` order**,
 renewing the lease between jobs (heartbeat), and releases when the companion has
 no more due work. The claim is a leased row (sketch — exact SQL settled at build;
-the required *property* is "exactly one live claim per companion across the
+the required _property_ is "exactly one live claim per companion across the
 fleet"):
 
 ```sql
@@ -315,11 +330,11 @@ fleet"):
 > construction — no two processors ever touch one companion's derived state at
 > once, fleet-wide. Per-`(companion,type)` would parallelize a companion's
 > independent work but forces a standing **disjointness audit** of every shared
-> write (the `companions` row is updated by `consolidate`, `motivation`, *and*
+> write (the `companions` row is updated by `consolidate`, `motivation`, _and_
 > `reaction_learn`; the `user_facts` + `userFactsThroughSeq` cursor by three
 > paths). We accept coarse-grained head-of-line blocking (a long `ingest` delays
 > that companion's `consolidate`) because ingest-before-consolidate is the
-> *correct* order anyway and affect is a soft signal. **`ingest` is the
+> _correct_ order anyway and affect is a soft signal. **`ingest` is the
 > pre-identified candidate to split into its own claim lane later** if profiling
 > shows it starving proactivity — it writes near-disjoint state (sections keyed
 > by `source_id`).
@@ -341,14 +356,14 @@ single run consolidate everything; the extra triggers are free no-ops).
 **d. Triggering = coarse poll + local nudge + claim expiry.** Three mechanisms,
 each with a distinct job:
 
-| Mechanism | Purpose | Cost |
-|---|---|---|
-| **Coarse periodic poll** (~30–60s per node) | The **clock** for idle-time work (proactivity). Also the safety net that picks up a future-dated job whose scheduling node died, and anything a launch-read would catch. | One indexed query per node per interval — negligible. SKIP LOCKED means simultaneous polls partition cleanly, no thundering herd. |
-| **Immediate local nudge on enqueue** | The **latency path**: a request that inserts a `run_at = now()` job kicks its own node's pool so interactive-adjacent work (ingestion "reading…" status, post-turn reflection) doesn't wait a poll interval. | One in-process signal. |
-| **Claim expiry (lease)** | **Crash recovery**: a node dying mid-drain releases its companion after the lease lapses, and another node re-picks on its next poll/nudge. | None beyond the lease column. |
+| Mechanism                                   | Purpose                                                                                                                                                                                                      | Cost                                                                                                                              |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| **Coarse periodic poll** (~30–60s per node) | The **clock** for idle-time work (proactivity). Also the safety net that picks up a future-dated job whose scheduling node died, and anything a launch-read would catch.                                     | One indexed query per node per interval — negligible. SKIP LOCKED means simultaneous polls partition cleanly, no thundering herd. |
+| **Immediate local nudge on enqueue**        | The **latency path**: a request that inserts a `run_at = now()` job kicks its own node's pool so interactive-adjacent work (ingestion "reading…" status, post-turn reflection) doesn't wait a poll interval. | One in-process signal.                                                                                                            |
+| **Claim expiry (lease)**                    | **Crash recovery**: a node dying mid-drain releases its companion after the lease lapses, and another node re-picks on its next poll/nudge.                                                                  | None beyond the lease column.                                                                                                     |
 
 **e. Bounded ephemeral processor pool per node.** On a nudge or poll, a node
-launches **up to K processors**; each claims a *distinct* companion (SKIP LOCKED),
+launches **up to K processors**; each claims a _distinct_ companion (SKIP LOCKED),
 drains it, and exits when no claimable companion remains. **K is an
 instantaneous-concurrency cap, not a cap on companions handled** — with 8
 companions queued and K=4, a node runs 4 at a time, and as each finishes a fresh
@@ -379,28 +394,28 @@ stateDiagram-v2
 The 17 async paths inventoried during planning collapse into a handful of job
 types (file refs are starting points for the implementer):
 
-| Existing path(s) | Becomes | Notes |
-|---|---|---|
-| Consolidation sweep + runner + service, and its cascade (personality evolver, user-model reflector, user-persona synthesizer) | job type **`consolidate`** | One coarse job; the existing internal cascade + cursors run *inside* it, so ordering logic we already trust is preserved. |
-| Motivation sweep + runner + engine; post-turn & return-detection triggers | job type **`motivation`** | The engine's gate still decides whether to actually act. |
-| Ingestion runner + deferred-job sweeper | job type **`ingest`** | Absorbs the upload sub-problem (see §5.1.7). `payload` carries `source_id`. |
-| Reaction learner + reinforcement-from-delta | job type **`reaction_learn`** | `payload` carries the reaction/outcome id; outcome resolution is already an atomic claim. |
-| Post-turn affect perception (`harness.ts`, fire-and-forget) | job type **`affect`** *(candidate — see open questions)* | Moving it into the queue replaces the per-process affect promise chain with the fleet-wide companion claim. |
-| Post-turn user-fact capture (`harness.ts`, fire-and-forget) | job type **`user_facts`** *(candidate)* | Same: replaces the per-user promise chain. |
-| Post-turn growth recompute (`message.routes.ts`, in-stream) | **stays inline** in the turn | Token-free, idempotent (monotonic high-water mark), and part of the turn's own SSE response — not background. |
-| `consolidation.request()` / `motivation.request()` triggers | **enqueue + nudge** | The fire-and-forget "request" becomes a coalesced insert plus a local pool nudge. |
-| Harness background-task tracking + `whenIdle()` (graceful shutdown) | **pool drain-on-shutdown** | `onClose` stops accepting claims and drains the local pool before exit. |
+| Existing path(s)                                                                                                              | Becomes                                                  | Notes                                                                                                                     |
+| ----------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Consolidation sweep + runner + service, and its cascade (personality evolver, user-model reflector, user-persona synthesizer) | job type **`consolidate`**                               | One coarse job; the existing internal cascade + cursors run _inside_ it, so ordering logic we already trust is preserved. |
+| Motivation sweep + runner + engine; post-turn & return-detection triggers                                                     | job type **`motivation`**                                | The engine's gate still decides whether to actually act.                                                                  |
+| Ingestion runner + deferred-job sweeper                                                                                       | job type **`ingest`**                                    | Absorbs the upload sub-problem (see §5.1.7). `payload` carries `source_id`.                                               |
+| Reaction learner + reinforcement-from-delta                                                                                   | job type **`reaction_learn`**                            | `payload` carries the reaction/outcome id; outcome resolution is already an atomic claim.                                 |
+| Post-turn affect perception (`harness.ts`, fire-and-forget)                                                                   | job type **`affect`** _(candidate — see open questions)_ | Moving it into the queue replaces the per-process affect promise chain with the fleet-wide companion claim.               |
+| Post-turn user-fact capture (`harness.ts`, fire-and-forget)                                                                   | job type **`user_facts`** _(candidate)_                  | Same: replaces the per-user promise chain.                                                                                |
+| Post-turn growth recompute (`message.routes.ts`, in-stream)                                                                   | **stays inline** in the turn                             | Token-free, idempotent (monotonic high-water mark), and part of the turn's own SSE response — not background.             |
+| `consolidation.request()` / `motivation.request()` triggers                                                                   | **enqueue + nudge**                                      | The fire-and-forget "request" becomes a coalesced insert plus a local pool nudge.                                         |
+| Harness background-task tracking + `whenIdle()` (graceful shutdown)                                                           | **pool drain-on-shutdown**                               | `onClose` stops accepting claims and drains the local pool before exit.                                                   |
 
 #### 5.1.5 Decision log
 
-| Decision | Chosen | Why | Rejected |
-|---|---|---|---|
-| Coordinator | Postgres job queue, **no leader** | No sub-second SLA; work partitions by companion; the DB is already the source of truth | **Leader election / separate worker** — serializes all background work through one node: bottleneck + SPOF, doesn't scale the work itself |
-| Claim granularity | **Per companion**, all types serial | Establishes single-writer-per-companion fleet-wide by construction; no disjointness audit needed | **Per-`(companion,type)`** — more parallel but forces a standing shared-write disjointness audit; deferred to a future `ingest`-only split |
-| Claim primitive | **Leased claim row** | Pooler-safe; survives multi-second LLM runs; crash-safe via lease expiry | **Session advisory locks** — break through Supabase's transaction-mode pooler and need a pinned connection held for the whole run |
-| Coalescing | Partial unique index on `(companion_id, type) WHERE pending` | Collapses repeat triggers to one job; replaces the in-memory `Set` | **Insert-per-trigger** — queue clutter + wasted no-op runs |
-| Triggering | **Coarse poll + local nudge + claim expiry** | Idle proactivity needs a clock; a cheap poll *is* that clock and also covers crash/future-job liveness; nudge gives low latency on activity | **LISTEN/NOTIFY or Redis pub/sub** — extra moving parts, only justified for precise future scheduling we don't need. **Precise in-memory timer** — cross-node visibility gaps when the scheduling node dies during idle |
-| Processor count | **Bounded ephemeral pool, K = concurrency cap** | Sized to DB-connection + LLM-rate + CPU ceilings; queue depth stays unbounded and fully drained | **One per node** (throughput-bound); **`companions ÷ nodes`** — scales with population (mostly idle) and blows connection + rate-limit ceilings |
+| Decision          | Chosen                                                       | Why                                                                                                                                         | Rejected                                                                                                                                                                                                                |
+| ----------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Coordinator       | Postgres job queue, **no leader**                            | No sub-second SLA; work partitions by companion; the DB is already the source of truth                                                      | **Leader election / separate worker** — serializes all background work through one node: bottleneck + SPOF, doesn't scale the work itself                                                                               |
+| Claim granularity | **Per companion**, all types serial                          | Establishes single-writer-per-companion fleet-wide by construction; no disjointness audit needed                                            | **Per-`(companion,type)`** — more parallel but forces a standing shared-write disjointness audit; deferred to a future `ingest`-only split                                                                              |
+| Claim primitive   | **Leased claim row**                                         | Pooler-safe; survives multi-second LLM runs; crash-safe via lease expiry                                                                    | **Session advisory locks** — break through Supabase's transaction-mode pooler and need a pinned connection held for the whole run                                                                                       |
+| Coalescing        | Partial unique index on `(companion_id, type) WHERE pending` | Collapses repeat triggers to one job; replaces the in-memory `Set`                                                                          | **Insert-per-trigger** — queue clutter + wasted no-op runs                                                                                                                                                              |
+| Triggering        | **Coarse poll + local nudge + claim expiry**                 | Idle proactivity needs a clock; a cheap poll _is_ that clock and also covers crash/future-job liveness; nudge gives low latency on activity | **LISTEN/NOTIFY or Redis pub/sub** — extra moving parts, only justified for precise future scheduling we don't need. **Precise in-memory timer** — cross-node visibility gaps when the scheduling node dies during idle |
+| Processor count   | **Bounded ephemeral pool, K = concurrency cap**              | Sized to DB-connection + LLM-rate + CPU ceilings; queue depth stays unbounded and fully drained                                             | **One per node** (throughput-bound); **`companions ÷ nodes`** — scales with population (mostly idle) and blows connection + rate-limit ceilings                                                                         |
 
 #### 5.1.6 Tunables (call out at implementation, set by measurement)
 
@@ -420,10 +435,10 @@ types (file refs are starting points for the implementer):
   lease expiry, replacing per-process `failInterruptedJobs()`. "Deferred" = a
   pending job with a pushed-out `run_at`.
 - **Problem 1 (concurrent writes) — narrowed, not eliminated.** The companion
-  claim *establishes* single-writer-per-companion for all **queued** work, so the
+  claim _establishes_ single-writer-per-companion for all **queued** work, so the
   background-vs-background races (affect ordering, sweep-vs-sweep) are gone by
   construction. **What remains** (still owned by Problem 1's audit) is concurrency
-  the claim does *not* cover:
+  the claim does _not_ cover:
   - **Turn-vs-background:** a live turn appends transcript while a `consolidate`
     job reads the tail and advances a cursor. Likely safe (consolidation reads
     only committed rows; cursor advance is atomic) — **confirm**.
@@ -452,10 +467,10 @@ types (file refs are starting points for the implementer):
 **Decision.** Replace the standing SSE event channel and its in-process bus
 (`InProcessCompanionEventBus`, `packages/core/src/events/bus.ts`; route
 `packages/api/src/routes/event.routes.ts`) with **one permanent WebSocket per
-client that *is* the companion's live embodiment.** All client↔server traffic —
+client that _is_ the companion's live embodiment.** All client↔server traffic —
 every request and every event — flows over that single connection. **Connecting
 claims the companion exclusively**; background events are delivered by a
-**heartbeat-driven read from the shared DB**. This *dissolves* both problems
+**heartbeat-driven read from the shared DB**. This _dissolves_ both problems
 instead of patching the fan-out.
 
 #### 5.2.1 First principles
@@ -463,24 +478,24 @@ instead of patching the fan-out.
 1. **The product already forbids the state P5/P6 fight.** A companion "embodies in
    **one surface at a time**" with **"no split-brain state to reconcile"**
    (`product-overview.md` §2.2). It is a **game, not a web page** — the companion
-   *physically lives in one room*. So "many connections per companion" is not a
+   _physically lives in one room_. So "many connections per companion" is not a
    case to support; it is a rule to **enforce**.
 2. **One embodiment ⇒ one connection ⇒ affinity is free and correct.** With exactly
-   one live connection per companion, connection-affinity *is* companion-affinity.
+   one live connection per companion, connection-affinity _is_ companion-affinity.
    There is no cross-node fan-out (P5) because there is nothing to fan out to but
    that single connection, and its own node reads what it needs from shared
    Postgres.
 3. **The latency-critical path is unaffected.** The user's own reply streams back
    over the same WS as the turn that produced it (co-located by construction). Only
-   *unsolicited* events (proactive notes, ingestion notes, reactions) come via the
+   _unsolicited_ events (proactive notes, ingestion notes, reactions) come via the
    heartbeat read — and those tolerate seconds by nature, so eventual consistency
    is acceptable for them.
 
 #### 5.2.2 The model
 
 - **Transport.** Every client — web, device, **and service client** (a service
-  client uses the *same per-connection mechanism*, not a shared connection) — opens
-  one **permanent WebSocket** and sends *all* requests / receives *all* events over
+  client uses the _same per-connection mechanism_, not a shared connection) — opens
+  one **permanent WebSocket** and sends _all_ requests / receives _all_ events over
   it, behind a **Network Load Balancer (L4)** that pins the TCP flow to one node
   for the connection's life.
 - **Connecting claims the companion.** There is **no read-only connection** —
@@ -496,11 +511,11 @@ instead of patching the fan-out.
 - **Handoff = "the companion moves rooms."** A new connection **force-claims**
   (writes its newer ULID); the previous connection **self-fences** — on its next
   heartbeat or request it sees it was superseded, finishes any in-flight turn's DB
-  write, and closes. The client presents this as the companion *physically moving*
+  write, and closes. The client presents this as the companion _physically moving_
   to the new room: a deliberate, visible, "expensive" action (you cannot be in two
   rooms at once). **Blocking during the move is intentional UX, not a technical
   wait** — the new connection does not wait on the old one's acknowledgement.
-- **TTL = crash backstop only.** `last_heartbeat` + a TTL lets a *dead* holder be
+- **TTL = crash backstop only.** `last_heartbeat` + a TTL lets a _dead_ holder be
   reclaimed when it cannot self-fence (e.g. a backgrounded phone whose WS was
   suspended). Because handoff is always the **same user** reclaiming, the new
   connection force-claims immediately and fences the old via the token — it does
@@ -513,7 +528,7 @@ instead of patching the fan-out.
   clock.
 - **Ambient work never connects.** Cron / proactivity / automations act through the
   **job queue** (§5.1), never as a connection — so they never seize the room from
-  the user's live device. Connections are always *interactive* embodiments; the
+  the user's live device. Connections are always _interactive_ embodiments; the
   thing that must act without evicting the user is background work, by definition.
 
 Handoff sequence (phone → laptop):
@@ -536,15 +551,15 @@ sequenceDiagram
 
 #### 5.2.3 Decision log
 
-| Decision | Chosen | Why | Rejected |
-|---|---|---|---|
-| Delivery transport | **One perm WebSocket per client; all traffic over it** | Product allows one embodiment per companion (`product-overview.md` §2.2); a single connection makes delivery stateless (the node reads shared Postgres) and gives a natural place to serialize a companion's turns | **Client polls a `companion_events` table** — works and is simpler, but enforces no single-embodiment and doesn't serialize turns. **SSE + `LISTEN/NOTIFY`** — fixes fan-out but keeps a fragile push path and never models embodiment (and still leaves P6) |
-| Routing | **NLB (L4), flow-pinned** | A perm WS is one TCP flow; the NLB pins it to a node for its life — exactly the affinity the embodiment needs | **L7 / ALB** — can't pin an arbitrary app-level key; HTTP-aware overhead a single duplex socket doesn't need |
-| Connect semantics | **Connecting always claims; no read-only** | Simplest rule that matches "one room at a time" — any connection *is* the embodiment | **Passive/observer connections** — an extra mode; a service read would still have to avoid evicting, complicating the rule |
-| Handoff | **Force-claim + old self-fences**, shown as "moving rooms" | Contenders are always the *same user*; latest-wins is natural and never blocks the active user on a (usually suspended) old device | **Negotiated transfer-ack** — needs the old side alive to ack; the common phone→laptop case (old device suspended) would hang until TTL |
-| Ownership token | **ULID** (DB `generation` if strictness ever needed) | Sortable + timestamped → "newer wins" and zombie-fencing fall out for free | **Opaque connection id** — unique but unordered; can't fence a revived zombie |
-| TTL | **Heartbeat-refreshed; crash backstop only** | Liveness without per-request write amplification; off the handoff critical path | **Per-request TTL refresh** — hammers one hot row per companion for no added safety |
-| Service clients | **Same per-connection mechanism as web/device** | Uniform — a service client is just another room with its own connection and claim | **Special service path** — only *ambient/automation* work differs, and that belongs on the **job queue**, not a connection |
+| Decision           | Chosen                                                     | Why                                                                                                                                                                                                                | Rejected                                                                                                                                                                                                                                                     |
+| ------------------ | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Delivery transport | **One perm WebSocket per client; all traffic over it**     | Product allows one embodiment per companion (`product-overview.md` §2.2); a single connection makes delivery stateless (the node reads shared Postgres) and gives a natural place to serialize a companion's turns | **Client polls a `companion_events` table** — works and is simpler, but enforces no single-embodiment and doesn't serialize turns. **SSE + `LISTEN/NOTIFY`** — fixes fan-out but keeps a fragile push path and never models embodiment (and still leaves P6) |
+| Routing            | **NLB (L4), flow-pinned**                                  | A perm WS is one TCP flow; the NLB pins it to a node for its life — exactly the affinity the embodiment needs                                                                                                      | **L7 / ALB** — can't pin an arbitrary app-level key; HTTP-aware overhead a single duplex socket doesn't need                                                                                                                                                 |
+| Connect semantics  | **Connecting always claims; no read-only**                 | Simplest rule that matches "one room at a time" — any connection _is_ the embodiment                                                                                                                               | **Passive/observer connections** — an extra mode; a service read would still have to avoid evicting, complicating the rule                                                                                                                                   |
+| Handoff            | **Force-claim + old self-fences**, shown as "moving rooms" | Contenders are always the _same user_; latest-wins is natural and never blocks the active user on a (usually suspended) old device                                                                                 | **Negotiated transfer-ack** — needs the old side alive to ack; the common phone→laptop case (old device suspended) would hang until TTL                                                                                                                      |
+| Ownership token    | **ULID** (DB `generation` if strictness ever needed)       | Sortable + timestamped → "newer wins" and zombie-fencing fall out for free                                                                                                                                         | **Opaque connection id** — unique but unordered; can't fence a revived zombie                                                                                                                                                                                |
+| TTL                | **Heartbeat-refreshed; crash backstop only**               | Liveness without per-request write amplification; off the handoff critical path                                                                                                                                    | **Per-request TTL refresh** — hammers one hot row per companion for no added safety                                                                                                                                                                          |
+| Service clients    | **Same per-connection mechanism as web/device**            | Uniform — a service client is just another room with its own connection and claim                                                                                                                                  | **Special service path** — only _ambient/automation_ work differs, and that belongs on the **job queue**, not a connection                                                                                                                                   |
 
 #### 5.2.4 What this resolves
 
@@ -570,7 +585,7 @@ sequenceDiagram
   designed deliberately.
 - **Atomic writes still required.** A background job (other node) and the active
   embodiment can write the same companion's rows, so Problem 1's atomic-write
-  guarantee still stands — the WS only serializes the *conversational* path.
+  guarantee still stands — the WS only serializes the _conversational_ path.
 
 #### 5.2.6 Tunables
 
@@ -582,7 +597,7 @@ sequenceDiagram
 ## 6. Implementation plan (draft)
 
 > Phases follow the §3 priorities and are each **independently shippable while
-> still single-node** — multi-node is only *enabled* after Phase D and flipped on
+> still single-node** — multi-node is only _enabled_ after Phase D and flipped on
 > last (§6.5). The questions raised while drafting are **resolved in §7** and their
 > decisions are folded into the phases below.
 
@@ -600,7 +615,7 @@ sequenceDiagram
   supports cursor polling; `CompanionEventBus` is a clean swap seam; auth is a
   `CompositeVerifier` (Google + service token) usable once at a WS handshake.
 
-### Phase A — Problem 1: atomic-write audit *(release gate, cheap)*
+### Phase A — Problem 1: atomic-write audit _(release gate, cheap)_
 
 Confirm every per-companion mutation a **turn** performs is a single atomic
 statement; convert any that isn't.
@@ -612,7 +627,7 @@ statement; convert any that isn't.
 - Tests: single-statement atomicity (PGlite ok); true 2-writer race → Q1.
 - **DoD:** no turn-path write is read-modify-write; each field documented.
 
-### Phase B — Problem 2: the job queue *(release gate, the bulk)* — ✅ DELIVERED
+### Phase B — Problem 2: the job queue _(release gate, the bulk)_ — ✅ DELIVERED
 
 **Delivered scope.** The job queue migrates the two `setInterval`-sweep N-times
 offenders — **`consolidate` and `motivation`** (companion-keyed, tiny/no payload).
@@ -622,12 +637,12 @@ offenders, and need their own refactors.
 
 - **B1 Schema** (`db/src/schema.ts`, migration `0004_lonely_gorgon`). `jobs`
   (`companion_id, type, dedupe_key, payload jsonb, run_at, status, attempts,
-  last_error, timestamps`) + partial unique index
+last_error, timestamps`) + partial unique index
   `(companion_id, dedupe_key) WHERE status='pending'` (coalescing). The
   **`dedupe_key`** discriminates per-event work from companion-wide work so
   distinct reactions don't collapse (a refinement over the planned
   `(companion_id, type)`). `companion_claims` (`companion_id pk, owner, generation,
-  claimed_until`) = the lease. `ingestion_jobs` kept as-is (not generalized — see
+claimed_until`) = the lease. `ingestion_jobs` kept as-is (not generalized — see
   Deferred). DB reset, no data migration (Q6).
 - **B2 Core** (`packages/core/src/jobs/`). `DrizzleJobQueue` (coalescing enqueue,
   atomic claim via conditional `ON CONFLICT … WHERE claimed_until < now()`,
@@ -653,11 +668,12 @@ offenders, and need their own refactors.
   behavior unchanged.
 
 **Deferred from Phase B → delivered in Phase D D-A:**
+
 - **`reaction_learn`** and **`ingest`** were deferred from the initial Phase B PR and
   are now on the queue (see Phase D **D-A** below). The `driveWeights`-from-reaction
   race is closed; the in-memory `IngestionRunner` is gone.
 
-### Phase C — Problems 3 & 4 *(overlaps B's tail)*
+### Phase C — Problems 3 & 4 _(overlaps B's tail)_
 
 - **C1 DB budget — ⏸️ DEFERRED (with the multi-node flip).** Measure the Supabase
   connection ceiling; route queries through the transaction pooler; size pool/K/N
@@ -678,21 +694,21 @@ offenders, and need their own refactors.
   `packages/core/src/jobs/queue-metrics.test.ts`,
   `packages/api/src/routes/admin.routes.test.ts`.
 
-### Phase D — Problems 5 & 6: WebSocket embodiment *(release gate, the big rewrite)* — IN PROGRESS
+### Phase D — Problems 5 & 6: WebSocket embodiment _(release gate, the big rewrite)_ — IN PROGRESS
 
 > **Scope.** A large, self-contained effort on its own branch
 > (`feat/ws-embodiment`, stacked on Phase B's `feat/horizontal-scalability`): it
-> rewrites the *entire* client↔server transport onto WebSockets (big-bang, Q3),
+> rewrites the _entire_ client↔server transport onto WebSockets (big-bang, Q3),
 > rewrites the web client, adds the embodiment claim + fencing + handoff, and adds
 > NLB infra. Each sub-phase below is **independently shippable while still
 > single-node** and committed separately.
 >
 > **Build-order note — D-A goes first.** The only Phase-B background path still
-> blocked is `ingest` (its payload is file *bytes*, which need the two-part
+> blocked is `ingest` (its payload is file _bytes_, which need the two-part
 > upload). `reaction_learn` is **not** blocked by WS at all — it only needs the
 > awaitable-learner refactor. And the two-part upload (the D3 carve-out) is fully
 > independent of the WS transport. So we pull that work forward as **D-A**, which
-> *finishes Phase B*, closes the `driveWeights`-from-reaction race, and ships
+> _finishes Phase B_, closes the `driveWeights`-from-reaction race, and ships
 > single-node — before any WS work.
 
 **Decisions for this phase (defaults chosen; stated so they can be redirected):**
@@ -705,7 +721,7 @@ offenders, and need their own refactors.
   Phase D PR is **based on the Phase B branch** (stacked) so its diff is clean while
   PR #22 is still open.
 
-#### D-A — Finish Phase B: two-part upload + `ingest` & `reaction_learn` on the queue *(ships single-node)* — ✅ DELIVERED
+#### D-A — Finish Phase B: two-part upload + `ingest` & `reaction_learn` on the queue _(ships single-node)_ — ✅ DELIVERED
 
 **Delivered (commits on `feat/ws-embodiment`).** `reaction_learn` (D-A.1) and `ingest`
 (D-A.2) now run as durable, claim-serialised jobs; the in-memory `IngestionRunner`
@@ -715,10 +731,9 @@ and the `ingest` job reads them on any node. All four background paths
 Backpressure is a fleet-wide pending-`ingest` count; deferred jobs resume via
 `sweepIngestion` (handler reads the held parse). Suite green (core 972, api 271).
 
-
 - **Schema.** `upload_staging` (`id`, `owner_id` → users, `bytes bytea`,
   `byte_size`, `kind`, `expires_at`, `created_at`). Extend `JobType` with `ingest`;
-  extend `JobPayload` with `sourceId`, `jobId`, `uploadId` (a *reference*, never
+  extend `JobPayload` with `sourceId`, `jobId`, `uploadId` (a _reference_, never
   bytes).
 - **Two-part upload.** New stateless HTTP `POST /companions/:id/uploads`
   (multipart, any node, no embodiment): validate magic bytes (reuse
@@ -743,7 +758,7 @@ Backpressure is a fleet-wide pending-`ingest` count; deferred jobs resume via
 #### D1 — WS transport & handshake auth — ✅ DELIVERED
 
 - WS endpoint `/ws` (`@fastify/websocket`), authenticated **once at the handshake**
-  (`makeWsAuth` reuses the `CompositeVerifier`; bearer via header *or* `?access_token=`
+  (`makeWsAuth` reuses the `CompositeVerifier`; bearer via header _or_ `?access_token=`
   for browsers); `userId` fixed for the connection's life. Envelope
   (`packages/shared`): `{id, method, params}` ⇄ `{id, result|error}` plus server-push
   `{event}`. `dispatchMessage` routes by method and is fired without awaiting, so
@@ -809,12 +824,12 @@ Backpressure is a fleet-wide pending-`ingest` count; deferred jobs resume via
 #### D5 — Presence from the claim (Q7) — ✅ DELIVERED
 
 - The `active_embodiment` row doubles as the presence signal: added `last_activity_at`
-  + `tab_visible` columns. `EmbodimentPresenceStore` implements `PresenceStore` over
-  it — `get` returns a signal only for a live claim (heartbeat within the TTL) → a
-  dropped connection naturally reads absent; `recordActivity`/`recordHeartbeat` bump
-  activity/visibility (best-effort). **Fleet-wide:** a turn on one node and a
-  motivation tick on another read the same presence from shared Postgres. Production
-  wiring swaps `InMemoryPresenceStore` → `EmbodimentPresenceStore`.
+  - `tab_visible` columns. `EmbodimentPresenceStore` implements `PresenceStore` over
+    it — `get` returns a signal only for a live claim (heartbeat within the TTL) → a
+    dropped connection naturally reads absent; `recordActivity`/`recordHeartbeat` bump
+    activity/visibility (best-effort). **Fleet-wide:** a turn on one node and a
+    motivation tick on another read the same presence from shared Postgres. Production
+    wiring swaps `InMemoryPresenceStore` → `EmbodimentPresenceStore`.
 - `PresenceStore.get` is now async (DB read); the motivation engine awaits it.
   `InMemoryPresenceStore` stays as the engine's test fake (its `get` is now async
   too). Migration 0008. Tests: claim-backed presence (4) — present/absent/activity/
@@ -878,7 +893,7 @@ Backpressure is a fleet-wide pending-`ingest` count; deferred jobs resume via
 
 - **Phase DoD:** one embodiment per companion enforced fleet-wide; live delivery
   works cross-node; SSE bus + standing channel removed ✅ (the code-side DoD is met;
-  the *fleet-wide* claim is proven once N > 1 runs under load — D7 + Q1's real-PG
+  the _fleet-wide_ claim is proven once N > 1 runs under load — D7 + Q1's real-PG
   concurrency suite).
 
 ### 6.5 Flip to multi-node
@@ -893,16 +908,16 @@ duplicate background work.
 All eight questions raised while drafting were resolved on review. One is deferred
 as a documented known gap.
 
-| # | Question | **Decision** |
-|---|---|---|
+| #      | Question                      | **Decision**                                                                                                                                                                                                                                                      |
+| ------ | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Q1** | Concurrency testing on PGlite | **Deferred — known gap.** No automated concurrency tests now (PGlite is single-connection, can't run `SKIP LOCKED` / lease races / two-node contention); **documented for the future** (real-Postgres / testcontainers suite). Logic stays unit-tested on PGlite. |
-| **Q2** | Unified event cursor | **One `companion_events` append-log** (own monotonic `seq`), written by every publish point; the WS heartbeat reads it by cursor. |
-| **Q3** | All-over-WS migration | **Big-bang — all routes onto WS.** Uploads split in two: a stateless HTTP upload writes a doc record to shared storage; a WS reference message then enqueues the `ingest` job. Binary never crosses the WS. |
-| **Q4** | Three "claims" | **Separate, never mixed** — embodiment ownership, the job-queue companion-claim, and atomic writes are independent mechanisms with their own rows/semantics. |
-| **Q5** | Turn serialization | **Yes — in-process per-companion turn chain** on the embodiment node (one connection, one node → no DB lock). Guards against rapid double-send running two agent loops. |
-| **Q6** | `ingestion_jobs` migration | **Generalize into `jobs`; no data migration** — DB is reset from scratch (not deployed). |
-| **Q7** | Presence in-memory | **Derive presence from the `active_embodiment` claim** (live claim = present); drop `InMemoryPresenceStore`. Add `last_activity_at` only if a finer idle signal is needed. |
-| **Q8** | Cutover / rollout | **None needed** — not deployed, no back-compat. Build the cleanest version; reset the DB freely. |
+| **Q2** | Unified event cursor          | **One `companion_events` append-log** (own monotonic `seq`), written by every publish point; the WS heartbeat reads it by cursor.                                                                                                                                 |
+| **Q3** | All-over-WS migration         | **Big-bang — all routes onto WS.** Uploads split in two: a stateless HTTP upload writes a doc record to shared storage; a WS reference message then enqueues the `ingest` job. Binary never crosses the WS.                                                       |
+| **Q4** | Three "claims"                | **Separate, never mixed** — embodiment ownership, the job-queue companion-claim, and atomic writes are independent mechanisms with their own rows/semantics.                                                                                                      |
+| **Q5** | Turn serialization            | **Yes — in-process per-companion turn chain** on the embodiment node (one connection, one node → no DB lock). Guards against rapid double-send running two agent loops.                                                                                           |
+| **Q6** | `ingestion_jobs` migration    | **Generalize into `jobs`; no data migration** — DB is reset from scratch (not deployed).                                                                                                                                                                          |
+| **Q7** | Presence in-memory            | **Derive presence from the `active_embodiment` claim** (live claim = present); drop `InMemoryPresenceStore`. Add `last_activity_at` only if a finer idle signal is needed.                                                                                        |
+| **Q8** | Cutover / rollout             | **None needed** — not deployed, no back-compat. Build the cleanest version; reset the DB freely.                                                                                                                                                                  |
 
 > **Known gap (Q1):** the queue's claim/lease/fencing concurrency is **not** covered
 > by automated tests until a real-Postgres integration suite is added. Track as
@@ -917,7 +932,7 @@ background path that Phase B's companion claim serializes.**
 ### Turn-path (the actual Problem-1 gate) — clean
 
 - **Vitality `spend`/`add`** (`quota/vitality-store.ts:103,124`) — **ATOMIC**
-  (`GREATEST`/`LEAST` in SQL). The only per-companion field two concurrent *turns*
+  (`GREATEST`/`LEAST` in SQL). The only per-companion field two concurrent _turns_
   write; safe.
 - **Growth high-water** (`growth/growth-store.ts:66`) — **CAS** (guards on the
   bands it read; the loser writes nothing).
@@ -931,17 +946,17 @@ background path that Phase B's companion claim serializes.**
 Written only by background paths (consolidation cascade, reflector, synthesizer,
 motivation reinforce, reaction learning). Once those run as claim-serialized jobs
 (§5.1), one processor touches a companion at a time, so they don't race. Listed
-with the cheap hardening that would make each safe *independent* of the claim:
+with the cheap hardening that would make each safe _independent_ of the claim:
 
-| Field / site | Writers | Note |
-|---|---|---|
-| `consolidatedThroughSeq` (`memory/episodic-store.ts:162`) | consolidation (in txn) | monotonic CAS `WHERE seq < $new` |
-| `personaUpdatedThroughSeq` + `evolvedPersona` (`identity/store.ts:260`) | evolver | CAS on the cursor |
-| `userFactsThroughSeq` (`identity/store.ts:271`) | reflector | monotonic CAS |
-| `userModelUpdatedThroughSeq` + `userPersona` (`identity/store.ts:278`) | synthesizer | CAS on the cursor |
-| `driveWeights` jsonb (`identity/store.ts:300`) | motivation reinforce, reaction learning | **claim-covered** — the only *critical* RMW today (lost personality learning under concurrent reactions); atomic-jsonb rewrite is fiddly, so rely on the claim (these become `affect`/`reaction_learn`/`motivation` jobs) |
-| `message_reactions.reward` (`reactions/store.ts:148`) | reaction learning | claim-covered; low risk (companion reactions carry no reward) |
-| belief salience / `recordBelief` (`user-model/store.ts:380,509`) | reflector, reaction learning | claim-covered + per-user transaction |
+| Field / site                                                            | Writers                                 | Note                                                                                                                                                                                                                      |
+| ----------------------------------------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `consolidatedThroughSeq` (`memory/episodic-store.ts:162`)               | consolidation (in txn)                  | monotonic CAS `WHERE seq < $new`                                                                                                                                                                                          |
+| `personaUpdatedThroughSeq` + `evolvedPersona` (`identity/store.ts:260`) | evolver                                 | CAS on the cursor                                                                                                                                                                                                         |
+| `userFactsThroughSeq` (`identity/store.ts:271`)                         | reflector                               | monotonic CAS                                                                                                                                                                                                             |
+| `userModelUpdatedThroughSeq` + `userPersona` (`identity/store.ts:278`)  | synthesizer                             | CAS on the cursor                                                                                                                                                                                                         |
+| `driveWeights` jsonb (`identity/store.ts:300`)                          | motivation reinforce, reaction learning | **claim-covered** — the only _critical_ RMW today (lost personality learning under concurrent reactions); atomic-jsonb rewrite is fiddly, so rely on the claim (these become `affect`/`reaction_learn`/`motivation` jobs) |
+| `message_reactions.reward` (`reactions/store.ts:148`)                   | reaction learning                       | claim-covered; low risk (companion reactions carry no reward)                                                                                                                                                             |
+| belief salience / `recordBelief` (`user-model/store.ts:380,509`)        | reflector, reaction learning            | claim-covered + per-user transaction                                                                                                                                                                                      |
 
 ### Accepted last-writer-wins (no fix)
 

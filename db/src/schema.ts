@@ -84,6 +84,18 @@ const tsvector = customType<{ data: string }>({
 });
 
 /**
+ * Postgres `xid8` (64-bit, non-wrapping transaction id) column — the value of
+ * `pg_current_xact_id()` at insert. Used only by the live-event reader's visibility
+ * horizon (see {@link companionEvents}); never read into the app. Exposed as a
+ * string to avoid 64-bit precision loss.
+ */
+const xid8 = customType<{ data: string }>({
+  dataType() {
+    return 'xid8';
+  },
+});
+
+/**
  * Raw binary column (`bytea`) — holds a staged upload's bytes (see
  * {@link uploadStaging}). The pg/PGlite drivers round-trip a Node `Buffer` /
  * `Uint8Array`; we expose `Uint8Array` so callers don't depend on `Buffer`.
@@ -478,6 +490,16 @@ export const companionClaims = pgTable('companion_claims', {
  * an event written on ANY node is read from shared Postgres by the holding node, so
  * there is no in-process fan-out to miss (the SSE bus's failure at N nodes). `seq`
  * is the per-row monotonic cursor.
+ *
+ * **Visibility-gap guard (`xid`).** `seq` (a `bigserial`) is assigned at INSERT but a
+ * row only becomes visible at COMMIT, and commits can land out of `seq` order — so a
+ * naive `seq > cursor` reader can leap past a lower `seq` that commits late and drop
+ * it forever. Each row therefore records its inserting transaction id
+ * (`pg_current_xact_id()`); the reader only delivers rows whose `xid` is below the
+ * oldest still-running transaction (`pg_snapshot_xmin`), holding back any row that
+ * could still have an uncommitted predecessor. This is correct because every append
+ * is a single-statement autocommit insert, so `xid` order matches `seq` order
+ * (deliver-scalability.md §C "C1"; reader in `core/src/events/log.ts`).
  */
 export const companionEvents = pgTable(
   'companion_events',
@@ -487,6 +509,12 @@ export const companionEvents = pgTable(
       .notNull()
       .references(() => companions.id, { onDelete: 'cascade' }),
     event: jsonb('event').$type<CompanionStreamEvent>().notNull(),
+    // The inserting transaction's id — the live reader's delivery horizon (see the
+    // table doc). Stamped per-row at INSERT; never read into the app, only compared
+    // in SQL against pg_snapshot_xmin.
+    xid: xid8('xid')
+      .notNull()
+      .default(sql`pg_current_xact_id()`),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index('companion_events_companion_seq_idx').on(table.companionId, table.seq)],

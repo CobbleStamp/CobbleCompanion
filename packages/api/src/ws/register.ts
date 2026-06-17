@@ -93,8 +93,11 @@ async function embody(
   connection.bindEmbodiment({ companionId, owner, generation: claim.generation });
 
   // Deliver only events that arrive AFTER connect; the client loads the transcript
-  // snapshot (messages.list) for everything before, merging by id (D4).
-  let cursor = await deps.eventLog.latestSeq(companionId).catch(() => 0);
+  // snapshot (messages.list) for everything before, merging by id (D4). The initial
+  // cursor is the settled horizon (not the raw max seq) so an event still in-flight
+  // at connect isn't stranded between the snapshot and live delivery — see the
+  // visibility-gap guard in core/src/events/log.ts (deliver-scalability.md §C).
+  let cursor = await deps.eventLog.latestSettledSeq(companionId).catch(() => 0);
 
   const heartbeat = setInterval(() => {
     void (async () => {
