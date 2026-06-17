@@ -1,5 +1,6 @@
 import type {
   CapabilityKey,
+  CompanionStreamEvent,
   Drive,
   DriveWeights,
   IngestionStatus,
@@ -463,6 +464,28 @@ export const companionClaims = pgTable('companion_claims', {
   claimedUntil: timestamp('claimed_until', { withTimezone: true }).notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Durable per-companion live-event log (deliver-scalability.md §5.2/§6 D4). Every
+ * publish point (transcript append, reaction add/remove, the react tool) writes a
+ * row here; the one live embodiment connection's node reads rows past its cursor on
+ * each heartbeat and pushes them over the WS. This is the cross-node delivery fix:
+ * an event written on ANY node is read from shared Postgres by the holding node, so
+ * there is no in-process fan-out to miss (the SSE bus's failure at N nodes). `seq`
+ * is the per-row monotonic cursor.
+ */
+export const companionEvents = pgTable(
+  'companion_events',
+  {
+    seq: bigserial('seq', { mode: 'number' }).primaryKey(),
+    companionId: uuid('companion_id')
+      .notNull()
+      .references(() => companions.id, { onDelete: 'cascade' }),
+    event: jsonb('event').$type<CompanionStreamEvent>().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('companion_events_companion_seq_idx').on(table.companionId, table.seq)],
+);
 
 /**
  * Live embodiment claim (deliver-scalability.md §5.2, Phase D D2). Exactly one WS

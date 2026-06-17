@@ -169,6 +169,13 @@ export {
   type CompanionEventBus,
   type CompanionSubscription,
 } from './events/bus.js';
+// Durable cross-node delivery (deliver-scalability.md §6 D4)
+export {
+  DrizzleCompanionEventLog,
+  type CompanionEventLog,
+  type LoggedEvent,
+} from './events/log.js';
+export { DurableCompanionEventBus } from './events/durable-bus.js';
 // Background job queue (deliver-scalability.md §5.1, Phase B)
 export {
   DrizzleJobQueue,

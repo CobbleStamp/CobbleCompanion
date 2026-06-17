@@ -63,6 +63,8 @@ import {
   MotivationEngine,
   reinforceFromDelta,
   InProcessCompanionEventBus,
+  DurableCompanionEventBus,
+  DrizzleCompanionEventLog,
   PublishingMemoryStore,
   type RetrieveContext,
   ToolRegistry,
@@ -216,7 +218,12 @@ export async function makeTestApp(
   const userModel = new DrizzleUserModelStore(db);
   // Mirror production wiring (index.ts): the publish-on-append decorator over the
   // transcript store so tests exercise the same event-channel publish path.
-  const eventBus = new InProcessCompanionEventBus();
+  const eventLog = new DrizzleCompanionEventLog(db);
+  const eventBus = new DurableCompanionEventBus(
+    new InProcessCompanionEventBus(),
+    eventLog,
+    silentLogger,
+  );
   const memory = new PublishingMemoryStore(new TranscriptMemoryStore(db), eventBus, silentLogger);
   const reactions = new DrizzleReactionStore(db);
   const semantic = new DrizzleSemanticMemoryStore(db);
@@ -422,6 +429,7 @@ export async function makeTestApp(
     userModel,
     memory,
     eventBus,
+    eventLog,
     semantic,
     episodic,
     embeddings,

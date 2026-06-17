@@ -739,13 +739,22 @@ Backpressure is a fleet-wide pending-`ingest` count; deferred jobs resume via
   removed as the **final cleanup**. WS-method tests: read/write/streaming-turn/
   fencing/params (5). api suite green (284).
 
-#### D4 — Delivery via `companion_events` append-log (Q2)
+#### D4 — Delivery via `companion_events` append-log (Q2) — ✅ DELIVERED
 
-- New `companion_events` table (own monotonic `seq`); every publish point
-  (`PublishingMemoryStore.appendMessage`, reaction add/remove routes, `react-tool`)
-  writes a row. Remove `InProcessCompanionEventBus` + the SSE event route; the
-  active connection's heartbeat reads `companion_events` since its cursor and pushes
-  over the WS. Per-turn reply still streams over the same WS.
+- New `companion_events` table (own monotonic `seq`) + `CompanionEventLog`
+  (`append`/`readSince`/`latestSeq`). A `DurableCompanionEventBus` wraps the
+  in-process bus and is swapped in as the `eventBus` everywhere — so **every existing
+  publish point** (`PublishingMemoryStore.appendMessage`, reaction add/remove,
+  `react-tool`) now appends to the durable log with **no publish-site changes**, and
+  still fans to the in-process bus for same-node SSE through the transition.
+- The embodiment heartbeat reads `companion_events` past the connection's cursor
+  (initialised to `latestSeq` at connect; the client snapshots via `messages.list`
+  for everything before, merging by id) and pushes each as a `companion` WS event —
+  **the cross-node delivery fix (Problem 5)**: an event written on any node is read
+  from shared Postgres by the holding node, no in-process fan-out to miss.
+- **Strangler:** `InProcessCompanionEventBus` + the SSE route stay until the final
+  cleanup. Tests: log unit (2) + WS delivery via heartbeat (1). Suites green
+  (api 285, core 980).
 
 #### D5 — Presence from the claim (Q7)
 

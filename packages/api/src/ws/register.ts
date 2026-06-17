@@ -10,6 +10,9 @@ import { makeWsAuth } from './handshake.js';
 /** WS close code for a connection whose companion was claimed by a newer one. */
 const SUPERSEDED_CLOSE = 4002;
 
+/** Max events delivered per heartbeat tick (bounds a catch-up burst). */
+const EVENT_BATCH = 200;
+
 /**
  * Monotonic ULID owner tokens: within this process every token is strictly greater
  * than the last, so a later connection always force-claims over an earlier one even
@@ -89,12 +92,15 @@ async function embody(
   }
   connection.bindEmbodiment({ companionId, owner, generation: claim.generation });
 
+  // Deliver only events that arrive AFTER connect; the client loads the transcript
+  // snapshot (messages.list) for everything before, merging by id (D4).
+  let cursor = await deps.eventLog.latestSeq(companionId).catch(() => 0);
+
   const heartbeat = setInterval(() => {
     void (async () => {
+      let held: boolean;
       try {
-        if (await deps.embodiment.renew(companionId, owner)) {
-          return;
-        }
+        held = await deps.embodiment.renew(companionId, owner);
       } catch (error) {
         deps.logger.error('ws heartbeat renew failed', {
           operation: 'ws.embody',
@@ -103,10 +109,27 @@ async function embody(
         });
         return; // transient; try again next tick rather than dropping the room
       }
-      // We no longer hold the claim — a newer connection took the room. Self-fence.
-      clearInterval(heartbeat);
-      connection.pushEvent('embodiment.superseded', { companionId });
-      connection.close(SUPERSEDED_CLOSE, 'superseded');
+      if (!held) {
+        // A newer connection took the room. Self-fence.
+        clearInterval(heartbeat);
+        connection.pushEvent('embodiment.superseded', { companionId });
+        connection.close(SUPERSEDED_CLOSE, 'superseded');
+        return;
+      }
+      // Cross-node live delivery: push events written on any node since our cursor.
+      try {
+        const events = await deps.eventLog.readSince(companionId, cursor, EVENT_BATCH);
+        for (const { seq, event } of events) {
+          connection.pushEvent('companion', event);
+          cursor = seq;
+        }
+      } catch (error) {
+        deps.logger.error('ws event delivery failed', {
+          operation: 'ws.embody',
+          companionId,
+          error,
+        });
+      }
     })();
   }, deps.config.wsHeartbeatMs);
   heartbeat.unref?.();

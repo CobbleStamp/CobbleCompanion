@@ -2,6 +2,7 @@ import { CompanionNotFoundError } from '@cobble/core';
 import type {
   CompanionAffectStore,
   CompanionEventBus,
+  CompanionEventLog,
   CompanionWorkRequester,
   EmbeddingGateway,
   EmbodimentStore,
@@ -79,6 +80,9 @@ export interface AppDeps {
   /** The standing companion event channel's bus (architecture.md §6) — fed by the
    *  publish-on-append MemoryStore decorator, drained by the event-channel route. */
   readonly eventBus: CompanionEventBus;
+  /** Durable cross-node event log (Phase D D4) — the live embodiment connection's
+   *  heartbeat reads it by cursor and pushes events over the WS. */
+  readonly eventLog: CompanionEventLog;
   readonly semantic: SemanticMemoryStore;
   readonly episodic: EpisodicMemoryStore;
   readonly embeddings: EmbeddingGateway;

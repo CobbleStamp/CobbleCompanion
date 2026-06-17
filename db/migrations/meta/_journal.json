@@ -50,6 +50,13 @@
       "when": 1781672478972,
       "tag": "0006_skinny_mathemanic",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1781675078579,
+      "tag": "0007_sparkling_bill_hollister",
+      "breakpoints": true
     }
   ]
 }

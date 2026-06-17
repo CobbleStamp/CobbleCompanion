@@ -64,6 +64,8 @@ import {
   sweepMotivation,
   ToolRegistry,
   InProcessCompanionEventBus,
+  DurableCompanionEventBus,
+  DrizzleCompanionEventLog,
   PublishingMemoryStore,
   TranscriptMemoryStore,
   DrizzleJobQueue,
@@ -145,7 +147,15 @@ async function main(): Promise<void> {
   // bus fans appended rows out to subscribed surfaces, and wrapping the store in a
   // publish-on-append decorator HERE means every persistence path downstream
   // (announcer, harness, greeter) publishes through the one shared instance.
-  const eventBus = new InProcessCompanionEventBus();
+  // Durable cross-node delivery (D4): publishes append to companion_events (read by
+  // the live embodiment connection's heartbeat on any node) and still fan to the
+  // in-process bus for same-node SSE through the transition.
+  const eventLog = new DrizzleCompanionEventLog(db);
+  const eventBus = new DurableCompanionEventBus(
+    new InProcessCompanionEventBus(),
+    eventLog,
+    consoleLogger,
+  );
   const memory = new PublishingMemoryStore(new TranscriptMemoryStore(db), eventBus, consoleLogger);
   // Reinforcement log + the rolling affect read — built early so the harness can
   // sense the user's mood each turn (Phase 4.2) and the will can learn from it.
@@ -515,6 +525,7 @@ async function main(): Promise<void> {
     userModel,
     memory,
     eventBus,
+    eventLog,
     semantic,
     episodic,
     embeddings,
