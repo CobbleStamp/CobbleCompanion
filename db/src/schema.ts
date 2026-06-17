@@ -512,6 +512,11 @@ export const activeEmbodiment = pgTable('active_embodiment', {
   generation: bigint('generation', { mode: 'number' }).notNull().default(0),
   // Refreshed by the holder's heartbeat; a stale value past the TTL is reclaimable.
   lastHeartbeat: timestamp('last_heartbeat', { withTimezone: true }).notNull(),
+  // Presence (D5): the claim row doubles as the presence signal — a live claim means
+  // the user is embodying the companion. `last_activity_at` is the last real
+  // interaction (a turn); `tab_visible` whether the room is in the foreground.
+  lastActivityAt: timestamp('last_activity_at', { withTimezone: true }).notNull().defaultNow(),
+  tabVisible: boolean('tab_visible').notNull().default(true),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

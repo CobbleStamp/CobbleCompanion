@@ -31,7 +31,7 @@ describe('presence routes', () => {
       payload: { tabVisible: false },
     });
     expect(res.statusCode).toBe(204);
-    const signal = ctx.deps.presence.get(companionId);
+    const signal = await ctx.deps.presence.get(companionId);
     expect(signal?.tabVisible).toBe(false);
   });
 
@@ -42,7 +42,7 @@ describe('presence routes', () => {
       headers: auth,
     });
     expect(res.statusCode).toBe(204);
-    expect(ctx.deps.presence.get(companionId)?.tabVisible).toBe(true);
+    expect((await ctx.deps.presence.get(companionId))?.tabVisible).toBe(true);
   });
 
   // A heartbeat records presence but is deliberately NOT a motivation trigger
@@ -74,7 +74,7 @@ describe('presence routes', () => {
     });
     expect(res.statusCode).toBe(404);
     // The owner's presence was not touched by the intruder's call.
-    expect(ctx.deps.presence.get(companionId)).toBeNull();
+    expect(await ctx.deps.presence.get(companionId)).toBeNull();
   });
 
   it('requires auth', async () => {

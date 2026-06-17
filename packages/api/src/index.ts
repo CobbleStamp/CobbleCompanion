@@ -45,7 +45,7 @@ import {
   GrowthService,
   DEFAULT_GROWTH_CONFIG,
   Harness,
-  InMemoryPresenceStore,
+  EmbodimentPresenceStore,
   IngestionPipeline,
   DrizzleEmbodimentStore,
   DrizzleUploadStagingStore,
@@ -269,9 +269,12 @@ async function main(): Promise<void> {
   const toolCallLog = new DrizzleToolCallLog(db);
   const leads = new DrizzleLeadStore(db);
   const procedural = new DrizzleProceduralStore(db);
-  // Volatile presence (P4) — fed by the heartbeat route and message sends; the
-  // motivation engine reads it to decide whether/how to initiate.
-  const presence = new InMemoryPresenceStore();
+  // Presence (P4) derived from the live embodiment claim (D5): a live claim means
+  // the user is here. Fleet-wide (shared Postgres), so a turn on one node and a
+  // motivation tick on another see the same presence; a dropped connection becomes
+  // absent when its claim lapses. The motivation engine reads it to decide whether
+  // to self-initiate.
+  const presence = new EmbodimentPresenceStore(db, config.wsClaimTtlMs, consoleLogger);
   const baseTools = [
     // web_fetch harvests outbound links into the reading list (the P4 substrate).
     createWebFetchTool({

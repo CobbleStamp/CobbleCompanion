@@ -65,6 +65,9 @@ export class DrizzleEmbodimentStore implements EmbodimentStore {
           node: params.node,
           generation: sql`${activeEmbodiment.generation} + 1`,
           lastHeartbeat: sql`now()`,
+          // A new connection takes the room present + foregrounded (D5 presence).
+          lastActivityAt: sql`now()`,
+          tabVisible: true,
           updatedAt: sql`now()`,
         },
         // Take over only from an older ULID (newer connection wins) or a holder

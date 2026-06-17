@@ -99,7 +99,7 @@ export class MotivationEngine {
       }
 
       // Cheap, token-free sensing — so staying idle is free.
-      const signal = presence.get(companionId);
+      const signal = await presence.get(companionId);
       const presenceState = signal
         ? classifyPresence(signal, this.now(), this.thresholds)
         : 'absent_long';

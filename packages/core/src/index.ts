@@ -192,6 +192,8 @@ export {
   type EmbodimentClaim,
   type EmbodimentStore,
 } from './embodiment/store.js';
+// Presence derived from the embodiment claim (Phase D D5)
+export { EmbodimentPresenceStore } from './embodiment/presence.js';
 export {
   JobProcessorPool,
   makeCompanionWorkRequester,

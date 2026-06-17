@@ -756,12 +756,20 @@ Backpressure is a fleet-wide pending-`ingest` count; deferred jobs resume via
   cleanup. Tests: log unit (2) + WS delivery via heartbeat (1). Suites green
   (api 285, core 980).
 
-#### D5 — Presence from the claim (Q7)
+#### D5 — Presence from the claim (Q7) — ✅ DELIVERED
 
-- Drop the per-node `InMemoryPresenceStore`; **derive presence from
-  `active_embodiment`** (a live, non-expired claim = present). Add `last_activity_at`
-  only if a finer idle signal is needed. The HTTP heartbeat route folds into the WS
-  heartbeat.
+- The `active_embodiment` row doubles as the presence signal: added `last_activity_at`
+  + `tab_visible` columns. `EmbodimentPresenceStore` implements `PresenceStore` over
+  it — `get` returns a signal only for a live claim (heartbeat within the TTL) → a
+  dropped connection naturally reads absent; `recordActivity`/`recordHeartbeat` bump
+  activity/visibility (best-effort). **Fleet-wide:** a turn on one node and a
+  motivation tick on another read the same presence from shared Postgres. Production
+  wiring swaps `InMemoryPresenceStore` → `EmbodimentPresenceStore`.
+- `PresenceStore.get` is now async (DB read); the motivation engine awaits it.
+  `InMemoryPresenceStore` stays as the engine's test fake (its `get` is now async
+  too). Migration 0008. Tests: claim-backed presence (4) — present/absent/activity/
+  TTL-lapse. (The HTTP heartbeat route stays through the strangler; it folds into the
+  WS heartbeat at the final cleanup.)
 
 #### D6 — Web client → WS
 
