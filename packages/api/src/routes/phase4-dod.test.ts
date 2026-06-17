@@ -21,6 +21,7 @@
 import type { IngestionRunParams, IngestionTarget } from '@cobble/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { makeTestApp, type TestApp } from '../test/helpers.js';
+import { openWs } from '../test/ws-client.js';
 
 const TOKENS_PER_READ = 120;
 
@@ -38,7 +39,6 @@ function fakeReadPipeline(markDone: (jobId: string) => Promise<void>): Ingestion
 
 describe('Phase 4.2 DoD — proactivity engine', () => {
   let ctx: TestApp;
-  let auth: { authorization: string };
   let companionId: string;
 
   beforeEach(async () => {
@@ -59,14 +59,14 @@ describe('Phase 4.2 DoD — proactivity engine', () => {
         ),
       },
     );
-    auth = ctx.bearerFor('owner@example.com');
-    const created = await ctx.app.inject({
-      method: 'POST',
-      url: '/companions',
-      headers: auth,
-      payload: { name: 'Pebble', form: 'fox', temperament: 'curious' },
+    const anon = await openWs(ctx, 'owner@example.com');
+    const { companion } = await anon.call<{ companion: { id: string } }>('companions.create', {
+      name: 'Pebble',
+      form: 'fox',
+      temperament: 'curious',
     });
-    companionId = created.json().companion.id;
+    await anon.close();
+    companionId = companion.id;
   });
   afterEach(async () => {
     await ctx.close();
@@ -153,12 +153,9 @@ describe('Phase 4.2 DoD — proactivity engine', () => {
     // Reaction turn: the user warms up. The agent loop senses the mood in the same
     // turn (scripted 0.9); the CHANGE (0 → 0.9) is the reward — no button, no
     // separate critic call, sensed as part of processing the message.
-    await ctx.app.inject({
-      method: 'POST',
-      url: `/companions/${companionId}/messages`,
-      headers: auth,
-      payload: { content: 'Oh nice — thanks for reading those!' },
-    });
+    const ws = await openWs(ctx, 'owner@example.com', companionId);
+    await ws.stream('messages.send', { content: 'Oh nice — thanks for reading those!' });
+    await ws.close();
 
     // The outcome is resolved with the positive change and the curiosity weight rose.
     const [outcome] = await ctx.deps.rewards.list(companionId, 1);
