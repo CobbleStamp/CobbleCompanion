@@ -185,7 +185,7 @@ Server-to-server consumer credentials (§5). One row per `(client_id, secret)`, 
 > (`architecture.md` §4.7); a reaction is **mutable** (added later, removed, re-added). Keeping mutable
 > annotation state out of the canonical turn preserves that invariant. A reaction is **not** a
 > transcript turn: it never enters the LLM-context projection, and it is delivered as a
-> `reaction_added` / `reaction_removed` event on the standing channel (§2.4) — a mutation on an existing
+> `reaction_added` / `reaction_removed` event on the live channel (§2.4) — a mutation on an existing
 > row rather than a new `{ type: 'message' }`. Full mechanism → `companion-reactions.md`.
 
 > **The reward path** generalizes the `companion_affect` `report_affect` machinery (below): a user
@@ -281,7 +281,7 @@ the companion — no separate wallet table):
 > turn can't drive it negative, so there is no debt); feeding increments it. No cap, no window, no
 > auto-refill — a balance only goes down (spending) or up (feeding). Postgres-backed so it is correct
 > across replicas. Routes enforce stamina inline: chat/search 429 when empty, ingestion defers until
-> it has tokens again (`architecture.md` §4.8). `GET /companions/:id/usage` exposes the stamina
+> it has tokens again (`architecture.md` §4.8). The `usage.get` WS method exposes the stamina
 > balance for the web client's live indicator. One store meters both columns, picked by a
 > `'stamina' | 'energy'` discriminator (`packages/core/src/quota/vitality-store.ts`).
 
@@ -292,7 +292,7 @@ the companion — no separate wallet table):
 | `ration` / `spark` / `treat` | integer, not null | counts of each food type. Seeded with `initialFood` (default 10 each) on the row's first creation; a feed decrements one (atomic SQL `count - 1`, guarded ≥ 0). Not replenished in the PoC. |
 | `updated_at` | timestamptz | |
 
-> The feeding economy's supply (`companion-economy.md`). `POST /companions/:id/feed` consumes one
+> The feeding economy's supply (`companion-economy.md`). The `feed` WS method consumes one
 > food from this row and adds its grants to the fed companion's wallet(s). When a count hits 0 the
 > feed returns 409; a developer raises it directly in the DB (no buying in the PoC).
 
@@ -595,8 +595,8 @@ erDiagram
   (`companion-motivation.md` §7). It also carries **`read_sources`** (jsonb, nullable): a snapshot of
   the sources the burst read (`{sourceId, title}[]`, captured at read time so the labels survive a
   later source deletion). This log is surfaced read-only to the user as the **Activity view** via
-  **`GET /companions/:companionId/activity`** (`?limit=`, default 30 / max 100, keyset-paginated by
-  `?before=<seq>`): the store's `listDetailed` LEFT-JOINs the report-note text and the driving belief
+  the **`activity.list`** WS method (`limit`, default 30 / max 100, keyset-paginated by
+  `before=<seq>`): the store's `listDetailed` LEFT-JOINs the report-note text and the driving belief
   onto each row, batch-loads each read source's **findings** (its section topic titles — empty when
   the read yielded only boilerplate), and the route returns them newest-first alongside the initiative
   `stats` (the same `{ total, positive }` the Growth Initiative axis reads).
@@ -758,7 +758,7 @@ fencing. The how-to (changing/adding a prompt) lives in `guide-prompts.md`.
   call, writes its outcome as a `tool_step` row, then calls `Harness.continueAfterApproval` — which
   retrieves recent context, injects the outcome as an **ephemeral** observation (the persisted row is
   UI-only and filtered from context), and runs the loop so the companion narrates and continues. No new
-  user message is persisted; the response **streams** back over SSE like a normal turn.
+  user message is persisted; the response **streams** back over the WS like a normal turn.
 - **Streamed tool calls:** the OpenRouter gateway accumulates `choices[].delta.tool_calls` fragments
   by `index` (the first carries id+name+partial args, later frames append arg-string pieces) and
   `JSON.parse`s the assembled arguments at `[DONE]`; malformed args degrade to `{}` (failures are
@@ -771,50 +771,52 @@ fencing. The how-to (changing/adding a prompt) lives in `guide-prompts.md`.
 The proactive `Initiator` seam is filled by the motivation engine in `motivation/` (see §1
 and `companion-motivation.md`).
 
-### 2.4 Event delivery — the companion event channel
+### 2.4 Event delivery — the durable log + WebSocket push
 
-The standing per-companion push channel (`architecture.md` §6). No schema change — the bus is
-**in-process pub/sub**; durability lives in the `messages` / `message_reactions` tables, the channel
-only delivers. It carries a `CompanionStreamEvent` union: a `{ type: 'message' }` for each appended
-transcript row, plus `reaction_added` / `reaction_removed` for emoji reactions (§1,
-`companion-reactions.md` §8).
+Live delivery rides the **permanent WebSocket** (`architecture.md` §6, Phase D). Every publish
+**appends a row** to the durable `companion_events` log; the one embodiment connection's node reads
+new rows past a cursor on each heartbeat and pushes them. There is **no in-process pub/sub and no SSE
+route** — the durable log is the sole substrate, so an event written on any node is delivered
+cross-node from shared Postgres. The wire payload is the same `CompanionStreamEvent` union: a
+`{ type: 'message' }` for each appended transcript row, plus `reaction_added` / `reaction_removed`
+for emoji reactions (§1, `companion-reactions.md` §8).
 
 - **Publish points.** Transcript rows publish through `appendMessage` (`memory/store.ts`), the single
   chokepoint every persistence path flows through (turn reply, greeting, ingestion announcer, upload
   turns): a **`PublishingMemoryStore`** decorator wraps the real store and, after a successful append,
   calls `CompanionEventBus.publish(companionId, { type: 'message', message })`. Reaction events are
-  published **directly** — by the reaction route (`reaction.routes.ts`, user reactions) and the
-  `react` tool (`reactions/react-tool.ts`, the companion's own), each only on an actual insert/delete
-  so a re-tap or no-op delete broadcasts nothing. The publish is **best-effort**: wrapped in
-  `try/catch`, logged at `error` on failure, and never allowed to fail the originating write (a
+  published **directly** — by the reaction WS methods (`ws/methods/reactions.ts`, user reactions) and
+  the `react` tool (`reactions/react-tool.ts`, the companion's own), each only on an actual
+  insert/delete so a re-tap or no-op delete broadcasts nothing. The publish is **best-effort**:
+  the append is logged at `error` on failure and never allowed to fail the originating write (a
   delivery hiccup must not break persistence — `common/logging.md`). The decorator is wired once at
   the composition root (`api/src/index.ts`) — `new PublishingMemoryStore(new TranscriptMemoryStore(db),
   bus, logger)` — so harness, greeter, and announcer all publish through the one shared instance with
   no call-site change.
-- **Bus.** `CompanionEventBus` (`core/src/events/`) is an interface; `InProcessCompanionEventBus`
-  keeps a `Map<companionId, Set<subscriber>>` and exposes `publish` + `subscribe(companionId) →
-  { events: AsyncIterableIterator<CompanionStreamEvent>; close() }` (a bounded queue + waiter bridges
-  callback → async-iterable). The interface is the seam for a Postgres `LISTEN/NOTIFY` / Redis
-  implementation when the API runs on >1 replica (`architecture.md` §9) — publishers and the route are
-  unchanged.
-- **Channel route.** `GET /companions/:companionId/events` (`requireAuth` + ownership check) opens an
-  **open-ended** SSE (`streamChannel`, distinct from the finite `streamSse`): it subscribes to the
-  bus and writes each event through to the wire **as-is** (the bus already carries the wire
-  `CompanionStreamEvent`), emits a heartbeat comment (`: ping`) on an interval to keep intermediaries
-  from reaping the idle connection, and registers `request.raw.on('close', …)` to **unsubscribe +
-  clear the heartbeat + end** — the close-driven cleanup the per-turn streams don't need. Published
-  message events include `tool_step`/`proposal` kinds, so a client that wasn't the turn's initiator
-  still renders a complete transcript.
-- **Client transport + establishment.** `subscribeCompanionEvents(companionId, signal)` (`web/src/api/
-  client.ts`) reads the channel via the shared `fetch`-based `send()` (so the bearer header is set —
-  no `EventSource` limitation) and an SSE parser, threading an `AbortSignal`. The chat's establishment
-  effect: open the subscription **first** (buffering), **then** `fetchMessages` the snapshot, and feed
-  both through a reducer keyed by server id — a `message` event goes through `mergeMessage(lines, dto)`
+- **Bus = durable append.** `CompanionEventBus` (`core/src/events/bus.ts`) is now a one-method
+  interface (`publish(companionId, event)`); the production `DurableCompanionEventBus`
+  (`durable-bus.ts`) implements `publish` as a **fire-and-forget append** to the
+  `CompanionEventLog` (`log.ts`, table `companion_events`). The former in-process
+  `InProcessCompanionEventBus` (the `Map<companionId, Set<subscriber>>` + SSE seam) was **removed**.
+- **Log read = the delivery path.** The embodiment connection's heartbeat
+  (`api/src/ws/register.ts`) calls `eventLog.readSince(companionId, cursor, limit)` and pushes each
+  row as a `{ event: 'companion', data }` WS frame, advancing the cursor to the max seq delivered.
+  Reads are **visibility-horizon gated**: only rows whose inserting transaction id (`xid`) is below
+  `pg_snapshot_xmin(pg_current_snapshot())` are returned, so a `bigserial` `seq` that was assigned at
+  INSERT but commits *after* a higher seq is never skipped (the connect cursor is `latestSettledSeq`,
+  not the raw max, for the same reason — §1, `deliver-scalability.md` §C). Message events include
+  `tool_step`/`proposal` kinds, so a surface that wasn't the turn's initiator still renders a complete
+  transcript.
+- **Client transport + establishment.** The web client holds **one permanent WebSocket** via the
+  `wsClient` transport singleton (`web/src/api/ws.ts`): all requests correlate by envelope `id`, turns
+  stream as `{ id, stream }` chunks, and `{ event, data }` frames are the live channel. The chat's
+  establishment effect loads the transcript snapshot (`messages.list`) and merges the live event
+  stream through a reducer keyed by server id — a `message` event goes through `mergeMessage(lines, dto)`
   (present id ⇒ ignore; an id-less optimistic line matching `role`+`content`(+`sourceId`) ⇒ replace it
   adopting the id; else insert in `createdAt` order), and a `reaction_*` event through
   `applyReaction(lines, event)` (add/remove the chip on the addressed line, deduped by
-  `(reactor, emoji)`). On stream error while mounted it reconnects with backoff, re-running the
-  snapshot each (re)connect; on unmount it aborts. Ordering uses `createdAt` (the DTO carries no
+  `(reactor, emoji)`). A dropped socket reconnects and re-runs the snapshot; a takeover pushes
+  `embodiment.superseded` (the companion "moved rooms"). Ordering uses `createdAt` (the DTO carries no
   `seq`); add `seq` to `MessageDto` if equal-timestamp ordering ever glitches.
 
 ## 3. Configuration
@@ -871,10 +873,10 @@ chars) and link-harvest cap (`MAX_HARVESTED_LINKS`, default 20), and the `/explo
 `STARTING_VITALITY_TOKENS` (`api/src/index.ts`), and the post-turn **affect read** runs on
 `INGESTION_MODEL` (spent from the companion's stamina) — see §1 and `companion-motivation.md` §7–§8.
 
-**Event-channel constants** are in-code (not secrets): the standing channel's **heartbeat interval**
-(the `: ping` keep-alive cadence, `api/src/sse.ts`) and the client's **reconnect backoff** bounds
-(`web/src/api/client.ts`). No env wiring — the channel is in-process pub/sub with no provider or
-credential (§2.4).
+**WS delivery constants** are in-code (not secrets): the embodiment **heartbeat interval**
+(`WS_HEARTBEAT_MS` — doubles as the background-event read cadence) and **claim TTL**
+(`WS_CLAIM_TTL_MS`), plus the client's **reconnect backoff** bounds (`web/src/api/ws.ts`). The live
+channel is the durable `companion_events` log read over the WS — no provider or credential (§2.4).
 
 **User-model decay constants** _(Phase 13)_ are also in-code: `BELIEF_SALIENCE_HALF_LIFE_DAYS` (the
 uniform half-life of the lazy `effectiveSalience` view) and `STALE_SALIENCE_FLOOR` (below which a decayed

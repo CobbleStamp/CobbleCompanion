@@ -16,7 +16,7 @@
 >
 > **Where it lives.** `packages/core/src/growth/economy.ts` (the feed), the per-user food store in
 > `packages/core/src/growth/food-store.ts` (the pantry + atomic consume), the food catalogue in `contracts.ts`
-> (`FOODS`), and the route `POST /companions/:companionId/feed`
+> (`FOODS`), and the `feed` WS method
 > (`packages/api/src/routes/growth.routes.ts`). The Growth view's "Kitchen"
 > (`packages/web/src/pages/Growth.tsx`) is the one mutating affordance.
 
@@ -81,7 +81,7 @@ drift; token grants are product constants single-sourced there.
 
 ## 5. Spending — the feed flow
 
-Feeding is `POST /companions/:companionId/feed` (owner-scoped; body `{ food: 'ration' | 'spark' |
+Feeding is the `feed` WS method (owner-scoped; params `{ food: 'ration' | 'spark' |
 'treat' }`). The mechanism (`economy.ts` `feed`) is **consume-first, atomically guarded**, so a food
 is never granted for free:
 

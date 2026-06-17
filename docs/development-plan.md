@@ -759,9 +759,9 @@ loop) and a **`GreetingService`** that voices ONE in-character greeting billed t
 greeting is interaction, not solo work) — or shows the fixed token-free **exhausted line** when stamina
 is gone — and records a **`bond`** proactive outcome so the change-as-reward loop learns to greet less
 when greetings land cold. The open loop is the single most relevant of a pending approval (P3) or an
-unanswered question the companion left; depth comes from the user model. A new SSE endpoint
-**`POST /companions/:id/greeting`** streams a **`composing`** cue then the greeting as `done`; the web
-client opens it on **mount and on tab-return**, shows a typing indicator, and appends the greeting —
+unanswered question the companion left; depth comes from the user model. A server-initiated turn
+stream (the `greeting.stream` WS method) sends a **`composing`** cue then the greeting; the web
+client invokes it on **mount and on tab-return**, shows a typing indicator, and appends the greeting —
 and the arrival clock is stamped **after** the gap is read so an idle return never re-greets. The gate
 also won't stack a greeting on an outcome still awaiting a reaction. (Mechanism →
 `companion-greeting.md`; schema → `implementation.md` §1.) **Gate passed** (offline, deterministic —
@@ -772,6 +772,14 @@ fixed line with no outcome; and a greeting never stacks on a pending note. The `
 exhaustively unit-tested; the full monorepo is green at ≥80% coverage.
 
 ## 4e. Realtime Delivery Workstream (standing event channel)
+
+> **Transport superseded by Phase D.** Phase 15 shipped this as an **SSE** standing channel
+> (`GET /companions/:id/events`) over an in-process event bus, as described below. The
+> stateless/horizontal-scalability work (Phase D, `docs/plans/deliver-scalability.md`) **replaced that
+> transport** with a single **permanent WebSocket** + a durable `companion_events` log (events read by
+> cursor and pushed). The *delivery guarantee* below — subscribe/snapshot, merge-by-id, no forced
+> refresh — is unchanged and still canonical; only the mechanism moved from SSE to WS. Canonical
+> current description: `architecture.md` §6.
 
 Through Phase 14, the surface receives backend-produced messages two ways, both with seams: the
 **per-turn SSE** lives only for the turn that opened it and is **owned by the chat component** — so
@@ -858,14 +866,15 @@ Full mechanism → `companion-reactions.md`.
 ### Phase 16 — Emoji Reactions
 **Goal:** the user can react to any assistant `message` with an emoji, and the companion learns from it
 as an **addressed, value-created** reward; the companion can react to the user's messages as a
-**planned expressive act** within a turn, delivered live to every open surface.
+**planned expressive act** within a turn, delivered live to the active embodiment (one connection per
+companion — Phase D's "one room at a time" rule; a surface that re-establishes picks it up by snapshot).
 
 **Scope** (full mechanism → `companion-reactions.md`)
 - **`message_reactions` table + contracts.** A mutable annotation table outside the append-only
   transcript (`implementation.md` §1); `ReactionDto` + a derived `MessageDto.reactions[]`; emoji
-  validated at the boundary. `POST`/`DELETE …/messages/:id/reactions`.
-- **Live delivery.** `reaction_added` / `reaction_removed` on the standing event channel (§4e,
-  `architecture.md` §6) so a reaction (yours, another surface's, or the companion's) appears live.
+  validated at the boundary. WS methods `reactions.add` / `reactions.remove`.
+- **Live delivery.** `reaction_added` / `reaction_removed` on the WS live channel (§4e,
+  `architecture.md` §6) so a reaction (yours or the companion's) appears live on the active embodiment.
 - **User reaction → reward (the inline read).** An event-triggered `ReactionLearner` runs a contextual
   **value-created** read — _did the companion's act create value?_, **not** a fixed emoji lexicon —
   yielding a reward + note, or `null` (no learning). Resolves the matching `proactive_outcomes` row
