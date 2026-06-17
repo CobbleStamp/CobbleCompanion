@@ -721,13 +721,23 @@ Backpressure is a fleet-wide pending-`ingest` count; deferred jobs resume via
 - Tests: `EmbodimentStore` unit (6) + WS integration (claim, fencing, handoff = 3).
   api suite green (279).
 
-#### D3 — RPC-over-WS (big-bang, Q3)
+#### D3 — RPC-over-WS (big-bang, Q3) — ✅ WS METHODS DELIVERED (HTTP removed in final cleanup)
 
-- Move **all** ~34 routes onto WS method types in one pass; the 4 streaming routes
-  (`POST /messages`, `POST /greeting`, `POST /proposals/:id/confirm`, the events
-  channel) become **server-push event sequences correlated by request id**. Uploads
-  already carved out in **D-A** (HTTP store + WS reference). Keep a thin HTTP
-  surface: `/health`, `/auth/config`, and `POST /uploads`.
+- Every route now has a WS method, organized as per-domain modules in
+  `packages/api/src/ws/methods/` (`companions`, `messages`, `reactions`, `memory`,
+  `episodes`, `sources`, `usermodel`, `proposals`, `inventory`, `activity`,
+  `vitality`, `streaming`) spread into `buildWsMethods`. Companion-scoped methods
+  fence on the embodiment binding (`companionOf`) instead of re-resolving ownership;
+  per-user methods use `ctx.userId`; params validate with the routes' Zod schemas;
+  coded errors (`bad_params`/`conflict`/`not_found`/`over_cap`/`not_embodied`).
+- The 4 streaming routes (`messages.send`, `greeting.stream`, `proposals.confirm`,
+  plus event delivery → D4) became **server-push chunk sequences** correlated by
+  request id (`ctx.emit` → `{id, stream}` frames, terminal `{id, result}`), each run
+  through `runSerial` (D2′). Uploads stay the HTTP two-part endpoint (D-A).
+- **Strangler:** the HTTP routes + SSE stay mounted in parallel (suite stays green);
+  the web client cuts to WS in D6 and the dead HTTP routes + SSE + their tests are
+  removed as the **final cleanup**. WS-method tests: read/write/streaming-turn/
+  fencing/params (5). api suite green (284).
 
 #### D4 — Delivery via `companion_events` append-log (Q2)
 

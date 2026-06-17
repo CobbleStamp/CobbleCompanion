@@ -1,13 +1,25 @@
 import type { AppDeps } from '../app.js';
 import type { WsMethods } from './dispatch.js';
 import { requireEmbodiment } from './fencing.js';
+import { activityMethods } from './methods/activity.js';
+import { companionMethods } from './methods/companions.js';
+import { episodeMethods } from './methods/episodes.js';
+import { inventoryMethods } from './methods/inventory.js';
+import { memoryMethods } from './methods/memory.js';
+import { messageMethods } from './methods/messages.js';
+import { proposalMethods } from './methods/proposals.js';
+import { reactionMethods } from './methods/reactions.js';
+import { sourceMethods } from './methods/sources.js';
+import { streamingMethods } from './methods/streaming.js';
+import { userModelMethods } from './methods/usermodel.js';
+import { vitalityMethods } from './methods/vitality.js';
 
 /**
- * The WS method table (deliver-scalability.md §5.2, Phase D). D1 seeds the
- * transport with `ping` (liveness/echo) and `auth.me` (handshake identity); D2 adds
- * `embodiment.whoami`, fenced on the live claim (proving claim + fencing). D3 moves
- * the HTTP routes here as methods. The HTTP routes remain mounted in parallel until
- * then, so this is additive and single-node-safe.
+ * The WS method table (deliver-scalability.md §5.2, Phase D). Transport seeds
+ * (`ping`, `auth.me`, `embodiment.whoami`) plus the per-domain method modules that
+ * mirror the HTTP routes (D3). The HTTP routes stay mounted in parallel through the
+ * transition (additive, single-node-safe); the web client cuts over in D6 and the
+ * dead HTTP routes are removed last.
  */
 export function buildWsMethods(deps: AppDeps): WsMethods {
   return {
@@ -17,5 +29,17 @@ export function buildWsMethods(deps: AppDeps): WsMethods {
       const binding = await requireEmbodiment(deps.embodiment, ctx);
       return { companionId: binding.companionId, generation: binding.generation };
     },
+    ...companionMethods(deps),
+    ...messageMethods(deps),
+    ...reactionMethods(deps),
+    ...memoryMethods(deps),
+    ...episodeMethods(deps),
+    ...sourceMethods(deps),
+    ...userModelMethods(deps),
+    ...proposalMethods(deps),
+    ...inventoryMethods(deps),
+    ...activityMethods(deps),
+    ...vitalityMethods(deps),
+    ...streamingMethods(deps),
   };
 }

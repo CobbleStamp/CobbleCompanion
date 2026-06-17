@@ -3,11 +3,13 @@ import type { WsRequestMessage } from '@cobble/shared';
 import type { EmbodimentBinding, WsConnection } from './connection.js';
 
 /** What a method handler sees: the connection's identity, the companion it embodies
- *  (if any), and the live connection. */
+ *  (if any), the live connection, and `emit` for streaming chunks correlated to
+ *  this request's id (the terminal result/error ends the stream). */
 export interface WsCallContext {
   readonly userId: string;
   readonly embodiment: EmbodimentBinding | undefined;
   readonly connection: WsConnection;
+  readonly emit: (chunk: unknown) => void;
 }
 
 /** A WS method: returns the result value (sent back correlated by request id), or
@@ -58,8 +60,14 @@ export async function dispatchMessage(
     return;
   }
   try {
+    const requestId = parsed.id;
     const result = await handler(
-      { userId: connection.userId, embodiment: connection.embodiment, connection },
+      {
+        userId: connection.userId,
+        embodiment: connection.embodiment,
+        connection,
+        emit: (chunk: unknown) => connection.stream(requestId, chunk),
+      },
       parsed.params,
     );
     connection.result(parsed.id, result ?? null);

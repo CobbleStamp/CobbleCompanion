@@ -259,7 +259,14 @@ export interface WsEventMessage {
   readonly data: unknown;
 }
 
-export type WsServerMessage = WsResultMessage | WsErrorMessage | WsEventMessage;
+/** One chunk of a streaming method's response (e.g. a turn's tokens), correlated to
+ *  the request `id`; the terminal {@link WsResultMessage} with the same `id` ends it. */
+export interface WsStreamMessage {
+  readonly id: string;
+  readonly stream: unknown;
+}
+
+export type WsServerMessage = WsResultMessage | WsErrorMessage | WsEventMessage | WsStreamMessage;
 
 /**
  * Type-specific job reference — never bulk data. `reaction_learn` carries the

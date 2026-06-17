@@ -76,6 +76,12 @@ export class WsConnection {
     this.send({ event, data });
   }
 
+  /** Emit one chunk of a streaming method's response, correlated to request `id`.
+   *  The terminal `result(id, …)` ends the stream. */
+  stream(id: string, chunk: unknown): void {
+    this.send({ id, stream: chunk });
+  }
+
   close(code?: number, reason?: string): void {
     try {
       this.socket.close(code, reason);
