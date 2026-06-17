@@ -62,7 +62,6 @@ import {
   LlmUserPersonaSynthesizer,
   MotivationEngine,
   reinforceFromDelta,
-  InProcessCompanionEventBus,
   DurableCompanionEventBus,
   DrizzleCompanionEventLog,
   PublishingMemoryStore,
@@ -219,11 +218,7 @@ export async function makeTestApp(
   // Mirror production wiring (index.ts): the publish-on-append decorator over the
   // transcript store so tests exercise the same event-channel publish path.
   const eventLog = new DrizzleCompanionEventLog(db);
-  const eventBus = new DurableCompanionEventBus(
-    new InProcessCompanionEventBus(),
-    eventLog,
-    silentLogger,
-  );
+  const eventBus = new DurableCompanionEventBus(eventLog, silentLogger);
   const memory = new PublishingMemoryStore(new TranscriptMemoryStore(db), eventBus, silentLogger);
   const reactions = new DrizzleReactionStore(db);
   const semantic = new DrizzleSemanticMemoryStore(db);

@@ -163,12 +163,8 @@ export {
 export { TranscriptMemoryStore, type MemoryStore, type TranscriptEntry } from './memory/store.js';
 export { PublishingMemoryStore } from './memory/publishing-store.js';
 
-// Event channel (architecture.md §6) — the standing companion event channel's substrate
-export {
-  InProcessCompanionEventBus,
-  type CompanionEventBus,
-  type CompanionSubscription,
-} from './events/bus.js';
+// Event channel (architecture.md §6) — the companion event sink interface
+export { type CompanionEventBus } from './events/bus.js';
 // Durable cross-node delivery (deliver-scalability.md §6 D4)
 export {
   DrizzleCompanionEventLog,
