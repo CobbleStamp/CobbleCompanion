@@ -31,15 +31,16 @@ describe('app error logging (common/logging.md)', () => {
   });
 
   it('logs an unexpected 5xx with full context and never leaks internals', async () => {
-    // Inject a genuine internal failure (a store throw) to exercise the 5xx path.
-    // A valid-format id is needed so the param guard lets it through to the
+    // Inject a genuine internal failure (a store throw) to exercise the 5xx path,
+    // via the one remaining HTTP route (the file upload, which calls getCompanion
+    // first). A valid-format id is needed so the param guard lets it through to the
     // handler — a malformed id is now a clean 404 (see the next test).
-    const url = '/companions/00000000-0000-0000-0000-000000000000/messages';
+    const url = '/companions/00000000-0000-0000-0000-000000000000/sources/file';
     ctx.deps.identity.getCompanion = async () => {
       throw new Error('boom');
     };
     const res = await ctx.app.inject({
-      method: 'GET',
+      method: 'POST',
       url,
       headers: ctx.bearerFor('owner@example.com'),
     });
@@ -52,7 +53,7 @@ describe('app error logging (common/logging.md)', () => {
     expect(entry.message).toBe('request failed');
     expect(entry.context).toMatchObject({
       operation: 'http.request',
-      method: 'GET',
+      method: 'POST',
       url,
       statusCode: 500,
     });
@@ -64,8 +65,8 @@ describe('app error logging (common/logging.md)', () => {
     // A non-UUID id can't name a real row; the param guard short-circuits it to
     // 404 before any DB query (which would otherwise throw Postgres 22P02 → 500).
     const res = await ctx.app.inject({
-      method: 'GET',
-      url: '/companions/not-a-uuid/messages',
+      method: 'POST',
+      url: '/companions/not-a-uuid/sources/file',
       headers: ctx.bearerFor('owner@example.com'),
     });
 
@@ -78,7 +79,7 @@ describe('app error logging (common/logging.md)', () => {
   it('logs a 4xx client error at info severity, not error', async () => {
     const res = await ctx.app.inject({
       method: 'POST',
-      url: '/companions/00000000-0000-0000-0000-000000000000/messages',
+      url: '/companions/00000000-0000-0000-0000-000000000000/sources/file',
       headers: { ...ctx.bearerFor('owner@example.com'), 'content-type': 'application/json' },
       payload: '{ this is not json',
     });

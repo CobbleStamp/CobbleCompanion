@@ -29,13 +29,14 @@ describe('ws embodiment', () => {
     host = `127.0.0.1:${addr.port}`;
     const auth = ctx.bearerFor('owner@example.com');
     token = auth.authorization.slice('Bearer '.length);
-    const made = await ctx.app.inject({
-      method: 'POST',
-      url: '/companions',
-      headers: auth,
-      payload: { name: 'Pebble', form: 'fox', temperament: 'curious' },
-    });
-    companionId = made.json().companion.id;
+    const user = await ctx.deps.identity.ensureUserByEmail('owner@example.com');
+    companionId = (
+      await ctx.deps.identity.createCompanion(user.id, {
+        name: 'Pebble',
+        form: 'fox',
+        temperament: 'curious',
+      })
+    ).id;
   });
 
   afterEach(async () => {

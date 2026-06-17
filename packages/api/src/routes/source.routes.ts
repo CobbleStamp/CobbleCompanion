@@ -1,18 +1,17 @@
 /**
- * Source routes — feeding the companion's knowledge base (Phase 1). Uploads
- * create the source row + ingestion job and enqueue the off-request-path
- * runner, returning 202 immediately; reading happens in the background and
- * progress is polled via the ingestion route. All routes are owner-scoped.
+ * Source file upload (Phase 1; the one HTTP route that outlives the WS cutover —
+ * deliver-scalability.md D-A's two-part upload). Bulk bytes belong in a multipart
+ * body, not a JSON WS frame, so the upload stays HTTP: it stages the bytes durably
+ * and enqueues the off-request-path `ingest` job, returning 202 immediately. Note
+ * and link sources, listing, drill-in, and ingestion progress are WS methods
+ * (`sources.*`, `ingestion.list`). Owner-scoped.
  */
 
 import {
-  createLinkSourceSchema,
-  createNoteSourceSchema,
   fileSourceAcknowledgement,
   uploadKindForFilename,
   type IngestionJobDto,
   type MessageDto,
-  type SectionDto,
   type SourceDto,
   type UploadSourceKind,
 } from '@cobble/shared';
@@ -22,7 +21,6 @@ import {
   looksBinary,
   type IngestionPayload,
   type JobRecord,
-  type SectionRecord,
   type SourceRecord,
 } from '@cobble/core';
 import type { FastifyInstance } from 'fastify';
@@ -70,16 +68,10 @@ interface CompanionParams {
   readonly companionId: string;
 }
 
-interface SourceParams extends CompanionParams {
-  readonly sourceId: string;
-}
-
 /**
- * Mounts the owner-scoped HTTP surface for feeding a companion's knowledge
- * base — accepting file/note/link sources and exposing source listing, drill-in,
- * and ingestion progress. Accountable for request validation, ownership checks,
- * and handing accepted uploads to the background runner; the reading itself is
- * not its concern.
+ * Mount the multipart file-upload route. Accountable for request validation,
+ * ownership checks, and handing accepted uploads to the background `ingest` job;
+ * the reading itself is not its concern.
  */
 export function registerSourceRoutes(
   app: FastifyInstance,
@@ -87,9 +79,6 @@ export function registerSourceRoutes(
   requireAuth: RequireAuth,
 ): void {
   const { identity, memory, semantic, staging, ingest, logger } = deps;
-  // Intake routes share the auth preHandler; over-cap uploads are accepted and
-  // deferred by the pipeline rather than rejected up front (architecture.md §4.8).
-  const ingestPreHandlers = [requireAuth];
 
   /**
    * Create the source + job, stage the payload bytes durably, and enqueue the
@@ -127,7 +116,7 @@ export function registerSourceRoutes(
   // the client-declared content type alone.
   app.post(
     '/companions/:companionId/sources/file',
-    { preHandler: ingestPreHandlers },
+    { preHandler: requireAuth },
     async (request, reply) => {
       const { companionId } = request.params as CompanionParams;
       const companion = await identity.getCompanion(companionId, request.userId!);
@@ -191,122 +180,6 @@ export function registerSourceRoutes(
       return reply.code(202).send({ ...result, messages });
     },
   );
-
-  // Add a plain-text note.
-  app.post(
-    '/companions/:companionId/sources/note',
-    { preHandler: ingestPreHandlers },
-    async (request, reply) => {
-      const { companionId } = request.params as CompanionParams;
-      const parsed = createNoteSourceSchema.safeParse(request.body);
-      if (!parsed.success) {
-        return reply.code(400).send({ error: 'a note title and text are required' });
-      }
-      const companion = await identity.getCompanion(companionId, request.userId!);
-      if (!companion) {
-        return reply.code(404).send({ error: 'companion not found' });
-      }
-      const result = await enqueue(
-        companion.id,
-        request.userId!,
-        { kind: 'note', title: parsed.data.title, byteSize: parsed.data.text.length },
-        { kind: 'note', text: parsed.data.text },
-      );
-      return reply.code(202).send(result);
-    },
-  );
-
-  // Add a web link; the article is fetched and read in the background.
-  app.post(
-    '/companions/:companionId/sources/link',
-    { preHandler: ingestPreHandlers },
-    async (request, reply) => {
-      const { companionId } = request.params as CompanionParams;
-      const parsed = createLinkSourceSchema.safeParse(request.body);
-      if (!parsed.success) {
-        return reply.code(400).send({ error: 'a valid URL is required' });
-      }
-      const companion = await identity.getCompanion(companionId, request.userId!);
-      if (!companion) {
-        return reply.code(404).send({ error: 'companion not found' });
-      }
-      const result = await enqueue(
-        companion.id,
-        request.userId!,
-        { kind: 'link', title: parsed.data.title ?? parsed.data.url, origin: parsed.data.url },
-        { kind: 'link', url: parsed.data.url },
-      );
-      return reply.code(202).send(result);
-    },
-  );
-
-  // List the companion's sources.
-  app.get(
-    '/companions/:companionId/sources',
-    { preHandler: requireAuth },
-    async (request, reply) => {
-      const { companionId } = request.params as CompanionParams;
-      const companion = await identity.getCompanion(companionId, request.userId!);
-      if (!companion) {
-        return reply.code(404).send({ error: 'companion not found' });
-      }
-      const sources = await semantic.listSources(companion.id);
-      return reply.send({ sources: sources.map(toSourceDto) });
-    },
-  );
-
-  // Source drill-in: metadata + its sections (verbatim text + provenance).
-  app.get(
-    '/companions/:companionId/sources/:sourceId',
-    { preHandler: requireAuth },
-    async (request, reply) => {
-      const { companionId, sourceId } = request.params as SourceParams;
-      const companion = await identity.getCompanion(companionId, request.userId!);
-      if (!companion) {
-        return reply.code(404).send({ error: 'companion not found' });
-      }
-      const source = (await semantic.listSources(companion.id)).find((s) => s.id === sourceId);
-      if (!source) {
-        return reply.code(404).send({ error: 'source not found' });
-      }
-      const sections = await semantic.listSectionsBySource(companion.id, sourceId);
-      return reply.send({ source: toSourceDto(source), sections: sections.map(toSectionDto) });
-    },
-  );
-
-  // Delete a source (and its job + sections). Lets a user prune the queue — e.g.
-  // a job deferred on an empty wallet they no longer want to wait on.
-  app.delete(
-    '/companions/:companionId/sources/:sourceId',
-    { preHandler: requireAuth },
-    async (request, reply) => {
-      const { companionId, sourceId } = request.params as SourceParams;
-      const companion = await identity.getCompanion(companionId, request.userId!);
-      if (!companion) {
-        return reply.code(404).send({ error: 'companion not found' });
-      }
-      const deleted = await semantic.deleteSource(companion.id, sourceId);
-      if (!deleted) {
-        return reply.code(404).send({ error: 'source not found' });
-      }
-      return reply.code(204).send();
-    },
-  );
-
-  // Ingestion progress for all sources ("Cobble has read N of M").
-  app.get(
-    '/companions/:companionId/ingestion',
-    { preHandler: requireAuth },
-    async (request, reply) => {
-      const { companionId } = request.params as CompanionParams;
-      const companion = await identity.getCompanion(companionId, request.userId!);
-      if (!companion) {
-        return reply.code(404).send({ error: 'companion not found' });
-      }
-      const jobs = await semantic.listJobs(companion.id);
-      return reply.send({ jobs: jobs.map(toJobDto) });
-    },
-  );
 }
 
 function toSourceDto(source: SourceRecord): SourceDto {
@@ -328,21 +201,5 @@ function toJobDto(job: JobRecord): IngestionJobDto {
     sectionsTotal: job.sectionsTotal,
     sectionsDone: job.sectionsDone,
     error: job.error,
-  };
-}
-
-function toSectionDto(section: SectionRecord): SectionDto {
-  return {
-    id: section.id,
-    sourceId: section.sourceId,
-    chapterTitle: section.chapterTitle,
-    topicTitle: section.topicTitle,
-    originalText: section.originalText,
-    contextHeader: section.contextHeader,
-    paraStart: section.paraStart,
-    paraEnd: section.paraEnd,
-    pageStart: section.pageStart,
-    pageEnd: section.pageEnd,
-    ord: section.ord,
   };
 }

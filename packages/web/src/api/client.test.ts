@@ -299,7 +299,10 @@ describe('superseded handoff', () => {
 describe('file upload stays HTTP', () => {
   it('POSTs multipart with the bearer header and returns the intake', async () => {
     const intake = { source: { id: 's1' }, job: { id: 'j1' }, messages: [] };
-    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => intake }));
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => ({
+      ok: true,
+      json: async () => intake,
+    }));
     vi.stubGlobal('fetch', fetchMock);
 
     const file = new File(['hello'], 'note.txt', { type: 'text/plain' });
@@ -308,10 +311,8 @@ describe('file upload stays HTTP', () => {
     expect(result).toEqual(intake);
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toContain('/companions/c1/sources/file');
-    expect((init as RequestInit).method).toBe('POST');
-    expect(((init as RequestInit).headers as Record<string, string>).authorization).toBe(
-      'Bearer tok',
-    );
+    expect(init?.method).toBe('POST');
+    expect((init?.headers as Record<string, string>).authorization).toBe('Bearer tok');
     // No FakeWebSocket was opened for the upload path.
     expect(FakeWebSocket.instances).toHaveLength(0);
   });

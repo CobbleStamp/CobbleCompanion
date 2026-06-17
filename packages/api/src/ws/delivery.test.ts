@@ -21,14 +21,14 @@ describe('ws live delivery', () => {
     host = `127.0.0.1:${(ctx.app.server.address() as AddressInfo).port}`;
     const auth = ctx.bearerFor('owner@example.com');
     token = auth.authorization.slice('Bearer '.length);
+    const user = await ctx.deps.identity.ensureUserByEmail('owner@example.com');
     companionId = (
-      await ctx.app.inject({
-        method: 'POST',
-        url: '/companions',
-        headers: auth,
-        payload: { name: 'Pebble', form: 'fox', temperament: 'curious' },
+      await ctx.deps.identity.createCompanion(user.id, {
+        name: 'Pebble',
+        form: 'fox',
+        temperament: 'curious',
       })
-    ).json().companion.id;
+    ).id;
   });
 
   afterEach(async () => {

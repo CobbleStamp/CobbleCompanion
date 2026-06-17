@@ -41,22 +41,7 @@ import { makeRequireAuth } from './auth-guard.js';
 import type { TokenVerifier } from './auth/jwt-verifier.js';
 import type { AppConfig } from './config.js';
 import { registerAuthRoutes } from './routes/auth.routes.js';
-import { registerCompanionRoutes } from './routes/companion.routes.js';
-import { registerEpisodeRoutes } from './routes/episode.routes.js';
-import { registerEventRoutes } from './routes/event.routes.js';
-import { registerGreetingRoutes } from './routes/greeting.routes.js';
-import { registerGrowthRoutes } from './routes/growth.routes.js';
-import { registerMemoryRoutes } from './routes/memory.routes.js';
-import { registerUserModelRoutes } from './routes/user-model.routes.js';
-import { registerMessageRoutes } from './routes/message.routes.js';
-import { registerInventoryRoutes } from './routes/inventory.routes.js';
-import { registerPresenceRoutes } from './routes/presence.routes.js';
-import { registerProactiveActivityRoutes } from './routes/proactive-activity.routes.js';
-import { registerProactivityRoutes } from './routes/proactivity.routes.js';
-import { registerProposalRoutes } from './routes/proposal.routes.js';
-import { registerReactionRoutes } from './routes/reaction.routes.js';
 import { registerSourceRoutes } from './routes/source.routes.js';
-import { registerUsageRoutes } from './routes/usage.routes.js';
 import { registerUuidParamGuard } from './uuid.js';
 import { registerWebSocket } from './ws/register.js';
 import { buildWsMethods } from './ws/methods.js';
@@ -231,30 +216,15 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   const requireAuth = makeRequireAuth(deps);
 
-  // The per-companion vitality wallet (architecture.md §4.8) is the cost
-  // guardrail; routes enforce it inline (chat/search pre-flight, ingestion
-  // defer), so there are no per-route request-count limiters.
-  registerAuthRoutes(app, deps, requireAuth);
-  registerCompanionRoutes(app, deps, requireAuth);
-  registerMessageRoutes(app, deps, requireAuth);
-  registerReactionRoutes(app, deps, requireAuth);
-  registerEventRoutes(app, deps, requireAuth);
-  registerMemoryRoutes(app, deps, requireAuth);
-  registerUserModelRoutes(app, deps, requireAuth);
-  registerEpisodeRoutes(app, deps, requireAuth);
+  // The product surface is the realtime WS (below). Only two HTTP routes remain:
+  // the public auth bootstrap (fetched before the client can authenticate) and the
+  // multipart file upload (bulk bytes don't belong in a JSON WS frame — D-A's
+  // two-part upload). Everything else is a WS method (deliver-scalability.md §6).
+  registerAuthRoutes(app, deps);
   registerSourceRoutes(app, deps, requireAuth);
-  registerProposalRoutes(app, deps, requireAuth);
-  registerInventoryRoutes(app, deps, requireAuth);
-  registerPresenceRoutes(app, deps, requireAuth);
-  registerGreetingRoutes(app, deps, requireAuth);
-  registerProactivityRoutes(app, deps, requireAuth);
-  registerProactiveActivityRoutes(app, deps, requireAuth);
-  registerGrowthRoutes(app, deps, requireAuth);
-  registerUsageRoutes(app, deps, requireAuth);
 
-  // Realtime WS transport (Phase D D1): authenticated at the handshake, request/
-  // response correlated by id, with server-push events. Additive — the HTTP routes
-  // above stay mounted until D3 migrates them onto WS methods.
+  // Realtime WS transport (Phase D): authenticated at the handshake, request/
+  // response correlated by id, with server-push events — the one product surface.
   await registerWebSocket(app, deps, buildWsMethods(deps));
 
   registerSpa(app);
