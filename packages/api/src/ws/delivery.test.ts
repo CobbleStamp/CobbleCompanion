@@ -35,6 +35,42 @@ describe('ws live delivery', () => {
     await ctx.close();
   });
 
+  it('fails the connection closed when the live-cursor init query errors (no history replay)', async () => {
+    // A transient DB error on latestSettledSeq must NOT fall back to cursor 0 — that
+    // would make the first heartbeat re-deliver the entire settled history as live
+    // events. Closing lets the client reconnect and re-init the cursor cleanly.
+    const log = ctx.deps.eventLog as { latestSettledSeq: (id: string) => Promise<number> };
+    log.latestSettledSeq = () => Promise.reject(new Error('db unavailable'));
+
+    const client = new WebSocket(
+      `ws://${host}/ws?companion=${companionId}&access_token=${encodeURIComponent(token)}`,
+    );
+    const closed = new Promise<{ code: number }>((resolve, reject) => {
+      client.addEventListener('close', (e: CloseEvent) => resolve({ code: e.code }), {
+        once: true,
+      });
+      // A replayed history would arrive as a 'companion' frame before any close.
+      client.addEventListener(
+        'message',
+        (e: MessageEvent) => {
+          const frame = JSON.parse(String(e.data)) as { event?: string };
+          if (frame.event === 'companion') {
+            reject(new Error('history was replayed instead of failing closed'));
+          }
+        },
+        { once: true },
+      );
+    });
+
+    const outcome = await closed;
+    expect(outcome.code).toBe(1011);
+    try {
+      client.close();
+    } catch {
+      // already closed
+    }
+  });
+
   it('pushes a companion_events row to the embodied connection via the heartbeat', async () => {
     const client = new WebSocket(
       `ws://${host}/ws?companion=${companionId}&access_token=${encodeURIComponent(token)}`,

@@ -110,7 +110,24 @@ async function embody(
   // cursor is the settled horizon (not the raw max seq) so an event still in-flight
   // at connect isn't stranded between the snapshot and live delivery — see the
   // visibility-gap guard in core/src/events/log.ts (deliver-scalability.md §C).
-  let cursor = await deps.eventLog.latestSettledSeq(companionId).catch(() => 0);
+  //
+  // Fail closed on a DB error here (mirror the claim path above): a legitimate empty
+  // log returns 0, but a *failed* query must NOT fall back to 0 — that would make the
+  // first heartbeat read from seq 0 and re-deliver the companion's entire settled
+  // history as live events. Closing lets the client reconnect and re-init the cursor
+  // cleanly (its reconnect already reloads the snapshot), with no replay.
+  let cursor: number;
+  try {
+    cursor = await deps.eventLog.latestSettledSeq(companionId);
+  } catch (error) {
+    deps.logger.error('ws live-cursor init failed', {
+      operation: 'ws.embody',
+      companionId,
+      error,
+    });
+    socket.close(1011, 'cursor init failed');
+    return;
+  }
 
   const heartbeat = setInterval(() => {
     void (async () => {
