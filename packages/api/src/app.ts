@@ -37,7 +37,7 @@ import fastifyStatic from '@fastify/static';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyError, type FastifyInstance, type FastifyRequest } from 'fastify';
 import { makeRequireAdmin, makeRequireAuth } from './auth-guard.js';
 import type { TokenVerifier } from './auth/jwt-verifier.js';
 import type { AppConfig } from './config.js';
@@ -135,14 +135,55 @@ export interface AppDeps {
 // API route prefixes that must 404 (not fall through to the SPA index.html).
 const API_PREFIXES = ['/admin', '/auth', '/companions', '/food', '/health'] as const;
 
+// Query-string params that carry a live bearer credential and must never reach the
+// access log. A browser `WebSocket` cannot set an Authorization header, so the bearer
+// rides the WS handshake URL as `?access_token=<jwt>` (see ws/handshake.ts). Fastify's
+// default `req` serializer logs the full URL — query string included — so without this
+// redaction a replayable token would land in stdout/access logs.
+const SENSITIVE_QUERY_PARAMS = ['access_token', 'token'] as const;
+
+/** Redact credential-bearing query params from a request URL before it is logged. */
+export function redactUrl(url: string): string {
+  const queryStart = url.indexOf('?');
+  if (queryStart === -1) {
+    return url;
+  }
+  const path = url.slice(0, queryStart);
+  const params = new URLSearchParams(url.slice(queryStart + 1));
+  let redacted = false;
+  for (const name of SENSITIVE_QUERY_PARAMS) {
+    if (params.has(name)) {
+      params.set(name, 'REDACTED');
+      redacted = true;
+    }
+  }
+  return redacted ? `${path}?${params.toString()}` : url;
+}
+
 /** Build the Fastify app — the only surface↔core boundary (invariant #1). */
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const app = Fastify({
     // Request access logging — every request/response (method, url, status,
     // remoteAddress, responseTime). Fastify's default serializers do NOT log
-    // headers, so the Authorization bearer never lands in the access log.
-    // Application/business logging still flows through deps.logger.
-    logger: true,
+    // headers, so the Authorization bearer never lands in the access log — but the
+    // default DOES log the full URL, query string included, and a browser WS client
+    // sends its bearer as `?access_token=<jwt>` (ws/handshake.ts). Override the `req`
+    // serializer to redact credential-bearing query params so the token never lands
+    // in the log. Application/business logging still flows through deps.logger.
+    logger: {
+      serializers: {
+        req(request: FastifyRequest) {
+          const remotePort = request.socket?.remotePort;
+          return {
+            method: request.method,
+            url: redactUrl(request.url),
+            host: request.host,
+            remoteAddress: request.ip,
+            ...(remotePort === undefined ? {} : { remotePort }),
+          };
+        },
+      },
+    },
     // Behind a reverse proxy (Caddy) terminating TLS on the same host: honour the
     // X-Forwarded-* headers so request.ip / request.protocol reflect the real
     // client, not the proxy. Safe because the Node listener binds localhost and is

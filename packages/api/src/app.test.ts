@@ -1,5 +1,6 @@
 import type { Logger } from '@cobble/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { redactUrl } from './app.js';
 import { makeTestApp, type TestApp } from './test/helpers.js';
 
 interface LogEntry {
@@ -89,5 +90,33 @@ describe('app error logging (common/logging.md)', () => {
     expect(
       infos.some((e) => e.message === 'request rejected' && e.context.statusCode === 400),
     ).toBe(true);
+  });
+});
+
+describe('redactUrl (S1 — access-log token redaction)', () => {
+  it('redacts the access_token a browser WebSocket sends in the handshake URL', () => {
+    // ws/handshake.ts accepts the bearer as ?access_token=<jwt>; the access log
+    // must never carry a live, replayable token.
+    expect(redactUrl('/ws?access_token=eyJhbG.live.jwt&companion=c_123')).toBe(
+      '/ws?access_token=REDACTED&companion=c_123',
+    );
+  });
+
+  it('redacts a bare token param', () => {
+    expect(redactUrl('/ws?token=secret')).toBe('/ws?token=REDACTED');
+  });
+
+  it('leaves a URL with no query string untouched', () => {
+    expect(redactUrl('/companions/c_123/messages')).toBe('/companions/c_123/messages');
+  });
+
+  it('preserves non-sensitive query params verbatim', () => {
+    expect(redactUrl('/ws?companion=c_123')).toBe('/ws?companion=c_123');
+  });
+
+  it('redacts every credential param when several are present', () => {
+    expect(redactUrl('/ws?access_token=a&token=b&companion=c_123')).toBe(
+      '/ws?access_token=REDACTED&token=REDACTED&companion=c_123',
+    );
   });
 });
