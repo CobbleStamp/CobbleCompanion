@@ -181,6 +181,12 @@ export {
   type JobQueue,
   type QueuedJob,
 } from './jobs/job-queue.js';
+// Queue / embodiment observability (deliver-scalability.md §C "C2")
+export {
+  DrizzleQueueMetricsReader,
+  type QueueMetricsReader,
+  type QueueMetricsSnapshot,
+} from './jobs/queue-metrics.js';
 // Live embodiment claim (deliver-scalability.md §5.2, Phase D D2)
 export {
   DrizzleEmbodimentStore,

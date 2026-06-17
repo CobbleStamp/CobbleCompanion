@@ -123,6 +123,11 @@ export const users = pgTable(
     // the auth boundary, then refined in conversation; see `user_facts` below and
     // docs/companion-memory.md §4).
     email: text('email').unique(),
+    // Operator flag: gates access to the admin-only surface (the `/admin/queue`
+    // queue/embodiment observability read — deliver-scalability.md §C). Defaults to
+    // false so every existing + JIT-provisioned user is non-admin; an operator
+    // promotes a specific user out-of-band (a DB update / the CLI).
+    isAdmin: boolean('is_admin').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [

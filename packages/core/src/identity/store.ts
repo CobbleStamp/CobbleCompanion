@@ -12,6 +12,8 @@ export interface UserRecord {
   readonly externalId: string | null;
   /** Login identity when `authSource = 'google'`; null for `service` (no email). */
   readonly email: string | null;
+  /** Operator flag — gates the admin-only surface (`/admin/queue`). Default false. */
+  readonly isAdmin: boolean;
   readonly createdAt: string;
 }
 
@@ -87,6 +89,12 @@ export interface IdentityStore {
   /** Convenience wrapper for a Google/email claim — see {@link ensureUserByClaim}. */
   ensureUserByEmail(email: string): Promise<UserRecord>;
   getUserById(id: string): Promise<UserRecord | null>;
+  /**
+   * Set a user's operator (admin) flag — the out-of-band promotion path for the
+   * admin-only surface (deliver-scalability.md §C). Used by an operator tool/CLI;
+   * never reachable from a user request path. No-op if the user does not exist.
+   */
+  setAdmin(userId: string, isAdmin: boolean): Promise<void>;
   createCompanion(ownerId: string, input: CreateCompanionInput): Promise<CompanionDto>;
   getCompanion(id: string, ownerId: string): Promise<CompanionDto | null>;
   /**
@@ -216,6 +224,10 @@ export class DrizzleIdentityStore implements IdentityStore {
     return row ? toUserRecord(row) : null;
   }
 
+  async setAdmin(userId: string, isAdmin: boolean): Promise<void> {
+    await this.db.update(users).set({ isAdmin }).where(eq(users.id, userId));
+  }
+
   async createCompanion(ownerId: string, input: CreateCompanionInput): Promise<CompanionDto> {
     const [row] = await this.db
       .insert(companions)
@@ -331,6 +343,7 @@ function toUserRecord(row: typeof users.$inferSelect): UserRecord {
     serviceClientId: row.serviceClientId,
     externalId: row.externalId,
     email: row.email,
+    isAdmin: row.isAdmin,
     createdAt: row.createdAt.toISOString(),
   };
 }

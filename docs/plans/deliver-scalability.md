@@ -2,8 +2,9 @@
 
 > **Status:** code-complete for the MVP (single-node). The stateless WS backend
 > (D-A→D6 + cleanup) is delivered, green, and runs on one micro instance behind
-> Caddy with no infra change. Multi-node (D7 NLB, the §6.5 flip, Phase C
-> observability, the Q1 concurrency suite) is **deferred until scale is needed**.
+> Caddy with no infra change. Queue/embodiment observability (Phase **C2**) ships —
+> `GET /admin/queue`, admin-gated. Multi-node (D7 NLB, the §6.5 flip, Phase **C1** DB
+> connection budget, the Q1 concurrency suite) is **deferred until scale is needed**.
 > Working plan, not canonical architecture — fold the durable decisions into
 > `docs/architecture.md` §6/§8 and delete superseded parts here when convenient.
 >
@@ -26,9 +27,10 @@
 >   NLB, no flip. The existing `infra/aws` deploy already serves the WS surface
 >   (Caddy `reverse_proxy` upgrades WebSockets transparently; the 10s heartbeat keeps
 >   sockets alive) — **no infra change for the MVP.** When scale is needed: NLB (L4)
->   + drain on deploy + the §6.5 flip, plus **Phase C** (C1 DB connection budget, C2
->   queue/embodiment observability — that admin read would be a new WS method or a
->   small internal HTTP route) and the **Q1** real-Postgres concurrency suite first.
+>   + drain on deploy + the §6.5 flip, plus **Phase C1** (DB connection budget) and
+>   the **Q1** real-Postgres concurrency suite first. **Phase C2 (queue/embodiment
+>   observability) is DONE** — a read-only `GET /admin/queue` gated behind a
+>   `users.is_admin` flag (migration `0009`); see §C below.
 > - **WS surface map:** transport in `packages/api/src/ws/` (`register`,
 >   `handshake`, `connection`, `dispatch`, `fencing`, `methods.ts`); per-domain
 >   methods in `packages/api/src/ws/methods/` (incl. `presence.ts`). Envelope types
@@ -655,17 +657,26 @@ offenders, and need their own refactors.
   are now on the queue (see Phase D **D-A** below). The `driveWeights`-from-reaction
   race is closed; the in-memory `IngestionRunner` is gone.
 
-### Phase C — Problems 3 & 4 *(overlaps B's tail)* — NOT STARTED (deployment-time)
+### Phase C — Problems 3 & 4 *(overlaps B's tail)*
 
-Both genuinely need the live multi-node environment to be meaningful, so they are
-deferred to deployment time (and C is itself gated by Phase D for *actual*
-multi-node). The queue exposes `duePendingCount()` as a first observability hook.
-
-- **C1 DB budget.** Measure the Supabase connection ceiling; route queries through
-  the transaction pooler; size pool/K/N with headroom; document.
-- **C2 Observability.** Queue metrics (depth by type, oldest pending, live claims,
-  failed/poison, reclaim count) via a read-only `/admin/queue` route + structured
-  logs; alert on oldest-pending age and failed count.
+- **C1 DB budget — ⏸️ DEFERRED (with the multi-node flip).** Measure the Supabase
+  connection ceiling; route queries through the transaction pooler; size pool/K/N
+  with headroom; document. Only meaningful under real multi-node load, so it rides
+  with D7.
+- **C2 Observability — ✅ DELIVERED.** A read-only `/admin/queue` route returns a
+  fleet-wide `QueueMetricsSnapshot` (`packages/core/src/jobs/queue-metrics.ts`,
+  `DrizzleQueueMetricsReader`): pending depth total + by type, oldest **due**-pending
+  age (the starvation canary), failed total + by type (poison), live job claims +
+  the reclaimed (`generation>1`) subset (the failover signal), and live embodiments.
+  All derived from shared Postgres (correct at N nodes); ages computed with the DB
+  clock (no app↔db skew). A **reclaim** (takeover of a crashed/lapsed holder) is also
+  logged at `warn` from `DrizzleJobQueue.tryClaim`. **Access:** gated behind auth
+  **and** a new `users.is_admin` flag (migration `0009`) — an ordinary signed-in user
+  gets 403, unauthenticated 401. Promote an operator out-of-band via
+  `IdentityStore.setAdmin(userId, true)`. The route stays HTTP (not a WS method) so
+  ops tooling — `curl`, a monitor, a dashboard scraper — can read it. Tests:
+  `packages/core/src/jobs/queue-metrics.test.ts`,
+  `packages/api/src/routes/admin.routes.test.ts`.
 
 ### Phase D — Problems 5 & 6: WebSocket embodiment *(release gate, the big rewrite)* — IN PROGRESS
 

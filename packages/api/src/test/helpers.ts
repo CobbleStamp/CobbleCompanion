@@ -10,6 +10,7 @@ import {
   composeRetrieveContext,
   ConsolidationService,
   DrizzleJobQueue,
+  DrizzleQueueMetricsReader,
   JobProcessorPool,
   makeCompanionWorkRequester,
   makeReactionWorkRequester,
@@ -322,6 +323,7 @@ export async function makeTestApp(
   const motivation = makeCompanionWorkRequester(jobPool, 'motivation');
   const reactionLearn = makeReactionWorkRequester(jobPool);
   const ingest = makeIngestWorkRequester(jobPool, jobQueue, config.ingestionQueueMax);
+  const queueMetrics = new DrizzleQueueMetricsReader(db, config.wsClaimTtlMs);
 
   // The Phase 3 tool surface: read-only memory_search + effectful ingest_source
   // (web_fetch is omitted here — it needs a live resolver and isn't exercised by
@@ -435,6 +437,7 @@ export async function makeTestApp(
     tools,
     proposals,
     toolCallLog,
+    queueMetrics,
     leads,
     procedural,
     presence,

@@ -68,6 +68,7 @@ import {
   PublishingMemoryStore,
   TranscriptMemoryStore,
   DrizzleJobQueue,
+  DrizzleQueueMetricsReader,
   JobProcessorPool,
   makeCompanionWorkRequester,
   makeReactionWorkRequester,
@@ -221,7 +222,7 @@ async function main(): Promise<void> {
   // constructed below; they only run at drain time (after pool.start()), so the
   // forward reference is safe. Built here — before the tool registry — because the
   // `ingest_source` tool and the upload routes enqueue through the same requester.
-  const jobQueue = new DrizzleJobQueue(db);
+  const jobQueue = new DrizzleJobQueue(db, consoleLogger);
   const jobPool = new JobProcessorPool(
     jobQueue,
     {
@@ -257,6 +258,9 @@ async function main(): Promise<void> {
   const motivation = makeCompanionWorkRequester(jobPool, 'motivation');
   const reactionLearn = makeReactionWorkRequester(jobPool);
   const ingest = makeIngestWorkRequester(jobPool, jobQueue, config.ingestionQueueMax);
+  // Read-only queue/embodiment observability for the admin surface (C2). Uses the
+  // same claim TTL as the WS heartbeat so "live" matches the embodiment semantics.
+  const queueMetrics = new DrizzleQueueMetricsReader(db, config.wsClaimTtlMs);
 
   // Phase 3 tool surface + trust machinery, built before the harness so the
   // propose→approve gate and the tool-call log can be wired into the loop.
@@ -535,6 +539,7 @@ async function main(): Promise<void> {
     tools,
     proposals,
     toolCallLog,
+    queueMetrics,
     leads,
     procedural,
     presence,

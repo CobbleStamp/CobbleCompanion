@@ -21,6 +21,7 @@ import type {
   ProactiveOutcomeStore,
   ProceduralStore,
   ProposalStore,
+  QueueMetricsReader,
   ReactionStore,
   ReactionWorkRequester,
   SemanticMemoryStore,
@@ -37,9 +38,10 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
-import { makeRequireAuth } from './auth-guard.js';
+import { makeRequireAdmin, makeRequireAuth } from './auth-guard.js';
 import type { TokenVerifier } from './auth/jwt-verifier.js';
 import type { AppConfig } from './config.js';
+import { registerAdminRoutes } from './routes/admin.routes.js';
 import { registerAuthRoutes } from './routes/auth.routes.js';
 import { registerSourceRoutes } from './routes/source.routes.js';
 import { registerUuidParamGuard } from './uuid.js';
@@ -88,6 +90,9 @@ export interface AppDeps {
   readonly proposals: ProposalStore;
   /** The "every tool call is logged" audit log (P3). */
   readonly toolCallLog: ToolCallLog;
+  /** Read-only queue/embodiment observability snapshot — the admin `/admin/queue`
+   *  surface (deliver-scalability.md §C "C2"). */
+  readonly queueMetrics: QueueMetricsReader;
   /** The lead inventory — the companion's reading list (P3 substrate). */
   readonly leads: LeadStore;
   /** Procedural memory — learned, reusable workflows (P3 seed). */
@@ -128,7 +133,7 @@ export interface AppDeps {
 }
 
 // API route prefixes that must 404 (not fall through to the SPA index.html).
-const API_PREFIXES = ['/auth', '/companions', '/food', '/health'] as const;
+const API_PREFIXES = ['/admin', '/auth', '/companions', '/food', '/health'] as const;
 
 /** Build the Fastify app — the only surface↔core boundary (invariant #1). */
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
@@ -215,13 +220,16 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.get('/health', async () => ({ status: 'ok' }));
 
   const requireAuth = makeRequireAuth(deps);
+  const requireAdmin = makeRequireAdmin(deps);
 
-  // The product surface is the realtime WS (below). Only two HTTP routes remain:
-  // the public auth bootstrap (fetched before the client can authenticate) and the
+  // The product surface is the realtime WS (below). Only a few HTTP routes remain:
+  // the public auth bootstrap (fetched before the client can authenticate), the
   // multipart file upload (bulk bytes don't belong in a JSON WS frame — D-A's
-  // two-part upload). Everything else is a WS method (deliver-scalability.md §6).
+  // two-part upload), and the admin-only observability read (ops tooling speaks
+  // HTTP, not the WS envelope). Everything else is a WS method (deliver-scalability.md §6).
   registerAuthRoutes(app, deps);
   registerSourceRoutes(app, deps, requireAuth);
+  registerAdminRoutes(app, deps, requireAuth, requireAdmin);
 
   // Realtime WS transport (Phase D): authenticated at the handshake, request/
   // response correlated by id, with server-push events — the one product surface.

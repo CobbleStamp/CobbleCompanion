@@ -1,6 +1,7 @@
 import type { JobPayload, JobType } from '@cobble/shared';
 import { companionClaims, type Database, jobs } from '@cobble/db';
 import { and, eq, lt, lte, or, isNull, sql } from 'drizzle-orm';
+import type { Logger } from '../logging.js';
 
 /**
  * The background job queue (deliver-scalability.md §5.1, Phase B). A durable,
@@ -75,7 +76,15 @@ export function reactionLearnDedupeKey(messageId: string, emoji: string): string
 const CLAIM_CANDIDATE_BATCH = 8;
 
 export class DrizzleJobQueue implements JobQueue {
-  constructor(private readonly db: Database) {}
+  /**
+   * @param logger Optional — when present, a **reclaim** (takeover of a
+   *   crashed/lapsed holder's claim) is logged for C2 observability
+   *   (deliver-scalability.md §C). Omitted in tests that don't assert on it.
+   */
+  constructor(
+    private readonly db: Database,
+    private readonly logger?: Logger,
+  ) {}
 
   async enqueue(params: EnqueueParams): Promise<void> {
     const runAt = params.runAt ?? new Date();
@@ -156,7 +165,15 @@ export class DrizzleJobQueue implements JobQueue {
         setWhere: lt(companionClaims.claimedUntil, sql`now()`),
       })
       .returning({ generation: companionClaims.generation });
-    return rows[0]?.generation ?? null;
+    const generation = rows[0]?.generation ?? null;
+    // generation > 1 means the row pre-existed and was taken over via the
+    // `setWhere claimed_until < now()` gate — a crashed/lapsed holder's claim was
+    // reclaimed (a fresh claim after a clean release deletes the row, so a re-claim
+    // is generation 1 again). Surface the failover for C2 (the reclaim-count signal).
+    if (generation !== null && generation > 1) {
+      this.logger?.warn('job claim reclaimed', { companionId, owner, generation });
+    }
+    return generation;
   }
 
   async nextDueJob(companionId: string): Promise<QueuedJob | null> {
