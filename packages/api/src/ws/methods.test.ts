@@ -141,4 +141,38 @@ describe('ws methods', () => {
       client.close();
     }
   });
+
+  it('records tab visibility via presence.heartbeat (D5) without nudging motivation', async () => {
+    const nudged: string[] = [];
+    ctx.deps.motivation.request = (id: string): void => {
+      nudged.push(id);
+    };
+    const client = await open(true);
+    try {
+      const { frame } = await call(client, {
+        id: '6',
+        method: 'presence.heartbeat',
+        params: { tabVisible: false },
+      });
+      expect(frame.result).toEqual({ ok: true });
+      // The heartbeat recorded the reported (background) visibility on the presence signal.
+      expect((await ctx.deps.presence.get(companionId))?.tabVisible).toBe(false);
+      // A heartbeat is deliberately not a motivation trigger (presence-route parity).
+      expect(nudged).toHaveLength(0);
+    } finally {
+      client.close();
+    }
+  });
+
+  it('identifies the user over a transport-only connection (auth.me)', async () => {
+    const client = await open(false);
+    try {
+      const { frame } = await call(client, { id: '7', method: 'auth.me' });
+      const { user } = frame.result as { user: { id: string; email: string | null } };
+      expect(typeof user.id).toBe('string');
+      expect(user.email).toBe('owner@example.com');
+    } finally {
+      client.close();
+    }
+  });
 });

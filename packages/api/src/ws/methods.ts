@@ -7,6 +7,7 @@ import { episodeMethods } from './methods/episodes.js';
 import { inventoryMethods } from './methods/inventory.js';
 import { memoryMethods } from './methods/memory.js';
 import { messageMethods } from './methods/messages.js';
+import { presenceMethods } from './methods/presence.js';
 import { proposalMethods } from './methods/proposals.js';
 import { reactionMethods } from './methods/reactions.js';
 import { sourceMethods } from './methods/sources.js';
@@ -24,7 +25,12 @@ import { vitalityMethods } from './methods/vitality.js';
 export function buildWsMethods(deps: AppDeps): WsMethods {
   return {
     ping: async (_ctx, params) => ({ pong: true, echo: params ?? null }),
-    'auth.me': async (ctx) => ({ user: { id: ctx.userId } }),
+    'auth.me': async (ctx) => {
+      // Mirrors GET /auth/me: the handshake already authenticated this connection,
+      // so the user resolves (email may be null for a service consumer).
+      const user = await deps.identity.getUserById(ctx.userId);
+      return { user: { id: ctx.userId, email: user?.email ?? null } };
+    },
     'embodiment.whoami': async (ctx) => {
       const binding = await requireEmbodiment(deps.embodiment, ctx);
       return { companionId: binding.companionId, generation: binding.generation };
@@ -33,6 +39,7 @@ export function buildWsMethods(deps: AppDeps): WsMethods {
     ...messageMethods(deps),
     ...reactionMethods(deps),
     ...memoryMethods(deps),
+    ...presenceMethods(deps),
     ...episodeMethods(deps),
     ...sourceMethods(deps),
     ...userModelMethods(deps),

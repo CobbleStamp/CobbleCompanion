@@ -1,119 +1,181 @@
-import type {
-  ChatStreamEvent,
-  CompanionStreamEvent,
-  FoodInventoryDto,
-  MessageDto,
-  StaminaEnergyDto,
-} from '@cobble/shared';
+/**
+ * The WebSocket transport (Phase D, D6). These pin the request/reply correlation,
+ * streaming, the live-event channel, the superseded handoff, and the one remaining
+ * HTTP call (the multipart file upload) — exercised through the public client API
+ * over a controllable fake socket.
+ */
+
+import type { ChatStreamEvent, CompanionStreamEvent, MessageDto } from '@cobble/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  addReaction,
   confirmProposal,
   createCompanion,
   fetchBudget,
   fetchMessages,
   getFood,
-  removeReaction,
-  sendHeartbeat,
+  listCompanions,
+  onEmbodimentMoved,
+  reclaimEmbodiment,
   sendMessage,
   setAccessTokenGetter,
-  setProactivityDial,
   subscribeCompanionEvents,
+  uploadFileSource,
 } from './client.js';
 
-/**
- * Guards the request helper's content-type behavior: a POST with a body must send
- * `content-type: application/json`, while a bodyless request (e.g. a GET) must
- * omit it. Both must carry the bearer token.
- */
-describe('api client request headers', () => {
-  let fetchMock: ReturnType<typeof vi.fn>;
+/** A drivable WebSocket double: records sent frames, opens on the next microtask,
+ *  and lets the test push server frames or close the socket. */
+class FakeWebSocket {
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSING = 2;
+  static readonly CLOSED = 3;
+  static instances: FakeWebSocket[] = [];
 
-  beforeEach(() => {
-    setAccessTokenGetter(async () => 'tok');
-    fetchMock = vi.fn(async () => ({
-      ok: true,
-      json: async () => ({ messages: [], companion: { id: 'k1' } }),
-    }));
-    vi.stubGlobal('fetch', fetchMock);
-  });
+  readonly url: string;
+  readyState: number = FakeWebSocket.CONNECTING;
+  readonly sent: string[] = [];
+  onopen: (() => void) | null = null;
+  onmessage: ((event: { data: string }) => void) | null = null;
+  onerror: (() => void) | null = null;
+  onclose: ((event: { code: number }) => void) | null = null;
 
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    setAccessTokenGetter(async () => null);
-  });
-
-  function headersFor(call: number): Record<string, string> {
-    return (fetchMock.mock.calls[call]?.[1]?.headers ?? {}) as Record<string, string>;
+  constructor(url: string) {
+    this.url = url;
+    FakeWebSocket.instances.push(this);
+    queueMicrotask(() => {
+      this.readyState = FakeWebSocket.OPEN;
+      this.onopen?.();
+    });
   }
 
-  it('omits content-type on a bodyless GET (fetchMessages)', async () => {
-    await fetchMessages('k1');
-    const headers = headersFor(0);
-    expect(headers['content-type']).toBeUndefined();
-    expect(headers.authorization).toBe('Bearer tok');
+  send(data: string): void {
+    this.sent.push(data);
+  }
+
+  close(code = 1000): void {
+    this.readyState = FakeWebSocket.CLOSED;
+    this.onclose?.({ code });
+  }
+
+  /** Push a server frame to the transport. */
+  serverSend(message: unknown): void {
+    this.onmessage?.({ data: JSON.stringify(message) });
+  }
+}
+
+const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+/** The current (latest) fake socket, after letting it open. */
+async function liveSocket(): Promise<FakeWebSocket> {
+  await tick();
+  const socket = FakeWebSocket.instances.at(-1);
+  if (!socket) throw new Error('no socket opened');
+  return socket;
+}
+
+/** The parsed request envelope the transport last sent on `socket`. */
+function lastRequest(socket: FakeWebSocket): { id: string; method: string; params: unknown } {
+  const raw = socket.sent.at(-1);
+  if (!raw) throw new Error('no frame sent');
+  return JSON.parse(raw) as { id: string; method: string; params: unknown };
+}
+
+beforeEach(() => {
+  setAccessTokenGetter(async () => 'tok');
+  FakeWebSocket.instances = [];
+  vi.stubGlobal('WebSocket', FakeWebSocket);
+});
+
+afterEach(() => {
+  // Drop any socket so the next test reconnects fresh, and clear a superseded yield.
+  for (const socket of FakeWebSocket.instances) {
+    if (socket.readyState === FakeWebSocket.OPEN) socket.close();
+  }
+  reclaimEmbodiment();
+  vi.unstubAllGlobals();
+  setAccessTokenGetter(async () => null);
+});
+
+describe('WS request/reply correlation', () => {
+  it('opens a companion-scoped socket and resolves a call by id', async () => {
+    const promise = fetchBudget('c1');
+    const socket = await liveSocket();
+    expect(socket.url).toContain('/ws?');
+    expect(socket.url).toContain('access_token=tok');
+    expect(socket.url).toContain('companion=c1');
+
+    const request = lastRequest(socket);
+    expect(request.method).toBe('budget.get');
+    const budget = { stamina: { balanceTokens: 1 }, energy: { balanceTokens: 2 } };
+    socket.serverSend({ id: request.id, result: budget });
+
+    expect(await promise).toEqual(budget);
   });
 
-  it('sends content-type on a POST with a body (createCompanion)', async () => {
-    await createCompanion({ name: 'Cobble', form: 'fox', temperament: 'curious' });
-    const headers = headersFor(0);
-    expect(headers['content-type']).toBe('application/json');
-    expect(headers.authorization).toBe('Bearer tok');
+  it('opens a transport-only socket (no companion) for an agnostic call', async () => {
+    const promise = listCompanions();
+    const socket = await liveSocket();
+    expect(socket.url).not.toContain('companion=');
+
+    const request = lastRequest(socket);
+    expect(request.method).toBe('companions.list');
+    socket.serverSend({ id: request.id, result: { companions: [] } });
+    expect(await promise).toEqual([]);
+  });
+
+  it('sends the params an RPC method expects', async () => {
+    const promise = createCompanion({ name: 'Cobble', form: 'fox', temperament: 'curious' });
+    const socket = await liveSocket();
+    const request = lastRequest(socket);
+    expect(request.method).toBe('companions.create');
+    expect(request.params).toEqual({ name: 'Cobble', form: 'fox', temperament: 'curious' });
+    socket.serverSend({ id: request.id, result: { companion: { id: 'k1' } } });
+    expect((await promise).id).toBe('k1');
+  });
+
+  it('unwraps a wrapped agnostic result (getFood → food)', async () => {
+    const food = { ration: 10, spark: 10, treat: 10 };
+    const promise = getFood();
+    const socket = await liveSocket();
+    socket.serverSend({ id: lastRequest(socket).id, result: { food } });
+    expect(await promise).toEqual(food);
+  });
+
+  it('reuses the open socket for a second same-companion call', async () => {
+    const first = fetchMessages('c1');
+    const socket = await liveSocket();
+    socket.serverSend({ id: lastRequest(socket).id, result: { messages: [] } });
+    await first;
+
+    const opened = FakeWebSocket.instances.length;
+    const second = fetchBudget('c1');
+    await tick();
+    expect(FakeWebSocket.instances.length).toBe(opened); // no reconnect
+    socket.serverSend({ id: lastRequest(socket).id, result: { stamina: {}, energy: {} } });
+    await second;
   });
 });
 
-/**
- * Pins the SSE frame parser in `sendMessage`. The server writes
- * `data: <json>\n\n` per event (packages/api/src/sse.ts), so the parser splits
- * on the `\n\n` frame boundary and carries any partial trailing frame across
- * reads. These tests fake `fetch` with a `ReadableStream`-backed body and assert
- * the decoded event sequence and the boundary/malformed-frame contract.
- */
-describe('sendMessage SSE parser', () => {
-  beforeEach(() => {
-    setAccessTokenGetter(async () => 'tok');
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    setAccessTokenGetter(async () => null);
-  });
-
-  /** Builds a fake fetch whose response body streams the given UTF-8 chunks. */
-  function stubFetchStreaming(chunks: readonly string[]): void {
-    const encoder = new TextEncoder();
-    let index = 0;
-    const reader = {
-      read: async (): Promise<ReadableStreamReadResult<Uint8Array>> => {
-        if (index >= chunks.length) return { done: true, value: undefined };
-        const chunk = chunks[index]!;
-        index += 1;
-        return { done: false, value: encoder.encode(chunk) };
-      },
-    };
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => ({
-        ok: true,
-        body: { getReader: () => reader },
-      })),
-    );
-  }
-
-  async function collect(): Promise<ChatStreamEvent[]> {
+describe('streaming methods', () => {
+  async function collect(stream: AsyncGenerator<ChatStreamEvent>): Promise<ChatStreamEvent[]> {
     const events: ChatStreamEvent[] = [];
-    for await (const event of sendMessage('companion-1', 'hi')) {
-      events.push(event);
-    }
+    for await (const event of stream) events.push(event);
     return events;
   }
 
-  it('parses multiple events delivered in a single chunk', async () => {
-    stubFetchStreaming([
-      'data: {"type":"token","value":"He"}\n\n' + 'data: {"type":"token","value":"llo"}\n\n',
-    ]);
+  it('yields each streamed chunk then ends on the terminal result', async () => {
+    const events: ChatStreamEvent[] = [];
+    const done = (async () => {
+      for await (const event of sendMessage('c1', 'hi')) events.push(event);
+    })();
+    const socket = await liveSocket();
+    const { id, method } = lastRequest(socket);
+    expect(method).toBe('messages.send');
 
-    const events = await collect();
+    socket.serverSend({ id, stream: { type: 'token', value: 'He' } });
+    socket.serverSend({ id, stream: { type: 'token', value: 'llo' } });
+    socket.serverSend({ id, result: { done: true } });
+    await done;
 
     expect(events).toEqual([
       { type: 'token', value: 'He' },
@@ -121,181 +183,23 @@ describe('sendMessage SSE parser', () => {
     ]);
   });
 
-  it('carries a frame split across two reads (buffer carry)', async () => {
-    // The first read ends mid-frame; the parser must hold the partial line in
-    // its buffer and only emit once the `\n\n` boundary arrives in read two.
-    stubFetchStreaming(['data: {"type":"to', 'ken","value":"split"}\n\n']);
-
-    const events = await collect();
-
-    expect(events).toEqual([{ type: 'token', value: 'split' }]);
-  });
-
-  it('parses a newline-terminated final done frame', async () => {
-    stubFetchStreaming([
-      'data: {"type":"token","value":"done"}\n\n' +
-        'data: {"type":"done","message":{"id":"m9","companionId":"companion-1","role":"assistant","content":"done","createdAt":"2026-01-03T00:00:03.000Z"}}\n\n',
-    ]);
-
-    const events = await collect();
-
-    expect(events).toEqual([
-      { type: 'token', value: 'done' },
-      {
-        type: 'done',
-        message: {
-          id: 'm9',
-          companionId: 'companion-1',
-          role: 'assistant',
-          content: 'done',
-          createdAt: '2026-01-03T00:00:03.000Z',
-        },
-      },
-    ]);
-  });
-
-  it('drops a trailing frame that is not newline-terminated (contract pin)', async () => {
-    // Per the server contract every frame ends with `\n\n`; a trailing fragment
-    // without that boundary is held in the buffer and never emitted, rather than
-    // being parsed as a partial event.
-    stubFetchStreaming([
-      'data: {"type":"token","value":"kept"}\n\n' + 'data: {"type":"token","value":"dropped"}',
-    ]);
-
-    const events = await collect();
-
-    expect(events).toEqual([{ type: 'token', value: 'kept' }]);
-  });
-
-  it('throws out of the generator on a malformed data frame (contract pin)', async () => {
-    // A malformed JSON payload makes JSON.parse throw; the parser does not skip
-    // it. The thrown error propagates to the caller, which surfaces it in the UI.
-    stubFetchStreaming(['data: {not json}\n\n']);
-
-    await expect(collect()).rejects.toThrow();
+  it('throws out of the stream on a terminal error frame (confirmProposal)', async () => {
+    const promise = collect(confirmProposal('c1', 'p1'));
+    const socket = await liveSocket();
+    const { id } = lastRequest(socket);
+    socket.serverSend({
+      id,
+      error: { message: 'Cobble is out of stamina for now. Feed it a Ration to continue.' },
+    });
+    await expect(promise).rejects.toThrow('Cobble is out of stamina for now');
   });
 });
 
-/**
- * The confirm endpoint streams SSE on success but returns a plain JSON error on a
- * non-2xx (e.g. 429 over-cap, 409 no-longer-pending). `send()` must surface the
- * server's `error` body verbatim — not a generic `request failed (NNN)` — so the
- * UI can show the user why the action was held (review H1).
- */
-describe('confirmProposal error surfacing', () => {
-  beforeEach(() => {
-    setAccessTokenGetter(async () => 'tok');
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    setAccessTokenGetter(async () => null);
-  });
-
-  function stubErrorResponse(status: number, error: string): void {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => ({
-        ok: false,
-        status,
-        json: async () => ({ error }),
-      })),
-    );
-  }
-
-  it('throws the server body on a 429 out-of-stamina (not the status code)', async () => {
-    stubErrorResponse(429, 'Cobble is out of stamina for now. Feed it a Ration to continue.');
-    await expect(confirmProposal('companion-1', 'p1').next()).rejects.toThrow(
-      'Cobble is out of stamina for now. Feed it a Ration to continue.',
-    );
-  });
-
-  it('throws the server body on a 409 no-longer-pending proposal', async () => {
-    stubErrorResponse(409, 'proposal is no longer pending');
-    await expect(confirmProposal('companion-1', 'p1').next()).rejects.toThrow(
-      'proposal is no longer pending',
-    );
-  });
-});
-
-/**
- * The Phase 4 vitality methods: each drives the right verb/URL/payload through
- * `send` and unwraps the response shape the surface expects (the meter, the dial,
- * the fire-and-forget heartbeat). The generic send mechanics are pinned above.
- */
-describe('phase 4 budget/dial/heartbeat methods', () => {
-  let fetchMock: ReturnType<typeof vi.fn>;
-
-  const BUDGET: StaminaEnergyDto = {
-    stamina: { balanceTokens: 900_000 },
-    energy: { balanceTokens: 800_000 },
-  };
-
-  const FOOD: FoodInventoryDto = { ration: 10, spark: 10, treat: 10 };
-
-  beforeEach(() => {
-    setAccessTokenGetter(async () => 'tok');
-    fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    setAccessTokenGetter(async () => null);
-  });
-
-  it('GETs the budget meter and returns the parsed DTO', async () => {
-    fetchMock.mockResolvedValue({ ok: true, json: async () => BUDGET });
-    const budget = await fetchBudget('c1');
-    expect(budget).toEqual(BUDGET);
-    expect(fetchMock.mock.calls[0]![0]).toContain('/companions/c1/budget');
-  });
-
-  it('GETs the user food pantry and unwraps the food field', async () => {
-    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ food: FOOD }) });
-    const food = await getFood();
-    expect(food).toEqual(FOOD);
-    expect(fetchMock.mock.calls[0]![0]).toContain('/food');
-  });
-
-  it('PATCHes the proactivity dial and unwraps the dial field', async () => {
-    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ dial: 'active' }) });
-    const dial = await setProactivityDial('c1', 'active');
-    expect(dial).toBe('active');
-    const [url, init] = fetchMock.mock.calls[0]!;
-    expect(url).toContain('/companions/c1/proactivity');
-    expect(init.method).toBe('PATCH');
-    expect(JSON.parse(init.body as string)).toEqual({ dial: 'active' });
-  });
-
-  it('POSTs a heartbeat carrying the live tab visibility', async () => {
-    fetchMock.mockResolvedValue({ ok: true, json: async () => ({}) });
-    await sendHeartbeat('c1', false);
-    const [url, init] = fetchMock.mock.calls[0]!;
-    expect(url).toContain('/companions/c1/heartbeat');
-    expect(init.method).toBe('POST');
-    expect(JSON.parse(init.body as string)).toEqual({ tabVisible: false });
-  });
-});
-
-/**
- * The standing event-channel subscription (architecture.md §6): yields the pushed
- * `{ type: 'message' }` rows, skips `: ping` heartbeat comments, and treats an
- * abort as a clean stop rather than an error (the caller owns reconnect).
- */
-describe('subscribeCompanionEvents event channel', () => {
-  beforeEach(() => {
-    setAccessTokenGetter(async () => 'tok');
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    setAccessTokenGetter(async () => null);
-  });
-
+describe('subscribeCompanionEvents live channel', () => {
   function row(id: string): MessageDto {
     return {
       id,
-      companionId: 'companion-1',
+      companionId: 'c1',
       role: 'assistant',
       content: `row ${id}`,
       kind: 'message',
@@ -304,39 +208,24 @@ describe('subscribeCompanionEvents event channel', () => {
     };
   }
 
-  /** Fake fetch whose body streams the given UTF-8 chunks, then ends. */
-  function stubChannel(chunks: readonly string[]): void {
-    const encoder = new TextEncoder();
-    let index = 0;
-    const reader = {
-      read: async (): Promise<ReadableStreamReadResult<Uint8Array>> => {
-        if (index >= chunks.length) return { done: true, value: undefined };
-        const chunk = chunks[index]!;
-        index += 1;
-        return { done: false, value: encoder.encode(chunk) };
-      },
-    };
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => ({ ok: true, body: { getReader: () => reader } })),
-    );
-  }
-
-  it('yields message and reaction events, ignoring heartbeat comments', async () => {
-    stubChannel([
-      ': ping\n\n',
-      `data: ${JSON.stringify({ type: 'message', message: row('m1') })}\n\n`,
-      ': ping\n\n' +
-        `data: ${JSON.stringify({ type: 'reaction_added', messageId: 'm1', reactor: 'user', emoji: '❤️' })}\n\n`,
-    ]);
-
+  it('yields pushed companion events, ignoring other server frames', async () => {
+    const controller = new AbortController();
     const got: CompanionStreamEvent[] = [];
-    for await (const event of subscribeCompanionEvents(
-      'companion-1',
-      new AbortController().signal,
-    )) {
-      got.push(event);
-    }
+    const done = (async () => {
+      for await (const event of subscribeCompanionEvents('c1', controller.signal)) {
+        got.push(event);
+        if (got.length === 2) controller.abort();
+      }
+    })();
+    const socket = await liveSocket();
+
+    socket.serverSend({ event: 'companion', data: { type: 'message', message: row('m1') } });
+    socket.serverSend({ id: 'rX', result: { ignored: true } }); // a stray reply: ignored
+    socket.serverSend({
+      event: 'companion',
+      data: { type: 'reaction_added', messageId: 'm1', reactor: 'user', emoji: '❤️' },
+    });
+    await done;
 
     expect(got).toEqual([
       { type: 'message', message: row('m1') },
@@ -344,99 +233,86 @@ describe('subscribeCompanionEvents event channel', () => {
     ]);
   });
 
-  it('GETs the events endpoint with the abort signal', async () => {
-    stubChannel([]); // empty stream → the generator connects, yields nothing, ends
-    const controller = new AbortController();
-    const got: CompanionStreamEvent[] = [];
-    for await (const event of subscribeCompanionEvents('companion-1', controller.signal)) {
-      got.push(event);
-    }
-    expect(got).toEqual([]);
-    const [url, init] = vi.mocked(fetch).mock.calls[0]!;
-    expect(url).toContain('/companions/companion-1/events');
-    expect(init?.method).toBe('GET');
-    expect(init?.signal).toBe(controller.signal);
-  });
-
-  it('ends quietly when the connect is aborted (no throw)', async () => {
+  it('ends quietly when aborted before connect', async () => {
     const controller = new AbortController();
     controller.abort();
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => {
-        throw new DOMException('aborted', 'AbortError');
-      }),
-    );
-
     const got: CompanionStreamEvent[] = [];
-    for await (const event of subscribeCompanionEvents('companion-1', controller.signal)) {
+    for await (const event of subscribeCompanionEvents('c1', controller.signal)) {
       got.push(event);
     }
     expect(got).toEqual([]);
   });
 
-  it('ends quietly when aborted mid-stream after delivering events', async () => {
+  it('ends quietly when the socket drops mid-stream', async () => {
     const controller = new AbortController();
-    const encoder = new TextEncoder();
-    let reads = 0;
-    const reader = {
-      read: async (): Promise<ReadableStreamReadResult<Uint8Array>> => {
-        reads += 1;
-        if (reads === 1) {
-          const frame = `data: ${JSON.stringify({ type: 'message', message: row('m1') })}\n\n`;
-          return { done: false, value: encoder.encode(frame) };
-        }
-        // The consumer aborted after m1; the underlying fetch read now rejects.
-        throw new DOMException('aborted', 'AbortError');
-      },
-    };
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => ({ ok: true, body: { getReader: () => reader } })),
-    );
-
     const got: CompanionStreamEvent[] = [];
-    for await (const event of subscribeCompanionEvents('companion-1', controller.signal)) {
-      got.push(event);
-      controller.abort(); // unmount after the first event → next read throws AbortError
-    }
+    const done = (async () => {
+      for await (const event of subscribeCompanionEvents('c1', controller.signal)) {
+        got.push(event);
+      }
+    })();
+    const socket = await liveSocket();
+    socket.serverSend({ event: 'companion', data: { type: 'message', message: row('m1') } });
+    await tick();
+    socket.close(1006); // connection dropped
+    await done;
     expect(got).toHaveLength(1);
   });
 });
 
-describe('reaction calls', () => {
-  beforeEach(() => {
-    setAccessTokenGetter(async () => 'tok');
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    setAccessTokenGetter(async () => null);
-  });
+describe('superseded handoff', () => {
+  it('fires the moved listener and stops reconnecting until reclaim', async () => {
+    let moved = 0;
+    const off = onEmbodimentMoved(() => {
+      moved += 1;
+    });
 
-  function stubOk(): void {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => ({ ok: true, json: async () => ({ ok: true }) })),
+    // Establish a socket, then have the server supersede it (and close 4002).
+    const promise = fetchMessages('c1');
+    const socket = await liveSocket();
+    socket.serverSend({ id: lastRequest(socket).id, result: { messages: [] } });
+    await promise;
+
+    socket.serverSend({ event: 'embodiment.superseded', data: { companionId: 'c1' } });
+    socket.close(4002);
+    expect(moved).toBe(1);
+
+    // A call while yielded fails fast (no reconnect, no claim war).
+    const opened = FakeWebSocket.instances.length;
+    await expect(fetchBudget('c1')).rejects.toThrow(/another window/);
+    expect(FakeWebSocket.instances.length).toBe(opened);
+
+    // Reclaiming clears the yield: the next call reconnects and force-claims.
+    reclaimEmbodiment();
+    const next = fetchBudget('c1');
+    const reconnected = await liveSocket();
+    expect(FakeWebSocket.instances.length).toBe(opened + 1);
+    reconnected.serverSend({
+      id: lastRequest(reconnected).id,
+      result: { stamina: {}, energy: {} },
+    });
+    await next;
+    off();
+  });
+});
+
+describe('file upload stays HTTP', () => {
+  it('POSTs multipart with the bearer header and returns the intake', async () => {
+    const intake = { source: { id: 's1' }, job: { id: 'j1' }, messages: [] };
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => intake }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const file = new File(['hello'], 'note.txt', { type: 'text/plain' });
+    const result = await uploadFileSource('c1', file);
+
+    expect(result).toEqual(intake);
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toContain('/companions/c1/sources/file');
+    expect((init as RequestInit).method).toBe('POST');
+    expect(((init as RequestInit).headers as Record<string, string>).authorization).toBe(
+      'Bearer tok',
     );
-  }
-
-  it('POSTs the emoji to add a reaction', async () => {
-    stubOk();
-    await addReaction('companion-1', 'm1', '🎉');
-    const [url, init] = vi.mocked(fetch).mock.calls[0]!;
-    expect(url).toContain('/companions/companion-1/messages/m1/reactions');
-    expect(init?.method).toBe('POST');
-    expect(JSON.parse(init?.body as string)).toEqual({ emoji: '🎉' });
-  });
-
-  it('DELETEs a URL-encoded emoji to remove a reaction', async () => {
-    stubOk();
-    // A multi-codepoint emoji (U+2764 U+FE0F) must be percent-encoded in the path.
-    await removeReaction('companion-1', 'm1', '❤️');
-    const [url, init] = vi.mocked(fetch).mock.calls[0]!;
-    expect(url).toContain(
-      `/companions/companion-1/messages/m1/reactions/${encodeURIComponent('❤️')}`,
-    );
-    expect(init?.method).toBe('DELETE');
+    // No FakeWebSocket was opened for the upload path.
+    expect(FakeWebSocket.instances).toHaveLength(0);
   });
 });

@@ -77,6 +77,10 @@ vi.mock('../api/client.js', () => ({
   ),
   addReaction: vi.fn(() => Promise.resolve()),
   removeReaction: vi.fn(() => Promise.resolve()),
+  // The room-handoff hooks (D6): a no-op listener + reclaim so the "moved to
+  // another window" banner never shows unless a test drives it.
+  onEmbodimentMoved: vi.fn(() => () => undefined),
+  reclaimEmbodiment: vi.fn(),
   // The ingestion-status hook polls these; default to empty so the header badge
   // and panel stay quiet unless a test opts in.
   listSources: vi.fn(() => Promise.resolve([])),
