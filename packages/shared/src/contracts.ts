@@ -219,25 +219,31 @@ export type IngestionStatus =
   | 'failed';
 
 /**
- * Background job-queue types (deliver-scalability.md §5.1, Phase B). The queue
- * serialises a companion's off-request-path work fleet-wide via a leased
- * per-companion claim. Phase B covers the companion-keyed runners that had the
- * duplicate-sweep / racing-write problems; ingestion keeps its own durable table
- * until the Phase D upload split makes its byte payload durable.
+ * Background job-queue types (deliver-scalability.md §5.1). The queue serialises a
+ * companion's off-request-path work fleet-wide via a leased per-companion claim.
+ * `consolidate`/`motivation`/`reaction_learn` are companion- or event-keyed;
+ * `ingest` reads an uploaded source (its bytes are staged in `upload_staging`, so
+ * the payload carries only references — never the bytes).
  */
-export type JobType = 'consolidate' | 'motivation' | 'reaction_learn';
+export type JobType = 'consolidate' | 'motivation' | 'reaction_learn' | 'ingest';
 
 /** Terminal-or-pending lifecycle of a queued job. */
 export type JobStatus = 'pending' | 'done' | 'failed';
 
 /**
  * Type-specific job reference — never bulk data. `reaction_learn` carries the
- * reacted message id + emoji (the learner re-reads the message); `consolidate`
- * and `motivation` need only the companion id, so their payload is empty.
+ * reacted message id + emoji (the learner re-reads the message); `ingest` carries
+ * the source + ingestion-job ids and, for a fresh run, the `upload_staging` id
+ * holding the bytes (absent when resuming a deferred job, whose parsed doc lives on
+ * the ingestion job); `consolidate` and `motivation` need only the companion id, so
+ * their payload is empty.
  */
 export interface JobPayload {
   readonly messageId?: string;
   readonly emoji?: string;
+  readonly sourceId?: string;
+  readonly jobId?: string;
+  readonly uploadId?: string;
 }
 
 /** A source the user fed the companion (the verbatim text is fetched on demand). */

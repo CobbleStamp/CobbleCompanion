@@ -4,9 +4,8 @@
  * listing, drill-in, progress, and owner scoping.
  */
 
-import { IngestionQueueFullError, IngestionRunner } from '@cobble/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { makeTestApp, silentLogger, type TestApp } from '../test/helpers.js';
+import { makeTestApp, type TestApp } from '../test/helpers.js';
 
 const ABSENT_UUID = '00000000-0000-0000-0000-000000000000';
 
@@ -45,7 +44,7 @@ describe('source routes', () => {
     expect(source.title).toBe('Peru notes');
     expect(job.status).toBe('queued');
 
-    await ctx.deps.ingestion.whenIdle();
+    await ctx.deps.ingest.whenIdle();
     const progress = await ctx.app.inject({
       method: 'GET',
       url: `/companions/${companionId}/ingestion`,
@@ -86,7 +85,7 @@ describe('source routes', () => {
     expect(source.kind).toBe('link');
     expect(source.origin).toBe('https://example.com/ceviche');
     // The live fetch fails in tests; the job must land as failed, not hang.
-    await ctx.deps.ingestion.whenIdle();
+    await ctx.deps.ingest.whenIdle();
     const progress = await ctx.app.inject({
       method: 'GET',
       url: `/companions/${companionId}/ingestion`,
@@ -103,7 +102,7 @@ describe('source routes', () => {
       payload: { title: 'Doomed', text: 'Gone soon.\n\nReally.' },
     });
     const sourceId = created.json().source.id;
-    await ctx.deps.ingestion.whenIdle();
+    await ctx.deps.ingest.whenIdle();
 
     // A different owner cannot reach this companion's source.
     const intruder = ctx.bearerFor('intruder@example.com');
@@ -179,7 +178,7 @@ describe('source routes', () => {
     expect(job.status).toBe('queued');
 
     // Corrupt bytes: ingestion must fail safely with a user-safe error.
-    await ctx.deps.ingestion.whenIdle();
+    await ctx.deps.ingest.whenIdle();
     const progress = await ctx.app.inject({
       method: 'GET',
       url: `/companions/${companionId}/ingestion`,
@@ -202,7 +201,7 @@ describe('source routes', () => {
     expect(res.json().source.kind).toBe('txt');
     expect(res.json().source.title).toBe('peru-notes');
 
-    await ctx.deps.ingestion.whenIdle();
+    await ctx.deps.ingest.whenIdle();
     const progress = await ctx.app.inject({
       method: 'GET',
       url: `/companions/${companionId}/ingestion`,
@@ -343,7 +342,7 @@ describe('source routes', () => {
       headers: auth,
       payload: { title: 'Peru notes', text: 'Ceviche is cured with lime.' },
     });
-    await ctx.deps.ingestion.whenIdle();
+    await ctx.deps.ingest.whenIdle();
 
     const list = await ctx.app.inject({
       method: 'GET',
@@ -431,51 +430,9 @@ describe('source routes', () => {
     }
   });
 
-  it('marks the job failed when the queue fills between the up-front check and enqueue', async () => {
-    // Fault-injected runner: reports capacity up front but is full by the time
-    // the route enqueues — the race the route's catch path exists for.
-    class RacingRunner extends IngestionRunner {
-      override isFull(): boolean {
-        return false;
-      }
-      override enqueue(): void {
-        throw new IngestionQueueFullError();
-      }
-    }
-    const racing = await makeTestApp(undefined, undefined, {
-      ingestion: new RacingRunner({ run: () => Promise.resolve() }, silentLogger),
-    });
-    try {
-      const ownerAuth = racing.bearerFor('owner@example.com');
-      const made = await racing.app.inject({
-        method: 'POST',
-        url: '/companions',
-        headers: ownerAuth,
-        payload: { name: 'Pebble', form: 'fox', temperament: 'curious' },
-      });
-      const id = made.json().companion.id;
-
-      const res = await racing.app.inject({
-        method: 'POST',
-        url: `/companions/${id}/sources/note`,
-        headers: ownerAuth,
-        payload: { title: 'Note', text: 'Body text.' },
-      });
-      expect(res.statusCode).toBe(429);
-      expect(res.json().error).toMatch(/busy reading/);
-
-      // The decline is recorded as data, never a stuck `queued` job.
-      const progress = await racing.app.inject({
-        method: 'GET',
-        url: `/companions/${id}/ingestion`,
-        headers: ownerAuth,
-      });
-      const { jobs } = progress.json();
-      expect(jobs).toHaveLength(1);
-      expect(jobs[0].status).toBe('failed');
-      expect(jobs[0].error).toMatch(/busy reading/);
-    } finally {
-      await racing.close();
-    }
-  });
+  // Backpressure is now an up-front, fleet-wide pending-`ingest`-count check
+  // (deliver-scalability.md §6 D-A): the durable enqueue never rejects on depth, so
+  // the old "enqueue races to full and the route marks the job failed" path is gone
+  // (a rare concurrent overrun past the gate is an accepted soft overshoot, like the
+  // vitality gate). The cap-0 test above covers the up-front rejection.
 });

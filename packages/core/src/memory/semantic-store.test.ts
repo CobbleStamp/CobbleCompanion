@@ -111,6 +111,7 @@ describe('DrizzleSemanticMemoryStore', () => {
   let close: () => Promise<void>;
   let companionId: string;
   let otherCompanionId: string;
+  let ownerId: string;
 
   beforeEach(async () => {
     const created = await createTestDatabase();
@@ -118,6 +119,7 @@ describe('DrizzleSemanticMemoryStore', () => {
     store = new DrizzleSemanticMemoryStore(created.db);
     const identity = new DrizzleIdentityStore(created.db);
     const user = await identity.ensureUserByEmail('owner@example.com');
+    ownerId = user.id;
     const companion = await identity.createCompanion(user.id, {
       name: 'Pebble',
       form: 'fox',
@@ -429,31 +431,41 @@ describe('DrizzleSemanticMemoryStore', () => {
     expect((await store.counts(companionId)).facts).toBe(0);
   });
 
-  it('claims a deferred job exactly once', async () => {
+  it('returns the run context for a fresh job (status + source title + owner)', async () => {
+    const source = await store.createSource(companionId, {
+      kind: 'note',
+      title: 'Fresh',
+      rawText: '',
+    });
+    const job = await store.createJob(companionId, source.id);
+    const ctx = await store.getRunContext(job.id);
+    expect(ctx).toMatchObject({
+      companionId,
+      sourceId: source.id,
+      sourceTitle: 'Fresh',
+      ownerId,
+      status: 'queued',
+      parsedDoc: null,
+    });
+  });
+
+  it('surfaces the held parse for a deferred job in its run context', async () => {
     const source = await store.createSource(companionId, {
       kind: 'note',
       title: 'Parked',
       rawText: 'held',
     });
     const job = await store.createJob(companionId, source.id);
-    await store.updateJob(job.id, { status: 'deferred' });
+    const parsedDoc = { rawText: 'held', paragraphs: [{ ord: 1, text: 'held' }] };
+    await store.updateJob(job.id, { status: 'deferred', parsedDoc });
 
-    // The first claim wins and flips the job out of `deferred`; a racing second
-    // claim sees a non-deferred job and loses, so it is never resumed twice.
-    expect(await store.claimDeferredJob(job.id)).toBe(true);
-    expect(await store.claimDeferredJob(job.id)).toBe(false);
-    const [claimed] = await store.listJobs(companionId);
-    expect(claimed?.status).toBe('queued');
+    const ctx = await store.getRunContext(job.id);
+    expect(ctx?.status).toBe('deferred');
+    expect(ctx?.parsedDoc).toEqual(parsedDoc);
   });
 
-  it('refuses to claim a job that is not deferred', async () => {
-    const source = await store.createSource(companionId, {
-      kind: 'note',
-      title: 'Active',
-      rawText: 'x',
-    });
-    const job = await store.createJob(companionId, source.id); // status: 'queued'
-    expect(await store.claimDeferredJob(job.id)).toBe(false);
+  it('returns null run context for a missing job', async () => {
+    expect(await store.getRunContext('00000000-0000-0000-0000-000000000000')).toBeNull();
   });
 
   it('deletes a source within its companion scope, cascading its job', async () => {

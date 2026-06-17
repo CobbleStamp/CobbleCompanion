@@ -11,7 +11,7 @@ import type {
   GrowthStore,
   Harness,
   IdentityStore,
-  IngestionRunner,
+  IngestWorkRequester,
   LeadStore,
   Logger,
   MemoryStore,
@@ -22,6 +22,7 @@ import type {
   ReactionStore,
   ReactionWorkRequester,
   SemanticMemoryStore,
+  UploadStagingStore,
   ToolCallLog,
   ToolRegistry,
   UserModelStore,
@@ -75,7 +76,11 @@ export interface AppDeps {
   readonly semantic: SemanticMemoryStore;
   readonly episodic: EpisodicMemoryStore;
   readonly embeddings: EmbeddingGateway;
-  readonly ingestion: IngestionRunner;
+  /** Durable byte staging for the two-part upload (deliver-scalability.md §6 D-A). */
+  readonly staging: UploadStagingStore;
+  /** Enqueues `ingest` jobs (with fleet-wide backpressure) — the durable successor
+   *  to the in-process IngestionRunner. */
+  readonly ingest: IngestWorkRequester;
   /** Off-request episodic reflection — the message route requests it post-turn. */
   readonly consolidation: CompanionWorkRequester;
   readonly harness: Harness;

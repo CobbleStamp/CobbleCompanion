@@ -62,6 +62,8 @@ export interface JobQueue {
   releaseClaim(companionId: string, owner: string): Promise<void>;
   /** Count of pending jobs that are due now — observability + poll wake. */
   duePendingCount(): Promise<number>;
+  /** Count of pending jobs of a type (any run_at) — fleet-wide backpressure (ingest). */
+  pendingCountByType(type: JobType): Promise<number>;
 }
 
 /** The dedupe key for a `reaction_learn` job — one per distinct reaction. */
@@ -236,6 +238,14 @@ export class DrizzleJobQueue implements JobQueue {
       .select({ n: sql<number>`count(*)::int` })
       .from(jobs)
       .where(and(eq(jobs.status, 'pending'), lte(jobs.runAt, sql`now()`)));
+    return rows[0]?.n ?? 0;
+  }
+
+  async pendingCountByType(type: JobType): Promise<number> {
+    const rows = await this.db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(jobs)
+      .where(and(eq(jobs.status, 'pending'), eq(jobs.type, type)));
     return rows[0]?.n ?? 0;
   }
 }

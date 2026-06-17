@@ -18,6 +18,7 @@ import {
 } from '@cobble/shared';
 import {
   IngestionQueueFullError,
+  ingestionPayloadBytes,
   looksBinary,
   type IngestionPayload,
   type JobRecord,
@@ -85,22 +86,24 @@ export function registerSourceRoutes(
   deps: AppDeps,
   requireAuth: RequireAuth,
 ): void {
-  const { identity, memory, semantic, ingestion, logger } = deps;
+  const { identity, memory, semantic, staging, ingest, logger } = deps;
   // Intake routes share the auth preHandler; over-cap uploads are accepted and
   // deferred by the pipeline rather than rejected up front (architecture.md §4.8).
   const ingestPreHandlers = [requireAuth];
 
-  /** Create the source + job and hand the payload to the background runner. */
+  /**
+   * Create the source + job, stage the payload bytes durably, and enqueue the
+   * `ingest` job that reads them on any node (deliver-scalability.md §6 D-A).
+   * Backpressure is fleet-wide (pending `ingest` job count), checked before any
+   * write; the queue is the hard invariant for the rare race past this check.
+   */
   async function enqueue(
     companionId: string,
     ownerId: string,
     input: { kind: SourceDto['kind']; title: string; origin?: string; byteSize?: number },
     payload: IngestionPayload,
   ): Promise<{ source: SourceDto; job: IngestionJobDto }> {
-    // Backstop against unbounded queue growth. Reject before any DB write on
-    // the common path; the runner's own cap is the hard invariant for the rare
-    // race where concurrent requests pass this check before enqueuing.
-    if (ingestion.isFull()) {
+    if (await ingest.isFull()) {
       throw tooManyRequests(new IngestionQueueFullError().message);
     }
     const source = await semantic.createSource(companionId, {
@@ -112,23 +115,9 @@ export function registerSourceRoutes(
       ...(input.byteSize !== undefined ? { byteSize: input.byteSize } : {}),
     });
     const job = await semantic.createJob(companionId, source.id);
-    try {
-      ingestion.enqueue({
-        companionId,
-        ownerId,
-        sourceId: source.id,
-        jobId: job.id,
-        sourceTitle: source.title,
-        payload,
-      });
-    } catch (error) {
-      if (error instanceof IngestionQueueFullError) {
-        // Don't leave a stuck job behind: record the decline as data.
-        await semantic.updateJob(job.id, { status: 'failed', error: error.message });
-        throw tooManyRequests(error.message);
-      }
-      throw error;
-    }
+    const { kind, bytes } = ingestionPayloadBytes(payload);
+    const { id: uploadId } = await staging.stage({ ownerId, kind, bytes });
+    ingest.request({ companionId, sourceId: source.id, jobId: job.id, uploadId });
     return { source: toSourceDto(source), job: toJobDto(job) };
   }
 

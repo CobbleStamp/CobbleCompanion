@@ -12,7 +12,7 @@ import { createTestDatabase } from '@cobble/db/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Logger } from '../logging.js';
 import { DrizzleIdentityStore } from '../identity/store.js';
-import type { IngestionTarget } from '../ingestion/runner.js';
+import type { IngestionTarget } from '../ingestion/pipeline.js';
 import type { IngestionRunParams } from '../ingestion/pipeline.js';
 import { FakeLlmGateway } from '../llm/fake.js';
 import { TranscriptMemoryStore } from '../memory/store.js';

@@ -27,7 +27,7 @@ import {
   type DriveWeights,
   type IngestionStatus,
 } from '@cobble/shared';
-import type { IngestionTarget } from '../ingestion/runner.js';
+import type { IngestionTarget } from '../ingestion/pipeline.js';
 import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import type { SectionRecord } from '../memory/semantic-store.js';

@@ -611,15 +611,10 @@ offenders, and need their own refactors.
   of the production path; their work flows through the durable queue; single-node
   behavior unchanged.
 
-**Deferred from Phase B (tracked):**
-- **`ingest`** — its in-memory payload is file *bytes*; a DB-backed queue needs them
-  durable on any node, which is exactly the Phase D two-part upload (Q3). Ingestion
-  also isn't an N-times offender (an upload lands on one node, runs once). Folds
-  into Phase D.
-- **`reaction_learn`** — per-event; needs an awaitable `ReactionLearner` refactor +
-  message reconstruction. Until done, the `driveWeights` write from a reaction
-  stays a (documented) race; the motivation-driven `driveWeights` write *is* now
-  claim-serialised. Follow-on.
+**Deferred from Phase B → delivered in Phase D D-A:**
+- **`reaction_learn`** and **`ingest`** were deferred from the initial Phase B PR and
+  are now on the queue (see Phase D **D-A** below). The `driveWeights`-from-reaction
+  race is closed; the in-memory `IngestionRunner` is gone.
 
 ### Phase C — Problems 3 & 4 *(overlaps B's tail)* — NOT STARTED (deployment-time)
 
@@ -660,7 +655,16 @@ multi-node). The queue exposes `duePendingCount()` as a first observability hook
   Phase D PR is **based on the Phase B branch** (stacked) so its diff is clean while
   PR #22 is still open.
 
-#### D-A — Finish Phase B: two-part upload + `ingest` & `reaction_learn` on the queue *(ships single-node)*
+#### D-A — Finish Phase B: two-part upload + `ingest` & `reaction_learn` on the queue *(ships single-node)* — ✅ DELIVERED
+
+**Delivered (commits on `feat/ws-embodiment`).** `reaction_learn` (D-A.1) and `ingest`
+(D-A.2) now run as durable, claim-serialised jobs; the in-memory `IngestionRunner`
+and the deferred-job sweeper are removed; uploads stage bytes in `upload_staging`
+and the `ingest` job reads them on any node. All four background paths
+(`consolidate`, `motivation`, `reaction_learn`, `ingest`) flow through the queue.
+Backpressure is a fleet-wide pending-`ingest` count; deferred jobs resume via
+`sweepIngestion` (handler reads the held parse). Suite green (core 972, api 271).
+
 
 - **Schema.** `upload_staging` (`id`, `owner_id` → users, `bytes bytea`,
   `byte_size`, `kind`, `expires_at`, `created_at`). Extend `JobType` with `ingest`;

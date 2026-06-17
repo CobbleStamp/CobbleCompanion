@@ -31,8 +31,9 @@ export {
 export {
   createIngestSourceTool,
   type IngestSourceOptions,
-  type IngestionEnqueuePort,
+  type IngestEnqueuePort,
   type SourceRegistrationPort,
+  type UploadStagingPort,
 } from './tools/ingest-source.js';
 
 // MCP tool acquisition (companion-tools.md — Phase 9): a whitelisted catalog the
@@ -180,8 +181,11 @@ export {
 export {
   JobProcessorPool,
   makeCompanionWorkRequester,
+  makeIngestWorkRequester,
   makeReactionWorkRequester,
   type CompanionWorkRequester,
+  type IngestRequest,
+  type IngestWorkRequester,
   type ReactionWorkRequester,
   type JobHandler,
   type JobHandlers,
@@ -206,6 +210,7 @@ export {
   DrizzleSemanticMemoryStore,
   type CreateSourceInput,
   type DeferredJob,
+  type IngestionRunContext,
   type JobPatch,
   type JobRecord,
   type NewFact,
@@ -558,23 +563,31 @@ export {
   type HttpLinkResolverOptions,
 } from './ingestion/link-resolver.js';
 export {
-  IngestionQueueFullError,
-  IngestionRunner,
-  type IngestionTarget,
-} from './ingestion/runner.js';
-export {
   IngestionPipeline,
   type IngestionPayload,
   type IngestionPipelineOptions,
   type IngestionRunParams,
+  type IngestionTarget,
 } from './ingestion/pipeline.js';
+export {
+  IngestionQueueFullError,
+  ingestionPayloadBytes,
+  makeIngestJobHandler,
+  type IngestJobDeps,
+} from './ingestion/ingest-job.js';
+export {
+  DrizzleUploadStagingStore,
+  type StagedUpload,
+  type StageUploadParams,
+  type UploadStagingStore,
+} from './ingestion/upload-staging.js';
+export { sweepIngestion, type IngestionSweepDeps } from './ingestion/ingest-sweep.js';
 export {
   LlmIngestionAnnouncer,
   type IngestionAnnouncer,
   type IngestionOutcome,
   type LlmIngestionAnnouncerOptions,
 } from './ingestion/announcer.js';
-export { resumeDeferredJobs, type DeferredSweepDeps } from './ingestion/deferred-sweeper.js';
 
 // Logging
 export { consoleLogger, type Logger } from './logging.js';

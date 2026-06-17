@@ -82,6 +82,23 @@ const tsvector = customType<{ data: string }>({
   },
 });
 
+/**
+ * Raw binary column (`bytea`) — holds a staged upload's bytes (see
+ * {@link uploadStaging}). The pg/PGlite drivers round-trip a Node `Buffer` /
+ * `Uint8Array`; we expose `Uint8Array` so callers don't depend on `Buffer`.
+ */
+const bytea = customType<{ data: Uint8Array; driverData: Buffer }>({
+  dataType() {
+    return 'bytea';
+  },
+  toDriver(value: Uint8Array): Buffer {
+    return Buffer.from(value);
+  },
+  fromDriver(value: Buffer): Uint8Array {
+    return new Uint8Array(value);
+  },
+});
+
 export const users = pgTable(
   'users',
   {
@@ -446,6 +463,37 @@ export const companionClaims = pgTable('companion_claims', {
   claimedUntil: timestamp('claimed_until', { withTimezone: true }).notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Two-part-upload staging (deliver-scalability.md §6 D-A). An upload's raw bytes
+ * are stored here durably so the `ingest` job that reads them can run on ANY node
+ * (the in-memory IngestionRunner queue couldn't survive a cross-node claim). The
+ * row is written when an intake route accepts a source and deleted by the `ingest`
+ * job once the pipeline has consumed it (parsing is free, so a deferred run keeps
+ * its parsed doc on {@link ingestionJobs}, not these bytes). `expires_at` is a GC
+ * backstop for an upload that was staged but never enqueued (only possible once the
+ * client-facing /uploads endpoint lands in Phase D D3); the consuming job is the
+ * normal delete path.
+ *
+ * `kind` is the full {@link SourceKind} so the job reconstructs the right
+ * `IngestionPayload`: file kinds carry document bytes; `note`/`link` carry their
+ * text / URL as UTF-8 bytes (uniform one-column staging).
+ */
+export const uploadStaging = pgTable(
+  'upload_staging',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    ownerId: uuid('owner_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    kind: text('kind').$type<SourceKind>().notNull(),
+    bytes: bytea('bytes').notNull(),
+    byteSize: integer('byte_size').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  },
+  (table) => [index('upload_staging_expires_idx').on(table.expiresAt)],
+);
 
 /**
  * Layer 1 — sections: the retrieval units. `original_text` is a PURE VERBATIM

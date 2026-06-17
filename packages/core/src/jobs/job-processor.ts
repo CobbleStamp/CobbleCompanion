@@ -196,6 +196,59 @@ export function makeCompanionWorkRequester(
   };
 }
 
+/** What an ingest trigger supplies — the source + job ids and (for a fresh run)
+ *  the staged-upload id holding the bytes. */
+export interface IngestRequest {
+  readonly companionId: string;
+  readonly sourceId: string;
+  readonly jobId: string;
+  /** Present for a fresh upload; absent when re-requesting a deferred resume. */
+  readonly uploadId?: string;
+}
+
+/** The trigger the intake routes + the `ingest_source` tool call. Owns the
+ *  fleet-wide backpressure check (queue depth vs the configured cap). */
+export interface IngestWorkRequester {
+  request(params: IngestRequest): void;
+  /** True when too many ingest jobs are already pending (maps to 429 / busy). */
+  isFull(): Promise<boolean>;
+  /** Drain the backing pool — for deterministic tests. */
+  whenIdle(): Promise<void>;
+}
+
+/**
+ * Adapt the pool + queue to the ingest trigger. Each source coalesces on its own
+ * `ingest:{sourceId}` key (a duplicate trigger dedupes; distinct sources don't
+ * collapse). `isFull` counts pending `ingest` jobs across the fleet — the durable
+ * replacement for the old in-process IngestionRunner depth cap.
+ */
+export function makeIngestWorkRequester(
+  pool: JobProcessorPool,
+  queue: JobQueue,
+  maxQueueDepth: number,
+): IngestWorkRequester {
+  return {
+    request(params: IngestRequest): void {
+      pool.enqueueAndNudge({
+        companionId: params.companionId,
+        type: 'ingest',
+        dedupeKey: `ingest:${params.sourceId}`,
+        payload: {
+          sourceId: params.sourceId,
+          jobId: params.jobId,
+          ...(params.uploadId !== undefined ? { uploadId: params.uploadId } : {}),
+        },
+      });
+    },
+    async isFull(): Promise<boolean> {
+      return (await queue.pendingCountByType('ingest')) >= maxQueueDepth;
+    },
+    whenIdle(): Promise<void> {
+      return pool.whenIdle();
+    },
+  };
+}
+
 /** The trigger interface the reaction route calls — per-event, so it carries the
  *  reacted message id + emoji (unlike the companion-only consolidate/motivation). */
 export interface ReactionWorkRequester {

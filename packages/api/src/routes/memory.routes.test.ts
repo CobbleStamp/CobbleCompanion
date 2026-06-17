@@ -56,7 +56,7 @@ describe('memory routes', () => {
       },
     });
     expect(created.statusCode).toBe(202);
-    await ctx.deps.ingestion.whenIdle();
+    await ctx.deps.ingest.whenIdle();
 
     const snapshot = await ctx.app.inject({
       method: 'GET',

@@ -47,7 +47,10 @@ import {
   Harness,
   InMemoryPresenceStore,
   IngestionPipeline,
-  IngestionRunner,
+  DrizzleUploadStagingStore,
+  makeIngestJobHandler,
+  makeIngestWorkRequester,
+  sweepIngestion,
   LlmIngestionAnnouncer,
   LlmPersonalityEvolver,
   LlmUserModelReflector,
@@ -56,7 +59,6 @@ import {
   OpenRouterEmbeddingGateway,
   OpenRouterGateway,
   reinforceFromDelta,
-  resumeDeferredJobs,
   sweepConsolidation,
   sweepMotivation,
   ToolRegistry,
@@ -196,7 +198,55 @@ async function main(): Promise<void> {
       logger: consoleLogger,
     }),
   });
-  const ingestion = new IngestionRunner(ingestionPipeline, consoleLogger, config.ingestionQueueMax);
+  // Two-part-upload staging: an intake stores bytes here, then enqueues an
+  // `ingest` job that reads them on any node (deliver-scalability.md §6 D-A).
+  const staging = new DrizzleUploadStagingStore(db);
+
+  // Background job queue (deliver-scalability.md §5.1): the durable, fleet-coherent
+  // replacement for the in-process runners + their per-process coalescing Sets.
+  // consolidate/motivation/reaction_learn/ingest run as claim-serialised jobs
+  // drained by a bounded pool on every node, so duplicate sweeps can't run the same
+  // work N times and a reaction's drive-weight write can't race a concurrent one.
+  // The consolidate/motivation/reaction_learn handlers reference services
+  // constructed below; they only run at drain time (after pool.start()), so the
+  // forward reference is safe. Built here — before the tool registry — because the
+  // `ingest_source` tool and the upload routes enqueue through the same requester.
+  const jobQueue = new DrizzleJobQueue(db);
+  const jobPool = new JobProcessorPool(
+    jobQueue,
+    {
+      consolidate: (job) => consolidationService.consolidate(job.companionId),
+      motivation: async (job) => {
+        await motivationEngine.tick(job.companionId);
+      },
+      reaction_learn: async (job) => {
+        const { messageId, emoji } = job.payload;
+        if (!messageId || !emoji) {
+          return;
+        }
+        await reactionLearner.learnForMessage(job.companionId, messageId, emoji);
+      },
+      ingest: makeIngestJobHandler({
+        pipeline: ingestionPipeline,
+        semantic,
+        staging,
+        logger: consoleLogger,
+      }),
+    },
+    {
+      owner: `${hostname()}-${process.pid}`,
+      concurrency: JOB_CONCURRENCY,
+      leaseMs: JOB_LEASE_MS,
+      pollMs: JOB_POLL_INTERVAL_MS,
+      logger: consoleLogger,
+    },
+  );
+  // Triggers (message routes, reaction route, intake routes/tool) + the catch-up
+  // sweeps enqueue through these requesters — coalesced, with a local nudge.
+  const consolidation = makeCompanionWorkRequester(jobPool, 'consolidate');
+  const motivation = makeCompanionWorkRequester(jobPool, 'motivation');
+  const reactionLearn = makeReactionWorkRequester(jobPool);
+  const ingest = makeIngestWorkRequester(jobPool, jobQueue, config.ingestionQueueMax);
 
   // Phase 3 tool surface + trust machinery, built before the harness so the
   // propose→approve gate and the tool-call log can be wired into the loop.
@@ -221,7 +271,7 @@ async function main(): Promise<void> {
       embeddingDimensions: config.embeddingDimensions,
       logger: consoleLogger,
     }),
-    createIngestSourceTool({ semantic, ingestion, logger: consoleLogger }),
+    createIngestSourceTool({ semantic, ingest, staging, logger: consoleLogger }),
     // The companion's expressive emoji reaction (companion-reactions.md §5): free,
     // ungated, silent; binds to the message that triggered the turn.
     createReactTool({ reactions, eventBus, logger: consoleLogger }),
@@ -421,46 +471,6 @@ async function main(): Promise<void> {
     logger: consoleLogger,
   });
 
-  // Background job queue (deliver-scalability.md §5.1): the durable, fleet-coherent
-  // replacement for the in-process runners + their per-process coalescing Sets.
-  // `consolidate`/`motivation`/`reaction_learn` run as claim-serialised jobs drained
-  // by a bounded pool on every node, so the old setInterval sweeps can no longer run
-  // the same work N times across replicas, and a reaction's drive-weight write can't
-  // race a concurrent one. (Ingestion keeps its own durable table until the upload
-  // split makes its byte payload durable — Phase D D-A.2.)
-  const jobQueue = new DrizzleJobQueue(db);
-  const jobPool = new JobProcessorPool(
-    jobQueue,
-    {
-      consolidate: (job) => consolidationService.consolidate(job.companionId),
-      motivation: async (job) => {
-        await motivationEngine.tick(job.companionId);
-      },
-      reaction_learn: async (job) => {
-        const { messageId, emoji } = job.payload;
-        if (!messageId || !emoji) {
-          return;
-        }
-        await reactionLearner.learnForMessage(job.companionId, messageId, emoji);
-      },
-    },
-    {
-      owner: `${hostname()}-${process.pid}`,
-      concurrency: JOB_CONCURRENCY,
-      leaseMs: JOB_LEASE_MS,
-      pollMs: JOB_POLL_INTERVAL_MS,
-      logger: consoleLogger,
-    },
-  );
-  // Inline triggers (message routes) + the catch-up sweeps enqueue through these —
-  // the same `.request(companionId)` shape they already call — coalesced, and they
-  // nudge the local pool for low latency.
-  const consolidation = makeCompanionWorkRequester(jobPool, 'consolidate');
-  const motivation = makeCompanionWorkRequester(jobPool, 'motivation');
-  // The reaction route enqueues a `reaction_learn` job (per-event payload) instead
-  // of floating a detached read.
-  const reactionLearn = makeReactionWorkRequester(jobPool);
-
   // Greeting on arrival (P14): the bond-driven reaction to the user returning.
   // Voiced greetings are interaction, so they spend STAMINA (the `quota` wallet),
   // not energy — an exhausted companion shows a fixed token-free line instead.
@@ -503,7 +513,8 @@ async function main(): Promise<void> {
     semantic,
     episodic,
     embeddings,
-    ingestion,
+    staging,
+    ingest,
     consolidation,
     harness,
     tools,
@@ -536,13 +547,14 @@ async function main(): Promise<void> {
   }
 
   // Resume parked (deferred) jobs now and on a timer, so work that hit an empty
-  // wallet drains as companions are fed (architecture.md §4.8). Serial + wallet-gated,
-  // so it never overspends.
-  const sweepDeps = { semantic, quota, ingestion, logger: consoleLogger };
-  await resumeDeferredJobs(sweepDeps);
+  // wallet drains as companions are fed (architecture.md §4.8). Enqueues an `ingest`
+  // job per under-cap deferred source; the handler resumes from the held parse and
+  // the pipeline re-checks the wallet, so it never overspends.
+  const ingestionSweepDeps = { semantic, quota, ingest, logger: consoleLogger };
+  await sweepIngestion(ingestionSweepDeps);
   const sweepTimer = setInterval(() => {
-    void resumeDeferredJobs(sweepDeps).catch((error: unknown) => {
-      consoleLogger.error('deferred-job sweep failed', { error });
+    void sweepIngestion(ingestionSweepDeps).catch((error: unknown) => {
+      consoleLogger.error('deferred-ingestion sweep failed', { error });
     });
   }, DEFERRED_SWEEP_INTERVAL_MS);
   sweepTimer.unref();
@@ -585,7 +597,6 @@ async function main(): Promise<void> {
     clearInterval(consolidationTimer);
     clearInterval(motivationTimer);
     await jobPool.close();
-    await ingestion.whenIdle();
     await harness.whenIdle();
     await mcpGateway.close();
   });
