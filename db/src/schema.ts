@@ -465,6 +465,34 @@ export const companionClaims = pgTable('companion_claims', {
 });
 
 /**
+ * Live embodiment claim (deliver-scalability.md §5.2, Phase D D2). Exactly one WS
+ * connection "embodies" a companion at a time — the product's one-room rule. The
+ * holder is identified by a **ULID** (`owner`, timestamp-sortable so "newer wins"
+ * is a lexical compare); `generation` is a DB-stamped monotonic counter (bumped on
+ * each claim) kept for observability + a strict-ordering fallback. A new connection
+ * **force-claims** (its newer ULID wins); the prior holder self-fences when its
+ * heartbeat renew finds it no longer owns the row. `last_heartbeat` + a TTL is the
+ * crash backstop: a dead holder's claim lapses and is reclaimable.
+ *
+ * Distinct from the job-queue companion claim and from atomic writes — three
+ * independent mechanisms, never conflated (deliver-scalability.md §7 Q4).
+ */
+export const activeEmbodiment = pgTable('active_embodiment', {
+  companionId: uuid('companion_id')
+    .primaryKey()
+    .references(() => companions.id, { onDelete: 'cascade' }),
+  // The holding connection's ULID — the fencing token (sortable; newer wins).
+  owner: text('owner').notNull(),
+  // Host/pid of the node holding the connection (observability/debugging).
+  node: text('node').notNull(),
+  // Monotonic claim counter, bumped on each (re)claim.
+  generation: bigint('generation', { mode: 'number' }).notNull().default(0),
+  // Refreshed by the holder's heartbeat; a stale value past the TTL is reclaimable.
+  lastHeartbeat: timestamp('last_heartbeat', { withTimezone: true }).notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
  * Two-part-upload staging (deliver-scalability.md §6 D-A). An upload's raw bytes
  * are stored here durably so the `ingest` job that reads them can run on ANY node
  * (the in-memory IngestionRunner queue couldn't survive a cross-node claim). The

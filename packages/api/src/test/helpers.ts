@@ -49,6 +49,7 @@ import {
   InMemoryPresenceStore,
   IngestionPipeline,
   type IngestionTarget,
+  DrizzleEmbodimentStore,
   DrizzleUploadStagingStore,
   makeIngestJobHandler,
   makeIngestWorkRequester,
@@ -117,6 +118,9 @@ export const testConfig: AppConfig = {
   ingestionMaxBytes: 25 * 1024 * 1024,
   useContextHeader: true,
   ingestionQueueMax: 100,
+  // Short WS embodiment timers so handoff/supersession is observable in tests.
+  wsHeartbeatMs: 40,
+  wsClaimTtlMs: 200,
   startingVitalityTokens: 1_000_000,
   mcpServers: [],
   serviceRegistrySeeds: [],
@@ -245,6 +249,7 @@ export async function makeTestApp(
     }),
   });
   const staging = new DrizzleUploadStagingStore(db);
+  const embodiment = new DrizzleEmbodimentStore(db);
   // Phase 12: the User-Model Reflector derives Tier-2 beliefs from the transcript on
   // its own cursor; the consolidation service fires it after each run.
   const userModelReflector = new LlmUserModelReflector({
@@ -422,6 +427,7 @@ export async function makeTestApp(
     embeddings,
     staging,
     ingest,
+    embodiment,
     consolidation,
     tools,
     proposals,

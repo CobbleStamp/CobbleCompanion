@@ -56,5 +56,18 @@ export function makeWsAuth(
         });
       }
     }
+    // A connection that names a companion embodies it (Phase D D2). Resolve +
+    // ownership-check here, at the handshake, so an unauthorized companion never
+    // opens a socket. A connection with no `companion` param is transport-only.
+    const query = request.query as { companion?: string } | undefined;
+    const companionId = typeof query?.companion === 'string' ? query.companion : undefined;
+    if (companionId) {
+      const companion = await deps.identity.getCompanion(companionId, user.id);
+      if (!companion) {
+        await reply.code(404).send({ error: 'companion not found' });
+        return;
+      }
+      request.companionId = companion.id;
+    }
   };
 }

@@ -702,15 +702,24 @@ Backpressure is a fleet-wide pending-`ingest` count; deferred jobs resume via
   mounted, so single-node behaviour is unchanged. Tests run against a real listener
   (5 cases); full api suite green (276).
 
-#### D2 — Embodiment claim + fencing + handoff
+#### D2 — Embodiment claim + fencing + handoff — ✅ DELIVERED
 
-- `active_embodiment` (`companion_id` pk, owner ULID, node, generation,
-  `last_heartbeat`); force-claim on connect; **fencing** check on every
-  state-mutating op; self-fence + close on supersession; TTL crash backstop;
-  heartbeat = liveness + TTL refresh + supersession + event-read cursor.
-- **D2′ turn serialization (Q5).** The embodiment node processes a connection's
-  turn-producing messages **one at a time** (per-companion in-process chain) — all
-  of a companion's turns arrive on one connection on one node, so no DB lock.
+- `active_embodiment` table (`companion_id` pk, owner **ULID**, node, generation,
+  `last_heartbeat`) + `EmbodimentStore` (`claim`/`renew`/`holds`/`release`/`current`).
+  The handshake resolves + ownership-checks the `?companion=` param; on connect the
+  socket **force-claims** with a `monotonicFactory` ULID (newer wins). A server-side
+  **heartbeat** (`config.wsHeartbeatMs`) renews while the socket is open; when a
+  newer connection takes the room, `renew` returns false → the prior connection
+  **self-fences** (pushes `embodiment.superseded`, closes 4002). TTL
+  (`config.wsClaimTtlMs`) is the crash backstop; `release` on clean close.
+- **Fencing:** `requireEmbodiment` (used by D3's mutating methods) rejects a
+  connection that doesn't hold the live claim (`not_embodied`) — a superseded zombie
+  can't act. Proven now via the `embodiment.whoami` method.
+- **D2′ turn serialization (Q5):** `WsConnection.runSerial` chains a connection's
+  turn-producing messages so two agent loops can't run at once (all of a companion's
+  turns arrive on one connection — no DB lock). D3's turn method uses it.
+- Tests: `EmbodimentStore` unit (6) + WS integration (claim, fencing, handoff = 3).
+  api suite green (279).
 
 #### D3 — RPC-over-WS (big-bang, Q3)
 

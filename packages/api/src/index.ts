@@ -47,6 +47,7 @@ import {
   Harness,
   InMemoryPresenceStore,
   IngestionPipeline,
+  DrizzleEmbodimentStore,
   DrizzleUploadStagingStore,
   makeIngestJobHandler,
   makeIngestWorkRequester,
@@ -201,6 +202,10 @@ async function main(): Promise<void> {
   // Two-part-upload staging: an intake stores bytes here, then enqueues an
   // `ingest` job that reads them on any node (deliver-scalability.md §6 D-A).
   const staging = new DrizzleUploadStagingStore(db);
+
+  // Live embodiment claim (Phase D D2): one WS connection holds a companion at a
+  // time; the handshake claims it and the heartbeat renews it.
+  const embodiment = new DrizzleEmbodimentStore(db);
 
   // Background job queue (deliver-scalability.md §5.1): the durable, fleet-coherent
   // replacement for the in-process runners + their per-process coalescing Sets.
@@ -515,6 +520,7 @@ async function main(): Promise<void> {
     embeddings,
     staging,
     ingest,
+    embodiment,
     consolidation,
     harness,
     tools,

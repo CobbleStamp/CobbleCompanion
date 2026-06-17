@@ -43,6 +43,13 @@
       "when": 1781671017166,
       "tag": "0005_careful_forgotten_one",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1781672478972,
+      "tag": "0006_skinny_mathemanic",
+      "breakpoints": true
     }
   ]
 }

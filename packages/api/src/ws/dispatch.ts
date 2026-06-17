@@ -1,10 +1,12 @@
 import type { Logger } from '@cobble/core';
 import type { WsRequestMessage } from '@cobble/shared';
-import type { WsConnection } from './connection.js';
+import type { EmbodimentBinding, WsConnection } from './connection.js';
 
-/** What a method handler sees: the connection's identity + the live connection. */
+/** What a method handler sees: the connection's identity, the companion it embodies
+ *  (if any), and the live connection. */
 export interface WsCallContext {
   readonly userId: string;
+  readonly embodiment: EmbodimentBinding | undefined;
   readonly connection: WsConnection;
 }
 
@@ -56,7 +58,10 @@ export async function dispatchMessage(
     return;
   }
   try {
-    const result = await handler({ userId: connection.userId, connection }, parsed.params);
+    const result = await handler(
+      { userId: connection.userId, embodiment: connection.embodiment, connection },
+      parsed.params,
+    );
     connection.result(parsed.id, result ?? null);
   } catch (error) {
     logger.error('ws method failed', {
@@ -65,6 +70,10 @@ export async function dispatchMessage(
       userId: connection.userId,
       error,
     });
-    connection.fail(parsed.id, error instanceof Error ? error.message : 'internal error');
+    const code =
+      typeof (error as { code?: unknown }).code === 'string'
+        ? (error as { code: string }).code
+        : undefined;
+    connection.fail(parsed.id, error instanceof Error ? error.message : 'internal error', code);
   }
 }

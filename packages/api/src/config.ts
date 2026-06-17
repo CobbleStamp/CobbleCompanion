@@ -51,6 +51,12 @@ export interface AppConfig {
   readonly useContextHeader: boolean;
   /** Backstop cap on queued+in-flight ingestion runs across all owners. */
   readonly ingestionQueueMax: number;
+  /** WS embodiment heartbeat interval — the node renews its claim this often while
+   *  the socket is open (deliver-scalability.md §5.2). */
+  readonly wsHeartbeatMs: number;
+  /** WS embodiment claim TTL — a claim with no heartbeat for this long is dead and
+   *  reclaimable (crash backstop). A small multiple of the heartbeat. */
+  readonly wsClaimTtlMs: number;
   /**
    * The token balance a new companion is seeded with in **each** vitality wallet
    * (stamina + energy). Not a cap — wallets only refill by feeding (architecture.md §4.8).
@@ -118,6 +124,8 @@ const envSchema = z
       .default('true')
       .transform((value) => value === 'true'),
     INGESTION_QUEUE_MAX: z.coerce.number().int().positive().default(100),
+    WS_HEARTBEAT_MS: z.coerce.number().int().positive().default(10_000),
+    WS_CLAIM_TTL_MS: z.coerce.number().int().positive().default(30_000),
     STARTING_VITALITY_TOKENS: z.coerce
       .number()
       .int()
@@ -294,6 +302,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     ingestionMaxBytes: parsed.INGESTION_MAX_BYTES,
     useContextHeader: parsed.USE_CONTEXT_HEADER,
     ingestionQueueMax: parsed.INGESTION_QUEUE_MAX,
+    wsHeartbeatMs: parsed.WS_HEARTBEAT_MS,
+    wsClaimTtlMs: parsed.WS_CLAIM_TTL_MS,
     startingVitalityTokens: parsed.STARTING_VITALITY_TOKENS,
     mcpServers: parseMcpServers(parsed.MCP_SERVERS),
     serviceRegistrySeeds: parseServiceRegistrySeeds(parsed.SERVICE_REGISTRY_SEEDS),

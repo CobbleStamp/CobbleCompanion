@@ -4,6 +4,7 @@ import type {
   CompanionEventBus,
   CompanionWorkRequester,
   EmbeddingGateway,
+  EmbodimentStore,
   EpisodicMemoryStore,
   FoodStore,
   GreetingService,
@@ -62,6 +63,9 @@ import { buildWsMethods } from './ws/methods.js';
 declare module 'fastify' {
   interface FastifyRequest {
     userId?: string;
+    /** The companion a WS connection embodies, resolved + ownership-checked at the
+     *  handshake (Phase D D2). Absent on HTTP requests and transport-only sockets. */
+    companionId?: string;
   }
 }
 
@@ -83,6 +87,9 @@ export interface AppDeps {
   /** Enqueues `ingest` jobs (with fleet-wide backpressure) — the durable successor
    *  to the in-process IngestionRunner. */
   readonly ingest: IngestWorkRequester;
+  /** The live embodiment claim (Phase D D2): one WS connection holds a companion at
+   *  a time; the handshake claims it, the heartbeat renews it. */
+  readonly embodiment: EmbodimentStore;
   /** Off-request episodic reflection — the message route requests it post-turn. */
   readonly consolidation: CompanionWorkRequester;
   readonly harness: Harness;

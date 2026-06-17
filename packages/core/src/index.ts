@@ -178,6 +178,13 @@ export {
   type JobQueue,
   type QueuedJob,
 } from './jobs/job-queue.js';
+// Live embodiment claim (deliver-scalability.md §5.2, Phase D D2)
+export {
+  DrizzleEmbodimentStore,
+  type ClaimParams,
+  type EmbodimentClaim,
+  type EmbodimentStore,
+} from './embodiment/store.js';
 export {
   JobProcessorPool,
   makeCompanionWorkRequester,
