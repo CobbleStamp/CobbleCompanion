@@ -925,7 +925,10 @@ export type CreateLinkSourceBody = z.infer<typeof createLinkSourceSchema>;
  */
 export const requestFileUploadSchema = z.object({
   filename: z.string().trim().min(1).max(255),
-  byteSize: z.number().int().positive().optional(),
+  // Required: the server validates it against the ingestion size cap before issuing
+  // a slot (so oversized files are rejected up front), and the S3 backend pins it
+  // into the presigned PUT signature so the upload body cannot exceed it.
+  byteSize: z.number().int().positive(),
 });
 export type RequestFileUploadBody = z.infer<typeof requestFileUploadSchema>;
 

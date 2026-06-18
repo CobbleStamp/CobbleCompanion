@@ -43,7 +43,10 @@ describe('PUT /uploads/local/:uploadId (filesystem backend)', () => {
 
   /** A slot for the authenticated owner, plus the inject path for its URL. */
   async function ownerSlot(filename = 'doc.pdf'): Promise<{ slot: UploadSlotDto; path: string }> {
-    const slot = await ws.call<UploadSlotDto>('sources.requestFileUpload', { filename });
+    const slot = await ws.call<UploadSlotDto>('sources.requestFileUpload', {
+      filename,
+      byteSize: 1024,
+    });
     const url = new URL(slot.url);
     return { slot, path: `${url.pathname}${url.search}` };
   }

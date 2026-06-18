@@ -166,15 +166,20 @@ describe('source intake', () => {
     job: { status: string };
     messages: { id: string; role: string; content: string; sourceId: string | null }[];
   }> {
-    const slot = await ws.call<UploadSlotDto>('sources.requestFileUpload', { filename });
+    const bytes = new TextEncoder().encode(body);
+    const slot = await ws.call<UploadSlotDto>('sources.requestFileUpload', {
+      filename,
+      byteSize: bytes.byteLength,
+    });
     const staging = ctx.deps.staging as InMemoryUploadStagingStore;
-    staging.put(slot.uploadId, new TextEncoder().encode(body));
+    staging.put(slot.uploadId, bytes);
     return ws.call('sources.file', { uploadId: slot.uploadId, filename });
   }
 
   it('issues an owner-scoped slot whose key carries the kind', async () => {
     const slot = await ws.call<UploadSlotDto>('sources.requestFileUpload', {
       filename: 'peru-history.pdf',
+      byteSize: 1024,
     });
     expect(slot.method).toBe('PUT');
     expect(slot.url).toContain(`/uploads/local/${encodeURIComponent(slot.uploadId)}`);
@@ -183,7 +188,16 @@ describe('source intake', () => {
 
   it('rejects requesting a slot for an unsupported file type (bad_params)', async () => {
     await expect(
-      ws.call('sources.requestFileUpload', { filename: 'data.xlsx' }),
+      ws.call('sources.requestFileUpload', { filename: 'data.xlsx', byteSize: 1024 }),
+    ).rejects.toMatchObject({ code: 'bad_params' });
+  });
+
+  it('rejects a slot request for a file larger than the ingestion cap (bad_params)', async () => {
+    await expect(
+      ws.call('sources.requestFileUpload', {
+        filename: 'huge.pdf',
+        byteSize: 25 * 1024 * 1024 + 1,
+      }),
     ).rejects.toMatchObject({ code: 'bad_params' });
   });
 
@@ -266,6 +280,7 @@ describe('source intake', () => {
   it('rejects enqueuing an upload that was never PUT (empty/missing → bad_params)', async () => {
     const slot = await ws.call<UploadSlotDto>('sources.requestFileUpload', {
       filename: 'ghost.pdf',
+      byteSize: 1024,
     });
     // No staging.put — the client never uploaded.
     await expect(
@@ -276,6 +291,7 @@ describe('source intake', () => {
   it("owner-scopes enqueue: another user can't claim this owner's uploadId (not_found)", async () => {
     const slot = await ws.call<UploadSlotDto>('sources.requestFileUpload', {
       filename: 'peru-history.pdf',
+      byteSize: 1024,
     });
     (ctx.deps.staging as InMemoryUploadStagingStore).put(
       slot.uploadId,

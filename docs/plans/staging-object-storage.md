@@ -63,6 +63,12 @@ capped at `INGESTION_MAX_BYTES` (default **25 MB**). Two issues:
   first 8 bytes** (`peek`) — not a full 25 MB download. A bad/oversized/missing object
   is rejected there (HEAD for existence + size cap, peek for magic bytes) before any
   source/job row is created.
+- **The size cap is enforced at slot-issue time, not just at enqueue.**
+  `sources.requestFileUpload` requires the client's declared `byteSize`, rejects it up
+  front if it exceeds `ingestionMaxBytes`, and the S3 store signs that size into the
+  presigned PUT as `content-length`. S3 then rejects any body that is not exactly that
+  size, so a client cannot upload an oversized object to the bucket even if it never
+  calls `sources.file`. The enqueue-time HEAD check remains as a backstop.
 - **Browser presigned PUT requires S3 bucket CORS.** The bucket needs a CORS rule
   allowing `PUT` from the web origin — included in the Pulumi bucket config.
 - **Note/link and the `ingest_source` tool keep server-side staging.** They are tiny
@@ -111,7 +117,8 @@ interface UploadStagingStore {
 
 - **`S3UploadStagingStore`** (`upload-staging-s3.ts`) — `@aws-sdk/client-s3` +
   `@aws-sdk/s3-request-presigner`. `createUploadSlot` → presigned `PutObjectCommand`
-  (content-type pinned, expiry = slot TTL). `head`→HeadObject, `peek`→GetObject with
+  (content-type pinned, `content-length` pinned to the declared `byteSize` so S3 caps
+  the body size, expiry = slot TTL). `head`→HeadObject, `peek`→GetObject with
   `Range: bytes=0-(n-1)`, `get`→GetObject, `delete`→DeleteObject (idempotent on
   `NoSuchKey`), `stage`→PutObject, `purgeExpired`→`return 0` (lifecycle owns TTL).
   Credentials via the default SDK chain (EC2 instance role).

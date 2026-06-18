@@ -69,6 +69,7 @@ describe('FilesystemUploadStagingStore', () => {
       kind: 'pdf',
       contentType: 'application/pdf',
       maxBytes: 1024,
+      byteSize: 512,
     });
     expect(slot.method).toBe('PUT');
     expect(slot.url).toBe(`https://api.example/uploads/local/${encodeURIComponent(slot.uploadId)}`);

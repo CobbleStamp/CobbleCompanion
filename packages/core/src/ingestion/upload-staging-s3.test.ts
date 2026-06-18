@@ -12,7 +12,8 @@ function fakeS3(): S3Operations & { objects: Map<string, Uint8Array> } {
   return {
     objects,
     async presignPut(key, opts) {
-      return `https://s3.example/${encodeURIComponent(key)}?exp=${opts.expiresInSec}`;
+      const len = opts.contentLength ?? '';
+      return `https://s3.example/${encodeURIComponent(key)}?exp=${opts.expiresInSec}&len=${len}`;
     },
     async put(key, bytes) {
       objects.set(key, bytes);
@@ -44,6 +45,7 @@ describe('S3UploadStagingStore', () => {
       kind: 'pdf',
       contentType: 'application/pdf',
       maxBytes: 1024,
+      byteSize: 512,
     });
 
     expect(slot.method).toBe('PUT');
@@ -54,6 +56,27 @@ describe('S3UploadStagingStore', () => {
       ownerId: 'owner-1',
       kind: 'pdf',
     });
+  });
+
+  it('pins the declared size into the presigned URL so S3 caps the body', async () => {
+    const store = new S3UploadStagingStore(fakeS3(), config);
+    const slot = await store.createUploadSlot({
+      ownerId: 'owner-1',
+      kind: 'pdf',
+      maxBytes: 1024,
+      byteSize: 700,
+    });
+
+    // The fake echoes the signed content-length; the real adapter signs it so S3
+    // rejects any PUT whose body is not exactly this many bytes.
+    expect(slot.url).toContain('len=700');
+  });
+
+  it('refuses a slot whose declared size exceeds the cap (caller backstop)', async () => {
+    const store = new S3UploadStagingStore(fakeS3(), config);
+    await expect(
+      store.createUploadSlot({ ownerId: 'owner-1', kind: 'pdf', maxBytes: 1024, byteSize: 2048 }),
+    ).rejects.toThrow(/exceeds the maximum/);
   });
 
   it('stages bytes server-side and reads them back with the key kind', async () => {

@@ -23,12 +23,21 @@ export class AwsS3Operations implements S3Operations {
 
   presignPut(
     key: string,
-    opts: { readonly contentType?: string; readonly expiresInSec: number },
+    opts: {
+      readonly contentType?: string;
+      readonly contentLength?: number;
+      readonly expiresInSec: number;
+    },
   ): Promise<string> {
+    // ContentLength is signed into the URL (it is not query-hoistable), so the
+    // client must send a matching `content-length` header — and S3 stores exactly
+    // that many bytes. This caps the upload size at presign time; a client cannot
+    // PUT a larger body than the size we signed for.
     const command = new PutObjectCommand({
       Bucket: this.bucket,
       Key: key,
       ...(opts.contentType ? { ContentType: opts.contentType } : {}),
+      ...(opts.contentLength !== undefined ? { ContentLength: opts.contentLength } : {}),
     });
     return getSignedUrl(this.client, command, { expiresIn: opts.expiresInSec });
   }

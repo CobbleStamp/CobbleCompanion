@@ -57,6 +57,7 @@ describe('app error logging (common/logging.md)', () => {
       kind: 'pdf',
       contentType: 'application/pdf',
       maxBytes: 1024,
+      byteSize: 13,
     });
     store.writeAt = async () => {
       throw new Error('boom');

@@ -41,6 +41,8 @@ const sourceIdParams = z.object({ sourceId: z.string().uuid() });
 
 const UNSUPPORTED_FILE_TYPE = 'unsupported file type — upload a PDF, .txt, .md, .docx, or .pptx';
 
+const FILE_TOO_LARGE = 'the uploaded file is too large';
+
 /**
  * Source intake + browse. File uploads are a two-step presigned flow
  * (staging-object-storage.md): `sources.requestFileUpload` issues a direct-upload
@@ -89,16 +91,28 @@ export function sourceMethods(deps: AppDeps): WsMethods {
 
   return {
     'sources.requestFileUpload': async (ctx, params): Promise<UploadSlotDto> => {
-      const { filename } = parseParams(requestFileUploadSchema, params, 'a filename is required');
+      const { filename, byteSize } = parseParams(
+        requestFileUploadSchema,
+        params,
+        'a filename and byteSize are required',
+      );
       const kind = uploadKindForFilename(filename);
       if (!kind) {
         throw new BadParamsError(UNSUPPORTED_FILE_TYPE);
+      }
+      // Reject oversized uploads before issuing the slot — the declared size is then
+      // pinned into the slot (S3 signs it into the presigned PUT), so the body cannot
+      // exceed the cap. The post-upload head check in `sources.file` stays as a
+      // backstop for backends that don't enforce size at write time.
+      if (byteSize > config.ingestionMaxBytes) {
+        throw new BadParamsError(FILE_TOO_LARGE);
       }
       const slot = await staging.createUploadSlot({
         ownerId: ctx.userId,
         kind,
         contentType: contentTypeForKind(kind),
         maxBytes: config.ingestionMaxBytes,
+        byteSize,
       });
       return {
         uploadId: slot.uploadId,
@@ -135,7 +149,7 @@ export function sourceMethods(deps: AppDeps): WsMethods {
         throw new BadParamsError('the upload was not found or is empty — please re-upload');
       }
       if (head.byteSize > config.ingestionMaxBytes) {
-        throw new BadParamsError('the uploaded file is too large');
+        throw new BadParamsError(FILE_TOO_LARGE);
       }
       const peeked = await staging.peek(uploadId, MAGIC_PEEK_BYTES);
       const magic = peeked

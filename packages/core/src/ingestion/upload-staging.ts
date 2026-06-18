@@ -38,8 +38,17 @@ export interface CreateUploadSlotParams {
   readonly kind: SourceKind;
   /** Pinned on the slot so the stored object's content type is fixed. */
   readonly contentType?: string;
-  /** Upper bound the backend may enforce on the uploaded body. */
+  /** Upper bound the backend enforces on the uploaded body. */
   readonly maxBytes: number;
+  /**
+   * The client-declared size of the body, in bytes. The S3 backend pins this into
+   * the presigned PUT signature (`content-length`), so S3 rejects any upload whose
+   * body is not exactly this size — closing the gap where a presigned slot would
+   * otherwise accept a body of any size regardless of {@link maxBytes}. Callers MUST
+   * validate `byteSize <= maxBytes` before issuing; the backend treats a violation
+   * as a programmer error and throws.
+   */
+  readonly byteSize: number;
 }
 
 /** A capability the client uses to upload bytes directly to the backend. */

@@ -19,10 +19,19 @@ import {
 
 /** The S3 surface the store needs; the AWS adapter implements it. */
 export interface S3Operations {
-  /** A presigned PUT URL the client uploads the body to. */
+  /**
+   * A presigned PUT URL the client uploads the body to. When `contentLength` is
+   * given it is signed into the URL, so S3 rejects any PUT whose `content-length`
+   * (and therefore body size) does not match exactly — this is how the size cap is
+   * enforced server-side for direct uploads.
+   */
   presignPut(
     key: string,
-    opts: { readonly contentType?: string; readonly expiresInSec: number },
+    opts: {
+      readonly contentType?: string;
+      readonly contentLength?: number;
+      readonly expiresInSec: number;
+    },
   ): Promise<string>;
   /** Server-side upload of bytes we already hold. */
   put(key: string, bytes: Uint8Array, opts?: { readonly contentType?: string }): Promise<void>;
@@ -50,9 +59,16 @@ export class S3UploadStagingStore implements UploadStagingStore {
   ) {}
 
   async createUploadSlot(params: CreateUploadSlotParams): Promise<UploadSlot> {
+    // Backstop: the caller is contracted to reject this up front (sources.ts), so a
+    // violation here is a programmer error, not client input. Pinning the declared
+    // size into the signature below is what actually caps the body server-side.
+    if (params.byteSize > params.maxBytes) {
+      throw new Error('declared upload size exceeds the maximum allowed');
+    }
     const uploadId = buildUploadKey(this.config.prefix, params.ownerId, params.kind);
     const url = await this.s3.presignPut(uploadId, {
       ...(params.contentType ? { contentType: params.contentType } : {}),
+      contentLength: params.byteSize,
       expiresInSec: Math.ceil(this.config.ttlMs / 1000),
     });
     return {
