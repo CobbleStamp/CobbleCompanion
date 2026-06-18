@@ -17,10 +17,10 @@ import { vitalityMethods } from './methods/vitality.js';
 
 /**
  * The WS method table (deliver-scalability.md §5.2, Phase D). Transport seeds
- * (`ping`, `auth.me`, `embodiment.whoami`) plus the per-domain method modules that
- * mirror the HTTP routes (D3). The HTTP routes stay mounted in parallel through the
- * transition (additive, single-node-safe); the web client cuts over in D6 and the
- * dead HTTP routes are removed last.
+ * (`ping`, `auth.me`, `embodiment.whoami`) plus the per-domain method modules. These
+ * superseded the former HTTP routes (D3); the web client is fully on the WS and the
+ * dead HTTP routes have been removed — only `/auth/config`, the multipart file
+ * upload, `/health`, the admin-only `/admin/queue`, and the SPA serve remain HTTP.
  */
 export function buildWsMethods(deps: AppDeps): WsMethods {
   return {

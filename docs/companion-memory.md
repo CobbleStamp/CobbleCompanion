@@ -290,9 +290,9 @@ invents preferences fails the gate (`ontology.md` §5).
 
 A read-only view of everything a companion holds, grouped by memory kind.
 
-**API** (owner-scoped; `/memory` + `/memory/search` in
-`packages/api/src/routes/memory.routes.ts`, `/sources…` + `/ingestion` in
-`source.routes.ts`):
+**API** (owner-scoped WS methods; `memory.snapshot` + `memory.search` in
+`packages/api/src/ws/methods/memory.ts`, the `sources.*` + `ingestion.list` methods in
+`packages/api/src/ws/methods/sources.ts`):
 
 - `memory.snapshot` (WS method) — a sectioned snapshot
   (`MemorySnapshotDto` in `packages/shared/src/contracts.ts`): `identity`,

@@ -60,7 +60,7 @@ its default outcome is **idle** — a first-class, free, silent result.
 transcript turn_ — so last-message-time can't see them. The greeting must react to _presence_, which
 the transcript doesn't record. So arrival is detected from a **durable per-companion `last_seen_at`
 timestamp**, updated by the **presence heartbeat** (which fires on mount even when the user never
-types — `usePresenceHeartbeat`). The trigger hangs off the heartbeat, **not** off `GET /messages`.
+types — `usePresenceHeartbeat`). The trigger hangs off the heartbeat, **not** off a message fetch.
 
 **Why durable, why per-companion.** The in-memory presence store (`motivation/presence-store.ts`)
 resets on restart, so it cannot answer "it's been three days." `last_seen_at` must persist. It is

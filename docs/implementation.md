@@ -86,6 +86,7 @@ erDiagram
 | `service_client_id` | text, nullable | the owning consumer (`service_registry.client_id`) when `auth_source = service`; null for `google`. Namespaces `external_id` so two consumers can reuse the same id without colliding |
 | `external_id` | text, nullable | the consumer's opaque user id (e.g. a Sprout UUID) when `auth_source = service`; null for `google`. Unique within `(auth_source, service_client_id)` |
 | `email` | text, nullable, unique | login identity when `auth_source = google`; null for `service` (a service user has no email) |
+| `is_admin` | boolean, default `false` | gates the operator-only `/admin/queue` snapshot (queue/embodiment observability, `architecture.md` §6). Set out-of-band; no self-service path |
 | `created_at` | timestamptz | |
 
 ### `service_registry`
@@ -608,7 +609,9 @@ erDiagram
   outcome **by `note_message_id`** rather than the ambient `findLatestUnresolved`. Full mechanism →
   `companion-reactions.md`.
 
-Presence is **not** a table — it is a volatile, heartbeat-fed in-memory signal (§4.5).
+Presence is **derived from the `active_embodiment` claim** (below), not a separate table: a
+live (non-expired) claim *is* presence, with `last_activity_at`/`tab_visible` carrying the
+foreground/idle detail (D5; `core/src/embodiment/presence.ts`, `architecture.md` §4.5).
 
 - **`companion_growth`** —
   the bond/growth standing as a **MIRROR**, fully **decoupled** from feeding (growing earns nothing
@@ -620,12 +623,100 @@ Presence is **not** a table — it is a volatile, heartbeat-fed in-memory signal
   `observed_capabilities` (jsonb `CapabilityKey[]`). The mark exists ONLY to make reflections
   **idempotent**: `advance` is a compare-and-set on the monotonic band indices + observed-capability
   set (the same trick as the consolidation cursor), so two concurrent post-turn recomputes (e.g. rapid
-  back-to-back turns, or two app instances) can never double-post a growth reflection. (`GET /growth`
-  itself is read-only — it never recomputes — so a read can never post.) The row is created lazily on
+  back-to-back turns, or two app instances) can never double-post a growth reflection. (the `growth.get`
+  WS method itself is read-only — it never recomputes — so a read can never post.) The row is created lazily on
   first recompute. Growth curves and the capabilities catalogue are centralized in
   `core/src/growth/config.ts` (`DEFAULT_GROWTH_CONFIG`) — no scattered literals — alongside the
   feeding economy's constants (food grants, the food seed), which drive the separate **feeding**
   flow; see `companion-economy.md`.
+
+### Scalability & delivery tables
+
+The stateless/horizontally-scalable backend (`docs/plans/deliver-scalability.md`) adds five
+tables. All three claim/lease/log mechanisms are **independent and never conflated** — the
+job-queue lease, the WS embodiment claim, and atomic per-row writes each have their own row and
+semantics.
+
+#### `jobs` — durable background work queue
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | uuid (PK) | |
+| `companion_id` | uuid (FK → `companions.id`, cascade) | the companion the work is for |
+| `type` | text (`JobType`) | `consolidate` \| `motivation` \| `ingest` \| `reaction_learn` |
+| `dedupe_key` | text | coalescing key — bare type for companion-wide work, discriminated by payload for per-event work |
+| `payload` | jsonb (`JobPayload`), default `{}` | type-specific reference, never bulk data (e.g. `reaction_learn` → messageId + emoji) |
+| `run_at` | timestamptz, default `now()` | earliest eligible time (`now()` for immediate; future for backoff / "deferred") |
+| `status` | text (`JobStatus`), default `pending` | `pending` \| `done` \| `failed` |
+| `attempts` | integer, default `0` | retry counter |
+| `last_error` | text, nullable | user-/operator-safe last failure reason; internal detail stays in logs |
+| `created_at` / `updated_at` | timestamptz | |
+
+Indexes: **partial-unique** `(companion_id, dedupe_key) WHERE status='pending'` (coalescing — a
+repeat enqueue upserts onto the pending row rather than piling up duplicates); `(status, run_at)`
+for the "due, pending, oldest-first" claiming scan. Mechanism → `deliver-scalability.md` §5.1.
+
+#### `companion_claims` — per-companion work lease
+
+| Field | Type | Notes |
+|---|---|---|
+| `companion_id` | uuid (PK, FK → `companions.id`, cascade) | one lease row per companion |
+| `owner` | text | opaque id of the processor/node holding the lease (observability) |
+| `generation` | bigint, default `0` | monotonic claim counter, bumped on each (re)claim — a fencing token |
+| `claimed_until` | timestamptz | the lease is live only while `now() < claimed_until`; a crashed processor's claim lapses and another node reclaims |
+| `updated_at` | timestamptz | |
+
+A processor claims a whole companion before draining its jobs, so exactly one processor
+fleet-wide touches a companion's background state at a time (the single-writer invariant the
+in-process runners used to get from a `Set`). Distinct from `active_embodiment`.
+
+#### `active_embodiment` — the live WS embodiment claim
+
+| Field | Type | Notes |
+|---|---|---|
+| `companion_id` | uuid (PK, FK → `companions.id`, cascade) | one live connection per companion (the "one room at a time" rule) |
+| `owner` | text | the holding connection's **ULID** — the fencing token (timestamp-sortable, "newer wins" by lexical compare) |
+| `node` | text | host/pid of the node holding the connection (observability) |
+| `generation` | bigint, default `0` | DB-stamped monotonic claim counter; observability + strict-ordering fallback |
+| `last_heartbeat` | timestamptz | refreshed by the holder's heartbeat; a value past the TTL is reclaimable (crash backstop) |
+| `last_activity_at` | timestamptz, default `now()` | presence (D5): last real interaction (a turn) |
+| `tab_visible` | boolean, default `true` | presence: whether the room is foregrounded |
+| `updated_at` | timestamptz | |
+
+A new connection **force-claims** (its newer ULID wins); the prior holder self-fences when its
+heartbeat renew finds it no longer owns the row. Handoff design + the (not-yet-built) in-turn
+fence → `architecture.md` §6, `deliver-scalability.md` §5.2.
+
+#### `companion_events` — durable live-event log
+
+| Field | Type | Notes |
+|---|---|---|
+| `seq` | bigserial (PK) | per-row monotonic cursor the embodiment connection reads past |
+| `companion_id` | uuid (FK → `companions.id`, cascade) | indexed `(companion_id, seq)` |
+| `event` | jsonb (`CompanionStreamEvent`) | the event to push over the WS |
+| `xid` | xid8, default `pg_current_xact_id()` | the inserting transaction id — the live reader's **visibility horizon** |
+| `created_at` | timestamptz | |
+
+Sole live-delivery substrate: every publish point appends a row; the one embodiment connection's
+node reads rows past its cursor on each heartbeat and pushes them, so an event written on **any**
+node is delivered cross-node from shared Postgres (no in-process fan-out). The reader only
+delivers rows whose `xid` is below `pg_snapshot_xmin` so a `seq` that commits out of order is
+never skipped — the **visibility-gap guard** (`core/src/events/log.ts`; `architecture.md` §6).
+
+#### `upload_staging` — two-part-upload byte staging
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | uuid (PK) | |
+| `owner_id` | uuid (FK → `users.id`, cascade) | the uploading user |
+| `kind` | text (`SourceKind`) | so the `ingest` job rebuilds the right `IngestionPayload` |
+| `bytes` | bytea | the staged document/note/link bytes |
+| `byte_size` | integer | |
+| `created_at` | timestamptz | |
+| `expires_at` | timestamptz, indexed | GC backstop for a staged-but-never-enqueued upload |
+
+Upload bytes are staged durably so the `ingest` job that consumes them can run on **any** node;
+the job deletes the row once the pipeline has read it. Mechanism → `deliver-scalability.md` §6 D-A.
 
 ### Migrations & versioning
 
@@ -873,8 +964,8 @@ detail: `runbook-tracing.md`.
 **Loop & tool tuning constants** are in-code defaults (not secrets, so not env-wired): the loop
 ceilings `DEFAULT_MAX_TOOL_ITERATIONS` (default 6) + the optional per-run token budget (`harness.ts`,
 overridable via `HarnessOptions`), `web_fetch`'s returned-text cap (`web-fetch.ts`, default 8000
-chars) and link-harvest cap (`MAX_HARVESTED_LINKS`, default 20), and the `/explore` burst size
-(`inventory.routes.ts`, default 3).
+chars) and link-harvest cap (`MAX_HARVESTED_LINKS`, default 20), and the `explore` burst size
+(`ws/methods/inventory.ts`, default 3).
 
 **Motivation tuning constants** are likewise in-code: the motivation **sweep cadence**
 (`MOTIVATION_SWEEP_INTERVAL_MS`, `api/src/index.ts`) and the autonomous-burst focus length

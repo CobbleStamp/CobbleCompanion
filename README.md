@@ -12,7 +12,7 @@ For the full product vision see [`docs/product-overview.md`](./docs/product-over
 > economy (Phase 5); acquires **MCP and CLI tools at runtime** with no redeploy (Phases 9–10); builds
 > a structured **user model** (Phases 11–13); **greets** on arrival (Phase 14); and pushes new
 > messages live over a **permanent WebSocket** (the Phase 15 standing channel, reworked into the
-stateless WS embodiment model in Phase D). Native mobile/desktop surfaces (Phases 6–8)
+> stateless WS embodiment model in Phase D). Native mobile/desktop surfaces (Phases 6–8)
 > are the next frontier. A TypeScript monorepo (`packages/{shared,core,api,web}` + `db/`) with the
 > agent-loop harness, provider-agnostic LLM and embedding gateways, and an ≥80%-coverage test suite.
 > Deployment is managed with Pulumi under `infra/` — two options, AWS EC2 micro or

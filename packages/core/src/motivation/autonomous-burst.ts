@@ -10,9 +10,9 @@
  * the note for later attribution.
  *
  * This replaces the v1 proposal-only explore burst for the autonomous path. The
- * user-initiated `/explore` command still proposes (the user asked and may want
- * to review — `inventory.routes.ts`); only the engine's self-initiated work runs
- * free here.
+ * user-initiated `explore` action still proposes (the user asked and may want
+ * to review — the `explore` WS method in `api/src/ws/methods/inventory.ts`); only
+ * the engine's self-initiated work runs free here.
  *
  * Energy bounds it three ways: the engine gives a `limit` scaled to remaining
  * energy, the loop stops the moment energy is exhausted, and each read debits
