@@ -240,7 +240,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     const context: Record<string, unknown> = {
       operation: 'http.request',
       method: request.method,
-      url: request.url,
+      // redactUrl, not request.url: a WS handshake error reaches here too, and the
+      // browser WS bearer rides the URL as `?access_token=<jwt>` (ws/handshake.ts).
+      url: redactUrl(request.url),
       statusCode,
       code: error.code,
       userId: request.userId,

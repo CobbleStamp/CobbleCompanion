@@ -62,6 +62,26 @@ describe('app error logging (common/logging.md)', () => {
     expect(entry.context.error).toBeInstanceOf(Error);
   });
 
+  it('redacts a credential query param from the 5xx error log', async () => {
+    // A WS handshake failure routes through this same error handler, and the
+    // browser bearer rides the URL as ?access_token=<jwt>. The log must carry the
+    // redacted URL, never the live token (regression guard for app.ts:243).
+    ctx.deps.identity.getCompanion = async () => {
+      throw new Error('boom');
+    };
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/companions/00000000-0000-0000-0000-000000000000/sources/file?access_token=live.jwt',
+      headers: ctx.bearerFor('owner@example.com'),
+    });
+
+    expect(res.statusCode).toBe(500);
+    expect(errors).toHaveLength(1);
+    const loggedUrl = errors[0]!.context.url;
+    expect(loggedUrl).not.toContain('live.jwt');
+    expect(loggedUrl).toContain('access_token=REDACTED');
+  });
+
   it('rejects a malformed resource id with a clean 404, not a 500', async () => {
     // A non-UUID id can't name a real row; the param guard short-circuits it to
     // 404 before any DB query (which would otherwise throw Postgres 22P02 → 500).

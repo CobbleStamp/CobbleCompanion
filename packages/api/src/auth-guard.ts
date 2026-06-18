@@ -1,5 +1,5 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import type { AppDeps } from './app.js';
+import { redactUrl, type AppDeps } from './app.js';
 import type { AuthRequest } from './auth/jwt-verifier.js';
 
 /** A Fastify preHandler that enforces authentication. */
@@ -82,7 +82,7 @@ export function makeRequireAdmin(deps: AppDeps): RequireAuth {
       deps.logger.info('admin access denied', {
         operation: 'auth.requireAdmin',
         userId,
-        url: request.url,
+        url: redactUrl(request.url),
       });
       await reply.code(403).send({ error: 'forbidden' });
       return;
