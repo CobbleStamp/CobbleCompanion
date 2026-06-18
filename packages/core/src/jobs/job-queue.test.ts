@@ -2,7 +2,9 @@ import { DrizzleIdentityStore } from '../identity/store.js';
 import type { Logger } from '../logging.js';
 import { DrizzleJobQueue, reactionLearnDedupeKey } from './job-queue.js';
 import { JobProcessorPool, type JobHandlers } from './job-processor.js';
+import { companionClaims, type Database } from '@cobble/db';
 import { createTestDatabase } from '@cobble/db/testing';
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const silentLogger: Logger = { error() {}, warn() {}, info() {} };
@@ -159,6 +161,7 @@ describe('DrizzleJobQueue', () => {
 });
 
 describe('JobProcessorPool', () => {
+  let db: Database;
   let queue: DrizzleJobQueue;
   let close: () => Promise<void>;
   let companionA: string;
@@ -166,6 +169,7 @@ describe('JobProcessorPool', () => {
 
   beforeEach(async () => {
     const created = await createTestDatabase();
+    db = created.db;
     close = created.close;
     queue = new DrizzleJobQueue(created.db);
     const identity = new DrizzleIdentityStore(created.db);
@@ -243,5 +247,41 @@ describe('JobProcessorPool', () => {
     // Both terminal (one failed, one done) → none left pending/due, and the
     // failure didn't block the sibling job.
     expect(await queue.duePendingCount()).toBe(0);
+  });
+
+  it('stops draining a companion once its lease has been taken over by another node', async () => {
+    const handled: string[] = [];
+    const handlers: JobHandlers = {
+      consolidate: async (job) => {
+        handled.push(job.dedupeKey);
+        // Simulate a rival node reclaiming the companion mid-drain: rewrite the
+        // claim's owner so node-1's between-jobs renewClaim no longer matches.
+        if (job.dedupeKey === 'first') {
+          await db
+            .update(companionClaims)
+            .set({ owner: 'node-2' })
+            .where(eq(companionClaims.companionId, companionA));
+        }
+      },
+    };
+    const pool = new JobProcessorPool(queue, handlers, {
+      owner: 'node-1',
+      concurrency: 1,
+      leaseMs: 60_000,
+      pollMs: 60_000,
+      logger: silentLogger,
+    });
+
+    await queue.enqueue({ companionId: companionA, type: 'consolidate', dedupeKey: 'first' });
+    await queue.enqueue({ companionId: companionA, type: 'consolidate', dedupeKey: 'second' });
+
+    pool.nudge();
+    await pool.whenIdle();
+
+    // The lease moved after 'first', so node-1 bails before running 'second' —
+    // bounding the overlap to the one job already in flight. 'second' stays pending
+    // for whichever node now holds the claim.
+    expect(handled).toEqual(['first']);
+    expect(await queue.duePendingCount()).toBe(1);
   });
 });

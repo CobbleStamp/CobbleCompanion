@@ -129,8 +129,19 @@ export class JobProcessorPool {
         const job = await this.queue.nextDueJob(claim.companionId);
         if (!job) return;
         await this.runJob(job);
-        // Heartbeat between jobs so a long companion drain keeps its lease.
-        await this.queue.renewClaim(claim.companionId, this.opts.owner, this.opts.leaseMs);
+        // Heartbeat between jobs so a long companion drain keeps its lease. If the
+        // lease was taken over (a multi-node reclaim after ours lapsed), stop
+        // draining rather than run jobs this node no longer owns — this bounds the
+        // overlap to the single iteration already in flight. The finally-block
+        // releaseClaim is owner-scoped, so it's a no-op once another node holds it.
+        // TODO(D7): also generation-fence nextDueJob/markDone for a full backstop
+        // (embodiment-handoff-fencing.md §4 — the shared fence-on-token helper).
+        const held = await this.queue.renewClaim(
+          claim.companionId,
+          this.opts.owner,
+          this.opts.leaseMs,
+        );
+        if (!held) return;
       }
     } catch (error) {
       this.opts.logger.error('companion drain failed', {
