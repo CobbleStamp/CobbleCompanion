@@ -18,6 +18,15 @@ no workers, no load balancer; the default `*.run.app` URL is used.)
 | Image registry | `<region>-docker.pkg.dev/<project>/cobblecompanion/<service>:<tag>` |
 | DNS | None — the `*.run.app` URL is the entry point. |
 
+> ⚠️ **Upload staging is not wired on GCP yet.** Upload bytes now live in object
+> storage, not Postgres (`docs/plans/staging-object-storage.md`). The AWS stack
+> provisions an S3 bucket; the GCP stack does **not** yet provision a GCS bucket or
+> set `UPLOAD_STAGING_*`, so the Cloud Run service has no valid staging backend
+> (its filesystem is instance-local across 1–5 instances). A **GCS adapter behind
+> the same `UploadStagingStore` port is a tracked follow-up**. GCP is not the MVP
+> target (the MVP is the AWS EC2 single-node deploy); do not run file/note/link
+> intake on Cloud Run until the GCS adapter lands.
+
 ---
 
 ## Phase A — One-time bootstrap (manual)

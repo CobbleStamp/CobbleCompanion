@@ -156,7 +156,8 @@ export function companionUnavailableNotice(): string {
 /** How a source entered the companion's knowledge base. */
 export type SourceKind = 'pdf' | 'note' | 'link' | 'txt' | 'md' | 'docx' | 'pptx';
 
-/** Source kinds that arrive through the multipart file-upload channel. */
+/** Source kinds that arrive through the file-upload channel (presigned direct
+ *  upload; staging-object-storage.md). */
 export type UploadSourceKind = Extract<SourceKind, 'pdf' | 'txt' | 'md' | 'docx' | 'pptx'>;
 
 /** One accepted upload format (architecture.md §4.8 acceptance contract). */
@@ -222,8 +223,8 @@ export type IngestionStatus =
  * Background job-queue types (deliver-scalability.md §5.1). The queue serialises a
  * companion's off-request-path work fleet-wide via a leased per-companion claim.
  * `consolidate`/`motivation`/`reaction_learn` are companion- or event-keyed;
- * `ingest` reads an uploaded source (its bytes are staged in `upload_staging`, so
- * the payload carries only references — never the bytes).
+ * `ingest` reads an uploaded source (its bytes are staged in object storage keyed
+ * by `uploadId`, so the payload carries only references — never the bytes).
  */
 export type JobType = 'consolidate' | 'motivation' | 'reaction_learn' | 'ingest';
 
@@ -272,8 +273,8 @@ export type WsServerMessage = WsResultMessage | WsErrorMessage | WsEventMessage 
 /**
  * Type-specific job reference — never bulk data. `reaction_learn` carries the
  * reacted message id + emoji (the learner re-reads the message); `ingest` carries
- * the source + ingestion-job ids and, for a fresh run, the `upload_staging` id
- * holding the bytes (absent when resuming a deferred job, whose parsed doc lives on
+ * the source + ingestion-job ids and, for a fresh run, the `uploadId` key of the
+ * staged bytes (absent when resuming a deferred job, whose parsed doc lives on
  * the ingestion job); `consolidate` and `motivation` need only the companion id, so
  * their payload is empty.
  */
@@ -916,6 +917,38 @@ export const createLinkSourceSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
 });
 export type CreateLinkSourceBody = z.infer<typeof createLinkSourceSchema>;
+
+/**
+ * Request a direct-upload slot for a file source (staging-object-storage.md). The
+ * server derives the kind from the filename and returns a capability the client
+ * uploads the bytes to before enqueuing with {@link createFileSourceSchema}.
+ */
+export const requestFileUploadSchema = z.object({
+  filename: z.string().trim().min(1).max(255),
+  byteSize: z.number().int().positive().optional(),
+});
+export type RequestFileUploadBody = z.infer<typeof requestFileUploadSchema>;
+
+/** A direct-upload capability: PUT the bytes to `url` with `headers`, then enqueue. */
+export interface UploadSlotDto {
+  readonly uploadId: string;
+  readonly url: string;
+  readonly method: 'PUT';
+  readonly headers?: Readonly<Record<string, string>>;
+  readonly expiresAt: string;
+}
+
+/**
+ * Enqueue a file source whose bytes were already uploaded to its slot. `filename`
+ * is the original name (for the title, origin, and transcript chip); the kind and
+ * owner are read back from the `uploadId` key, never trusted from the client.
+ */
+export const createFileSourceSchema = z.object({
+  uploadId: z.string().min(1).max(512),
+  filename: z.string().trim().min(1).max(255),
+  title: z.string().trim().min(1).max(200).optional(),
+});
+export type CreateFileSourceBody = z.infer<typeof createFileSourceSchema>;
 
 export const semanticSearchSchema = z.object({
   query: z.string().trim().min(1).max(1_000),

@@ -2,9 +2,10 @@
  * The `ingest` job handler (deliver-scalability.md §5.1, §6 D-A). Ingestion runs
  * as durable, claim-serialised background work like consolidate/motivation, so a
  * companion's reads happen once, on any node. A fresh job reads the uploaded bytes
- * from `upload_staging`; a deferred job (parked on an empty wallet) resumes from
- * the parse held on its ingestion row. The pipeline does the actual reading and
- * marks its own durable status.
+ * back from the staging store by their `uploadId` (the object key — object storage
+ * or a filesystem root, never Postgres; staging-object-storage.md); a deferred job
+ * (parked on an empty wallet) resumes from the parse held on its ingestion row. The
+ * pipeline does the actual reading and marks its own durable status.
  */
 
 import type { SourceKind } from '@cobble/shared';
@@ -12,7 +13,7 @@ import type { Logger } from '../logging.js';
 import type { JobHandler } from '../jobs/job-processor.js';
 import type { SemanticMemoryStore } from '../memory/semantic-store.js';
 import type { IngestionPayload, IngestionTarget } from './pipeline.js';
-import type { StagedUpload, UploadStagingStore } from './upload-staging.js';
+import type { StagedUpload, StagedUploadConsumer } from './upload-staging.js';
 
 /** Raised when the ingest queue is at capacity; callers map it to 429 / a busy tool reply. */
 export class IngestionQueueFullError extends Error {
@@ -61,15 +62,16 @@ function payloadFromStaged(staged: StagedUpload): IngestionPayload {
 export interface IngestJobDeps {
   readonly pipeline: IngestionTarget;
   readonly semantic: Pick<SemanticMemoryStore, 'getRunContext' | 'updateJob'>;
-  readonly staging: UploadStagingStore;
+  readonly staging: StagedUploadConsumer;
   readonly logger: Logger;
 }
 
 /**
  * Build the `ingest` job handler. The job payload carries only references
- * (`sourceId`, `jobId`, and a fresh run's `uploadId`); the bytes live in
- * `upload_staging`. Never throws — the pipeline records its own outcome, and a
- * missing source/staging row is logged and turned into a failed ingestion job.
+ * (`sourceId`, `jobId`, and a fresh run's `uploadId`); the bytes live in the
+ * staging store keyed by that `uploadId`. Never throws — the pipeline records its
+ * own outcome, and a missing source/staged object is logged and turned into a
+ * failed ingestion job.
  */
 export function makeIngestJobHandler(deps: IngestJobDeps): JobHandler {
   return async (job): Promise<void> => {

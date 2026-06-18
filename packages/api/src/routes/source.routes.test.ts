@@ -1,24 +1,27 @@
 /**
- * Source intake. The multipart file upload is the one HTTP route (bulk bytes;
- * D-A's two-part upload) — its kind detection, magic-byte gate, transcript pair,
- * ownership, and backpressure are exercised over `inject`. Note/link intake,
- * listing, drill-in, deletion, and ingestion progress are WS methods (`sources.*`,
- * `ingestion.list`), exercised over the WS harness on an embodied connection.
+ * Source intake — all WS methods (`sources.*`, `ingestion.list`), exercised over
+ * the WS harness on an embodied connection against an in-memory staging fake
+ * (staging-object-storage.md). The file-upload path is the two-step presigned
+ * flow: `sources.requestFileUpload` issues a slot, the test writes the bytes into
+ * the fake, then `sources.file` runs its kind detection, magic-byte gate,
+ * transcript pair, ownership check, and backpressure. Note/link intake, listing,
+ * drill-in, deletion, and ingestion progress round it out. (The filesystem upload
+ * sink `PUT /uploads/local/:uploadId` is covered in `uploads-local.routes.test.ts`.)
  */
 
+import type { UploadSlotDto } from '@cobble/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { InMemoryUploadStagingStore } from '../test/fake-upload-staging.js';
 import { makeTestApp, type TestApp } from '../test/helpers.js';
 import { openWs, WsCallError, type WsTestClient } from '../test/ws-client.js';
 
 describe('source intake', () => {
   let ctx: TestApp;
-  let auth: { authorization: string };
   let companionId: string;
   let ws: WsTestClient;
 
   beforeEach(async () => {
     ctx = await makeTestApp();
-    auth = ctx.bearerFor('owner@example.com');
     const anon = await openWs(ctx, 'owner@example.com');
     const { companion } = await anon.call<{ companion: { id: string } }>('companions.create', {
       name: 'Pebble',
@@ -148,44 +151,45 @@ describe('source intake', () => {
     }
   });
 
-  // ---- File upload (HTTP — the one remaining route) ----
+  // ---- File upload (presigned two-step WS flow; staging-object-storage.md) ----
 
-  function multipartFile(
-    fileBody: string,
+  /**
+   * Simulate the full presigned upload: request a slot, "PUT" the bytes (seeded
+   * into the in-memory staging fake at the slot's key), then enqueue via
+   * `sources.file`. Returns the enqueue result.
+   */
+  async function uploadFile(
+    body: string,
     filename = 'peru-history.pdf',
-    contentType = 'application/octet-stream',
-  ): { headers: Record<string, string>; payload: string } {
-    const boundary = 'test-boundary-7f3a';
-    const payload = [
-      `--${boundary}`,
-      `Content-Disposition: form-data; name="file"; filename="${filename}"`,
-      `Content-Type: ${contentType}`,
-      '',
-      fileBody,
-      `--${boundary}--`,
-      '',
-    ].join('\r\n');
-    return {
-      headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
-      payload,
-    };
+  ): Promise<{
+    source: { id: string; kind: string; title: string; origin: string };
+    job: { status: string };
+    messages: { id: string; role: string; content: string; sourceId: string | null }[];
+  }> {
+    const slot = await ws.call<UploadSlotDto>('sources.requestFileUpload', { filename });
+    const staging = ctx.deps.staging as InMemoryUploadStagingStore;
+    staging.put(slot.uploadId, new TextEncoder().encode(body));
+    return ws.call('sources.file', { uploadId: slot.uploadId, filename });
   }
 
-  function uploadFile(body: string, filename?: string) {
-    const upload = multipartFile(body, filename);
-    return ctx.app.inject({
-      method: 'POST',
-      url: `/companions/${companionId}/sources/file`,
-      headers: { ...auth, ...upload.headers },
-      payload: upload.payload,
+  it('issues an owner-scoped slot whose key carries the kind', async () => {
+    const slot = await ws.call<UploadSlotDto>('sources.requestFileUpload', {
+      filename: 'peru-history.pdf',
     });
-  }
+    expect(slot.method).toBe('PUT');
+    expect(slot.url).toContain(`/uploads/local/${encodeURIComponent(slot.uploadId)}`);
+    expect(slot.uploadId).toMatch(/__pdf$/);
+  });
 
-  it('accepts a PDF upload via multipart and tracks its job', async () => {
+  it('rejects requesting a slot for an unsupported file type (bad_params)', async () => {
+    await expect(
+      ws.call('sources.requestFileUpload', { filename: 'data.xlsx' }),
+    ).rejects.toMatchObject({ code: 'bad_params' });
+  });
+
+  it('accepts a PDF upload and tracks its job', async () => {
     // Valid magic bytes but a corrupt body: intake succeeds, reading fails safely.
-    const res = await uploadFile('%PDF-1.4 corrupt body with no objects');
-    expect(res.statusCode).toBe(202);
-    const { source, job } = res.json();
+    const { source, job } = await uploadFile('%PDF-1.4 corrupt body with no objects');
     expect(source.kind).toBe('pdf');
     expect(source.title).toBe('peru-history');
     expect(source.origin).toBe('peru-history.pdf');
@@ -200,10 +204,12 @@ describe('source intake', () => {
   });
 
   it('accepts a .txt upload and reads it to done, deriving the title from the filename', async () => {
-    const res = await uploadFile('Ceviche is cured in lime.\n\nServed in Lima.', 'peru-notes.txt');
-    expect(res.statusCode).toBe(202);
-    expect(res.json().source.kind).toBe('txt');
-    expect(res.json().source.title).toBe('peru-notes');
+    const { source } = await uploadFile(
+      'Ceviche is cured in lime.\n\nServed in Lima.',
+      'peru-notes.txt',
+    );
+    expect(source.kind).toBe('txt');
+    expect(source.title).toBe('peru-notes');
 
     await ctx.deps.ingest.whenIdle();
     const { jobs } = await ws.call<{ jobs: { status: string }[] }>('ingestion.list');
@@ -211,72 +217,84 @@ describe('source intake', () => {
   });
 
   it('writes the attachment chip + acknowledgement to the transcript on a file upload', async () => {
-    const res = await uploadFile('Ceviche is cured in lime.', 'peru-notes.txt');
-    expect(res.statusCode).toBe(202);
-    const { source, messages } = res.json();
+    const { source, messages } = await uploadFile('Ceviche is cured in lime.', 'peru-notes.txt');
     expect(messages).toHaveLength(2);
     expect(messages[0]).toMatchObject({
       role: 'user',
       content: 'peru-notes.txt',
       sourceId: source.id,
     });
-    expect(messages[1].role).toBe('assistant');
-    expect(messages[1].content).toMatch(/reading through "peru-notes\.txt" now/);
-    expect(messages[1].sourceId).toBe(source.id);
+    expect(messages[1]!.role).toBe('assistant');
+    expect(messages[1]!.content).toMatch(/reading through "peru-notes\.txt" now/);
+    expect(messages[1]!.sourceId).toBe(source.id);
 
     // They are real, reload-safe transcript turns (fetched back by id over the WS).
     const { messages: transcript } = await ws.call<{ messages: { id: string }[] }>('messages.list');
     const ids = transcript.map((m) => m.id);
-    expect(ids).toContain(messages[0].id);
-    expect(ids).toContain(messages[1].id);
+    expect(ids).toContain(messages[0]!.id);
+    expect(ids).toContain(messages[1]!.id);
   });
 
   it('detects .md and .pptx kinds from the filename', async () => {
-    const mdRes = await uploadFile('# Heading\n\nBody.', 'trip.md');
-    expect(mdRes.statusCode).toBe(202);
-    expect(mdRes.json().source.kind).toBe('md');
+    const md = await uploadFile('# Heading\n\nBody.', 'trip.md');
+    expect(md.source.kind).toBe('md');
 
     // PK-magic but not a real pptx: intake passes, reading fails safely.
-    const pptxRes = await uploadFile('PK not really a deck', 'deck.pptx');
-    expect(pptxRes.statusCode).toBe(202);
-    expect(pptxRes.json().source.kind).toBe('pptx');
+    const pptx = await uploadFile('PK not really a deck', 'deck.pptx');
+    expect(pptx.source.kind).toBe('pptx');
   });
 
   it('rejects a .txt whose bytes look binary (NUL byte, no BOM)', async () => {
-    const res = await uploadFile('text\x00with a NUL byte', 'notes.txt');
-    expect(res.statusCode).toBe(400);
-    expect(res.json().error).toMatch(/does not look like text/);
+    await expect(uploadFile('text\x00with a NUL byte', 'notes.txt')).rejects.toMatchObject({
+      code: 'bad_params',
+    });
   });
 
   it('falls back to a generic title when the filename is only an extension', async () => {
-    const res = await uploadFile('Just some prose.', '.txt');
-    expect(res.statusCode).toBe(202);
-    expect(res.json().source.kind).toBe('txt');
-    expect(res.json().source.title).toBe('Untitled TXT');
+    const { source } = await uploadFile('Just some prose.', '.txt');
+    expect(source.kind).toBe('txt');
+    expect(source.title).toBe('Untitled TXT');
   });
 
-  it('rejects an unsupported file type (400)', async () => {
-    const res = await uploadFile('col1,col2\n1,2', 'data.xlsx');
-    expect(res.statusCode).toBe(400);
-    expect(res.json().error).toMatch(/unsupported file type/);
-  });
-
-  it('rejects a file whose bytes do not match its extension (magic-byte check)', async () => {
-    // A .docx that is not a zip — extension lied; magic-byte check must catch it.
-    const res = await uploadFile('definitely not a zip', 'fake.docx');
-    expect(res.statusCode).toBe(400);
-    expect(res.json().error).toMatch(/not a valid docx/);
-  });
-
-  it('owner-scopes the file upload (404 for a non-owner)', async () => {
-    const intruder = ctx.bearerFor('intruder@example.com');
-    const upload = multipartFile('%PDF-1.4 body');
-    const res = await ctx.app.inject({
-      method: 'POST',
-      url: `/companions/${companionId}/sources/file`,
-      headers: { ...intruder, ...upload.headers },
-      payload: upload.payload,
+  it('rejects enqueuing a file whose bytes do not match its extension (magic-byte check)', async () => {
+    // A .docx that is not a zip — extension lied; the peek magic-byte check catches it.
+    await expect(uploadFile('definitely not a zip', 'fake.docx')).rejects.toMatchObject({
+      code: 'bad_params',
     });
-    expect(res.statusCode).toBe(404);
+  });
+
+  it('rejects enqueuing an upload that was never PUT (empty/missing → bad_params)', async () => {
+    const slot = await ws.call<UploadSlotDto>('sources.requestFileUpload', {
+      filename: 'ghost.pdf',
+    });
+    // No staging.put — the client never uploaded.
+    await expect(
+      ws.call('sources.file', { uploadId: slot.uploadId, filename: 'ghost.pdf' }),
+    ).rejects.toMatchObject({ code: 'bad_params' });
+  });
+
+  it("owner-scopes enqueue: another user can't claim this owner's uploadId (not_found)", async () => {
+    const slot = await ws.call<UploadSlotDto>('sources.requestFileUpload', {
+      filename: 'peru-history.pdf',
+    });
+    (ctx.deps.staging as InMemoryUploadStagingStore).put(
+      slot.uploadId,
+      new TextEncoder().encode('%PDF-1.4 body'),
+    );
+
+    // A second user, embodied in their own companion, tries the first owner's key.
+    const intruderAnon = await openWs(ctx, 'intruder@example.com');
+    const { companion: intruderCompanion } = await intruderAnon.call<{
+      companion: { id: string };
+    }>('companions.create', { name: 'Rocky', form: 'cat', temperament: 'aloof' });
+    await intruderAnon.close();
+    const intruderWs = await openWs(ctx, 'intruder@example.com', intruderCompanion.id);
+    try {
+      await expect(
+        intruderWs.call('sources.file', { uploadId: slot.uploadId, filename: 'peru-history.pdf' }),
+      ).rejects.toMatchObject({ code: 'not_found' });
+    } finally {
+      await intruderWs.close();
+    }
   });
 });

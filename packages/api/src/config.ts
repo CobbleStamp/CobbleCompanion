@@ -31,6 +31,28 @@ export function pathsOverlap(a: string, b: string): boolean {
  */
 
 /**
+ * Where staged upload bytes live (staging-object-storage.md). A discriminated
+ * union so the wiring can build the matching store and the type system guarantees
+ * the backend's required fields are present (validated in `superRefine`).
+ */
+export type UploadStagingConfig =
+  | {
+      readonly backend: 's3';
+      readonly prefix: string;
+      readonly ttlMs: number;
+      readonly bucket: string;
+      readonly region: string;
+    }
+  | {
+      readonly backend: 'file';
+      readonly prefix: string;
+      readonly ttlMs: number;
+      readonly root: string;
+      /** API origin used to build the local upload-slot URL. */
+      readonly publicBaseUrl: string;
+    };
+
+/**
  * Runtime configuration (implementation.md §3). Required secrets are validated at
  * startup — fail fast (security.md). Tests construct an AppConfig directly.
  */
@@ -47,6 +69,8 @@ export interface AppConfig {
   readonly ingestionModel: string;
   /** Upload size cap for source files. */
   readonly ingestionMaxBytes: number;
+  /** Where staged upload bytes live between accept and ingest (staging-object-storage.md). */
+  readonly uploadStaging: UploadStagingConfig;
   /** A/B knob: prefix the Pass-2 context header onto embedding inputs. */
   readonly useContextHeader: boolean;
   /** Backstop cap on queued+in-flight ingestion runs across all owners. */
@@ -129,6 +153,22 @@ const envSchema = z
       .int()
       .positive()
       .default(25 * 1024 * 1024),
+    // Upload staging (staging-object-storage.md). `s3` in production (bytes go
+    // straight to a bucket via presigned PUT); `file` for local/CI (a root dir is
+    // required — validated below). TTL mirrors the S3 bucket lifecycle rule.
+    UPLOAD_STAGING_BACKEND: z.enum(['s3', 'file']).default('file'),
+    UPLOAD_STAGING_S3_BUCKET: z.string().default(''),
+    // Falls back to the ambient AWS_REGION when unset (handled in loadConfig).
+    UPLOAD_STAGING_S3_REGION: z.string().default(''),
+    UPLOAD_STAGING_PREFIX: z.string().min(1).default('tmp-uploads'),
+    UPLOAD_STAGING_FS_ROOT: z.string().default(''),
+    // API origin the local upload-slot URL points at; empty → derived from PORT.
+    UPLOAD_STAGING_PUBLIC_BASE_URL: z.string().default(''),
+    UPLOAD_STAGING_TTL_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(60 * 60 * 1000),
     USE_CONTEXT_HEADER: z
       .enum(['true', 'false'])
       .default('true')
@@ -223,6 +263,35 @@ const envSchema = z
         path: ['LANGFUSE_SECRET_KEY'],
       });
     }
+    // Upload staging: each backend has its own required field (fail fast — a
+    // misconfigured staging store loses uploads silently otherwise).
+    if (env.UPLOAD_STAGING_BACKEND === 's3' && env.UPLOAD_STAGING_S3_BUCKET.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'UPLOAD_STAGING_S3_BUCKET is required when UPLOAD_STAGING_BACKEND=s3',
+        path: ['UPLOAD_STAGING_S3_BUCKET'],
+      });
+    }
+    if (
+      env.UPLOAD_STAGING_BACKEND === 's3' &&
+      env.UPLOAD_STAGING_S3_REGION.length === 0 &&
+      (process.env.AWS_REGION ?? '').length === 0
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'UPLOAD_STAGING_S3_REGION (or the ambient AWS_REGION) is required when ' +
+          'UPLOAD_STAGING_BACKEND=s3',
+        path: ['UPLOAD_STAGING_S3_REGION'],
+      });
+    }
+    if (env.UPLOAD_STAGING_BACKEND === 'file' && env.UPLOAD_STAGING_FS_ROOT.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'UPLOAD_STAGING_FS_ROOT is required when UPLOAD_STAGING_BACKEND=file',
+        path: ['UPLOAD_STAGING_FS_ROOT'],
+      });
+    }
     // The read-only CLI tool dir must not overlap the writable CLI scratch dir
     // (its default is the OS temp dir when CLI_SCRATCH_DIR is unset) — else a
     // scratch write could land a binary inside the trust boundary (companion-tools.md §6).
@@ -306,6 +375,28 @@ function parseServiceRegistrySeeds(raw: string): readonly ServiceCredentialSeed[
     }));
 }
 
+/**
+ * Resolve the upload-staging backend config from validated env. The discriminant
+ * has been checked in `superRefine`, so the required field for each backend is
+ * present here. The fs `publicBaseUrl` falls back to a local API origin; the s3
+ * region falls back to the ambient `AWS_REGION`.
+ */
+function buildUploadStagingConfig(parsed: z.infer<typeof envSchema>): UploadStagingConfig {
+  const prefix = parsed.UPLOAD_STAGING_PREFIX;
+  const ttlMs = parsed.UPLOAD_STAGING_TTL_MS;
+  if (parsed.UPLOAD_STAGING_BACKEND === 's3') {
+    return {
+      backend: 's3',
+      prefix,
+      ttlMs,
+      bucket: parsed.UPLOAD_STAGING_S3_BUCKET,
+      region: parsed.UPLOAD_STAGING_S3_REGION || (process.env.AWS_REGION ?? ''),
+    };
+  }
+  const publicBaseUrl = parsed.UPLOAD_STAGING_PUBLIC_BASE_URL || `http://localhost:${parsed.PORT}`;
+  return { backend: 'file', prefix, ttlMs, root: parsed.UPLOAD_STAGING_FS_ROOT, publicBaseUrl };
+}
+
 /** Load and validate config from the environment; throws on invalid config. */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const parsed = envSchema.parse(env);
@@ -319,6 +410,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     embeddingDimensions: parsed.EMBEDDING_DIM,
     ingestionModel: parsed.INGESTION_MODEL,
     ingestionMaxBytes: parsed.INGESTION_MAX_BYTES,
+    uploadStaging: buildUploadStagingConfig(parsed),
     useContextHeader: parsed.USE_CONTEXT_HEADER,
     ingestionQueueMax: parsed.INGESTION_QUEUE_MAX,
     wsHeartbeatMs: parsed.WS_HEARTBEAT_MS,

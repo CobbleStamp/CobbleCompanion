@@ -19,8 +19,9 @@ import { vitalityMethods } from './methods/vitality.js';
  * The WS method table (deliver-scalability.md §5.2, Phase D). Transport seeds
  * (`ping`, `auth.me`, `embodiment.whoami`) plus the per-domain method modules. These
  * superseded the former HTTP routes (D3); the web client is fully on the WS and the
- * dead HTTP routes have been removed — only `/auth/config`, the multipart file
- * upload, `/health`, the admin-only `/admin/queue`, and the SPA serve remain HTTP.
+ * dead HTTP routes have been removed — only `/auth/config`, the filesystem upload
+ * sink (`/uploads/local`, local backend only; staging-object-storage.md), `/health`,
+ * the admin-only `/admin/queue`, and the SPA serve remain HTTP.
  */
 export function buildWsMethods(deps: AppDeps): WsMethods {
   return {

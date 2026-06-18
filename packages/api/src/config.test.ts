@@ -6,6 +6,8 @@ import { loadConfig, pathsOverlap } from './config.js';
 const base = {
   DATABASE_URL: 'postgres://localhost/cobble',
   GOOGLE_CLIENT_ID: 'test-google-client-id',
+  // Default staging backend is `file`, which requires a root (see superRefine).
+  UPLOAD_STAGING_FS_ROOT: '/tmp/cc-staging',
 };
 
 /** Both LLM and embedding access offline — no provider key needed. */
@@ -117,6 +119,59 @@ describe('loadConfig', () => {
       NODE_ENV: 'production',
     });
     expect(config.isProduction).toBe(true);
+  });
+
+  describe('UPLOAD_STAGING', () => {
+    it('defaults to the file backend with the standard prefix + TTL', () => {
+      const config = loadConfig({ ...base, ...fakeProviders });
+      expect(config.uploadStaging).toEqual({
+        backend: 'file',
+        prefix: 'tmp-uploads',
+        ttlMs: 60 * 60 * 1000,
+        root: '/tmp/cc-staging',
+        publicBaseUrl: 'http://localhost:3000',
+      });
+    });
+
+    it('requires a filesystem root when the backend is file', () => {
+      expect(() =>
+        loadConfig({
+          DATABASE_URL: 'postgres://localhost/cobble',
+          GOOGLE_CLIENT_ID: 'test-google-client-id',
+          ...fakeProviders,
+          UPLOAD_STAGING_BACKEND: 'file',
+        }),
+      ).toThrow(/UPLOAD_STAGING_FS_ROOT is required/);
+    });
+
+    it('requires a bucket when the backend is s3', () => {
+      expect(() =>
+        loadConfig({
+          ...base,
+          ...fakeProviders,
+          UPLOAD_STAGING_BACKEND: 's3',
+          UPLOAD_STAGING_S3_REGION: 'us-east-1',
+        }),
+      ).toThrow(/UPLOAD_STAGING_S3_BUCKET is required/);
+    });
+
+    it('builds the s3 backend from bucket + region', () => {
+      const config = loadConfig({
+        ...base,
+        ...fakeProviders,
+        UPLOAD_STAGING_BACKEND: 's3',
+        UPLOAD_STAGING_S3_BUCKET: 'cc-uploads',
+        UPLOAD_STAGING_S3_REGION: 'eu-west-1',
+        UPLOAD_STAGING_PREFIX: 'tmp-uploads',
+      });
+      expect(config.uploadStaging).toEqual({
+        backend: 's3',
+        prefix: 'tmp-uploads',
+        ttlMs: 60 * 60 * 1000,
+        bucket: 'cc-uploads',
+        region: 'eu-west-1',
+      });
+    });
   });
 
   describe('CLI_TOOLS_PATH / CLI_SCRATCH_DIR overlap', () => {

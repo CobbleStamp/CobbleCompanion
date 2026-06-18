@@ -16,6 +16,7 @@ import { publicSubnet, webSg } from './network';
 import { imageUri, registryHost } from './registry';
 import { instanceProfile } from './iam';
 import { parameters } from './secrets';
+import { uploadsBucket, UPLOAD_PREFIX } from './storage';
 
 const tags = { Project: 'cobblecompanion', ManagedBy: 'pulumi' };
 
@@ -102,6 +103,10 @@ PORT=3000
 LLM_PROVIDER=openrouter
 LLM_MODEL=${llmModel}
 GOOGLE_CLIENT_ID=${googleClientId}
+UPLOAD_STAGING_BACKEND=s3
+UPLOAD_STAGING_S3_BUCKET=${uploadsBucket.bucket}
+UPLOAD_STAGING_S3_REGION=${region}
+UPLOAD_STAGING_PREFIX=${UPLOAD_PREFIX}
 EOF
 ${secretFetchScript}
 

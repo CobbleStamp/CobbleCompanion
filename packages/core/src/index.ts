@@ -594,11 +594,26 @@ export {
   type IngestJobDeps,
 } from './ingestion/ingest-job.js';
 export {
-  DrizzleUploadStagingStore,
+  buildUploadKey,
+  parseUploadKey,
+  type CreateUploadSlotParams,
+  type ParsedUploadKey,
   type StagedUpload,
+  type StagedUploadConsumer,
   type StageUploadParams,
+  type UploadSlot,
   type UploadStagingStore,
 } from './ingestion/upload-staging.js';
+export {
+  FilesystemUploadStagingStore,
+  type FilesystemStagingConfig,
+} from './ingestion/upload-staging-fs.js';
+export {
+  S3UploadStagingStore,
+  type S3Operations,
+  type S3StagingConfig,
+} from './ingestion/upload-staging-s3.js';
+export { AwsS3Operations, createAwsS3Operations } from './ingestion/upload-staging-s3-aws.js';
 export { sweepIngestion, type IngestionSweepDeps } from './ingestion/ingest-sweep.js';
 export {
   LlmIngestionAnnouncer,

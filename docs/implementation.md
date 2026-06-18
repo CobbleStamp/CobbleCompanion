@@ -703,20 +703,27 @@ node is delivered cross-node from shared Postgres (no in-process fan-out). The r
 delivers rows whose `xid` is below `pg_snapshot_xmin` so a `seq` that commits out of order is
 never skipped — the **visibility-gap guard** (`core/src/events/log.ts`; `architecture.md` §6).
 
-#### `upload_staging` — two-part-upload byte staging
+#### Upload staging — object storage, not Postgres
 
-| Field | Type | Notes |
-|---|---|---|
-| `id` | uuid (PK) | |
-| `owner_id` | uuid (FK → `users.id`, cascade) | the uploading user |
-| `kind` | text (`SourceKind`) | so the `ingest` job rebuilds the right `IngestionPayload` |
-| `bytes` | bytea | the staged document/note/link bytes |
-| `byte_size` | integer | |
-| `created_at` | timestamptz | |
-| `expires_at` | timestamptz, indexed | GC backstop for a staged-but-never-enqueued upload |
+Upload bytes are **not** stored in Postgres. They live in object storage (S3 in production)
+or a local filesystem root (dev/CI), behind the `UploadStagingStore` port
+(`core/src/ingestion/upload-staging*.ts`); the backend is chosen by
+`UPLOAD_STAGING_BACKEND` (`s3` | `file`). The `uploadId` *is* the object key —
+`tmp-uploads/<ownerId>/<uuid>__<kind>` — so there is no staging metadata table: the owner
+(authorization at enqueue) and kind (payload reconstruction) are read back from the key.
 
-Upload bytes are staged durably so the `ingest` job that consumes them can run on **any** node;
-the job deletes the row once the pipeline has read it. Mechanism → `deliver-scalability.md` §6 D-A.
+- **File uploads** are a presigned, direct-to-backend flow: `sources.requestFileUpload`
+  issues a slot, the client PUTs the bytes to it (straight to S3, or to the local
+  `PUT /uploads/local/:uploadId` route for the `file` backend), then `sources.file` validates
+  the staged object (a `head` size check + a ranged magic-byte `peek`) and enqueues the
+  `ingest` job. The job reads the bytes on **any** node and deletes the object when done.
+- **note/link** sources (and the `ingest_source` tool) are small text the API already holds,
+  so they stage server-side via `stage()` and enqueue, same as before.
+- **Expiry** of a staged-but-never-consumed object is the backend's job, not an app row: the
+  S3 bucket has a lifecycle rule on the prefix (TTL), and the `file` backend is swept by
+  `purgeExpired()` (wired in `api/src/index.ts` next to the other periodic sweeps). Full
+  design → `docs/plans/staging-object-storage.md` (supersedes the byte-storage part of
+  `deliver-scalability.md` §6 D-A).
 
 ### Migrations & versioning
 
@@ -903,8 +910,8 @@ for emoji reactions (§1, `companion-reactions.md` §8).
   schema has no `expires_at` — the sole deletion is the `companions` `onDelete: 'cascade'`, so for a
   live companion every appended event persists for the companion's lifetime. The table is the durable
   replay/resume substrate, so the PoC **accepts** this growth rather than trimming behind the read
-  cursor. This mirrors the unscheduled state of `upload_staging.purgeExpired()` — defined as a GC
-  backstop but wired to no sweep (the normal ingestion path deletes its staged row inline, §2.1). A
+  cursor. (Unlike upload staging, whose TTL is now reclaimed — the S3 bucket lifecycle rule, or the
+  `file` backend's wired `purgeExpired()` sweep — `companion_events` has no such backstop.) A
   long-lived deployment needs one of: a time- or watermark-based retention sweep, table partitioning,
   or archival — see `architecture.md` §9.
 - **Client transport + establishment.** The web client holds **one permanent WebSocket** via the

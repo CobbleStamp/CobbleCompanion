@@ -48,7 +48,6 @@ import {
   EmbodimentPresenceStore,
   IngestionPipeline,
   DrizzleEmbodimentStore,
-  DrizzleUploadStagingStore,
   makeIngestJobHandler,
   makeIngestWorkRequester,
   sweepIngestion,
@@ -83,6 +82,7 @@ import {
   type TokenVerifier,
 } from './auth/jwt-verifier.js';
 import { loadConfig, type AppConfig } from './config.js';
+import { createUploadStagingStore } from './upload-staging-factory.js';
 import { FileSystemCliToolStore } from './cli/fs-tool-store.js';
 import { createSubprocessSandbox } from './cli/subprocess-sandbox.js';
 import { StreamableHttpMcpGateway } from './mcp/sdk-client.js';
@@ -205,9 +205,10 @@ async function main(): Promise<void> {
       logger: consoleLogger,
     }),
   });
-  // Two-part-upload staging: an intake stores bytes here, then enqueues an
-  // `ingest` job that reads them on any node (deliver-scalability.md §6 D-A).
-  const staging = new DrizzleUploadStagingStore(db);
+  // Upload staging (staging-object-storage.md): raw bytes live in object storage
+  // (S3) or a local filesystem root, never Postgres; the `ingest` job reads them
+  // back on any node by their key. Backend chosen by config.
+  const staging = createUploadStagingStore(config.uploadStaging);
 
   // Live embodiment claim (Phase D D2): one WS connection holds a companion at a
   // time; the handshake claims it and the heartbeat renews it.
@@ -603,6 +604,21 @@ async function main(): Promise<void> {
   }, MOTIVATION_SWEEP_INTERVAL_MS);
   motivationTimer.unref();
 
+  // Reclaim upload-staging objects that were staged but never consumed — a crash
+  // or lost enqueue between staging and the `ingest` job's success-path delete
+  // would otherwise leak them (staging-object-storage.md §1, the issue-#3 fix).
+  // For the S3 backend this is a no-op (the bucket lifecycle rule owns TTL); for
+  // the filesystem backend it deletes files past their TTL.
+  await staging.purgeExpired().catch((error: unknown) => {
+    consoleLogger.error('upload-staging purge failed', { error });
+  });
+  const stagingPurgeTimer = setInterval(() => {
+    void staging.purgeExpired().catch((error: unknown) => {
+      consoleLogger.error('upload-staging purge failed', { error });
+    });
+  }, STAGING_PURGE_INTERVAL_MS);
+  stagingPurgeTimer.unref();
+
   // Start draining the job queue: a bounded pool of ephemeral processors that
   // claim companions and run their due consolidate/motivation jobs, with a coarse
   // poll as the clock for idle / future-dated work (deliver-scalability.md §5.1).
@@ -615,6 +631,7 @@ async function main(): Promise<void> {
     clearInterval(sweepTimer);
     clearInterval(consolidationTimer);
     clearInterval(motivationTimer);
+    clearInterval(stagingPurgeTimer);
     await jobPool.close();
     await harness.whenIdle();
     await mcpGateway.close();
@@ -641,6 +658,10 @@ const CONSOLIDATION_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 /** How often to catch up proactive ticks (cheap; a leads-pending scan). */
 const MOTIVATION_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+
+/** How often to reclaim never-consumed staged uploads (filesystem backend; the
+ *  S3 backend's call is a no-op since the bucket lifecycle owns TTL). */
+const STAGING_PURGE_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
  * Job-queue tuning (deliver-scalability.md §5.1.6). Lease is generous — longer

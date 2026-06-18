@@ -1,8 +1,9 @@
 /**
  * The WebSocket transport (Phase D, D6). These pin the request/reply correlation,
- * streaming, the live-event channel, the superseded handoff, and the one remaining
- * HTTP call (the multipart file upload) — exercised through the public client API
- * over a controllable fake socket.
+ * streaming, the live-event channel, the superseded handoff, and the presigned
+ * two-step file upload (slot request over WS → direct PUT to the backend → enqueue;
+ * staging-object-storage.md) — exercised through the public client API over a
+ * controllable fake socket.
  */
 
 import type { ChatStreamEvent, CompanionStreamEvent, MessageDto } from '@cobble/shared';
@@ -296,24 +297,75 @@ describe('superseded handoff', () => {
   });
 });
 
-describe('file upload stays HTTP', () => {
-  it('POSTs multipart with the bearer header and returns the intake', async () => {
+describe('file upload (presigned two-step flow)', () => {
+  it('requests a slot, PUTs to the presigned S3 URL (no auth), then enqueues', async () => {
     const intake = { source: { id: 's1' }, job: { id: 'j1' }, messages: [] };
-    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => ({
-      ok: true,
-      json: async () => intake,
-    }));
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => ({ ok: true }));
     vi.stubGlobal('fetch', fetchMock);
 
     const file = new File(['hello'], 'note.txt', { type: 'text/plain' });
-    const result = await uploadFileSource('c1', file);
+    const promise = uploadFileSource('c1', file);
 
-    expect(result).toEqual(intake);
-    const [url, init] = fetchMock.mock.calls[0]!;
-    expect(url).toContain('/companions/c1/sources/file');
-    expect(init?.method).toBe('POST');
-    expect((init?.headers as Record<string, string>).authorization).toBe('Bearer tok');
-    // No FakeWebSocket was opened for the upload path.
-    expect(FakeWebSocket.instances).toHaveLength(0);
+    // Step 1: the slot request over the companion-scoped WS.
+    const socket = await liveSocket();
+    expect(socket.url).toContain('companion=c1');
+    const slotReq = lastRequest(socket);
+    expect(slotReq.method).toBe('sources.requestFileUpload');
+    expect(slotReq.params).toEqual({ filename: 'note.txt', byteSize: file.size });
+    const slot = {
+      uploadId: 'tmp-uploads/u1/abc__txt',
+      url: 'https://bucket.s3.amazonaws.com/tmp-uploads/u1/abc__txt?sig=x',
+      method: 'PUT',
+      headers: { 'content-type': 'text/plain' },
+      expiresAt: '2030-01-01T00:00:00.000Z',
+    };
+    socket.serverSend({ id: slotReq.id, result: slot });
+
+    // Step 2: the direct PUT to the presigned URL — no Authorization header (it
+    // would break the S3 signature).
+    await tick();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [putUrl, putInit] = fetchMock.mock.calls[0]!;
+    expect(putUrl).toBe(slot.url);
+    expect(putInit?.method).toBe('PUT');
+    expect((putInit?.headers as Record<string, string>)['content-type']).toBe('text/plain');
+    expect((putInit?.headers as Record<string, string>).authorization).toBeUndefined();
+
+    // Step 3: enqueue the source referencing the staged bytes.
+    const fileReq = lastRequest(socket);
+    expect(fileReq.method).toBe('sources.file');
+    expect(fileReq.params).toEqual({ uploadId: slot.uploadId, filename: 'note.txt' });
+    socket.serverSend({ id: fileReq.id, result: intake });
+
+    expect(await promise).toEqual(intake);
+  });
+
+  it('sends the bearer when the slot is the same-origin local filesystem route', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => ({ ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const file = new File(['hi'], 'a.txt', { type: 'text/plain' });
+    const promise = uploadFileSource('c1', file);
+    const socket = await liveSocket();
+    socket.serverSend({
+      id: lastRequest(socket).id,
+      result: {
+        uploadId: 'tmp-uploads/u1/abc__txt',
+        url: 'http://localhost:3000/uploads/local/tmp-uploads%2Fu1%2Fabc__txt',
+        method: 'PUT',
+        headers: { 'content-type': 'text/plain' },
+        expiresAt: '2030-01-01T00:00:00.000Z',
+      },
+    });
+
+    await tick();
+    const [, putInit] = fetchMock.mock.calls[0]!;
+    expect((putInit?.headers as Record<string, string>).authorization).toBe('Bearer tok');
+
+    socket.serverSend({
+      id: lastRequest(socket).id,
+      result: { source: { id: 's1' }, job: { id: 'j1' }, messages: [] },
+    });
+    await promise;
   });
 });

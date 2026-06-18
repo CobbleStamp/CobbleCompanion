@@ -1,5 +1,6 @@
+import Fastify from 'fastify';
 import { describe, expect, it } from 'vitest';
-import { isUuid } from './uuid.js';
+import { isUuid, registerUuidParamGuard } from './uuid.js';
 
 describe('isUuid', () => {
   it('accepts a canonical lower-case UUID', () => {
@@ -22,5 +23,27 @@ describe('isUuid', () => {
     // trailing junk / leading whitespace must not slip through
     expect(isUuid('3f2504e0-4f89-41d3-9a0c-0305e82c3301 ')).toBe(false);
     expect(isUuid(' 3f2504e0-4f89-41d3-9a0c-0305e82c3301')).toBe(false);
+  });
+});
+
+describe('registerUuidParamGuard', () => {
+  it('404s a malformed resource id before the handler, but lets a valid one through', async () => {
+    const app = Fastify();
+    registerUuidParamGuard(app);
+    app.get('/companions/:companionId', async () => ({ ok: true }));
+    await app.ready();
+    try {
+      const bad = await app.inject({ method: 'GET', url: '/companions/not-a-uuid' });
+      expect(bad.statusCode).toBe(404);
+      expect(bad.json()).toEqual({ error: 'companion not found' });
+
+      const good = await app.inject({
+        method: 'GET',
+        url: '/companions/00000000-0000-0000-0000-000000000000',
+      });
+      expect(good.statusCode).toBe(200);
+    } finally {
+      await app.close();
+    }
   });
 });

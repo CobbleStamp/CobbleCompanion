@@ -51,12 +51,10 @@ function makeHandler(opts: { ctx: IngestionRunContext | null; staged?: StagedUpl
       },
     },
     staging: {
-      stage: async () => ({ id: 'unused' }),
       get: async () => opts.staged ?? null,
       delete: async (id) => {
         harness.deleted.push(id);
       },
-      purgeExpired: async () => 0,
     },
     logger: silentLogger,
   });

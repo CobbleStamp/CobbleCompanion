@@ -31,8 +31,9 @@ export function setAccessTokenGetter(getter: AccessTokenGetter): void {
   getAccessToken = getter;
 }
 
-/** Bearer header for the one remaining HTTP call (the multipart file upload); empty
- *  when auth is bypassed. Keeps the token's single source of truth in this module. */
+/** Bearer header for the one remaining HTTP call (the local `file`-backend upload
+ *  PUT to `/uploads/local`; the presigned S3 PUT carries no bearer); empty when auth
+ *  is bypassed. Keeps the token's single source of truth in this module. */
 export async function authHeaders(): Promise<Record<string, string>> {
   const token = await getAccessToken();
   return token ? { authorization: `Bearer ${token}` } : {};

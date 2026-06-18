@@ -20,10 +20,12 @@
 >   the single WS), and the **final cleanup** (HTTP routes + SSE + in-process bus
 >   removed). Each phase has a `✅ DELIVERED` marker in §6. Migrations `0005`–`0008`.
 > - **One surface.** The product runs entirely over the WS. The only HTTP routes
->   left are `/auth/config` (public bootstrap, pre-auth), the multipart file upload
->   (`POST /companions/:id/sources/file` — D-A's two-part upload), `/health`, and the
->   SPA static serve. Every test (incl. all seven phase-DoD suites) drives the
->   product over a WS test harness (`packages/api/src/test/ws-client.ts`).
+>   left are `/auth/config` (public bootstrap, pre-auth), the filesystem upload sink
+>   (`PUT /uploads/local/:uploadId` — mounted only for the local `file` staging
+>   backend; file uploads are otherwise a presigned direct-to-object-storage flow,
+>   `staging-object-storage.md`), `/health`, and the SPA static serve. Every test
+>   (incl. all seven phase-DoD suites) drives the product over a WS test harness
+>   (`packages/api/src/test/ws-client.ts`).
 > - **D7 / multi-node: DEFERRED (not needed for the MVP).** Decision 2026-06-17 —
 >   the backend runs on **one micro instance** until scale is actually needed. No
 >   NLB, no flip. The existing `infra/aws` deploy already serves the WS surface
@@ -601,8 +603,9 @@ sequenceDiagram
 
 - **The whole API moves onto WS.** Every REST route becomes a WS message type with
   request/response correlation and concurrent-request multiplexing over the one
-  socket (effectively HTTP/2-over-WS), and **file uploads** (`source.routes`,
-  multipart today) become binary-frame chunking. This is a large, invasive change —
+  socket (effectively HTTP/2-over-WS), and **file uploads** (now a presigned
+  direct-to-object-storage flow, `staging-object-storage.md`) become binary-frame
+  chunking. This is a large, invasive change —
   the main cost of the model, and why it sequences **after** §5.1.
 - **Node failure = full client reconnect.** Losing the embodiment node halts that
   client until it reconnects elsewhere and re-claims; every rolling deploy bounces
@@ -755,6 +758,12 @@ claimed_until`) = the lease. `ingestion_jobs` kept as-is (not generalized — se
 
 #### D-A — Finish Phase B: two-part upload + `ingest` & `reaction_learn` on the queue _(ships single-node)_ — ✅ DELIVERED
 
+> **Byte-storage superseded.** The `upload_staging` Postgres `bytea` table described below has
+> been replaced by **object storage** (S3 in prod) / a **filesystem** root (local), behind the
+> `UploadStagingStore` port, and file uploads are now a **presigned, direct-to-backend** flow.
+> The job-queue + `uploadId`-reference model is unchanged; only *where the bytes live* and *how
+> they arrive* changed. See `docs/plans/staging-object-storage.md`.
+
 **Delivered (commits on `feat/ws-embodiment`).** `reaction_learn` (D-A.1) and `ingest`
 (D-A.2) now run as durable, claim-serialised jobs; the in-memory `IngestionRunner`
 and the deferred-job sweeper are removed; uploads stage bytes in `upload_staging`
@@ -887,8 +896,10 @@ Backpressure is a fleet-wide pending-`ingest` count; deferred jobs resume via
 - `packages/web/src/api/ws.ts` is the transport singleton: one WS per embodied
   companion, RPC correlation by id, streaming methods, and the live-event channel.
   `client.ts` keeps every exported signature (so `Chat.tsx` + all components/hooks
-  are untouched) and only the multipart file upload stays HTTP (D-A's two-part
-  upload). The subscribe → snapshot → merge-by-id flow in `Chat.tsx` is preserved;
+  are untouched) and only the file-upload bytes stay off the WS — the slot request
+  + enqueue are WS methods, and the bytes PUT goes direct to object storage (or the
+  local `/uploads/local` sink for the `file` backend; `staging-object-storage.md`).
+  The subscribe → snapshot → merge-by-id flow in `Chat.tsx` is preserved;
   `companion_events` arrive as pushed `companion` events over the WS.
 - Reconnect/re-claim UX: a takeover by a newer connection (another tab/device)
   yields the room — the owner stops reconnecting (no claim war) and `Chat.tsx`
@@ -910,9 +921,10 @@ Backpressure is a fleet-wide pending-`ingest` count; deferred jobs resume via
   proactive-activity, growth, usage, greeting) and the SSE event channel
   (`sse.ts` + the standing event route). The turn-running HTTP routes that bypassed
   embodiment serialization went with them.
-- Kept the two non-WS routes: `/auth/config` (pre-auth bootstrap) and the multipart
-  file upload; reduced `auth.routes`/`source.routes` to just those (moved source
-  behaviors re-covered over WS in `source.routes.test`).
+- Kept the two non-WS routes: `/auth/config` (pre-auth bootstrap) and the file
+  upload sink (then multipart; now the `file`-backend `PUT /uploads/local/:uploadId`,
+  `staging-object-storage.md`); reduced `auth.routes`/`source.routes` to just those
+  (moved source behaviors re-covered over WS in `source.routes.test`).
 - Dropped `InProcessCompanionEventBus` + `CompanionSubscription`; narrowed
   `CompanionEventBus` to a publish-only sink; `DurableCompanionEventBus` appends to
   the log alone. Verification: core 974 + 1 todo, api 152, web 139 green.

@@ -23,13 +23,12 @@ import type {
   SemanticSearchResultDto,
   SourceDto,
   StaminaEnergyDto,
+  UploadSlotDto,
   UsageDto,
   UserFactDto,
   UserFactsDto,
 } from '@cobble/shared';
 import { authHeaders, SupersededError, wsClient } from './ws.js';
-
-const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? '';
 
 export interface CurrentUser {
   readonly id: string;
@@ -161,22 +160,38 @@ export async function createLinkSource(
 
 /**
  * Upload a document file (PDF/txt/md/docx/pptx); reading happens in the background.
- * This stays an HTTP endpoint — bulk bytes belong in a multipart body, not a JSON
- * WS frame (the two-part upload of D-A). The bearer rides the Authorization header.
+ * Three steps (staging-object-storage.md): (1) request a direct-upload slot over
+ * the WS — the server derives the kind from the filename; (2) PUT the bytes
+ * straight to the slot URL; (3) enqueue the source referencing the staged bytes.
+ *
+ * Step 2's target differs by backend: the S3 backend returns a presigned,
+ * cross-origin URL that must NOT carry our Authorization header (it would break
+ * the signature), while the local filesystem backend returns the same-origin
+ * `/uploads/local/...` route, which requires the bearer. Detect by the path.
  */
 export async function uploadFileSource(companionId: string, file: File): Promise<FileSourceIntake> {
-  const form = new FormData();
-  form.append('file', file);
-  const response = await fetch(`${API_URL}/companions/${companionId}/sources/file`, {
-    method: 'POST',
-    headers: await authHeaders(),
-    body: form,
-  });
-  if (!response.ok) {
-    const body = (await response.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? `upload failed (${response.status})`);
+  const slot = await wsClient.call<UploadSlotDto>(
+    'sources.requestFileUpload',
+    { filename: file.name, byteSize: file.size },
+    companionId,
+  );
+
+  const origin = globalThis.location?.origin ?? 'http://localhost';
+  const isLocalRoute = new URL(slot.url, origin).pathname.startsWith('/uploads/local/');
+  const headers: Record<string, string> = { ...(slot.headers ?? {}) };
+  if (isLocalRoute) {
+    Object.assign(headers, await authHeaders());
   }
-  return (await response.json()) as FileSourceIntake;
+  const put = await fetch(slot.url, { method: slot.method, headers, body: file });
+  if (!put.ok) {
+    throw new Error(`upload failed (${put.status})`);
+  }
+
+  return wsClient.call<FileSourceIntake>(
+    'sources.file',
+    { uploadId: slot.uploadId, filename: file.name },
+    companionId,
+  );
 }
 
 /** The companion's sources, newest first. */

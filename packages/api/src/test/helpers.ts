@@ -52,7 +52,6 @@ import {
   type IngestionTarget,
   type LlmGateway,
   DrizzleEmbodimentStore,
-  DrizzleUploadStagingStore,
   makeIngestJobHandler,
   makeIngestWorkRequester,
   DrizzleProactiveOutcomeStore,
@@ -71,6 +70,7 @@ import {
   ToolRegistry,
   TranscriptMemoryStore,
   type Logger,
+  type UploadStagingStore,
 } from '@cobble/core';
 import type { FastifyInstance } from 'fastify';
 import { buildApp, type AppDeps } from '../app.js';
@@ -82,6 +82,7 @@ import {
   type TokenVerifier,
 } from '../auth/jwt-verifier.js';
 import type { AppConfig } from '../config.js';
+import { InMemoryUploadStagingStore } from './fake-upload-staging.js';
 
 export const silentLogger: Logger = { error: () => {}, warn: () => {}, info: () => {} };
 
@@ -119,6 +120,13 @@ export const testConfig: AppConfig = {
   embeddingDimensions: EMBEDDING_DIMENSIONS,
   ingestionModel: 'test-ingestion-model',
   ingestionMaxBytes: 25 * 1024 * 1024,
+  uploadStaging: {
+    backend: 'file',
+    prefix: 'tmp-uploads',
+    ttlMs: 60 * 60 * 1000,
+    root: '/tmp/cc-test-staging',
+    publicBaseUrl: 'http://localhost:3000',
+  },
   useContextHeader: true,
   ingestionQueueMax: 100,
   // Short WS embodiment timers so handoff/supersession is observable in tests.
@@ -210,6 +218,13 @@ export interface TestAppOptions {
    * mid-turn embodiment fence (deliver-scalability.md §5.2) on single-connection PGlite.
    */
   readonly llmGateway?: LlmGateway;
+  /**
+   * Replace the upload-staging store (default: a {@link InMemoryUploadStagingStore}).
+   * A test exercising the filesystem upload route injects a real
+   * {@link FilesystemUploadStagingStore} over a temp dir so the `PUT /uploads/local`
+   * route is mounted and writes are observable on disk.
+   */
+  readonly staging?: UploadStagingStore;
 }
 
 export async function makeTestApp(
@@ -264,7 +279,9 @@ export async function makeTestApp(
       logger: silentLogger,
     }),
   });
-  const staging = new DrizzleUploadStagingStore(db);
+  const staging =
+    options.staging ??
+    new InMemoryUploadStagingStore(config.uploadStaging.prefix, config.uploadStaging.ttlMs);
   const embodiment = new DrizzleEmbodimentStore(db);
   // Phase 12: the User-Model Reflector derives Tier-2 beliefs from the transcript on
   // its own cursor; the consolidation service fires it after each run.

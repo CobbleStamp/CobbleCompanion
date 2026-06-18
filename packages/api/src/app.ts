@@ -32,7 +32,6 @@ import type {
   VitalityStore,
 } from '@cobble/core';
 import cors from '@fastify/cors';
-import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -199,11 +198,6 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     allowedHeaders: ['Content-Type', 'Authorization'],
   });
 
-  // Multipart uploads (PDF sources), capped at the configured size.
-  await app.register(multipart, {
-    limits: { fileSize: deps.config.ingestionMaxBytes, files: 1 },
-  });
-
   // Tolerate an empty body on application/json requests. Fastify's default JSON
   // parser rejects an empty body with 400 FST_ERR_CTP_EMPTY_JSON_BODY — and that
   // happens before preHandlers, so a client that sends `content-type:
@@ -267,9 +261,10 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   // The product surface is the realtime WS (below). Only a few HTTP routes remain:
   // the public auth bootstrap (fetched before the client can authenticate), the
-  // multipart file upload (bulk bytes don't belong in a JSON WS frame — D-A's
-  // two-part upload), and the admin-only observability read (ops tooling speaks
-  // HTTP, not the WS envelope). Everything else is a WS method (deliver-scalability.md §6).
+  // filesystem upload sink (mounted only for the local `file` staging backend — the
+  // local equivalent of a presigned S3 PUT; staging-object-storage.md), and the
+  // admin-only observability read (ops tooling speaks HTTP, not the WS envelope).
+  // Everything else is a WS method (deliver-scalability.md §6).
   registerAuthRoutes(app, deps);
   registerSourceRoutes(app, deps, requireAuth);
   registerAdminRoutes(app, deps, requireAuth, requireAdmin);
