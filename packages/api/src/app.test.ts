@@ -81,15 +81,21 @@ describe('app error logging (common/logging.md)', () => {
   });
 
   it('redacts a credential query param from the 5xx error log', async () => {
-    // A WS handshake failure routes through this same error handler, and the
-    // browser bearer rides the URL as ?access_token=<jwt>. The log must carry the
-    // redacted URL, never the live token (regression guard for app.ts:243).
-    ctx.deps.identity.getCompanion = async () => {
+    // An unhandled handler failure routes through the central setErrorHandler, and
+    // a browser bearer rides the URL as ?access_token=<jwt> (it cannot set an Auth
+    // header on a WebSocket). The log must carry the redacted URL, never the live
+    // token (regression guard for app.ts setErrorHandler url redaction). We drive
+    // it through /admin/queue — the one remaining HTTP route whose handler lets an
+    // error propagate uncaught — making the caller admin and forcing the snapshot
+    // read to throw.
+    const owner = await ctx.deps.identity.ensureUserByEmail('owner@example.com');
+    ctx.deps.identity.getUserById = async () => ({ ...owner, isAdmin: true });
+    ctx.deps.queueMetrics.snapshot = async () => {
       throw new Error('boom');
     };
     const res = await ctx.app.inject({
-      method: 'POST',
-      url: '/companions/00000000-0000-0000-0000-000000000000/sources/file?access_token=live.jwt',
+      method: 'GET',
+      url: '/admin/queue?access_token=live.jwt',
       headers: ctx.bearerFor('owner@example.com'),
     });
 
