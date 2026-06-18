@@ -807,6 +807,15 @@ for emoji reactions (§1, `companion-reactions.md` §8).
   not the raw max, for the same reason — §1, `deliver-scalability.md` §C). Message events include
   `tool_step`/`proposal` kinds, so a surface that wasn't the turn's initiator still renders a complete
   transcript.
+- **Retention — none (accepted unbounded growth).** `companion_events` is **append-only with no
+  retention sweep**: `append` only inserts, `readSince` only reads forward past a cursor, and the
+  schema has no `expires_at` — the sole deletion is the `companions` `onDelete: 'cascade'`, so for a
+  live companion every appended event persists for the companion's lifetime. The table is the durable
+  replay/resume substrate, so the PoC **accepts** this growth rather than trimming behind the read
+  cursor. This mirrors the unscheduled state of `upload_staging.purgeExpired()` — defined as a GC
+  backstop but wired to no sweep (the normal ingestion path deletes its staged row inline, §2.1). A
+  long-lived deployment needs one of: a time- or watermark-based retention sweep, table partitioning,
+  or archival — see `architecture.md` §9.
 - **Client transport + establishment.** The web client holds **one permanent WebSocket** via the
   `wsClient` transport singleton (`web/src/api/ws.ts`): all requests correlate by envelope `id`, turns
   stream as `{ id, stream }` chunks, and `{ event, data }` frames are the live channel. The chat's

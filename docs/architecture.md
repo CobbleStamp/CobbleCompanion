@@ -1074,6 +1074,11 @@ owned by `development-plan.md`.
   never replenishes it (a user who runs out asks a developer to raise the count). A real product needs
   a way to _get more food_ — earned, purchased, or granted — and the currency/monetization model that
   implies. Out of scope here (`companion-economy.md` §7).
+- **Event-log retention** — the durable `companion_events` log (§6) is **append-only with no
+  retention sweep**, so it grows for a companion's lifetime; the PoC accepts this (it is the
+  replay/resume substrate). A long-lived deployment needs a retention sweep (a `seq`-watermark delete
+  behind every node's settled cursor is safe), partitioning, or archival — and should likewise
+  schedule `upload_staging.purgeExpired()` as its GC backstop (`implementation.md` §2.4).
 - **Native surfaces** — Mobile/Desktop clients, OS-tool bridges, and the Sync Courier.
 - **Transcript compaction** — summarizing the compactible remainder when the context window fills.
 - **Security hardening** — encryption-at-rest specifics, data inspection/management/delete controls,
