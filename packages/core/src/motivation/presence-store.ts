@@ -13,8 +13,9 @@ export interface PresenceStore {
   recordHeartbeat(companionId: string, opts: { tabVisible: boolean }): void;
   /** Record real user activity (e.g. sending a message) — implies `active`. */
   recordActivity(companionId: string): void;
-  /** The latest signal, or null if the companion has not been seen this run. */
-  get(companionId: string): PresenceSignal | null;
+  /** The latest signal, or null if the companion is not present (no live claim /
+   *  not seen this run). Async — a claim-backed store (D5) reads shared Postgres. */
+  get(companionId: string): Promise<PresenceSignal | null>;
 }
 
 export class InMemoryPresenceStore implements PresenceStore {
@@ -48,7 +49,7 @@ export class InMemoryPresenceStore implements PresenceStore {
     });
   }
 
-  get(companionId: string): PresenceSignal | null {
+  async get(companionId: string): Promise<PresenceSignal | null> {
     return this.signals.get(companionId) ?? null;
   }
 }

@@ -177,6 +177,58 @@ describe('DrizzleIdentityStore', () => {
     expect(dto?.evolvedPersona).toBe("You've grown warmer with them.");
   });
 
+  it('updateEvolvedPersona never rewinds the cursor (monotonic CAS)', async () => {
+    const owner = await identity.ensureUserByEmail('owner@example.com');
+    const companion = await identity.createCompanion(owner.id, {
+      name: 'Pebble',
+      form: 'fox',
+      temperament: 'curious',
+    });
+
+    await identity.updateEvolvedPersona(companion.id, 'newer', 12);
+    // A stale/duplicate run (seq <= stored) is a safe no-op — neither the cursor
+    // nor the persona moves back.
+    await identity.updateEvolvedPersona(companion.id, 'stale', 5);
+
+    const record = await identity.getCompanionById(companion.id);
+    expect(record?.personaUpdatedThroughSeq).toBe(12);
+    expect(record?.evolvedPersona).toBe('newer');
+
+    // A genuine advance still applies.
+    await identity.updateEvolvedPersona(companion.id, 'newest', 20);
+    expect((await identity.getCompanionById(companion.id))?.personaUpdatedThroughSeq).toBe(20);
+  });
+
+  it('advanceUserFactsThroughSeq never rewinds the cursor (monotonic CAS)', async () => {
+    const owner = await identity.ensureUserByEmail('owner@example.com');
+    const companion = await identity.createCompanion(owner.id, {
+      name: 'Pebble',
+      form: 'fox',
+      temperament: 'curious',
+    });
+
+    await identity.advanceUserFactsThroughSeq(companion.id, 10);
+    await identity.advanceUserFactsThroughSeq(companion.id, 4); // stale → no-op
+    expect((await identity.getCompanionById(companion.id))?.userFactsThroughSeq).toBe(10);
+    await identity.advanceUserFactsThroughSeq(companion.id, 15);
+    expect((await identity.getCompanionById(companion.id))?.userFactsThroughSeq).toBe(15);
+  });
+
+  it('updateUserPersona never rewinds the cursor (monotonic CAS)', async () => {
+    const owner = await identity.ensureUserByEmail('owner@example.com');
+    const companion = await identity.createCompanion(owner.id, {
+      name: 'Pebble',
+      form: 'fox',
+      temperament: 'curious',
+    });
+
+    await identity.updateUserPersona(companion.id, 'newer', 8);
+    await identity.updateUserPersona(companion.id, 'stale', 3); // stale → no-op
+    const record = await identity.getCompanionById(companion.id);
+    expect(record?.userModelUpdatedThroughSeq).toBe(8);
+    expect(record?.userPersona).toBe('newer');
+  });
+
   it("lists only the owner's companions", async () => {
     const owner = await identity.ensureUserByEmail('owner@example.com');
     await identity.createCompanion(owner.id, {

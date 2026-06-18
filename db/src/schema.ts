@@ -1,8 +1,12 @@
 import type {
   CapabilityKey,
+  CompanionStreamEvent,
   Drive,
   DriveWeights,
   IngestionStatus,
+  JobPayload,
+  JobStatus,
+  JobType,
   LeadStatus,
   McpToolSnapshot,
   MessageKind,
@@ -79,6 +83,35 @@ const tsvector = customType<{ data: string }>({
   },
 });
 
+/**
+ * Postgres `xid8` (64-bit, non-wrapping transaction id) column — the value of
+ * `pg_current_xact_id()` at insert. Used only by the live-event reader's visibility
+ * horizon (see {@link companionEvents}); never read into the app. Exposed as a
+ * string to avoid 64-bit precision loss.
+ */
+const xid8 = customType<{ data: string }>({
+  dataType() {
+    return 'xid8';
+  },
+});
+
+/**
+ * Raw binary column (`bytea`) — holds a staged upload's bytes (see
+ * {@link uploadStaging}). The pg/PGlite drivers round-trip a Node `Buffer` /
+ * `Uint8Array`; we expose `Uint8Array` so callers don't depend on `Buffer`.
+ */
+const bytea = customType<{ data: Uint8Array; driverData: Buffer }>({
+  dataType() {
+    return 'bytea';
+  },
+  toDriver(value: Uint8Array): Buffer {
+    return Buffer.from(value);
+  },
+  fromDriver(value: Buffer): Uint8Array {
+    return new Uint8Array(value);
+  },
+});
+
 export const users = pgTable(
   'users',
   {
@@ -102,6 +135,11 @@ export const users = pgTable(
     // the auth boundary, then refined in conversation; see `user_facts` below and
     // docs/companion-memory.md §4).
     email: text('email').unique(),
+    // Operator flag: gates access to the admin-only surface (the `/admin/queue`
+    // queue/embodiment observability read — deliver-scalability.md §C). Defaults to
+    // false so every existing + JIT-provisioned user is non-admin; an operator
+    // promotes a specific user out-of-band (a DB update / the CLI).
+    isAdmin: boolean('is_admin').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -366,6 +404,184 @@ export const ingestionJobs = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index('ingestion_jobs_companion_idx').on(table.companionId, table.status)],
+);
+
+/**
+ * Generic background-work queue (deliver-scalability.md §5.1, Phase B). One row =
+ * one unit of off-request-path work for one companion. Ephemeral processor pools
+ * on any node claim a whole companion (see {@link companionClaims}) and drain its
+ * due jobs in `run_at` order, so duplicate setInterval sweeps across nodes can no
+ * longer run the same work N times.
+ *
+ * Coalesced by `dedupe_key`: at most one PENDING job per (companion, dedupe_key)
+ * via the partial unique index, so repeated triggers collapse onto one row (the
+ * fleet-wide replacement for the old in-process coalescing Set). The key is the
+ * bare type for idempotent companion-wide work (`consolidate`, `motivation` →
+ * one pending each), but discriminated for per-event work (`reaction_learn` →
+ * `reaction:{messageId}:{emoji}`, so distinct reactions don't collapse while a
+ * re-react dedupes). Phase B covers `consolidate`, `motivation`, `reaction_learn`;
+ * ingestion keeps {@link ingestionJobs} until the Phase D upload split makes its
+ * byte payload durable.
+ */
+export const jobs = pgTable(
+  'jobs',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companionId: uuid('companion_id')
+      .notNull()
+      .references(() => companions.id, { onDelete: 'cascade' }),
+    type: text('type').$type<JobType>().notNull(),
+    // Coalescing key (see table doc): bare type for companion-wide work,
+    // discriminated by payload for per-event work.
+    dedupeKey: text('dedupe_key').notNull(),
+    // Type-specific reference, never bulk data (e.g. reaction_learn → messageId +
+    // emoji); empty for companion-only jobs.
+    payload: jsonb('payload').$type<JobPayload>().notNull().default({}),
+    // Earliest time the job is eligible to run (now() for immediate work; a future
+    // time for backoff / "deferred").
+    runAt: timestamp('run_at', { withTimezone: true }).notNull().defaultNow(),
+    status: text('status').$type<JobStatus>().notNull().default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    // User-/operator-safe last failure reason; internal detail stays in logs.
+    lastError: text('last_error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // Coalescing: at most one PENDING job per (companion, dedupe_key). Repeat
+    // triggers upsert onto this row (bumping run_at to the earlier time) rather
+    // than piling up duplicates.
+    uniqueIndex('jobs_pending_companion_dedupe_idx')
+      .on(table.companionId, table.dedupeKey)
+      .where(sql`status = 'pending'`),
+    // Claiming scan: "due, pending work, oldest first".
+    index('jobs_due_idx').on(table.status, table.runAt),
+  ],
+);
+
+/**
+ * Per-companion work lease (deliver-scalability.md §5.1). A processor claims a
+ * whole companion before draining its jobs, so exactly one processor fleet-wide
+ * touches a companion's background state at a time (the single-writer invariant
+ * the runners used to get from an in-process Set). `claimedUntil` is a lease: a
+ * crashed processor's claim lapses and another node reclaims it.
+ *
+ * Distinct from the WS embodiment claim (Phase D) and from atomic writes — three
+ * independent mechanisms, never conflated (deliver-scalability.md §7 Q4).
+ */
+export const companionClaims = pgTable('companion_claims', {
+  companionId: uuid('companion_id')
+    .primaryKey()
+    .references(() => companions.id, { onDelete: 'cascade' }),
+  // Opaque id of the processor/node holding the lease (observability/debugging).
+  owner: text('owner').notNull(),
+  // Monotonic claim counter, bumped on each (re)claim — a fencing token.
+  generation: bigint('generation', { mode: 'number' }).notNull().default(0),
+  // The claim is live only while now() < claimedUntil.
+  claimedUntil: timestamp('claimed_until', { withTimezone: true }).notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Durable per-companion live-event log (deliver-scalability.md §5.2/§6 D4). Every
+ * publish point (transcript append, reaction add/remove, the react tool) writes a
+ * row here; the one live embodiment connection's node reads rows past its cursor on
+ * each heartbeat and pushes them over the WS. This is the cross-node delivery fix:
+ * an event written on ANY node is read from shared Postgres by the holding node, so
+ * there is no in-process fan-out to miss (the SSE bus's failure at N nodes). `seq`
+ * is the per-row monotonic cursor.
+ *
+ * **Visibility-gap guard (`xid`).** `seq` (a `bigserial`) is assigned at INSERT but a
+ * row only becomes visible at COMMIT, and commits can land out of `seq` order — so a
+ * naive `seq > cursor` reader can leap past a lower `seq` that commits late and drop
+ * it forever. Each row therefore records its inserting transaction id
+ * (`pg_current_xact_id()`); the reader only delivers rows whose `xid` is below the
+ * oldest still-running transaction (`pg_snapshot_xmin`), holding back any row that
+ * could still have an uncommitted predecessor. This is correct because every append
+ * is a single-statement autocommit insert, so `xid` order matches `seq` order
+ * (deliver-scalability.md §C "C1"; reader in `core/src/events/log.ts`).
+ */
+export const companionEvents = pgTable(
+  'companion_events',
+  {
+    seq: bigserial('seq', { mode: 'number' }).primaryKey(),
+    companionId: uuid('companion_id')
+      .notNull()
+      .references(() => companions.id, { onDelete: 'cascade' }),
+    event: jsonb('event').$type<CompanionStreamEvent>().notNull(),
+    // The inserting transaction's id — the live reader's delivery horizon (see the
+    // table doc). Stamped per-row at INSERT; never read into the app, only compared
+    // in SQL against pg_snapshot_xmin.
+    xid: xid8('xid')
+      .notNull()
+      .default(sql`pg_current_xact_id()`),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('companion_events_companion_seq_idx').on(table.companionId, table.seq)],
+);
+
+/**
+ * Live embodiment claim (deliver-scalability.md §5.2, Phase D D2). Exactly one WS
+ * connection "embodies" a companion at a time — the product's one-room rule. The
+ * holder is identified by a **ULID** (`owner`, timestamp-sortable so "newer wins"
+ * is a lexical compare); `generation` is a DB-stamped monotonic counter (bumped on
+ * each claim) kept for observability + a strict-ordering fallback. A new connection
+ * **force-claims** (its newer ULID wins); the prior holder self-fences when its
+ * heartbeat renew finds it no longer owns the row. `last_heartbeat` + a TTL is the
+ * crash backstop: a dead holder's claim lapses and is reclaimable.
+ *
+ * Distinct from the job-queue companion claim and from atomic writes — three
+ * independent mechanisms, never conflated (deliver-scalability.md §7 Q4).
+ */
+export const activeEmbodiment = pgTable('active_embodiment', {
+  companionId: uuid('companion_id')
+    .primaryKey()
+    .references(() => companions.id, { onDelete: 'cascade' }),
+  // The holding connection's ULID — the fencing token (sortable; newer wins).
+  owner: text('owner').notNull(),
+  // Host/pid of the node holding the connection (observability/debugging).
+  node: text('node').notNull(),
+  // Monotonic claim counter, bumped on each (re)claim.
+  generation: bigint('generation', { mode: 'number' }).notNull().default(0),
+  // Refreshed by the holder's heartbeat; a stale value past the TTL is reclaimable.
+  lastHeartbeat: timestamp('last_heartbeat', { withTimezone: true }).notNull(),
+  // Presence (D5): the claim row doubles as the presence signal — a live claim means
+  // the user is embodying the companion. `last_activity_at` is the last real
+  // interaction (a turn); `tab_visible` whether the room is in the foreground.
+  lastActivityAt: timestamp('last_activity_at', { withTimezone: true }).notNull().defaultNow(),
+  tabVisible: boolean('tab_visible').notNull().default(true),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Two-part-upload staging (deliver-scalability.md §6 D-A). An upload's raw bytes
+ * are stored here durably so the `ingest` job that reads them can run on ANY node
+ * (the in-memory IngestionRunner queue couldn't survive a cross-node claim). The
+ * row is written when an intake route accepts a source and deleted by the `ingest`
+ * job once the pipeline has consumed it (parsing is free, so a deferred run keeps
+ * its parsed doc on {@link ingestionJobs}, not these bytes). `expires_at` is a GC
+ * backstop for an upload that was staged but never enqueued (only possible once the
+ * client-facing /uploads endpoint lands in Phase D D3); the consuming job is the
+ * normal delete path.
+ *
+ * `kind` is the full {@link SourceKind} so the job reconstructs the right
+ * `IngestionPayload`: file kinds carry document bytes; `note`/`link` carry their
+ * text / URL as UTF-8 bytes (uniform one-column staging).
+ */
+export const uploadStaging = pgTable(
+  'upload_staging',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    ownerId: uuid('owner_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    kind: text('kind').$type<SourceKind>().notNull(),
+    bytes: bytea('bytes').notNull(),
+    byteSize: integer('byte_size').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  },
+  (table) => [index('upload_staging_expires_idx').on(table.expiresAt)],
 );
 
 /**

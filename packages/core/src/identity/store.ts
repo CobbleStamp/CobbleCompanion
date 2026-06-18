@@ -1,6 +1,6 @@
 import type { CompanionDto, DriveWeights, PersonalityKnobs, ProactivityDial } from '@cobble/shared';
 import { companions, type Database, DEFAULT_STARTING_VITALITY_TOKENS, users } from '@cobble/db';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, lte } from 'drizzle-orm';
 
 export interface UserRecord {
   readonly id: string;
@@ -12,6 +12,8 @@ export interface UserRecord {
   readonly externalId: string | null;
   /** Login identity when `authSource = 'google'`; null for `service` (no email). */
   readonly email: string | null;
+  /** Operator flag — gates the admin-only surface (`/admin/queue`). Default false. */
+  readonly isAdmin: boolean;
   readonly createdAt: string;
 }
 
@@ -87,6 +89,12 @@ export interface IdentityStore {
   /** Convenience wrapper for a Google/email claim — see {@link ensureUserByClaim}. */
   ensureUserByEmail(email: string): Promise<UserRecord>;
   getUserById(id: string): Promise<UserRecord | null>;
+  /**
+   * Set a user's operator (admin) flag — the out-of-band promotion path for the
+   * admin-only surface (deliver-scalability.md §C). Used by an operator tool/CLI;
+   * never reachable from a user request path. No-op if the user does not exist.
+   */
+  setAdmin(userId: string, isAdmin: boolean): Promise<void>;
   createCompanion(ownerId: string, input: CreateCompanionInput): Promise<CompanionDto>;
   getCompanion(id: string, ownerId: string): Promise<CompanionDto | null>;
   /**
@@ -216,6 +224,10 @@ export class DrizzleIdentityStore implements IdentityStore {
     return row ? toUserRecord(row) : null;
   }
 
+  async setAdmin(userId: string, isAdmin: boolean): Promise<void> {
+    await this.db.update(users).set({ isAdmin }).where(eq(users.id, userId));
+  }
+
   async createCompanion(ownerId: string, input: CreateCompanionInput): Promise<CompanionDto> {
     const [row] = await this.db
       .insert(companions)
@@ -265,14 +277,30 @@ export class DrizzleIdentityStore implements IdentityStore {
     await this.db
       .update(companions)
       .set({ evolvedPersona, personaUpdatedThroughSeq })
-      .where(eq(companions.id, companionId));
+      .where(
+        and(
+          eq(companions.id, companionId),
+          // Monotonic guard: write only when this batch is not behind the stored
+          // cursor. A stale run with a lower seq is a safe no-op (never a rewind);
+          // an equal or higher seq applies — so the initial write at seq 0 still
+          // lands. Keeps the cursor correct independent of the Phase B companion
+          // claim (deliver-scalability.md §8).
+          lte(companions.personaUpdatedThroughSeq, personaUpdatedThroughSeq),
+        ),
+      );
   }
 
   async advanceUserFactsThroughSeq(companionId: string, throughSeq: number): Promise<void> {
     await this.db
       .update(companions)
       .set({ userFactsThroughSeq: throughSeq })
-      .where(eq(companions.id, companionId));
+      .where(
+        and(
+          eq(companions.id, companionId),
+          // Monotonic guard — see updateEvolvedPersona (deliver-scalability.md §8).
+          lte(companions.userFactsThroughSeq, throughSeq),
+        ),
+      );
   }
 
   async updateUserPersona(
@@ -283,7 +311,13 @@ export class DrizzleIdentityStore implements IdentityStore {
     await this.db
       .update(companions)
       .set({ userPersona, userModelUpdatedThroughSeq })
-      .where(eq(companions.id, companionId));
+      .where(
+        and(
+          eq(companions.id, companionId),
+          // Monotonic guard — see updateEvolvedPersona (deliver-scalability.md §8).
+          lte(companions.userModelUpdatedThroughSeq, userModelUpdatedThroughSeq),
+        ),
+      );
   }
 
   async markSeen(companionId: string, at: Date): Promise<void> {
@@ -309,6 +343,7 @@ function toUserRecord(row: typeof users.$inferSelect): UserRecord {
     serviceClientId: row.serviceClientId,
     externalId: row.externalId,
     email: row.email,
+    isAdmin: row.isAdmin,
     createdAt: row.createdAt.toISOString(),
   };
 }

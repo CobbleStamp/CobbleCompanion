@@ -290,26 +290,26 @@ invents preferences fails the gate (`ontology.md` §5).
 
 A read-only view of everything a companion holds, grouped by memory kind.
 
-**API** (owner-scoped; `/memory` + `/memory/search` in
-`packages/api/src/routes/memory.routes.ts`, `/sources…` + `/ingestion` in
-`source.routes.ts`):
+**API** (owner-scoped WS methods; `memory.snapshot` + `memory.search` in
+`packages/api/src/ws/methods/memory.ts`, the `sources.*` + `ingestion.list` methods in
+`packages/api/src/ws/methods/sources.ts`):
 
-- `GET /companions/:companionId/memory` — a sectioned snapshot
+- `memory.snapshot` (WS method) — a sectioned snapshot
   (`MemorySnapshotDto` in `packages/shared/src/contracts.ts`): `identity`,
   `episodic` (the single transcript's `messageCount`), `semantic`
   (source/section/fact counts + ingestion jobs), and `procedural` (count of learned
-  workflows). It also exposes `GET …/procedures` (learned workflows), `GET …/leads`
-  (the reading list), `POST …/explore` (work the reading list → proposals), and the
-  approval queue (`GET …/proposals`, `POST …/proposals/:id/confirm|reject`).
-- `POST /companions/:companionId/memory/search` — search semantic memory
+  workflows). Sibling WS methods: `procedures.list` (learned workflows), `leads.list`
+  (the reading list), `explore` (work the reading list → proposals), and the
+  approval queue (`proposals.list`, `proposals.confirm` / `proposals.reject`).
+- `memory.search` (WS method) — search semantic memory
   directly; results carry the verbatim passage + a `Citation` (source, chapter,
   paragraph/page range).
-- `GET /companions/:companionId/sources` and `GET …/sources/:sourceId` — the
+- `sources.list` and `sources.get` (WS methods) — the
   sources the companion has read and the per-source section drill-in (verbatim
-  text + the companion's Pass-2 context line); `GET …/ingestion` — reading
+  text + the companion's Pass-2 context line); `ingestion.list` — reading
   progress ("read N of M").
 - Transcript drill-in reuses the chat read path
-  `GET /companions/:companionId/messages` (the companion's one continuous
+  `messages.list` (WS method) (the companion's one continuous
   conversation; there is no conversation/session entity — see
   [`implementation.md`](./implementation.md) §1). This read path returns the
   **most-recent N** messages (a recency window, like the harness `recentLimit`),

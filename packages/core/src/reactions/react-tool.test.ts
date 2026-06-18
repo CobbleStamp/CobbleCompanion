@@ -7,8 +7,9 @@
 
 import { type Database } from '@cobble/db';
 import { createTestDatabase } from '@cobble/db/testing';
+import type { CompanionStreamEvent } from '@cobble/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { InProcessCompanionEventBus } from '../events/bus.js';
+import type { CompanionEventBus } from '../events/bus.js';
 import type { TurnCtx } from '../harness/hooks.js';
 import { DrizzleIdentityStore } from '../identity/store.js';
 import type { Logger } from '../logging.js';
@@ -24,7 +25,8 @@ describe('createReactTool', () => {
   let companionId: string;
   let messageId: string;
   let reactions: DrizzleReactionStore;
-  let bus: InProcessCompanionEventBus;
+  let published: Array<{ companionId: string; event: CompanionStreamEvent }>;
+  let bus: CompanionEventBus;
   let tool: ReturnType<typeof createReactTool>;
 
   function ctx(overrides: Partial<TurnCtx> = {}): TurnCtx {
@@ -47,7 +49,8 @@ describe('createReactTool', () => {
     const msg = await memory.appendMessage(companionId, 'user', 'can you check this?');
     messageId = msg.id;
     reactions = new DrizzleReactionStore(db);
-    bus = new InProcessCompanionEventBus();
+    published = [];
+    bus = { publish: (id, event) => published.push({ companionId: id, event }) };
     tool = createReactTool({ reactions, eventBus: bus, logger: silent });
   });
   afterEach(async () => {
@@ -61,7 +64,6 @@ describe('createReactTool', () => {
   });
 
   it('writes a companion reaction on the triggering message and pushes it live', async () => {
-    const sub = bus.subscribe(companionId);
     const result = await tool.run({ emoji: '👀' }, ctx());
     expect(result.isError).toBeUndefined();
 
@@ -71,14 +73,12 @@ describe('createReactTool', () => {
     expect(rows[0]?.emoji).toBe('👀');
     expect(rows[0]?.reward).toBeNull(); // expression — no reward
 
-    const event = await sub.events.next();
-    expect(event.value).toEqual({
-      type: 'reaction_added',
-      messageId,
-      reactor: 'companion',
-      emoji: '👀',
-    });
-    sub.close();
+    expect(published).toEqual([
+      {
+        companionId,
+        event: { type: 'reaction_added', messageId, reactor: 'companion', emoji: '👀' },
+      },
+    ]);
   });
 
   it('errors and writes nothing on a proactive turn (no triggering message)', async () => {

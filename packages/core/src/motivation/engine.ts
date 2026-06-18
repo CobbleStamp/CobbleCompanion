@@ -16,7 +16,7 @@ import type { LlmGateway } from '../llm/gateway.js';
 import type { MemoryStore } from '../memory/store.js';
 import type { VitalityStore } from '../quota/vitality-store.js';
 import type { IdentityStore } from '../identity/store.js';
-import type { IngestionTarget } from '../ingestion/runner.js';
+import type { IngestionTarget } from '../ingestion/pipeline.js';
 import type { LeadStore } from '../tools/lead-store.js';
 import type { UserModelStore } from '../user-model/store.js';
 import { effectiveSalience, isStale } from '../user-model/decay.js';
@@ -99,7 +99,7 @@ export class MotivationEngine {
       }
 
       // Cheap, token-free sensing — so staying idle is free.
-      const signal = presence.get(companionId);
+      const signal = await presence.get(companionId);
       const presenceState = signal
         ? classifyPresence(signal, this.now(), this.thresholds)
         : 'absent_long';

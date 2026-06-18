@@ -95,6 +95,12 @@ export interface IngestionRunParams {
   readonly resumeDocument?: ParsedDocument;
 }
 
+/** What drives one ingestion run — the pipeline's `run` signature, so the job
+ *  handler and the motivation engine can take a fake in tests. */
+export interface IngestionTarget {
+  run(params: IngestionRunParams): Promise<void>;
+}
+
 /** Sections embedded per gateway call. */
 const EMBED_BATCH_SIZE = 32;
 

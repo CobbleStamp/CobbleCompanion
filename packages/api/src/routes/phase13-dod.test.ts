@@ -12,30 +12,34 @@
  */
 
 import { FakeEmbeddingGateway, FakeLlmGateway, LlmUserModelReflector } from '@cobble/core';
+import type { UserFactsDto } from '@cobble/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { makeTestApp, type TestApp } from '../test/helpers.js';
+import { openWs, type WsTestClient } from '../test/ws-client.js';
 
 describe('Phase 13 DoD — understanding & hygiene', () => {
   let ctx: TestApp;
-  let auth: { authorization: string };
   let userId: string;
   let companionId: string;
+  let ws: WsTestClient;
 
   beforeEach(async () => {
     ctx = await makeTestApp(['ok']);
-    auth = ctx.bearerFor('owner@example.com');
     const user = await ctx.deps.identity.ensureUserByEmail('owner@example.com');
     userId = user.id;
-    const created = await ctx.app.inject({
-      method: 'POST',
-      url: '/companions',
-      headers: auth,
-      payload: { name: 'Pebble', form: 'fox', temperament: 'curious' },
+    const anon = await openWs(ctx, 'owner@example.com');
+    const { companion } = await anon.call<{ companion: { id: string } }>('companions.create', {
+      name: 'Pebble',
+      form: 'fox',
+      temperament: 'curious',
     });
-    companionId = created.json().companion.id;
+    await anon.close();
+    companionId = companion.id;
+    ws = await openWs(ctx, 'owner@example.com', companionId);
   });
 
   afterEach(async () => {
+    await ws.close();
     await ctx.close();
   });
 
@@ -72,16 +76,11 @@ describe('Phase 13 DoD — understanding & hygiene', () => {
       learnedByCompanionId: companionId,
       confidence: 0.95,
     });
-    const before = await ctx.app.inject({ method: 'GET', url: '/user/facts', headers: auth });
-    expect(before.json().facts).toMatchObject([{ predicate: 'bornOn', sensitive: true }]);
+    const before = await ws.call<UserFactsDto>('userFacts.list');
+    expect(before.facts).toMatchObject([{ predicate: 'bornOn', sensitive: true }]);
 
     // Purge it — a true delete of the row.
-    const deleted = await ctx.app.inject({
-      method: 'DELETE',
-      url: `/user/facts/${born.id}`,
-      headers: auth,
-    });
-    expect(deleted.statusCode).toBe(204);
+    await ws.call('userFacts.delete', { factId: born.id });
     expect(await ctx.deps.userModel.listCurrent(userId)).toHaveLength(0);
   });
 

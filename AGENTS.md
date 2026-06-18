@@ -161,7 +161,7 @@ Before claiming any work is done, verify:
 | Tool acquisition & use (MCP/CLI)          | `docs/companion-tools.md`      |
 | Greeting / arrival reaction               | `docs/companion-greeting.md`   |
 | Emoji reactions (reward + expression)     | `docs/companion-reactions.md`  |
-| Realtime delivery (event channel / SSE)   | `docs/architecture.md` §6, `docs/implementation.md` §2.4 |
+| Realtime delivery (permanent WebSocket / embodiment + durable event log) | `docs/architecture.md` §6, `docs/implementation.md` §2.4 |
 | Proactivity & motivation                  | `docs/companion-motivation.md` |
 | Ontology contract & governance            | `docs/ontology.md`             |
 | Prompt management & iteration             | `docs/guide-prompts.md`        |

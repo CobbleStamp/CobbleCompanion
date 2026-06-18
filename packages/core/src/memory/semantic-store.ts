@@ -10,7 +10,7 @@
 
 import { companions, facts, ingestionJobs, sections, sources, type Database } from '@cobble/db';
 import type { IngestionStatus, SourceKind } from '@cobble/shared';
-import { and, count, desc, eq, notInArray, sql } from 'drizzle-orm';
+import { and, count, desc, eq, sql } from 'drizzle-orm';
 import type { ParsedDocument } from '../ingestion/parser.js';
 import { stripNul } from '../text/sanitize.js';
 import { reciprocalRankFusion } from './rrf.js';
@@ -96,6 +96,17 @@ export interface DeferredJob {
   readonly parsedDoc: ParsedDocument;
 }
 
+/** What the `ingest` job handler reads to run/resume one job (any status). */
+export interface IngestionRunContext {
+  readonly companionId: string;
+  readonly sourceId: string;
+  readonly sourceTitle: string;
+  readonly ownerId: string;
+  readonly status: IngestionStatus;
+  /** The parse held while deferred; null otherwise. */
+  readonly parsedDoc: ParsedDocument | null;
+}
+
 /** A retrieval hit: the verbatim section plus full provenance and a fused score. */
 export interface SemanticSearchHit {
   readonly sectionId: string;
@@ -163,17 +174,12 @@ export interface SemanticMemoryStore {
   /** Jobs waiting on a cap reset (status `deferred`), with owner + parsed doc. */
   listDeferredJobs(): Promise<readonly DeferredJob[]>;
   /**
-   * Atomically claim a deferred job for resumption: flip `deferred` → `queued`
-   * only if it is still `deferred`. Returns true if this caller won the claim.
-   * Lets two overlapping sweeps never resume (and re-bill) the same job twice.
+   * The run context the `ingest` job needs: the job's status (fresh vs. deferred
+   * vs. mid-pipeline) plus the source title, owner, and any held parse. Null if the
+   * job (or its source) was deleted. Keyed by job id alone — pipeline-internal, not
+   * reachable from user input.
    */
-  claimDeferredJob(jobId: string): Promise<boolean>;
-  /**
-   * Recover from a restart: fail every non-terminal, non-`deferred` job (its
-   * in-memory parse state is gone). Deferred jobs are resumable and left alone.
-   * Returns how many were failed.
-   */
-  failInterruptedJobs(): Promise<number>;
+  getRunContext(jobId: string): Promise<IngestionRunContext | null>;
   /** Owner-scoped source delete (cascades to its sections + job). Returns true if removed. */
   deleteSource(companionId: string, sourceId: string): Promise<boolean>;
 }
@@ -439,33 +445,33 @@ export class DrizzleSemanticMemoryStore implements SemanticMemoryStore {
       }));
   }
 
-  async claimDeferredJob(jobId: string): Promise<boolean> {
-    const claimed = await this.db
-      .update(ingestionJobs)
-      .set({ status: 'queued', updatedAt: new Date() })
-      .where(and(eq(ingestionJobs.id, jobId), eq(ingestionJobs.status, 'deferred')))
-      .returning({ id: ingestionJobs.id });
-    return claimed.length > 0;
-  }
-
-  async failInterruptedJobs(): Promise<number> {
-    const stranded = await this.db
-      .select({ id: ingestionJobs.id })
-      .from(ingestionJobs)
-      .where(notInArray(ingestionJobs.status, ['done', 'failed', 'deferred']));
-    if (stranded.length === 0) {
-      return 0;
-    }
-    await this.db
-      .update(ingestionJobs)
-      .set({
-        status: 'failed',
-        error: 'Reading was interrupted. Please re-upload this source.',
-        parsedDoc: null,
-        updatedAt: new Date(),
+  async getRunContext(jobId: string): Promise<IngestionRunContext | null> {
+    const rows = await this.db
+      .select({
+        companionId: ingestionJobs.companionId,
+        sourceId: ingestionJobs.sourceId,
+        status: ingestionJobs.status,
+        parsedDoc: ingestionJobs.parsedDoc,
+        sourceTitle: sources.title,
+        ownerId: companions.ownerId,
       })
-      .where(notInArray(ingestionJobs.status, ['done', 'failed', 'deferred']));
-    return stranded.length;
+      .from(ingestionJobs)
+      .innerJoin(sources, eq(sources.id, ingestionJobs.sourceId))
+      .innerJoin(companions, eq(companions.id, ingestionJobs.companionId))
+      .where(eq(ingestionJobs.id, jobId))
+      .limit(1);
+    const row = rows[0];
+    if (!row) {
+      return null;
+    }
+    return {
+      companionId: row.companionId,
+      sourceId: row.sourceId,
+      sourceTitle: row.sourceTitle,
+      ownerId: row.ownerId,
+      status: row.status,
+      parsedDoc: (row.parsedDoc as ParsedDocument | null) ?? null,
+    };
   }
 
   async deleteSource(companionId: string, sourceId: string): Promise<boolean> {

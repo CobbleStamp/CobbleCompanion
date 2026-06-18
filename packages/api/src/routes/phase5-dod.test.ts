@@ -2,16 +2,17 @@
  * Phase 5 Definition-of-Done — bond & growth, mechanically verified offline
  * (development-plan.md §3). Growth is mechanical (derived from substrate), not a
  * recall-quality score, so the gate is deterministic. It drives the real growth
- * service + feeding economy + routes through the app's stores and asserts:
+ * service + feeding economy over the WS (the one surface) + the app's stores and
+ * asserts:
  *   1. A substrate change → the axis band rises and capabilities are observed,
- *      surfaced via the read-only GET /growth (the visible four axes).
+ *      surfaced via the read-only `growth.get` (the visible four axes).
  *   2. Crossing a threshold (on the post-turn recompute, driven here by calling
- *      growth.recompute directly as the message route does inline) posts an
- *      in-character growth note to the transcript (growth, felt).
+ *      growth.recompute directly as the turn does inline) posts an in-character
+ *      growth note to the transcript (growth, felt).
  *   3. Recompute is idempotent — a repeat recompute never re-posts a note (and the
- *      read-only GET never mutates anything).
+ *      read-only `growth.get` never mutates anything).
  *   4. Feeding consumes a food from the user's pantry and refills the favoured
- *      wallet; out of that food → 409.
+ *      wallet; out of that food → conflict.
  *   5. A learned procedure RESURFACES as a context hint (abilities made functional,
  *      not just observed).
  */
@@ -25,35 +26,32 @@ import {
 } from '@cobble/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { makeTestApp, silentLogger, type TestApp } from '../test/helpers.js';
+import { openWs, WsCallError, type WsTestClient } from '../test/ws-client.js';
 
 describe('Phase 5 DoD — bond & growth', () => {
   let ctx: TestApp;
-  let auth: { authorization: string };
   let companionId: string;
+  let ws: WsTestClient;
 
   beforeEach(async () => {
     ctx = await makeTestApp();
-    auth = ctx.bearerFor('owner@example.com');
-    const created = await ctx.app.inject({
-      method: 'POST',
-      url: '/companions',
-      headers: auth,
-      payload: { name: 'Pebble', form: 'fox', temperament: 'curious' },
+    const anon = await openWs(ctx, 'owner@example.com');
+    const { companion } = await anon.call<{ companion: { id: string } }>('companions.create', {
+      name: 'Pebble',
+      form: 'fox',
+      temperament: 'curious',
     });
-    companionId = created.json().companion.id;
+    await anon.close();
+    companionId = companion.id;
+    ws = await openWs(ctx, 'owner@example.com', companionId);
   });
   afterEach(async () => {
+    await ws.close();
     await ctx.close();
   });
 
-  async function getGrowth(): Promise<GrowthDto> {
-    const res = await ctx.app.inject({
-      method: 'GET',
-      url: `/companions/${companionId}/growth`,
-      headers: auth,
-    });
-    expect(res.statusCode).toBe(200);
-    return res.json() as GrowthDto;
+  function getGrowth(): Promise<GrowthDto> {
+    return ws.call<GrowthDto>('growth.get');
   }
 
   async function assistantNotes(): Promise<readonly string[]> {
@@ -61,7 +59,7 @@ describe('Phase 5 DoD — bond & growth', () => {
     return messages.filter((m) => m.role === 'assistant').map((m) => m.content);
   }
 
-  /** Drive the post-turn growth recompute the way the message route does (inline). */
+  /** Drive the post-turn growth recompute the way a turn does (inline). */
   async function runGrowth(): Promise<void> {
     await ctx.deps.growth.recompute(companionId);
   }
@@ -116,7 +114,7 @@ describe('Phase 5 DoD — bond & growth', () => {
     expect((await assistantNotes()).length).toBe(notesAfterFirst);
   });
 
-  it('GET /growth is read-only — a read never advances the mark or reflects (DoD 3)', async () => {
+  it('growth.get is read-only — a read never advances the mark or reflects (DoD 3)', async () => {
     // Substrate that crosses a knowledge band + observes capabilities, but NO recompute.
     await seedSubstrate();
 
@@ -126,11 +124,11 @@ describe('Phase 5 DoD — bond & growth', () => {
     expect(first.capabilities.find((c) => c.key === 'reading_sources')?.observed).toBe(true);
 
     // ...yet repeated reads post no reflection — that side effect is recompute's
-    // (the stream tail) alone, never a GET's.
+    // (the stream tail) alone, never a read's.
     await getGrowth();
     expect(await assistantNotes()).not.toContain(growthReflectionNote('knowledge'));
 
-    // And the stored high-water mark is untouched: a GET never writes the mark, even
+    // And the stored high-water mark is untouched: a read never writes the mark, even
     // when the live reading has already moved past it.
     const mark = await ctx.deps.growthStore.getSnapshot(companionId);
     expect(mark.knowledgeBand).toBe(0);
@@ -139,14 +137,7 @@ describe('Phase 5 DoD — bond & growth', () => {
 
   it('feeds: consumes a food from the pantry and refills the energy wallet (DoD 4)', async () => {
     const before = await ctx.deps.energy.getBalance(companionId);
-    const res = await ctx.app.inject({
-      method: 'POST',
-      url: `/companions/${companionId}/feed`,
-      headers: auth,
-      payload: { food: 'spark' },
-    });
-    expect(res.statusCode).toBe(200);
-    const body = res.json() as FeedResultDto;
+    const body = await ws.call<FeedResultDto>('feed', { food: 'spark' });
     expect(body.budget.energy.balanceTokens).toBeGreaterThan(before);
     expect(body.food.spark).toBe(DEFAULT_GROWTH_CONFIG.initialFood - 1);
   });
@@ -154,47 +145,24 @@ describe('Phase 5 DoD — bond & growth', () => {
   it('refuses to feed once that food runs out (DoD 4)', async () => {
     // Drain the user's whole ration supply (each feed consumes one).
     for (let i = 0; i < DEFAULT_GROWTH_CONFIG.initialFood; i += 1) {
-      const ok = await ctx.app.inject({
-        method: 'POST',
-        url: `/companions/${companionId}/feed`,
-        headers: auth,
-        payload: { food: 'ration' },
-      });
-      expect(ok.statusCode).toBe(200);
+      await ws.call('feed', { food: 'ration' });
     }
-    const broke = await ctx.app.inject({
-      method: 'POST',
-      url: `/companions/${companionId}/feed`,
-      headers: auth,
-      payload: { food: 'ration' },
-    });
-    expect(broke.statusCode).toBe(409);
+    await expect(ws.call('feed', { food: 'ration' })).rejects.toMatchObject({ code: 'conflict' });
   });
 
-  it('GET /food returns the user pantry (DoD 4)', async () => {
-    const res = await ctx.app.inject({ method: 'GET', url: '/food', headers: auth });
-    expect(res.statusCode).toBe(200);
-    const { food } = res.json() as { food: FoodInventoryDto };
+  it('food.get returns the user pantry (DoD 4)', async () => {
+    const { food } = await ws.call<{ food: FoodInventoryDto }>('food.get');
     expect(food.ration).toBe(DEFAULT_GROWTH_CONFIG.initialFood);
     expect(food.spark).toBe(DEFAULT_GROWTH_CONFIG.initialFood);
     expect(food.treat).toBe(DEFAULT_GROWTH_CONFIG.initialFood);
   });
 
   it('rejects a bad food and a missing companion', async () => {
-    const bad = await ctx.app.inject({
-      method: 'POST',
-      url: `/companions/${companionId}/feed`,
-      headers: auth,
-      payload: { food: 'pizza' },
-    });
-    expect(bad.statusCode).toBe(400);
+    await expect(ws.call('feed', { food: 'pizza' })).rejects.toBeInstanceOf(WsCallError);
 
-    const missing = await ctx.app.inject({
-      method: 'GET',
-      url: `/companions/${crypto.randomUUID()}/growth`,
-      headers: auth,
-    });
-    expect(missing.statusCode).toBe(404);
+    // A connection naming a companion the caller doesn't own never opens (the
+    // handshake ownership check is the WS analogue of the HTTP 404).
+    await expect(openWs(ctx, 'owner@example.com', crypto.randomUUID())).rejects.toThrow();
   });
 
   it('resurfaces a learned procedure as a context hint (DoD 5 — abilities made functional)', async () => {

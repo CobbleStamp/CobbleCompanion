@@ -1,15 +1,16 @@
 /**
  * Phase 3 Definition-of-Done, end to end (offline, deterministic). Drives a
- * multi-step tool task through the real harness + gate + stores: the companion
- * reads (read-only tool, runs freely), then wants to remember something
- * (effectful tool) — which is HELD for approval. Asserts nothing consequential
- * executed without confirmation, every tool call was logged, and approval then
- * executes the action and seeds a procedural memory.
+ * multi-step tool task through the real harness + gate + stores over the WS (the
+ * one surface): the companion reads (read-only tool, runs freely), then wants to
+ * remember something (effectful tool) — which is HELD for approval. Asserts nothing
+ * consequential executed without confirmation, every tool call was logged, and
+ * approval then executes the action and seeds a procedural memory.
  */
 
+import type { ChatStreamEvent } from '@cobble/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { makeTestApp, type TestApp } from '../test/helpers.js';
-import type { ChatStreamEvent } from '@cobble/shared';
+import { openWs, type WsTestClient } from '../test/ws-client.js';
 
 /** A scripted run: turn 1 searches memory (read-only), turn 2 proposes ingesting. */
 const TURNS = [
@@ -23,42 +24,32 @@ const TURNS = [
   },
 ];
 
-async function streamEvents(ctx: TestApp, companionId: string, auth: { authorization: string }) {
-  const res = await ctx.app.inject({
-    method: 'POST',
-    url: `/companions/${companionId}/messages`,
-    headers: auth,
-    payload: { content: 'Research Peruvian food and remember the best source.' },
-  });
-  return res.payload
-    .split('\n\n')
-    .map((f) => f.trim())
-    .filter((f) => f.startsWith('data:'))
-    .map((f) => JSON.parse(f.slice('data:'.length).trim()) as ChatStreamEvent);
-}
-
 describe('Phase 3 DoD — multi-step task ends in a held proposal', () => {
   let ctx: TestApp;
-  let auth: { authorization: string };
   let companionId: string;
+  let ws: WsTestClient;
 
   beforeEach(async () => {
     ctx = await makeTestApp(TURNS);
-    auth = ctx.bearerFor('owner@example.com');
-    const created = await ctx.app.inject({
-      method: 'POST',
-      url: '/companions',
-      headers: auth,
-      payload: { name: 'Pebble', form: 'fox', temperament: 'curious' },
+    const anon = await openWs(ctx, 'owner@example.com');
+    const { companion } = await anon.call<{ companion: { id: string } }>('companions.create', {
+      name: 'Pebble',
+      form: 'fox',
+      temperament: 'curious',
     });
-    companionId = created.json().companion.id;
+    await anon.close();
+    companionId = companion.id;
+    ws = await openWs(ctx, 'owner@example.com', companionId);
   });
   afterEach(async () => {
+    await ws.close();
     await ctx.close();
   });
 
   it('runs the read tool, holds the effectful action, executes nothing until approved', async () => {
-    const events = await streamEvents(ctx, companionId, auth);
+    const events = await ws.stream<ChatStreamEvent>('messages.send', {
+      content: 'Research Peruvian food and remember the best source.',
+    });
 
     // The turn EXITed proposing the effectful action.
     const proposalEvent = events.find((e) => e.type === 'proposal');
@@ -76,12 +67,7 @@ describe('Phase 3 DoD — multi-step task ends in a held proposal', () => {
     expect(logged.map((r) => r.name)).toEqual(['memory_search']);
 
     // Approve it → the action executes once, is logged, and seeds a procedure.
-    const confirm = await ctx.app.inject({
-      method: 'POST',
-      url: `/companions/${companionId}/proposals/${pending[0]!.id}/confirm`,
-      headers: auth,
-    });
-    expect(confirm.statusCode).toBe(200);
+    await ws.stream('proposals.confirm', { proposalId: pending[0]!.id });
     expect(await ctx.deps.semantic.listSources(companionId)).toHaveLength(1);
     const afterApproval = await ctx.deps.toolCallLog.list(companionId, 10);
     expect(afterApproval.map((r) => r.name)).toContain('ingest_source');

@@ -8,11 +8,15 @@
 
 import type { Logger } from '../logging.js';
 import type { LeadStore } from '../tools/lead-store.js';
-import type { MotivationRunner } from './engine-runner.js';
 
 export interface MotivationSweepDeps {
   readonly leads: LeadStore;
-  readonly runner: MotivationRunner;
+  /**
+   * Anything that turns a companion id into a requested tick — the in-process
+   * `MotivationRunner` or, post-Phase-B, the job-queue requester. Structural so
+   * the sweep is agnostic to which drains the work.
+   */
+  readonly runner: { request(companionId: string): void };
   readonly logger: Logger;
 }
 

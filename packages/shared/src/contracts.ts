@@ -218,6 +218,73 @@ export type IngestionStatus =
   | 'done'
   | 'failed';
 
+/**
+ * Background job-queue types (deliver-scalability.md §5.1). The queue serialises a
+ * companion's off-request-path work fleet-wide via a leased per-companion claim.
+ * `consolidate`/`motivation`/`reaction_learn` are companion- or event-keyed;
+ * `ingest` reads an uploaded source (its bytes are staged in `upload_staging`, so
+ * the payload carries only references — never the bytes).
+ */
+export type JobType = 'consolidate' | 'motivation' | 'reaction_learn' | 'ingest';
+
+/** Terminal-or-pending lifecycle of a queued job. */
+export type JobStatus = 'pending' | 'done' | 'failed';
+
+/**
+ * Realtime WebSocket transport envelope (deliver-scalability.md §5.2, Phase D). A
+ * client sends a {@link WsRequestMessage} and correlates the reply by `id`; the
+ * server replies with a result or error carrying that `id`, and also pushes
+ * unsolicited {@link WsEventMessage}s (no `id`) — the live event stream pushed to
+ * the embodiment connection. Many requests can be in flight at once over the one
+ * socket (multiplexed by `id`).
+ */
+export interface WsRequestMessage {
+  readonly id: string;
+  readonly method: string;
+  readonly params?: unknown;
+}
+
+export interface WsResultMessage {
+  readonly id: string;
+  readonly result: unknown;
+}
+
+export interface WsErrorMessage {
+  readonly id: string;
+  readonly error: { readonly message: string; readonly code?: string };
+}
+
+/** A server-initiated push (proactive note, reaction, etc.) — no request `id`. */
+export interface WsEventMessage {
+  readonly event: string;
+  readonly data: unknown;
+}
+
+/** One chunk of a streaming method's response (e.g. a turn's tokens), correlated to
+ *  the request `id`; the terminal {@link WsResultMessage} with the same `id` ends it. */
+export interface WsStreamMessage {
+  readonly id: string;
+  readonly stream: unknown;
+}
+
+export type WsServerMessage = WsResultMessage | WsErrorMessage | WsEventMessage | WsStreamMessage;
+
+/**
+ * Type-specific job reference — never bulk data. `reaction_learn` carries the
+ * reacted message id + emoji (the learner re-reads the message); `ingest` carries
+ * the source + ingestion-job ids and, for a fresh run, the `upload_staging` id
+ * holding the bytes (absent when resuming a deferred job, whose parsed doc lives on
+ * the ingestion job); `consolidate` and `motivation` need only the companion id, so
+ * their payload is empty.
+ */
+export interface JobPayload {
+  readonly messageId?: string;
+  readonly emoji?: string;
+  readonly sourceId?: string;
+  readonly jobId?: string;
+  readonly uploadId?: string;
+}
+
 /** A source the user fed the companion (the verbatim text is fetched on demand). */
 export interface SourceDto {
   readonly id: string;
@@ -990,12 +1057,12 @@ export type ChatStreamEvent =
 
 /**
  * One row appended to a companion's transcript, pushed over the standing
- * companion event channel (`architecture.md` §6). Unlike {@link ChatStreamEvent}
- * — which narrates a single in-flight turn over a request-scoped stream — this is
- * the durable delivery path: every persisted row (a turn reply, an ingestion
- * note, a greeting, a proactive nudge) reaches any subscribed surface the moment
- * it's appended, regardless of which request produced it. The client merges these
- * into the transcript deduped by message id.
+ * WebSocket to the embodying connection (`architecture.md` §6). Unlike
+ * {@link ChatStreamEvent} — which narrates a single in-flight turn over a
+ * request-scoped stream — this is the durable delivery path: every persisted row
+ * (a turn reply, an ingestion note, a greeting, a proactive nudge) reaches the
+ * live room the moment it's appended, regardless of which request produced it.
+ * The client merges these into the transcript deduped by message id.
  */
 export interface StreamMessageEvent {
   readonly type: 'message';
@@ -1004,12 +1071,12 @@ export interface StreamMessageEvent {
 
 /**
  * A reaction added to or removed from a transcript message, pushed over the
- * standing companion event channel (companion-reactions.md §8). Unlike a
- * {@link StreamMessageEvent} this is a *mutation* on an existing row, not a new
- * turn — the client applies it to the message's reaction set rather than
- * appending. Carries the same `reaction_*` shape in both directions and for both
- * reactors, so a reaction placed on one surface (or by the companion itself) shows
- * up live everywhere.
+ * standing WebSocket to the embodying connection (companion-reactions.md §8).
+ * Unlike a {@link StreamMessageEvent} this is a *mutation* on an existing row,
+ * not a new turn — the client applies it to the message's reaction set rather
+ * than appending. Carries the same `reaction_*` shape in both directions and for
+ * both reactors, so a reaction placed by the user (or by the companion itself)
+ * shows up live in the active room.
  */
 export interface StreamReactionAddedEvent {
   readonly type: 'reaction_added';
@@ -1025,7 +1092,8 @@ export interface StreamReactionRemovedEvent {
   readonly emoji: string;
 }
 
-/** Events carried by the standing companion event channel (`GET .../events`). */
+/** Events delivered over the standing WebSocket from the durable companion event
+ *  log to the embodying connection (`architecture.md` §6). */
 export type CompanionStreamEvent =
   | StreamMessageEvent
   | StreamReactionAddedEvent

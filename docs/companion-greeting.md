@@ -13,8 +13,9 @@
 > scope/sequencing see `development-plan.md` §4d (Phase 14).
 >
 > **Status: built (Phase 14).** The mechanism below ships in `packages/core/src/greeting/`
-> (`decide.ts` gate + `greeter.ts` service), the SSE route `packages/api/src/routes/greeting.routes.ts`,
-> and the web client (`Chat.tsx` arrival triggers + composing indicator). Acceptance criteria and phase
+> (`decide.ts` gate + `greeter.ts` service), the WS method `greeting.stream`
+> (`packages/api/src/ws/methods/streaming.ts`), and the web client (`Chat.tsx` arrival triggers +
+> composing indicator). Acceptance criteria and phase
 > placement are owned by `development-plan.md` §4d.
 
 ## 1. Why this exists — what a greeting _is_
@@ -59,7 +60,7 @@ its default outcome is **idle** — a first-class, free, silent result.
 transcript turn_ — so last-message-time can't see them. The greeting must react to _presence_, which
 the transcript doesn't record. So arrival is detected from a **durable per-companion `last_seen_at`
 timestamp**, updated by the **presence heartbeat** (which fires on mount even when the user never
-types — `usePresenceHeartbeat`). The trigger hangs off the heartbeat, **not** off `GET /messages`.
+types — `usePresenceHeartbeat`). The trigger hangs off the heartbeat, **not** off a message fetch.
 
 **Why durable, why per-companion.** The in-memory presence store (`motivation/presence-store.ts`)
 resets on restart, so it cannot answer "it's been three days." `last_seen_at` must persist. It is
@@ -248,20 +249,20 @@ knowing anything is coming. The contract is: **arrival decides to greet → the 
 within a beat → the greeting streams in.** A greeting that appears a moment _after_ load actually
 feels more alive — the companion noticing you walked in — than an instant canned hello.
 
-**As built**, this rides two distinct SSE shapes (`architecture.md` §6):
+**As built**, this rides two distinct shapes over the one permanent WebSocket (`architecture.md` §6):
 
-- **The greeting's own turn — a finite per-turn stream.** The client opens
-  **`POST /companions/:id/greeting`** on mount and on tab-return; the route streams a **`composing`**
-  cue (→ typing dots) and then the greeting as a `done` event, on the same finite `streamSse`
-  machinery chat replies use — just **server-initiated**. The decision to greet is made server-side
-  from the durable `last_seen_at` clock, so no `greetingPending` flag or poll is needed.
-- **Convergence + recovery — the standing event channel.** Because the greeting is an appended
-  transcript row, it also publishes to the **standing companion event channel** (Phase 15,
-  `architecture.md` §6) like any proactive message: a surface re-established after navigation recovers
-  the persisted greeting by snapshot+merge even if it missed the live turn. That channel — not a
-  `refreshTranscript` poll — is now the durable delivery path for _all_ proactive companion messages
-  (greetings and autonomous report notes alike); the per-turn greeting stream is what carries the live
-  `composing`→stream experience on arrival.
+- **The greeting's own turn — a finite per-turn stream.** The client calls the WS method
+  **`greeting.stream`** on mount and on tab-return; it streams a **`composing`** cue (→ typing dots)
+  and then the greeting, on the same finite per-turn streaming machinery chat replies use — just
+  **server-initiated**. The decision to greet is made server-side from the durable `last_seen_at`
+  clock, so no `greetingPending` flag or poll is needed.
+- **Convergence + recovery — the WS live channel.** Because the greeting is an appended
+  transcript row, it is also delivered over the **WS live channel** (the durable `companion_events`
+  log, `architecture.md` §6) like any proactive message: a surface re-established after navigation
+  recovers the persisted greeting by snapshot+merge even if it missed the live turn. That live channel
+  — not a `refreshTranscript` poll — is the durable delivery path for _all_ proactive companion
+  messages (greetings and autonomous report notes alike); the per-turn greeting stream is what carries
+  the live `composing`→stream experience on arrival.
 
 Billing: the greeting's tokens ride the arrival turn and are debited to **stamina**, like ordinary
 chat (`companion-economy.md`). The exhausted fallback (§4, gate 5) is token-free and bypasses voicing
@@ -328,8 +329,8 @@ return while still empty → one more groan; never per-heartbeat spam.
    being adopted rather than narrating what the companion is; it degrades to asking for a name when
    none is on file (§6).
 7. **Async delivery with a `composing` contract** — the user always sees a typing indicator within a
-   beat; the greeting's live turn streams over a finite per-turn SSE, and the persisted row also rides
-   the standing event channel (Phase 15) that has replaced the proactive-note poll (§7).
+   beat; the greeting's live turn streams over the finite per-turn WS stream, and the persisted row
+   also rides the WS live channel (Phase 15) that has replaced the proactive-note poll (§7).
 8. **No neediness rule is hand-coded** — the reward loop decays the `connection` weight when greetings
    land cold, so restraint is _learned_ (§8).
 

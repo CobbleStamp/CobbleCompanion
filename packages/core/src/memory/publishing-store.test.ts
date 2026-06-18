@@ -52,7 +52,7 @@ function spyLogger(): Logger {
 describe('PublishingMemoryStore', () => {
   it('delegates the append to the inner store and returns its DTO', async () => {
     const inner = new FakeMemoryStore();
-    const bus: CompanionEventBus = { publish: vi.fn(), subscribe: vi.fn() };
+    const bus: CompanionEventBus = { publish: vi.fn() };
     const store = new PublishingMemoryStore(inner, bus, spyLogger());
 
     const result = await store.appendMessage('c1', 'user', 'hello');
@@ -64,7 +64,7 @@ describe('PublishingMemoryStore', () => {
   it('publishes the persisted row to the bus after a successful append', async () => {
     const inner = new FakeMemoryStore();
     const publish = vi.fn();
-    const bus: CompanionEventBus = { publish, subscribe: vi.fn() };
+    const bus: CompanionEventBus = { publish };
     const store = new PublishingMemoryStore(inner, bus, spyLogger());
 
     const result = await store.appendMessage('c1', 'assistant', 'hi there');
@@ -81,7 +81,6 @@ describe('PublishingMemoryStore', () => {
       publish: vi.fn(() => {
         throw new Error('bus exploded');
       }),
-      subscribe: vi.fn(),
     };
     const logger = spyLogger();
     const store = new PublishingMemoryStore(inner, bus, logger);
@@ -111,7 +110,7 @@ describe('PublishingMemoryStore', () => {
         createdAt: '2026-01-03T00:00:00.000Z',
       },
     ];
-    const bus: CompanionEventBus = { publish: vi.fn(), subscribe: vi.fn() };
+    const bus: CompanionEventBus = { publish: vi.fn() };
     const store = new PublishingMemoryStore(inner, bus, spyLogger());
 
     expect(await store.getRecentMessages('c1', 50)).toBe(inner.recentResult);
