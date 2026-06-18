@@ -783,6 +783,20 @@ Backpressure is a fleet-wide pending-`ingest` count; deferred jobs resume via
   coalesces toggles) instead of fire-and-forget. Handler reconstructs the reactable
   message + runs the learner. Closes the documented `driveWeights`-from-reaction
   race (now claim-serialised like motivation).
+- **Crash recovery is lease-driven, not a boot sweep.** There is **no** startup
+  `failInterruptedJobs()` sweep — a blanket "fail every non-terminal `ingestion_jobs`
+  row" at boot would, under N > 1, corrupt ingestions running live on peer nodes (a
+  booting node cannot tell a stranded row from one a peer is actively writing). The
+  `IngestionPipeline.run` never throws — it always lands the row on a terminal
+  status — so a row stuck mid-pipeline can only be the result of a hard process
+  death, which also leaves the durable `ingest` job still `pending`. Once the dead
+  runner's per-companion claim lapses, another node re-claims it, the `ingest`
+  handler re-runs, sees the non-terminal status, and **fails the row durably for
+  re-upload** (it does not resume — earlier stages already wrote sections, so a
+  re-run would duplicate them). This is the single recovery path; it costs up to one
+  lease TTL of latency before a stranded row flips to `failed`, which is the correct
+  "dead vs. slow" distinction (closes the D7-latent multi-node corruption the review
+  flagged).
 - **DoD:** all four background paths (`consolidate`, `motivation`, `ingest`,
   `reaction_learn`) flow through the durable queue; `IngestionRunner` in-memory
   queue gone; single-node behaviour unchanged; suite green.

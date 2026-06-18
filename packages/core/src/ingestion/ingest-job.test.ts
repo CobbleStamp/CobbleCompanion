@@ -110,13 +110,35 @@ describe('makeIngestJobHandler', () => {
     expect(harness.updates).toEqual([]);
   });
 
-  it('skips a mid-pipeline (interrupted) job rather than re-running it', async () => {
+  it('fails a mid-pipeline (interrupted) job for re-upload rather than re-running it', async () => {
+    // Re-claim after a crash: a stranded mid-pipeline row is the recovery point, so
+    // the handler fails it durably (never resumes — earlier stages wrote sections).
     const { handler, harness } = makeHandler({
       ctx: { ...baseCtx, status: 'segmenting', parsedDoc: null },
       staged: { id: 'up1', kind: 'note', bytes: new TextEncoder().encode('x') },
     });
     await handler(job({ sourceId: 's1', jobId: 'job-row', uploadId: 'up1' }));
     expect(harness.runs).toEqual([]);
+    expect(harness.updates).toEqual([
+      {
+        jobId: 'job-row',
+        patch: {
+          status: 'failed',
+          error: expect.stringContaining('interrupted'),
+          parsedDoc: null,
+        },
+      },
+    ]);
+  });
+
+  it('no-ops a re-claim of an already-terminal (done) job', async () => {
+    const { handler, harness } = makeHandler({
+      ctx: { ...baseCtx, status: 'done', parsedDoc: null },
+      staged: { id: 'up1', kind: 'note', bytes: new TextEncoder().encode('x') },
+    });
+    await handler(job({ sourceId: 's1', jobId: 'job-row', uploadId: 'up1' }));
+    expect(harness.runs).toEqual([]);
+    expect(harness.updates).toEqual([]);
   });
 
   it('fails a fresh job whose staged upload is gone', async () => {

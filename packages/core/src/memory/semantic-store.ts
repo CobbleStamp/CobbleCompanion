@@ -10,7 +10,7 @@
 
 import { companions, facts, ingestionJobs, sections, sources, type Database } from '@cobble/db';
 import type { IngestionStatus, SourceKind } from '@cobble/shared';
-import { and, count, desc, eq, notInArray, sql } from 'drizzle-orm';
+import { and, count, desc, eq, sql } from 'drizzle-orm';
 import type { ParsedDocument } from '../ingestion/parser.js';
 import { stripNul } from '../text/sanitize.js';
 import { reciprocalRankFusion } from './rrf.js';
@@ -180,12 +180,6 @@ export interface SemanticMemoryStore {
    * reachable from user input.
    */
   getRunContext(jobId: string): Promise<IngestionRunContext | null>;
-  /**
-   * Recover from a restart: fail every non-terminal, non-`deferred` job (its
-   * in-memory parse state is gone). Deferred jobs are resumable and left alone.
-   * Returns how many were failed.
-   */
-  failInterruptedJobs(): Promise<number>;
   /** Owner-scoped source delete (cascades to its sections + job). Returns true if removed. */
   deleteSource(companionId: string, sourceId: string): Promise<boolean>;
 }
@@ -478,26 +472,6 @@ export class DrizzleSemanticMemoryStore implements SemanticMemoryStore {
       status: row.status,
       parsedDoc: (row.parsedDoc as ParsedDocument | null) ?? null,
     };
-  }
-
-  async failInterruptedJobs(): Promise<number> {
-    const stranded = await this.db
-      .select({ id: ingestionJobs.id })
-      .from(ingestionJobs)
-      .where(notInArray(ingestionJobs.status, ['done', 'failed', 'deferred']));
-    if (stranded.length === 0) {
-      return 0;
-    }
-    await this.db
-      .update(ingestionJobs)
-      .set({
-        status: 'failed',
-        error: 'Reading was interrupted. Please re-upload this source.',
-        parsedDoc: null,
-        updatedAt: new Date(),
-      })
-      .where(notInArray(ingestionJobs.status, ['done', 'failed', 'deferred']));
-    return stranded.length;
   }
 
   async deleteSource(companionId: string, sourceId: string): Promise<boolean> {

@@ -376,32 +376,6 @@ describe('DrizzleSemanticMemoryStore', () => {
     expect(await store.listDeferredJobs()).toHaveLength(0);
   });
 
-  it('fails interrupted jobs on restart but spares deferred and terminal ones', async () => {
-    const make = async (status: 'parsing' | 'segmenting' | 'deferred' | 'done') => {
-      const source = await store.createSource(companionId, {
-        kind: 'note',
-        title: status,
-        rawText: '',
-      });
-      const job = await store.createJob(companionId, source.id);
-      await store.updateJob(job.id, { status });
-      return job.id;
-    };
-    const parsing = await make('parsing');
-    const segmenting = await make('segmenting');
-    const deferred = await make('deferred');
-    const done = await make('done');
-
-    const failedCount = await store.failInterruptedJobs();
-    expect(failedCount).toBe(2);
-
-    const byId = new Map((await store.listJobs(companionId)).map((j) => [j.id, j.status]));
-    expect(byId.get(parsing)).toBe('failed');
-    expect(byId.get(segmenting)).toBe('failed');
-    expect(byId.get(deferred)).toBe('deferred'); // resumable — spared
-    expect(byId.get(done)).toBe('done'); // terminal — spared
-  });
-
   it('replaces a source’s prior sections and their facts on re-ingestion', async () => {
     // A first run inserts two sections, one carrying a fact.
     const source = await store.createSource(companionId, {

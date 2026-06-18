@@ -26,6 +26,7 @@ const FAILED_NO_BYTES =
   'Cobble could not read this source (its upload was lost). Please re-upload.';
 const FAILED_EXPIRED =
   'Cobble could not read this source (its upload is no longer available). Please re-upload.';
+const FAILED_INTERRUPTED = 'Reading was interrupted. Please re-upload this source.';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -99,15 +100,33 @@ export function makeIngestJobHandler(deps: IngestJobDeps): JobHandler {
       return;
     }
 
-    // Only a brand-new ('queued') job runs from staged bytes. A job already mid-
-    // pipeline was interrupted by a crash — leave it for failInterruptedJobs on the
-    // next restart rather than re-running and duplicating sections; a terminal job
-    // (done/failed) is already finished.
+    // A terminal row (done/failed) is already finished — this is a re-claim after
+    // the outcome was recorded, so there is nothing to do.
+    if (ctx.status === 'done' || ctx.status === 'failed') {
+      return;
+    }
+
+    // Any other non-'queued' status (parsing/segmenting/enriching/embedding, or a
+    // deferred row that lost its held parse) means a prior run died mid-pipeline.
+    // The pipeline never throws — it always lands the row on a terminal status —
+    // so a non-terminal row can only survive a hard process death. We are running
+    // now because the original runner's per-companion claim lapsed and we re-claimed
+    // it, which proves that runner is gone; this is the lease-driven recovery point.
+    // Fail the job durably so the user re-uploads — we do not resume from a partial
+    // run because earlier stages already wrote sections and re-running would
+    // duplicate them. (Replaces the old global failInterruptedJobs boot sweep, which
+    // could not distinguish a peer's live job from a stranded one — see
+    // deliver-scalability.md D7.)
     if (ctx.status !== 'queued') {
-      deps.logger.warn('ingest job is not fresh; skipping', {
+      deps.logger.warn('ingest job interrupted mid-run; failing for re-upload', {
         operation: 'ingestion.job',
         jobId,
         status: ctx.status,
+      });
+      await deps.semantic.updateJob(jobId, {
+        status: 'failed',
+        error: FAILED_INTERRUPTED,
+        parsedDoc: null,
       });
       return;
     }

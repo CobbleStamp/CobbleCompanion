@@ -559,12 +559,11 @@ async function main(): Promise<void> {
     logger: consoleLogger,
   });
 
-  // Restart recovery: jobs interrupted mid-run lost their in-memory state, so
-  // fail them (the user re-uploads); deferred jobs kept their parse and resume.
-  const failed = await semantic.failInterruptedJobs();
-  if (failed > 0) {
-    consoleLogger.info('failed interrupted ingestion jobs on startup', { count: failed });
-  }
+  // Restart recovery is lease-driven, not a boot sweep: a node never fails jobs at
+  // startup (that would corrupt ingestions running live on its peers). An ingestion
+  // stranded mid-pipeline by a crash keeps its still-pending `ingest` job; once the
+  // dead runner's per-companion claim lapses, another node re-claims it and the
+  // ingest handler reconciles the stranded row (deliver-scalability.md D7).
 
   // Resume parked (deferred) jobs now and on a timer, so work that hit an empty
   // wallet drains as companions are fed (architecture.md §4.8). Enqueues an `ingest`
