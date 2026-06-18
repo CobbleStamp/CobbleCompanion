@@ -50,6 +50,7 @@ import {
   InMemoryPresenceStore,
   IngestionPipeline,
   type IngestionTarget,
+  type LlmGateway,
   DrizzleEmbodimentStore,
   DrizzleUploadStagingStore,
   makeIngestJobHandler,
@@ -202,6 +203,13 @@ export interface TestAppOptions {
    * vector-arm recall across such a turn injects a fake that models that adjacency.
    */
   readonly embeddings?: EmbeddingGateway;
+  /**
+   * Replace the LLM gateway (default: a {@link FakeLlmGateway} over `chunks`). Lets a
+   * test wrap the fake to observe or perturb a turn mid-stream — e.g. force-claim the
+   * companion from a second owner inside `stream()` to deterministically exercise the
+   * mid-turn embodiment fence (deliver-scalability.md §5.2) on single-connection PGlite.
+   */
+  readonly llmGateway?: LlmGateway;
 }
 
 export async function makeTestApp(
@@ -231,7 +239,10 @@ export async function makeTestApp(
   // Retrieval arms share a memoizing gateway (mirrors index.ts); ingestion and
   // consolidation use the raw fake.
   const retrievalEmbeddings = createMemoizingEmbeddingGateway(embeddings);
-  const llmGateway = new FakeLlmGateway(chunks);
+  // The default fake (always returned as `gateway` for assertions); a test may
+  // substitute its own gateway for wiring via `options.llmGateway`.
+  const fakeGateway = new FakeLlmGateway(chunks);
+  const llmGateway: LlmGateway = options.llmGateway ?? fakeGateway;
   const tokenVerifier = new FakeTokenVerifier();
   // Queue cap comes from config, mirroring production wiring (index.ts).
   const ingestionPipeline = new IngestionPipeline({
@@ -540,7 +551,7 @@ export async function makeTestApp(
     app,
     deps,
     tokenVerifier,
-    gateway: llmGateway,
+    gateway: fakeGateway,
     bearerFor,
     close: async () => {
       // Drain the job pool (consolidate + motivation + reaction_learn + ingest)

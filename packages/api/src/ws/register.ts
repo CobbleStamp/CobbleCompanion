@@ -3,12 +3,9 @@ import { hostname } from 'node:os';
 import type { FastifyInstance } from 'fastify';
 import { monotonicFactory } from 'ulid';
 import type { AppDeps } from '../app.js';
-import { WsConnection } from './connection.js';
+import { SUPERSEDED_CLOSE, WsConnection } from './connection.js';
 import { dispatchMessage, type WsMethods } from './dispatch.js';
 import { makeWsAuth } from './handshake.js';
-
-/** WS close code for a connection whose companion was claimed by a newer one. */
-const SUPERSEDED_CLOSE = 4002;
 
 /** Max events delivered per heartbeat tick (bounds a catch-up burst). */
 const EVENT_BATCH = 200;

@@ -2,6 +2,11 @@ import type { Logger } from '@cobble/core';
 import type { WsServerMessage } from '@cobble/shared';
 import type { WebSocket } from '@fastify/websocket';
 
+/** WS close code for a connection whose companion was claimed by a newer one
+ *  (deliver-scalability.md §5.2). Sent by both the heartbeat (a dead/idle holder
+ *  loses the renew) and a turn that self-fences mid-loop. */
+export const SUPERSEDED_CLOSE = 4002;
+
 /** The companion this connection embodies + the ULID it holds the claim with (D2). */
 export interface EmbodimentBinding {
   readonly companionId: string;
@@ -80,6 +85,12 @@ export class WsConnection {
   }
 
   private send(message: WsServerMessage): void {
+    // A closed/closing socket is normal — the client dropped, or we just superseded
+    // this connection and the method's terminal result is racing the close. A send is
+    // then a silent no-op, not a failure worth logging.
+    if (this.socket.readyState !== this.socket.OPEN) {
+      return;
+    }
     try {
       this.socket.send(JSON.stringify(message));
     } catch (error) {

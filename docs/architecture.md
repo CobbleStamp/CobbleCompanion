@@ -862,9 +862,14 @@ flowchart TB
   embodiment** — one live connection per companion, the product's "one room at a time" rule
   (`product-overview.md` §2.2). The claim is a row in **`active_embodiment`** keyed by a sortable
   **ULID `owner`** ("newer wins"); a heartbeat renews it, a newer connection **force-claims** (the
-  user "moves rooms") and the prior one self-fences. Every companion-scoped method re-checks the
-  lease (`holds(owner)`) before acting, so a superseded connection is rejected. Full handoff design +
-  the in-turn fencing hardening: `deliver-scalability.md` §5.2 + `docs/plans/embodiment-handoff-fencing.md`.
+  user "moves rooms") and the prior one self-fences. The lease is enforced on **two** surfaces:
+  every companion-scoped method re-checks `holds(owner)` before acting (a superseded connection's
+  new requests are rejected), and a **running turn** — a multi-step agent loop, not one request —
+  re-reads the lease at the top of every iteration and again before persisting the reply, standing
+  down without writing the assistant message (and skipping the non-idempotent post-turn affect
+  nudge) when the room has moved. The streaming method then pushes `embodiment.superseded` and
+  closes immediately rather than waiting for the next heartbeat. Full handoff design + the in-turn
+  fence: `deliver-scalability.md` §5.2 + `docs/plans/embodiment-handoff-fencing.md`.
 - **Live delivery is a cursor read from a durable log — no fan-out.** Every publish point (a
   transcript append via the publish-on-append MemoryStore decorator; a reaction add/remove; the
   `react` tool) appends a row to the durable **`companion_events`** log. The one embodiment

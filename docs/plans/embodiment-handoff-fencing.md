@@ -1,5 +1,15 @@
 # Implementation plan: embodiment handoff fencing (ULID lease)
 
+> **Status: delivered.** Steps 1–6 are implemented — `holdsLease` threads from
+> `streaming.ts` into `Harness.runTurn`/`continueAfterApproval`; `runLoop` re-checks the
+> lease at the top of every iteration and before each persisting exit (`finish` /
+> `finishBlocked`), standing down without writing the reply (option (a), the pre-write
+> re-check) and skipping the post-turn affect nudge; the streaming method pushes
+> `embodiment.superseded` and closes immediately. Tests: `harness.embodiment.test.ts`
+> (core, deterministic via the injected callback) + the mid-turn case in
+> `ws/embodiment.test.ts` (api). **Q1 remains deferred:** the genuine two-connection
+> concurrent-write interleaving needs the real-Postgres/testcontainers suite (§3, §6).
+
 > **Scope.** Make the WS embodiment handoff correct for **multi-node** without
 > blocking the new connection or adding a push channel. Design is canonical in
 > `deliver-scalability.md` §5.2 (updated); this is the build plan. The job-queue

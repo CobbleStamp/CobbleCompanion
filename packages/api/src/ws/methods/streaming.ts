@@ -9,7 +9,9 @@ import {
 import { z } from 'zod';
 import type { AppDeps } from '../../app.js';
 import { overCapGuard } from '../../quota-guard.js';
+import { SUPERSEDED_CLOSE } from '../connection.js';
 import type { WsCallContext, WsMethods } from '../dispatch.js';
+import { requireEmbodiment } from '../fencing.js';
 import { companionOf, ConflictError, NotFoundError, OverCapError, parseParams } from './helpers.js';
 
 const confirmParams = z.object({ proposalId: z.string().min(1) });
@@ -41,45 +43,94 @@ export function streamingMethods(deps: AppDeps): WsMethods {
     logger,
   } = deps;
 
-  /** Resolve the embodied companion as a DTO (for harness calls) — fenced. */
-  async function embodiedCompanion(ctx: WsCallContext): Promise<{ id: string; dto: CompanionDto }> {
-    const companionId = await companionOf(embodiment, ctx);
-    const dto = await identity.getCompanion(companionId, ctx.userId);
+  /** Resolve the embodied companion as a DTO (for harness calls) — fenced. Carries the
+   *  ULID `owner` so the turn can re-check the lease mid-loop (the long-turn fence). */
+  async function embodiedCompanion(
+    ctx: WsCallContext,
+  ): Promise<{ id: string; dto: CompanionDto; owner: string }> {
+    const binding = await requireEmbodiment(embodiment, ctx);
+    const dto = await identity.getCompanion(binding.companionId, ctx.userId);
     if (!dto) {
       throw new NotFoundError('companion not found');
     }
-    return { id: companionId, dto };
+    return { id: binding.companionId, dto, owner: binding.owner };
   }
 
+  /** The mid-turn embodiment fence handed to the harness: re-reads the DB claim so a
+   *  turn already running self-ends if a newer connection took the room (§5.2). */
+  function leaseGuard(companionId: string, owner: string): () => Promise<boolean> {
+    return () => embodiment.holds(companionId, owner);
+  }
+
+  /**
+   * Drive a turn stream to completion, emitting each chunk. Returns the harness's
+   * terminal signal: true = the turn stood down mid-loop because a newer connection
+   * force-claimed the companion (the user moved rooms). The caller yields the room.
+   */
   async function emitAll(
     ctx: WsCallContext,
-    stream: AsyncIterable<ChatStreamEvent>,
-  ): Promise<void> {
-    for await (const event of stream) {
-      ctx.emit(event);
+    stream: AsyncGenerator<ChatStreamEvent, boolean | void>,
+  ): Promise<boolean> {
+    try {
+      let next = await stream.next();
+      while (!next.done) {
+        ctx.emit(next.value);
+        next = await stream.next();
+      }
+      return next.value === true;
+    } catch (error) {
+      // Driving the generator by hand (to capture its terminal return value) loses
+      // the automatic `.return()` that `for await` performs on early exit. Forward
+      // termination so the harness generator's `finally` still runs — ending its
+      // trace, debiting metered tokens, and tearing down any in-flight LLM stream —
+      // then re-throw for the dispatcher to surface as a client-safe error.
+      await stream.return(false).catch(() => undefined);
+      throw error;
     }
+  }
+
+  /**
+   * The companion moved rooms mid-turn: tell this (now superseded) client and close
+   * the socket at once, rather than lingering until the next heartbeat notices the
+   * lost claim (deliver-scalability.md §5.2). Idempotent with the heartbeat's own
+   * self-fence — a second close is a no-op.
+   */
+  function yieldRoom(ctx: WsCallContext, companionId: string): void {
+    ctx.connection.pushEvent('embodiment.superseded', { companionId });
+    ctx.connection.close(SUPERSEDED_CLOSE, 'superseded');
   }
 
   return {
     'messages.send': async (ctx, params) => {
       const { content } = parseParams(sendMessageSchema, params, 'message content is required');
-      const { id: companionId, dto: companion } = await embodiedCompanion(ctx);
+      const { id: companionId, dto: companion, owner } = await embodiedCompanion(ctx);
       presence.recordActivity(companionId);
       const overCap = await overCapGuard(quota, companionId);
       if (overCap) {
         throw new OverCapError(overCap);
       }
-      await ctx.connection.runSerial(() =>
+      const superseded = await ctx.connection.runSerial(() =>
         emitAll(
           ctx,
           withGrowthReflections(
-            harness.runTurn({ companion, userContent: content, ownerId: ctx.userId }),
+            harness.runTurn({
+              companion,
+              userContent: content,
+              ownerId: ctx.userId,
+              holdsLease: leaseGuard(companionId, owner),
+            }),
             growth,
             companionId,
             logger,
           ),
         ),
       );
+      // The user moved rooms mid-turn — yield the room and run NO post-turn nudges
+      // (they belong to the live embodiment, on the new connection).
+      if (superseded) {
+        yieldRoom(ctx, companionId);
+        return { done: true };
+      }
       // Post-turn nudges (fire-and-forget; the reply already streamed).
       consolidation.request(companionId);
       motivation.request(companionId);
@@ -96,7 +147,7 @@ export function streamingMethods(deps: AppDeps): WsMethods {
 
     'proposals.confirm': async (ctx, params) => {
       const { proposalId } = parseParams(confirmParams, params, 'a proposal id is required');
-      const { id: companionId, dto: companion } = await embodiedCompanion(ctx);
+      const { id: companionId, dto: companion, owner } = await embodiedCompanion(ctx);
       const overCap = await overCapGuard(quota, companionId);
       if (overCap) {
         throw new OverCapError(overCap);
@@ -153,16 +204,20 @@ export function streamingMethods(deps: AppDeps): WsMethods {
       }
 
       if (proposal.origin === 'chat') {
-        await ctx.connection.runSerial(() =>
+        const superseded = await ctx.connection.runSerial(() =>
           emitAll(
             ctx,
             harness.continueAfterApproval({
               companion,
               ownerId: ctx.userId,
               outcome: result.content,
+              holdsLease: leaseGuard(companionId, owner),
             }),
           ),
         );
+        if (superseded) {
+          yieldRoom(ctx, companionId);
+        }
         return { done: true };
       }
       motivation.request(companionId);
@@ -196,14 +251,20 @@ async function advanceIngested(
   }
 }
 
-/** The Phase-5 growth recompute as the turn stream's tail (token-free; idempotent). */
+/** The Phase-5 growth recompute as the turn stream's tail (token-free; idempotent).
+ *  Forwards the turn's superseded signal so the caller can yield the room. */
 async function* withGrowthReflections(
-  inner: AsyncIterable<ChatStreamEvent>,
+  inner: AsyncGenerator<ChatStreamEvent, boolean>,
   growth: GrowthService,
   companionId: string,
   logger: Logger,
-): AsyncGenerator<ChatStreamEvent> {
-  yield* inner;
+): AsyncGenerator<ChatStreamEvent, boolean> {
+  const superseded = yield* inner;
+  // Stood down mid-turn: skip the growth recompute write too — the live turn on the
+  // new connection owns this companion's reflections now.
+  if (superseded) {
+    return true;
+  }
   try {
     const { reflections } = await growth.recompute(companionId);
     for (const message of reflections) {
@@ -216,6 +277,7 @@ async function* withGrowthReflections(
       error,
     });
   }
+  return false;
 }
 
 /** The arrival-greeting decision stream (companion-greeting.md §7). */
