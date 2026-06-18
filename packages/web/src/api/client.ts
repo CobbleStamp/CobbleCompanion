@@ -384,9 +384,9 @@ export async function* streamGreeting(companionId: string): AsyncGenerator<ChatS
 }
 
 /**
- * Subscribe to the standing companion event channel (architecture.md §6): yields
- * each transcript row / reaction the server pushes for as long as the embodiment
- * connection stays open. `signal` cancels it (the caller aborts on unmount), and an
+ * Subscribe to the embodiment connection's live event stream (architecture.md
+ * §6): yields each transcript row / reaction the server pushes for as long as the
+ * embodiment connection stays open. `signal` cancels it (the caller aborts on unmount), and an
  * abort — or a clean socket drop — ends the generator quietly rather than as an
  * error; the caller owns reconnect. A takeover by another tab/device (superseded)
  * also ends it quietly — {@link onEmbodimentMoved} carries that to the UI.

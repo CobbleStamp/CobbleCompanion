@@ -239,8 +239,8 @@ Server-to-server consumer credentials (§5). One row per `(client_id, secret)`, 
 | `parsed_doc` | jsonb, nullable | parsed paragraphs held while `deferred`, so the AI passes resume without a re-upload; null otherwise |
 | `created_at` / `updated_at` | timestamptz | |
 
-> The durable status surface is what makes the in-process runner replaceable by a real worker
-> with no schema/API change (`architecture.md` §4.8, §8), and lets deferred jobs survive a restart.
+> The durable status surface is what let the in-process runner give way to the durable job-queue
+> worker with no schema/API change (`architecture.md` §4.8, §8), and lets deferred jobs survive a restart.
 
 The `status` column is a state machine. Parsing extracts text without the LLM; the three AI passes
 (segment → enrich → embed) are metered, so a job the companion can't afford from stamina is parked in
@@ -684,7 +684,7 @@ in-process runners used to get from a `Set`). Distinct from `active_embodiment`.
 | `updated_at` | timestamptz | |
 
 A new connection **force-claims** (its newer ULID wins); the prior holder self-fences when its
-heartbeat renew finds it no longer owns the row. Handoff design + the (not-yet-built) in-turn
+heartbeat renew finds it no longer owns the row. Handoff design + the in-turn
 fence → `architecture.md` §6, `deliver-scalability.md` §5.2.
 
 #### `companion_events` — durable live-event log

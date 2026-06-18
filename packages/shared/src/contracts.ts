@@ -234,8 +234,9 @@ export type JobStatus = 'pending' | 'done' | 'failed';
  * Realtime WebSocket transport envelope (deliver-scalability.md §5.2, Phase D). A
  * client sends a {@link WsRequestMessage} and correlates the reply by `id`; the
  * server replies with a result or error carrying that `id`, and also pushes
- * unsolicited {@link WsEventMessage}s (no `id`) — the live channel that replaces SSE.
- * Many requests can be in flight at once over the one socket (multiplexed by `id`).
+ * unsolicited {@link WsEventMessage}s (no `id`) — the live event stream pushed to
+ * the embodiment connection. Many requests can be in flight at once over the one
+ * socket (multiplexed by `id`).
  */
 export interface WsRequestMessage {
   readonly id: string;
@@ -1056,12 +1057,12 @@ export type ChatStreamEvent =
 
 /**
  * One row appended to a companion's transcript, pushed over the standing
- * companion event channel (`architecture.md` §6). Unlike {@link ChatStreamEvent}
- * — which narrates a single in-flight turn over a request-scoped stream — this is
- * the durable delivery path: every persisted row (a turn reply, an ingestion
- * note, a greeting, a proactive nudge) reaches any subscribed surface the moment
- * it's appended, regardless of which request produced it. The client merges these
- * into the transcript deduped by message id.
+ * WebSocket to the embodying connection (`architecture.md` §6). Unlike
+ * {@link ChatStreamEvent} — which narrates a single in-flight turn over a
+ * request-scoped stream — this is the durable delivery path: every persisted row
+ * (a turn reply, an ingestion note, a greeting, a proactive nudge) reaches the
+ * live room the moment it's appended, regardless of which request produced it.
+ * The client merges these into the transcript deduped by message id.
  */
 export interface StreamMessageEvent {
   readonly type: 'message';
@@ -1070,12 +1071,12 @@ export interface StreamMessageEvent {
 
 /**
  * A reaction added to or removed from a transcript message, pushed over the
- * standing companion event channel (companion-reactions.md §8). Unlike a
- * {@link StreamMessageEvent} this is a *mutation* on an existing row, not a new
- * turn — the client applies it to the message's reaction set rather than
- * appending. Carries the same `reaction_*` shape in both directions and for both
- * reactors, so a reaction placed on one surface (or by the companion itself) shows
- * up live everywhere.
+ * standing WebSocket to the embodying connection (companion-reactions.md §8).
+ * Unlike a {@link StreamMessageEvent} this is a *mutation* on an existing row,
+ * not a new turn — the client applies it to the message's reaction set rather
+ * than appending. Carries the same `reaction_*` shape in both directions and for
+ * both reactors, so a reaction placed by the user (or by the companion itself)
+ * shows up live in the active room.
  */
 export interface StreamReactionAddedEvent {
   readonly type: 'reaction_added';
@@ -1091,7 +1092,8 @@ export interface StreamReactionRemovedEvent {
   readonly emoji: string;
 }
 
-/** Events carried by the standing companion event channel (`GET .../events`). */
+/** Events delivered over the standing WebSocket from the durable companion event
+ *  log to the embodying connection (`architecture.md` §6). */
 export type CompanionStreamEvent =
   | StreamMessageEvent
   | StreamReactionAddedEvent

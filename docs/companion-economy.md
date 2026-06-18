@@ -39,7 +39,7 @@ fully **decoupled** — growing earns no food, and feeding changes no axis. See 
 ```mermaid
 flowchart LR
     S["User's PANTRY<br/>(seeded foods:<br/>Rations, Sparks, Treats)"]
-    F["User feeds a companion a FOOD<br/>(the Kitchen, POST /feed)"]
+    F["User feeds a companion a FOOD<br/>(the Kitchen, the feed WS method)"]
     V["Food refills that companion's<br/>VITALITY wallet<br/>(stamina / energy)"]
     P["Powers conversation (stamina) /<br/>autonomous work (energy)"]
     S --> F --> V -->|powers| P

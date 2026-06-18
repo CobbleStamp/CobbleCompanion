@@ -11,7 +11,8 @@
  * (a {@link WsResultMessage}) resolves the call, a {@link WsErrorMessage} rejects it,
  * and a streaming method's chunks ({@link WsStreamMessage}) feed an async generator
  * until its terminal result ends it. Unsolicited {@link WsEventMessage}s (no id) fan
- * out to the live-event subscribers — the channel that replaces SSE.
+ * out to the live-event subscribers — the server-pushed event stream of the
+ * embodiment connection.
  *
  * `client.ts` is the public, signature-stable API; this module is the transport it
  * sits on. File upload stays an HTTP endpoint (the two-part upload of D-A).
@@ -212,7 +213,7 @@ class WsClient {
   }
 
   /**
-   * Subscribe to the companion's live event channel (the SSE replacement): yields
+   * Subscribe to the companion's live event stream over the WebSocket: yields
    * each pushed `companion` event for `companionId` until `signal` aborts or the
    * socket drops. An abort/drop ends the generator quietly — the caller owns
    * reconnect — and a takeover (superseded) ends it too, with {@link onState}
