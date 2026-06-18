@@ -12,8 +12,21 @@ export interface WsCallContext {
   readonly emit: (chunk: unknown) => void;
 }
 
+/**
+ * Base class for intentionally client-safe failures. The dispatcher forwards a
+ * thrown error's `message` (and `code`) to the client only when it is a
+ * `WsClientError` — anything else (a `pg` `DatabaseError` carrying a SQLSTATE
+ * `code`, a Node system error carrying `ECONNREFUSED`/host:port, a harness/gateway
+ * fault) is reported generically so it can't leak internal detail. Subclasses set a
+ * stable, client-facing `code`.
+ */
+export abstract class WsClientError extends Error {
+  abstract readonly code: string;
+}
+
 /** A WS method: returns the result value (sent back correlated by request id), or
- *  throws — a thrown Error's message becomes the client-safe error reply. */
+ *  throws — a thrown {@link WsClientError}'s message becomes the client-safe error
+ *  reply; any other error is reported generically. */
 export type WsMethodHandler = (ctx: WsCallContext, params: unknown) => Promise<unknown>;
 
 /** The method table the dispatcher routes by `method` name. */
@@ -78,16 +91,14 @@ export async function dispatchMessage(
       userId: connection.userId,
       error,
     });
-    // Allowlist client-facing messages: a `code`-carrying error is a tagged,
-    // intentionally client-safe failure (e.g. NotEmbodiedError) — pass its message
-    // through. An untagged error from the DB driver / gateway / harness could leak
-    // internal detail, so report it generically (mirrors the HTTP 5xx handler in
-    // app.ts). The full error is logged above regardless.
-    const code =
-      typeof (error as { code?: unknown }).code === 'string'
-        ? (error as { code: string }).code
-        : undefined;
-    const message = code !== undefined && error instanceof Error ? error.message : 'internal error';
-    connection.fail(parsed.id, message, code);
+    // Allowlist client-facing messages by type, not by a "has a string `code`"
+    // heuristic: a `WsClientError` is a tagged, intentionally client-safe failure
+    // (e.g. NotEmbodiedError) — pass its message and code through. Anything else
+    // (a `pg` DatabaseError whose `code` is a SQLSTATE, a Node system error, a
+    // gateway/harness fault) could leak internal detail, so report it generically
+    // (mirrors the HTTP 5xx handler in app.ts). The full error is logged above.
+    const clientError = error instanceof WsClientError ? error : undefined;
+    const message = clientError?.message ?? 'internal error';
+    connection.fail(parsed.id, message, clientError?.code);
   }
 }

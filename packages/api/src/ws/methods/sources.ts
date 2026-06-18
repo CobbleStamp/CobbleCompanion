@@ -18,7 +18,7 @@ import type { AppDeps } from '../../app.js';
 import type { WsMethods } from '../dispatch.js';
 import { companionOf, NotFoundError, parseParams, QueueFullError } from './helpers.js';
 
-const sourceIdParams = z.object({ sourceId: z.string().min(1) });
+const sourceIdParams = z.object({ sourceId: z.string().uuid() });
 
 /**
  * Source intake + browse (mirrors source.routes, minus the multipart file upload —

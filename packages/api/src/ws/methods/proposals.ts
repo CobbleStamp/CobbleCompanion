@@ -4,7 +4,7 @@ import type { AppDeps } from '../../app.js';
 import type { WsMethods } from '../dispatch.js';
 import { companionOf, ConflictError, parseParams } from './helpers.js';
 
-const rejectParams = z.object({ proposalId: z.string().min(1) });
+const rejectParams = z.object({ proposalId: z.string().uuid() });
 
 /**
  * Approval queue — list + reject (mirrors proposal.routes; `proposals.confirm` is

@@ -2,11 +2,11 @@ import type { EmbodimentStore } from '@cobble/core';
 import type { z } from 'zod';
 import type { AppDeps } from '../../app.js';
 import { overCapGuard } from '../../quota-guard.js';
-import type { WsCallContext } from '../dispatch.js';
+import { type WsCallContext, WsClientError } from '../dispatch.js';
 import { requireEmbodiment } from '../fencing.js';
 
 /** A method param failed schema validation — the dispatcher maps it to a client error. */
-export class BadParamsError extends Error {
+export class BadParamsError extends WsClientError {
   readonly code = 'bad_params';
   constructor(message: string) {
     super(message);
@@ -15,7 +15,7 @@ export class BadParamsError extends Error {
 }
 
 /** A method could not proceed against current state (the WS analogue of HTTP 409). */
-export class ConflictError extends Error {
+export class ConflictError extends WsClientError {
   readonly code = 'conflict';
   constructor(message: string) {
     super(message);
@@ -24,7 +24,7 @@ export class ConflictError extends Error {
 }
 
 /** A referenced resource was not found (the WS analogue of HTTP 404). */
-export class NotFoundError extends Error {
+export class NotFoundError extends WsClientError {
   readonly code = 'not_found';
   constructor(message: string) {
     super(message);
@@ -34,7 +34,7 @@ export class NotFoundError extends Error {
 
 /** The vitality wallet is empty — the action would spend tokens it doesn't have
  *  (the WS analogue of HTTP 429). */
-export class OverCapError extends Error {
+export class OverCapError extends WsClientError {
   readonly code = 'over_cap';
   constructor(message: string) {
     super(message);
@@ -47,9 +47,9 @@ export class OverCapError extends Error {
  * analogue of the HTTP route's 429, and distinct from the per-companion vitality
  * {@link OverCapError}). Tagging the core `IngestionQueueFullError` at the WS boundary
  * keeps its already-client-safe message reaching the client: the dispatcher only
- * forwards messages from `code`-carrying errors (`dispatch.ts`).
+ * forwards messages from {@link WsClientError}s (`dispatch.ts`).
  */
-export class QueueFullError extends Error {
+export class QueueFullError extends WsClientError {
   readonly code = 'queue_full';
   constructor(message: string) {
     super(message);

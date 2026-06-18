@@ -14,7 +14,7 @@ import type { WsCallContext, WsMethods } from '../dispatch.js';
 import { requireEmbodiment } from '../fencing.js';
 import { companionOf, ConflictError, NotFoundError, OverCapError, parseParams } from './helpers.js';
 
-const confirmParams = z.object({ proposalId: z.string().min(1) });
+const confirmParams = z.object({ proposalId: z.string().uuid() });
 
 /**
  * Streaming methods (mirror the SSE routes): the turn (`messages.send`), the arrival

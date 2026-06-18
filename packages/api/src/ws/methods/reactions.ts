@@ -5,8 +5,8 @@ import type { AppDeps } from '../../app.js';
 import type { WsMethods } from '../dispatch.js';
 import { BadParamsError, companionOf, NotFoundError, parseParams } from './helpers.js';
 
-const addParams = addReactionSchema.extend({ messageId: z.string().min(1) });
-const removeParams = z.object({ messageId: z.string().min(1), emoji: z.string().min(1) });
+const addParams = addReactionSchema.extend({ messageId: z.string().uuid() });
+const removeParams = z.object({ messageId: z.string().uuid(), emoji: z.string().min(1) });
 
 /** User emoji reactions (mirrors reaction.routes). Persist + publish the live event;
  *  an added reaction enqueues the reaction_learn job (D-A.1). */

@@ -1,11 +1,11 @@
 import type { EmbodimentStore } from '@cobble/core';
 import type { EmbodimentBinding } from './connection.js';
-import type { WsCallContext } from './dispatch.js';
+import { type WsCallContext, WsClientError } from './dispatch.js';
 
 /** Raised when a method needs the live embodiment but the connection doesn't hold it
  *  (never claimed a companion, or has since been superseded). The dispatcher turns
  *  the message into a client-safe error reply. */
-export class NotEmbodiedError extends Error {
+export class NotEmbodiedError extends WsClientError {
   readonly code = 'not_embodied';
   constructor(message: string) {
     super(message);

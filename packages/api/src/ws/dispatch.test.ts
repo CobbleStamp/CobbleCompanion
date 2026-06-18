@@ -1,9 +1,9 @@
 /**
  * WS dispatcher error allowlisting (S2): a thrown handler error must only reach the
- * client verbatim when it is a tagged (code-carrying) error. An untagged error from
- * the DB driver / gateway / harness is reported generically so its message can't
- * leak internal detail — mirroring the HTTP 5xx handler in app.ts. The full error is
- * always logged.
+ * client verbatim when it is a {@link WsClientError}. An error from the DB driver /
+ * gateway / harness — even one carrying a string `code` (a `pg` SQLSTATE, a Node
+ * system errno) — is reported generically so its message can't leak internal detail,
+ * mirroring the HTTP 5xx handler in app.ts. The full error is always logged.
  */
 
 import type { Logger } from '@cobble/core';
@@ -11,7 +11,7 @@ import type { WsServerMessage } from '@cobble/shared';
 import type { WebSocket } from '@fastify/websocket';
 import { describe, expect, it } from 'vitest';
 import { WsConnection } from './connection.js';
-import { dispatchMessage, type WsMethods } from './dispatch.js';
+import { dispatchMessage, type WsMethods, WsClientError } from './dispatch.js';
 
 /** A socket that records every JSON frame the connection writes (fakes-over-mocks:
  *  the socket is the third-party `@fastify/websocket` type we don't own). */
@@ -65,8 +65,8 @@ describe('ws dispatch error allowlisting', () => {
     expect(errors[0]?.message).toBe('ws method failed');
   });
 
-  it('passes through the message of a tagged (code-carrying) error', async () => {
-    class NotEmbodiedError extends Error {
+  it('passes through the message of a WsClientError', async () => {
+    class NotEmbodiedError extends WsClientError {
       readonly code = 'not_embodied';
     }
     const methods: WsMethods = {
@@ -84,5 +84,28 @@ describe('ws dispatch error allowlisting', () => {
         code: 'not_embodied',
       },
     });
+  });
+
+  it('reports a DB-driver error generically even though it carries a string code', async () => {
+    // A node-postgres DatabaseError is an Error with `.code` set to the SQLSTATE
+    // (here 22P02, "invalid text representation" — what a malformed uuid throws).
+    // The old "has a string code" heuristic leaked its message verbatim; the
+    // WsClientError gate must report it generically.
+    const errors: { message: string; meta: unknown }[] = [];
+    const methods: WsMethods = {
+      reject: async () => {
+        const dbError = Object.assign(
+          new Error('invalid input syntax for type uuid: "not-a-uuid"'),
+          { code: '22P02' },
+        );
+        throw dbError;
+      },
+    };
+
+    const reply = await dispatch(methods, { id: 'r3', method: 'reject' }, recordingLogger(errors));
+
+    expect(reply).toEqual({ id: 'r3', error: { message: 'internal error' } });
+    // The real error — SQLSTATE and all — is still logged for debugging.
+    expect(errors).toHaveLength(1);
   });
 });

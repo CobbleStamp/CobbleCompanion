@@ -5,8 +5,8 @@ import type { AppDeps } from '../../app.js';
 import type { WsMethods } from '../dispatch.js';
 import { NotFoundError, parseParams } from './helpers.js';
 
-const editParams = userFactEditSchema.extend({ factId: z.string().min(1) });
-const deleteParams = z.object({ factId: z.string().min(1) });
+const editParams = userFactEditSchema.extend({ factId: z.string().uuid() });
+const deleteParams = z.object({ factId: z.string().uuid() });
 
 /** A Tier-2 belief (vs a Tier-1 attribute); a null predicate is never a belief. */
 function isBelief(predicate: string | null): boolean {
