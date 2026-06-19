@@ -973,7 +973,7 @@ as a documented known gap.
 
 | #      | Question                      | **Decision**                                                                                                                                                                                                                                                      |
 | ------ | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Q1** | Concurrency testing on PGlite | **Deferred — known gap.** No automated concurrency tests now (PGlite is single-connection, can't run `SKIP LOCKED` / lease races / two-node contention); **documented for the future** (real-Postgres / testcontainers suite). Logic stays unit-tested on PGlite. |
+| **Q1** | Concurrency testing on PGlite | **Resolved — real-Postgres integration suite added.** `*.integration.test.ts` run against the docker-compose `pgvector/pgvector:pg16` via `make test-integration` (and CI's `integration` job), backed by `createIntegrationDatabase()` (`db/src/testing.ts`) — one throwaway DB per file. Two pools = two backend connections contend over one companion; covers the job-queue claim race + lease-expiry takeover and the embodiment newer-wins / `claimSeq` ABA fence. Logic still unit-tested on PGlite for speed. |
 | **Q2** | Unified event cursor          | **One `companion_events` append-log** (own monotonic `seq`), written by every publish point; the WS heartbeat reads it by cursor.                                                                                                                                 |
 | **Q3** | All-over-WS migration         | **Big-bang — all routes onto WS.** Uploads split in two: a stateless HTTP upload writes a doc record to shared storage; a WS reference message then enqueues the `ingest` job. Binary never crosses the WS.                                                       |
 | **Q4** | Three "claims"                | **Separate, never mixed** — embodiment ownership, the job-queue companion-claim, and atomic writes are independent mechanisms with their own rows/semantics.                                                                                                      |
@@ -982,9 +982,11 @@ as a documented known gap.
 | **Q7** | Presence in-memory            | **Derive presence from the `active_embodiment` claim** (live claim = present); drop `InMemoryPresenceStore`. Add `last_activity_at` only if a finer idle signal is needed.                                                                                        |
 | **Q8** | Cutover / rollout             | **None needed** — not deployed, no back-compat. Build the cleanest version; reset the DB freely.                                                                                                                                                                  |
 
-> **Known gap (Q1):** the queue's claim/lease/fencing concurrency is **not** covered
-> by automated tests until a real-Postgres integration suite is added. Track as
-> future work before this is trusted under real multi-node production load.
+> **Q1 (resolved):** the queue's and embodiment's claim/lease/fencing concurrency is
+> now covered by the real-Postgres integration suite (`*.integration.test.ts`, run via
+> `make test-integration`). The single-connection PGlite suites still cover SQL shape +
+> single-threaded semantics; the integration suite covers the two-writer races PGlite
+> cannot.
 
 ## 8. Phase A — atomic-write audit results
 

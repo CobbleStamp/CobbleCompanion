@@ -33,6 +33,45 @@ jobs:
       - name: Test with coverage (>=80%)
         run: pnpm run test:coverage
 
+  # Integration tests against a real Postgres (the property under test —
+  # concurrent claim races — cannot be exercised by the in-memory PGlite the
+  # default suite uses; deliver-scalability.md §7). Mirrors `make test-integration`.
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: cobble
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d cobble"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Integration tests (real Postgres)
+        run: pnpm run test:integration
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/cobble
+
   # The Pulumi infra projects live outside the pnpm workspace (own lockfiles), so
   # the workspace typecheck above never compiles them. Typecheck each so a change
   # that breaks an infra build — e.g. renaming a Dockerfile target or a config

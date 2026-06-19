@@ -86,9 +86,14 @@ and cost for both live in [`docs/infra-setup.md`](./docs/infra-setup.md); the ap
 
 ```bash
 pnpm typecheck                # all packages
-pnpm test                     # full suite
+pnpm test                     # full suite (in-memory PGlite — no Docker needed)
 pnpm test:coverage            # suite + ≥80% coverage gate
 pnpm lint                     # prettier check (code)
+make test-integration         # *.integration.test.ts vs real Postgres in Docker
 ```
 
-These are exactly what CI runs (`.github/workflows/ci.yml`).
+`pnpm test` and `pnpm test:coverage` run against in-memory PGlite. The
+concurrency suites (`*.integration.test.ts`) need a real Postgres, so they are
+excluded from the default run; `make test-integration` boots the docker-compose
+`postgres` service and runs them against it. All of these are what CI runs
+(`.github/workflows/ci.yml`).

@@ -11,9 +11,10 @@ const silentLogger: Logger = { error() {}, warn() {}, info() {} };
 
 /**
  * Logic-level tests on in-memory PGlite. NOTE: PGlite is single-connection, so
- * the *concurrent* claim races (two nodes contending) are NOT exercised here —
- * that's the documented known gap (deliver-scalability.md §7 Q1). These cover the
- * SQL shape and the single-threaded semantics.
+ * the *concurrent* claim races (two nodes contending) are not exercised here —
+ * they run against real Postgres in `job-queue.integration.test.ts`
+ * (`make test-integration`). These cover the SQL shape and single-threaded
+ * semantics.
  */
 describe('DrizzleJobQueue', () => {
   let queue: DrizzleJobQueue;

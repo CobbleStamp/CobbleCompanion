@@ -14,8 +14,9 @@ import type { Logger } from '../logging.js';
  * Concurrency note: the claim relies on `INSERT … ON CONFLICT DO UPDATE … WHERE
  * claimed_until < now()` being atomic (only one writer can transition an
  * absent/expired claim to held). That is correct on real Postgres; the in-memory
- * PGlite used in tests is single-connection, so the *races* aren't exercised
- * there — see deliver-scalability.md §7 Q1 (known gap).
+ * PGlite used in the unit suite is single-connection, so the *races* are
+ * exercised separately against real Postgres in `job-queue.integration.test.ts`
+ * (run via `make test-integration` — deliver-scalability.md §7 Q1).
  */
 
 /** One unit of background work, as the processor sees it. */
