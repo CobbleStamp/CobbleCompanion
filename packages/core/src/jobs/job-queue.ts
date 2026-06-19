@@ -51,14 +51,33 @@ export interface ClaimedCompanion {
   readonly generation: number;
 }
 
+/**
+ * The result of a heartbeat renewal. `held: true` means we still own the claim; a
+ * failure carries *why* we lost it so the caller can log a precise reason rather
+ * than a bare boolean (typescript/coding-style.md — model recoverable failures as
+ * a tagged Result; logging.md — log failures with context).
+ */
+export type RenewOutcome =
+  | { readonly held: true }
+  | {
+      readonly held: false;
+      /**
+       * `reclaimed`: a different owner holds it now (their id is `heldBy`).
+       * `lapsed`: still ours, but `claimed_until` is in the past (we fell behind).
+       * `released`: the claim row is gone entirely.
+       */
+      readonly reason: 'reclaimed' | 'lapsed' | 'released';
+      readonly heldBy?: string;
+    };
+
 export interface JobQueue {
   enqueue(params: EnqueueParams): Promise<void>;
   claimNextCompanion(owner: string, leaseMs: number): Promise<ClaimedCompanion | null>;
   nextDueJob(companionId: string): Promise<QueuedJob | null>;
   markDone(jobId: string): Promise<void>;
   markFailed(jobId: string, error: string): Promise<void>;
-  /** Heartbeat: extend our lease. Returns false if we no longer hold it. */
-  renewClaim(companionId: string, owner: string, leaseMs: number): Promise<boolean>;
+  /** Heartbeat: extend our lease. On failure, returns why we no longer hold it. */
+  renewClaim(companionId: string, owner: string, leaseMs: number): Promise<RenewOutcome>;
   /** Release our claim (no-op if it has already been taken over). */
   releaseClaim(companionId: string, owner: string): Promise<void>;
   /** Count of pending jobs that are due now — observability + poll wake. */
@@ -224,7 +243,7 @@ export class DrizzleJobQueue implements JobQueue {
       .where(eq(jobs.id, jobId));
   }
 
-  async renewClaim(companionId: string, owner: string, leaseMs: number): Promise<boolean> {
+  async renewClaim(companionId: string, owner: string, leaseMs: number): Promise<RenewOutcome> {
     const rows = await this.db
       .update(companionClaims)
       .set({
@@ -241,7 +260,23 @@ export class DrizzleJobQueue implements JobQueue {
         ),
       )
       .returning({ companionId: companionClaims.companionId });
-    return rows.length > 0;
+    if (rows.length > 0) {
+      return { held: true };
+    }
+    // The renewal matched no row — diagnose why, so the caller logs a precise
+    // reason. Read-only and only on the (rare) failure path, so the extra
+    // round-trip is never on the hot path.
+    const [current] = await this.db
+      .select({ owner: companionClaims.owner, claimedUntil: companionClaims.claimedUntil })
+      .from(companionClaims)
+      .where(eq(companionClaims.companionId, companionId));
+    if (!current) {
+      return { held: false, reason: 'released' };
+    }
+    if (current.owner !== owner) {
+      return { held: false, reason: 'reclaimed', heldBy: current.owner };
+    }
+    return { held: false, reason: 'lapsed' };
   }
 
   async releaseClaim(companionId: string, owner: string): Promise<void> {

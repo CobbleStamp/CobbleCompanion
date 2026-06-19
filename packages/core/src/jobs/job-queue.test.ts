@@ -155,8 +155,13 @@ describe('DrizzleJobQueue', () => {
   it('renewClaim extends our lease and rejects a non-owner', async () => {
     await queue.enqueue({ companionId: companionA, type: 'consolidate' });
     await queue.claimNextCompanion('node-1', 60_000);
-    expect(await queue.renewClaim(companionA, 'node-1', 60_000)).toBe(true);
-    expect(await queue.renewClaim(companionA, 'node-2', 60_000)).toBe(false);
+    expect(await queue.renewClaim(companionA, 'node-1', 60_000)).toEqual({ held: true });
+    // A non-owner's renewal fails and reports who actually holds the claim.
+    expect(await queue.renewClaim(companionA, 'node-2', 60_000)).toMatchObject({
+      held: false,
+      reason: 'reclaimed',
+      heldBy: 'node-1',
+    });
   });
 });
 
@@ -205,6 +210,7 @@ describe('JobProcessorPool', () => {
       owner: 'node-1',
       concurrency: 2,
       leaseMs: 60_000,
+      heartbeatMs: 30_000,
       pollMs: 60_000,
       logger: silentLogger,
     });
@@ -234,6 +240,7 @@ describe('JobProcessorPool', () => {
       owner: 'node-1',
       concurrency: 1,
       leaseMs: 60_000,
+      heartbeatMs: 30_000,
       pollMs: 60_000,
       logger: silentLogger,
     });
@@ -268,6 +275,7 @@ describe('JobProcessorPool', () => {
       owner: 'node-1',
       concurrency: 1,
       leaseMs: 60_000,
+      heartbeatMs: 30_000,
       pollMs: 60_000,
       logger: silentLogger,
     });
@@ -282,6 +290,39 @@ describe('JobProcessorPool', () => {
     // bounding the overlap to the one job already in flight. 'second' stays pending
     // for whichever node now holds the claim.
     expect(handled).toEqual(['first']);
+    expect(await queue.duePendingCount()).toBe(1);
+  });
+
+  it('leaves a job pending (does not complete it) when the lease is lost mid-run', async () => {
+    // A rival reclaims the companion *while* the job runs; the mid-run heartbeat
+    // observes the lost lease and aborts. The job must NOT be marked done — the new
+    // owner now owns it — so it stays pending for the reclaiming node (the C2 fix:
+    // a lost-lease run no longer silently double-completes).
+    const handlers: JobHandlers = {
+      consolidate: async () => {
+        await db
+          .update(companionClaims)
+          .set({ owner: 'node-2' })
+          .where(eq(companionClaims.companionId, companionA));
+        // Outlast a few heartbeat ticks so the renewal sees the rewritten owner.
+        await new Promise((resolve) => setTimeout(resolve, 80));
+      },
+    };
+    const pool = new JobProcessorPool(queue, handlers, {
+      owner: 'node-1',
+      concurrency: 1,
+      leaseMs: 60_000,
+      heartbeatMs: 10,
+      pollMs: 60_000,
+      logger: silentLogger,
+    });
+
+    await queue.enqueue({ companionId: companionA, type: 'consolidate' });
+
+    pool.nudge();
+    await pool.whenIdle();
+
+    // Not completed: the job is still pending+due for the node that now holds the claim.
     expect(await queue.duePendingCount()).toBe(1);
   });
 });

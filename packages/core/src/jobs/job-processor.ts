@@ -21,11 +21,19 @@ export interface JobProcessorOptions {
   /** Max concurrent companion drains on this node (K). Sized to resource ceilings, not population. */
   readonly concurrency: number;
   /**
-   * Claim lease in ms. Must exceed the slowest single job's runtime with margin
-   * (the lease is renewed *between* jobs, not mid-job — deliver-scalability.md
-   * §5.1.6). A job that outruns the lease risks a concurrent re-claim.
+   * Claim lease in ms. Renewed *during* a drain by a heartbeat every
+   * {@link heartbeatMs} (deliver-scalability.md §5.1.6), so it no longer has to
+   * exceed the slowest job — it only bounds how long a wedged/partitioned node
+   * keeps its claim before the work is reclaimed. Must exceed `heartbeatMs`.
    */
   readonly leaseMs: number;
+  /**
+   * Heartbeat interval in ms — how often a live drain renews its claim. A drain
+   * that cannot renew for ~`leaseMs` (event-loop wedge or DB partition) loses the
+   * lease, stops, and leaves its in-flight job pending for the reclaiming node.
+   * Must be < `leaseMs`, with margin to survive a single missed beat.
+   */
+  readonly heartbeatMs: number;
   /** Coarse poll interval — the clock for idle/future-dated work. */
   readonly pollMs: number;
   readonly logger: Logger;
@@ -124,24 +132,61 @@ export class JobProcessorPool {
   }
 
   private async drainCompanion(claim: ClaimedCompanion): Promise<void> {
+    // One heartbeat for the whole drain: renew the claim every `heartbeatMs` so a
+    // long job (or a long run of short ones) keeps the lease instead of losing it
+    // to a concurrent re-claim. If a renewal reports we no longer hold the claim —
+    // a multi-node reclaim after ours lapsed, or a DB partition — abort: stop
+    // taking new jobs and signal the in-flight one. The lease length now bounds
+    // only how long a wedged/partitioned node keeps its claim, not the slowest job.
+    const lease = new AbortController();
+    const heartbeat = setInterval(() => {
+      void this.queue
+        .renewClaim(claim.companionId, this.opts.owner, this.opts.leaseMs)
+        .then((outcome) => {
+          if (!outcome.held && !lease.signal.aborted) {
+            this.opts.logger.warn('claim lease lost; aborting drain', {
+              companionId: claim.companionId,
+              owner: this.opts.owner,
+              reason: outcome.reason,
+              ...(outcome.heldBy !== undefined ? { reclaimedBy: outcome.heldBy } : {}),
+            });
+            lease.abort();
+          }
+        })
+        .catch((error: unknown) => {
+          // A renewal that errors out (e.g. DB unreachable) is treated as lost: we
+          // cannot prove we still hold the claim, so stop rather than risk overlap.
+          this.opts.logger.error('claim heartbeat failed', {
+            companionId: claim.companionId,
+            error,
+          });
+          if (!lease.signal.aborted) lease.abort();
+        });
+    }, this.opts.heartbeatMs);
+    heartbeat.unref?.();
     try {
-      while (!this.stopping) {
+      while (!this.stopping && !lease.signal.aborted) {
         const job = await this.queue.nextDueJob(claim.companionId);
         if (!job) return;
-        await this.runJob(job);
-        // Heartbeat between jobs so a long companion drain keeps its lease. If the
-        // lease was taken over (a multi-node reclaim after ours lapsed), stop
-        // draining rather than run jobs this node no longer owns — this bounds the
-        // overlap to the single iteration already in flight. The finally-block
-        // releaseClaim is owner-scoped, so it's a no-op once another node holds it.
-        // TODO(D7): also generation-fence nextDueJob/markDone for a full backstop
-        // (embodiment-handoff-fencing.md §4 — the shared fence-on-token helper).
-        const held = await this.queue.renewClaim(
+        await this.runJob(job, lease.signal);
+        // Between-jobs ownership check. The heartbeat keeps the lease alive *during*
+        // a job; this catches a takeover *between* jobs synchronously, bounding the
+        // overlap to the one job already in flight rather than to a heartbeat tick.
+        if (lease.signal.aborted) return;
+        const renewal = await this.queue.renewClaim(
           claim.companionId,
           this.opts.owner,
           this.opts.leaseMs,
         );
-        if (!held) return;
+        if (!renewal.held) {
+          this.opts.logger.info('claim moved between jobs; stopping drain', {
+            companionId: claim.companionId,
+            owner: this.opts.owner,
+            reason: renewal.reason,
+            ...(renewal.heldBy !== undefined ? { reclaimedBy: renewal.heldBy } : {}),
+          });
+          return;
+        }
       }
     } catch (error) {
       this.opts.logger.error('companion drain failed', {
@@ -149,6 +194,8 @@ export class JobProcessorPool {
         error,
       });
     } finally {
+      clearInterval(heartbeat);
+      // Owner-scoped, so it's a no-op once another node has reclaimed the lease.
       await this.queue.releaseClaim(claim.companionId, this.opts.owner).catch((error: unknown) =>
         this.opts.logger.error('claim release failed', {
           companionId: claim.companionId,
@@ -158,7 +205,7 @@ export class JobProcessorPool {
     }
   }
 
-  private async runJob(job: QueuedJob): Promise<void> {
+  private async runJob(job: QueuedJob, lease: AbortSignal): Promise<void> {
     const handler = this.handlers[job.type];
     if (!handler) {
       this.opts.logger.error('no handler for job type', { type: job.type, jobId: job.id });
@@ -167,16 +214,35 @@ export class JobProcessorPool {
     }
     try {
       await handler(job);
-      await this.queue.markDone(job.id);
     } catch (error) {
-      this.opts.logger.error('job failed', {
+      // A genuine handler failure (we still hold the lease) is terminal for this
+      // pass. If instead the lease was lost mid-run, the error is moot — fall
+      // through to the shared lost-lease handling below.
+      if (!lease.aborted) {
+        this.opts.logger.error('job failed', {
+          jobId: job.id,
+          type: job.type,
+          companionId: job.companionId,
+          error,
+        });
+        await this.queue.markFailed(job.id, error instanceof Error ? error.message : String(error));
+        return;
+      }
+    }
+    // Lost the lease while the job ran (handler returned OR threw): record no
+    // outcome — the reclaiming node now owns this job and will run it. Marking it
+    // done/failed here would race that node (the C2 finding). Leaving it pending is
+    // safe — idempotent handlers re-run cleanly, and ingest's status machine fails
+    // an interrupted partial for re-upload rather than duplicating it (ingest-job.ts).
+    if (lease.aborted) {
+      this.opts.logger.warn('job lease lost mid-run; leaving pending for reclaim', {
         jobId: job.id,
         type: job.type,
         companionId: job.companionId,
-        error,
       });
-      await this.queue.markFailed(job.id, error instanceof Error ? error.message : String(error));
+      return;
     }
+    await this.queue.markDone(job.id);
   }
 }
 

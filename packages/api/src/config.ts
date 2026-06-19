@@ -75,6 +75,20 @@ export interface AppConfig {
   readonly useContextHeader: boolean;
   /** Backstop cap on queued+in-flight ingestion runs across all owners. */
   readonly ingestionQueueMax: number;
+  /** Job-queue claim lease — a companion drain holds its claim this long. The
+   *  heartbeat renews it *during* a drain, so the lease no longer has to exceed the
+   *  slowest job; it only bounds how long a wedged/partitioned node keeps its claim
+   *  before the work is reclaimed (job-processor.ts). Must exceed jobHeartbeatMs. */
+  readonly jobLeaseMs: number;
+  /** How often a drain renews its claim while running. The "silence cap": if the
+   *  node cannot renew for ~jobLeaseMs (event-loop wedge or DB partition), the lease
+   *  lapses and the work is reclaimed. Must be < jobLeaseMs (renew several times per
+   *  lease so a single missed beat never expires it). */
+  readonly jobHeartbeatMs: number;
+  /** Coarse poll interval — the clock for idle/future-dated background work. */
+  readonly jobPollIntervalMs: number;
+  /** Max concurrent companion drains per node (K) — sized to resource ceilings. */
+  readonly jobConcurrency: number;
   /** WS embodiment heartbeat interval — the node renews its claim this often while
    *  the socket is open (deliver-scalability.md §5.2). */
   readonly wsHeartbeatMs: number;
@@ -174,6 +188,13 @@ const envSchema = z
       .default('true')
       .transform((value) => value === 'true'),
     INGESTION_QUEUE_MAX: z.coerce.number().int().positive().default(100),
+    // Job-queue tuning (deliver-scalability.md §5.1.6). The lease is renewed
+    // *during* a drain by the heartbeat, so it no longer has to exceed the slowest
+    // job — it only bounds how long a wedged/partitioned node keeps its claim.
+    JOB_LEASE_MS: z.coerce.number().int().positive().default(60_000),
+    JOB_HEARTBEAT_MS: z.coerce.number().int().positive().default(20_000),
+    JOB_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(30_000),
+    JOB_CONCURRENCY: z.coerce.number().int().positive().default(4),
     WS_HEARTBEAT_MS: z.coerce.number().int().positive().default(10_000),
     WS_CLAIM_TTL_MS: z.coerce.number().int().positive().default(30_000),
     // A WS frame is a JSON control envelope; 256 KiB is generous for any message
@@ -307,6 +328,16 @@ const envSchema = z
         });
       }
     }
+    // The drain renews its claim every JOB_HEARTBEAT_MS; the lease must outlast a
+    // few beats or a single slow/missed renewal would expire it and hand a live
+    // companion to another node (job-processor.ts).
+    if (env.JOB_HEARTBEAT_MS >= env.JOB_LEASE_MS) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'JOB_HEARTBEAT_MS must be less than JOB_LEASE_MS',
+        path: ['JOB_HEARTBEAT_MS'],
+      });
+    }
   });
 
 /** One MCP whitelist entry as it appears in the `MCP_SERVERS` JSON array. */
@@ -413,6 +444,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     uploadStaging: buildUploadStagingConfig(parsed),
     useContextHeader: parsed.USE_CONTEXT_HEADER,
     ingestionQueueMax: parsed.INGESTION_QUEUE_MAX,
+    jobLeaseMs: parsed.JOB_LEASE_MS,
+    jobHeartbeatMs: parsed.JOB_HEARTBEAT_MS,
+    jobPollIntervalMs: parsed.JOB_POLL_INTERVAL_MS,
+    jobConcurrency: parsed.JOB_CONCURRENCY,
     wsHeartbeatMs: parsed.WS_HEARTBEAT_MS,
     wsClaimTtlMs: parsed.WS_CLAIM_TTL_MS,
     wsMaxPayloadBytes: parsed.WS_MAX_PAYLOAD_BYTES,

@@ -247,9 +247,10 @@ async function main(): Promise<void> {
     },
     {
       owner: `${hostname()}-${process.pid}`,
-      concurrency: JOB_CONCURRENCY,
-      leaseMs: JOB_LEASE_MS,
-      pollMs: JOB_POLL_INTERVAL_MS,
+      concurrency: config.jobConcurrency,
+      leaseMs: config.jobLeaseMs,
+      heartbeatMs: config.jobHeartbeatMs,
+      pollMs: config.jobPollIntervalMs,
       logger: consoleLogger,
     },
   );
@@ -662,16 +663,6 @@ const MOTIVATION_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 /** How often to reclaim never-consumed staged uploads (filesystem backend; the
  *  S3 backend's call is a no-op since the bucket lifecycle owns TTL). */
 const STAGING_PURGE_INTERVAL_MS = 5 * 60 * 1000;
-
-/**
- * Job-queue tuning (deliver-scalability.md §5.1.6). Lease is generous — longer
- * than any single background LLM pass — because it is renewed *between* jobs, not
- * mid-job. Poll is the coarse clock for idle/future work. Concurrency is the
- * per-node instantaneous cap (K), sized to resource ceilings, not population.
- */
-const JOB_LEASE_MS = 5 * 60 * 1000;
-const JOB_POLL_INTERVAL_MS = 30 * 1000;
-const JOB_CONCURRENCY = 4;
 
 main().catch((error: unknown) => {
   consoleLogger.error('api failed to start', { error });

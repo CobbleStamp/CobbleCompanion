@@ -283,7 +283,7 @@ flowchart TD
   subgraph node["One API node"]
     WAKE["wake processor pool<br/>(≤ K concurrent)"]
     CLAIM{"claim a companion with<br/>due jobs & no live claim<br/>(lease · SKIP LOCKED)"}
-    DRAIN["drain that companion's<br/>due jobs in order, one at a time<br/>(renew lease between jobs)"]
+    DRAIN["drain that companion's<br/>due jobs in order, one at a time<br/>(heartbeat renews lease during + between jobs)"]
     REL["release claim"]
     EXIT["no claimable companion → exit"]
     WAKE --> CLAIM
@@ -317,8 +317,10 @@ jobs (
 
 **b. Companion-granularity leased claim.** A processor claims a _companion_, not a
 job. It then drains that companion's due jobs **serially, in `run_at` order**,
-renewing the lease between jobs (heartbeat), and releases when the companion has
-no more due work. The claim is a leased row (sketch — exact SQL settled at build;
+renewing the lease both between jobs and on a heartbeat *during* a job (so a slow
+job keeps its claim — mechanism + abort path in `companion-background-job-lease.md`),
+and releases when the companion has no more due work. The claim is a leased row
+(sketch — exact SQL settled at build;
 the required _property_ is "exactly one live claim per companion across the
 fleet"):
 
@@ -428,8 +430,10 @@ types (file refs are starting points for the implementer):
 
 - **K** — processor-pool size per node. Start small (~4–8); raise only against an
   observed backlog, capped by connection/rate ceilings.
-- **Lease duration + heartbeat interval** — lease must exceed the slowest single
-  job's expected runtime with margin; heartbeat renews well inside it.
+- **Lease duration + heartbeat interval** — the heartbeat renews the lease *during*
+  a job, so the lease need only exceed a few heartbeat intervals (not the slowest
+  job); `JOB_HEARTBEAT_MS` must be `< JOB_LEASE_MS`. Values + the abort path:
+  `companion-background-job-lease.md` §6.
 - **Poll interval** — ~30–60s. Bounds worst-case idle-proactivity latency.
 - **`attempts` cap + backoff** — on `failed`, whether to retry (bump `run_at`) or
   go terminal; reuses the "failures are data" posture (`architecture.md` §4.8).

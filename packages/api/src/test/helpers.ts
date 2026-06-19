@@ -129,6 +129,10 @@ export const testConfig: AppConfig = {
   },
   useContextHeader: true,
   ingestionQueueMax: 100,
+  jobLeaseMs: 60_000,
+  jobHeartbeatMs: 30_000,
+  jobPollIntervalMs: 30_000,
+  jobConcurrency: 4,
   // Short WS embodiment timers so handoff/supersession is observable in tests.
   wsHeartbeatMs: 40,
   wsClaimTtlMs: 200,
@@ -347,7 +351,14 @@ export async function makeTestApp(
         logger: silentLogger,
       }),
     },
-    { owner: 'test', concurrency: 4, leaseMs: 60_000, pollMs: 60_000, logger: silentLogger },
+    {
+      owner: 'test',
+      concurrency: 4,
+      leaseMs: 60_000,
+      heartbeatMs: 30_000,
+      pollMs: 60_000,
+      logger: silentLogger,
+    },
   );
   const consolidation = makeCompanionWorkRequester(jobPool, 'consolidate');
   const motivation = makeCompanionWorkRequester(jobPool, 'motivation');
