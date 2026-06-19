@@ -212,12 +212,14 @@ export class JobProcessorPool {
       await this.queue.markFailed(job.id, `no handler for job type ${job.type}`);
       return;
     }
+    let handlerError: unknown;
     try {
       await handler(job);
     } catch (error) {
       // A genuine handler failure (we still hold the lease) is terminal for this
-      // pass. If instead the lease was lost mid-run, the error is moot — fall
-      // through to the shared lost-lease handling below.
+      // pass. If instead the lease was lost mid-run, the error is moot for the
+      // outcome — fall through to the shared lost-lease handling below, but keep
+      // the error so it's still logged there (no silent catch).
       if (!lease.aborted) {
         this.opts.logger.error('job failed', {
           jobId: job.id,
@@ -228,6 +230,7 @@ export class JobProcessorPool {
         await this.queue.markFailed(job.id, error instanceof Error ? error.message : String(error));
         return;
       }
+      handlerError = error;
     }
     // Lost the lease while the job ran (handler returned OR threw): record no
     // outcome — the reclaiming node now owns this job and will run it. Marking it
@@ -239,6 +242,10 @@ export class JobProcessorPool {
         jobId: job.id,
         type: job.type,
         companionId: job.companionId,
+        // A handler that also threw before the lease dropped: surface its error so
+        // a real bug coincident with lease loss isn't lost (the reclaiming node
+        // re-runs the job, but this trace is the only record of the failed attempt).
+        ...(handlerError !== undefined ? { handlerError } : {}),
       });
       return;
     }

@@ -341,4 +341,50 @@ describe('JobProcessorPool', () => {
     // Not completed: the job is still pending+due for the node that now holds the claim.
     expect(await countDuePending(db)).toBe(1);
   });
+
+  it('logs the handler error when the handler throws as the lease is lost mid-run', async () => {
+    // A genuine handler bug coincident with lease loss must not vanish: the job
+    // still stays pending (the reclaiming node re-runs it), but the thrown error
+    // is the only record of the failed attempt and must be logged.
+    const warnings: Array<{ message: string; context?: Record<string, unknown> }> = [];
+    const capturingLogger: Logger = {
+      error() {},
+      info() {},
+      warn(message: string, context?: Record<string, unknown>) {
+        warnings.push({ message, context });
+      },
+    };
+    const handlerError = new Error('handler exploded mid-run');
+    const handlers: JobHandlers = {
+      consolidate: async () => {
+        await db
+          .update(companionClaims)
+          .set({ owner: 'node-2' })
+          .where(eq(companionClaims.companionId, companionA));
+        // Outlast a few heartbeat ticks so the renewal sees the rewritten owner,
+        // then throw — the lease is lost AND the handler failed.
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        throw handlerError;
+      },
+    };
+    const pool = new JobProcessorPool(queue, handlers, {
+      owner: 'node-1',
+      concurrency: 1,
+      leaseMs: 60_000,
+      heartbeatMs: 10,
+      pollMs: 60_000,
+      logger: capturingLogger,
+    });
+
+    await queue.enqueue({ companionId: companionA, type: 'consolidate' });
+
+    pool.nudge();
+    await pool.whenIdle();
+
+    // Still pending for the reclaiming node — no outcome recorded by this node.
+    expect(await countDuePending(db)).toBe(1);
+    // The handler error is surfaced on the lost-lease warning, not swallowed.
+    const lostLease = warnings.find((w) => w.message.includes('lease lost mid-run'));
+    expect(lostLease?.context?.handlerError).toBe(handlerError);
+  });
 });
