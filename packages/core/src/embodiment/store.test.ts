@@ -54,8 +54,8 @@ describe('DrizzleEmbodimentStore', () => {
     expect(await store.holds(companionId, 'conn-bbb', 2)).toBe(true);
     expect(await store.holds(companionId, 'conn-aaa', 1)).toBe(false);
     // The superseded holder's heartbeat fails — it must self-fence and close.
-    expect(await store.renew(companionId, 'conn-aaa')).toBe(false);
-    expect(await store.renew(companionId, 'conn-bbb')).toBe(true);
+    expect(await store.renew(companionId, 'conn-aaa', 1)).toBe(false);
+    expect(await store.renew(companionId, 'conn-bbb', 2)).toBe(true);
   });
 
   it('refuses an older ULID while the holder is live', async () => {

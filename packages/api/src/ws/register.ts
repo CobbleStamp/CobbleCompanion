@@ -101,7 +101,8 @@ async function embody(
     connection.close(SUPERSEDED_CLOSE, 'superseded');
     return;
   }
-  connection.bindEmbodiment({ companionId, connectionId, claimSeq: claim.claimSeq });
+  const { claimSeq } = claim;
+  connection.bindEmbodiment({ companionId, connectionId, claimSeq });
 
   // Deliver only events that arrive AFTER connect; the client loads the transcript
   // snapshot (messages.list) for everything before, merging by id (D4). The initial
@@ -131,7 +132,7 @@ async function embody(
     void (async () => {
       let held: boolean;
       try {
-        held = await deps.embodiment.renew(companionId, connectionId);
+        held = await deps.embodiment.renew(companionId, connectionId, claimSeq);
       } catch (error) {
         deps.logger.error('ws heartbeat renew failed', {
           operation: 'ws.embody',

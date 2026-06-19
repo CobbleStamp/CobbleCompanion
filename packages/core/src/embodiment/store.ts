@@ -35,9 +35,14 @@ export interface EmbodimentStore {
    * null if a newer/live holder already exists.
    */
   claim(params: ClaimParams): Promise<EmbodimentClaim | null>;
-  /** Heartbeat: refresh `last_heartbeat` if this connection is still the holder.
-   *  False = superseded. */
-  renew(companionId: string, connectionId: string): Promise<boolean>;
+  /**
+   * Heartbeat: refresh `last_heartbeat` if this *exact* claim is still the holder.
+   * Matches on `connectionId` AND the DB-stamped `claimSeq` — same fence as
+   * {@link holds} — so a superseded connection self-fences even in the ABA case
+   * where a ULID `connectionId` recurs (the recurred claim's seq won't match the
+   * stale binding's). False = superseded.
+   */
+  renew(companionId: string, connectionId: string, claimSeq: number): Promise<boolean>;
   /**
    * Fencing check: is this *exact* claim still the holder? Matches on `connectionId`
    * AND the DB-stamped `claimSeq`, so a superseded connection is fenced out even in
@@ -96,7 +101,7 @@ export class DrizzleEmbodimentStore implements EmbodimentStore {
       : null;
   }
 
-  async renew(companionId: string, connectionId: string): Promise<boolean> {
+  async renew(companionId: string, connectionId: string, claimSeq: number): Promise<boolean> {
     const rows = await this.db
       .update(activeEmbodiment)
       .set({ lastHeartbeat: sql`now()`, updatedAt: sql`now()` })
@@ -104,6 +109,7 @@ export class DrizzleEmbodimentStore implements EmbodimentStore {
         and(
           eq(activeEmbodiment.companionId, companionId),
           eq(activeEmbodiment.connectionId, connectionId),
+          eq(activeEmbodiment.claimSeq, claimSeq),
         ),
       )
       .returning({ companionId: activeEmbodiment.companionId });

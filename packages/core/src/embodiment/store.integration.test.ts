@@ -110,4 +110,24 @@ describe('DrizzleEmbodimentStore concurrency (real Postgres)', () => {
     expect(await store.holds(companionId, older, 1)).toBe(false);
     expect(await store.holds(companionId, older, 3)).toBe(true);
   });
+
+  it('renew fences a superseded connection in the ABA case', async () => {
+    const store = new DrizzleEmbodimentStore(integration.db);
+    // A (id=older) claims seq=1, B (id=newer) takes over seq=2.
+    await store.claim({ companionId, connectionId: older, node: 'n1', ttlMs: TTL_MS });
+    await store.claim({ companionId, connectionId: newer, node: 'n2', ttlMs: TTL_MS });
+
+    // B's heartbeat lapses and id=older *recurs* on a fresh connection, winning the
+    // row via the dead-holder backstop → row is now (connectionId=older, claimSeq=3).
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const recurred = await store.claim({ companionId, connectionId: older, node: 'n3', ttlMs: 1 });
+    expect(recurred?.claimSeq).toBe(3);
+
+    // The ORIGINAL A (its real claim was seq=1) must NOT be able to renew — otherwise
+    // its heartbeat keeps a superseded connection alive and delivering live events.
+    // renew must fence on claimSeq exactly as holds does, not on (companionId,
+    // connectionId) alone — which the recurring id=older would wrongly satisfy.
+    expect(await store.renew(companionId, older, 1)).toBe(false);
+    expect(await store.renew(companionId, older, 3)).toBe(true);
+  });
 });
