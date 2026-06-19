@@ -286,6 +286,12 @@ export interface IngestRequest {
 /** The trigger the intake routes + the `ingest_source` tool call. Owns the
  *  fleet-wide backpressure check (queue depth vs the configured cap). */
 export interface IngestWorkRequester {
+  /**
+   * Enqueue a durable `ingest` job for one source and nudge a local worker to
+   * pick it up. Coalesces on `ingest:{sourceId}` — a duplicate trigger for the
+   * same source dedupes; distinct sources don't collapse. Fire-and-forget: the
+   * job is durable, so any node may run it.
+   */
   request(params: IngestRequest): void;
   /** True when too many ingest jobs are already pending (maps to 429 / busy). */
   isFull(): Promise<boolean>;
