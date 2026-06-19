@@ -42,7 +42,7 @@ describe('EmbodimentPresenceStore', () => {
   });
 
   it('is present once a claim is held, foregrounded by default', async () => {
-    await claims.claim({ companionId, owner: 'o1', node: 'n1', ttlMs: TTL });
+    await claims.claim({ companionId, connectionId: 'o1', node: 'n1', ttlMs: TTL });
     const signal = await presence.get(companionId);
     expect(signal).not.toBeNull();
     expect(signal?.tabVisible).toBe(true);
@@ -50,7 +50,7 @@ describe('EmbodimentPresenceStore', () => {
   });
 
   it('records activity (bumps last activity) and visibility on the claim', async () => {
-    await claims.claim({ companionId, owner: 'o1', node: 'n1', ttlMs: TTL });
+    await claims.claim({ companionId, connectionId: 'o1', node: 'n1', ttlMs: TTL });
     presence.recordHeartbeat(companionId, { tabVisible: false });
     await settle();
     expect((await presence.get(companionId))?.tabVisible).toBe(false);
@@ -64,7 +64,7 @@ describe('EmbodimentPresenceStore', () => {
     // A presence view with a 1ms TTL over the same db: a beat after the claim's
     // heartbeat, the claim is "stale" and presence reads absent.
     const shortTtl = new EmbodimentPresenceStore(db, 1);
-    await claims.claim({ companionId, owner: 'o1', node: 'n1', ttlMs: TTL });
+    await claims.claim({ companionId, connectionId: 'o1', node: 'n1', ttlMs: TTL });
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(await shortTtl.get(companionId)).toBeNull();
   });

@@ -31,53 +31,95 @@ describe('DrizzleEmbodimentStore', () => {
   });
 
   it('claims an unheld companion', async () => {
-    const claim = await store.claim({ companionId, owner: 'owner-aaa', node: 'n1', ttlMs: TTL });
-    expect(claim).toMatchObject({ companionId, owner: 'owner-aaa', generation: 1 });
-    expect(await store.holds(companionId, 'owner-aaa')).toBe(true);
+    const claim = await store.claim({
+      companionId,
+      connectionId: 'conn-aaa',
+      node: 'n1',
+      ttlMs: TTL,
+    });
+    expect(claim).toMatchObject({ companionId, connectionId: 'conn-aaa', claimSeq: 1 });
+    expect(await store.holds(companionId, 'conn-aaa', 1)).toBe(true);
   });
 
   it('lets a newer ULID force-claim, superseding the prior holder', async () => {
-    await store.claim({ companionId, owner: 'owner-aaa', node: 'n1', ttlMs: TTL });
-    const taken = await store.claim({ companionId, owner: 'owner-bbb', node: 'n2', ttlMs: TTL });
+    await store.claim({ companionId, connectionId: 'conn-aaa', node: 'n1', ttlMs: TTL });
+    const taken = await store.claim({
+      companionId,
+      connectionId: 'conn-bbb',
+      node: 'n2',
+      ttlMs: TTL,
+    });
 
-    expect(taken).toMatchObject({ owner: 'owner-bbb', generation: 2 });
-    expect(await store.holds(companionId, 'owner-bbb')).toBe(true);
-    expect(await store.holds(companionId, 'owner-aaa')).toBe(false);
+    expect(taken).toMatchObject({ connectionId: 'conn-bbb', claimSeq: 2 });
+    expect(await store.holds(companionId, 'conn-bbb', 2)).toBe(true);
+    expect(await store.holds(companionId, 'conn-aaa', 1)).toBe(false);
     // The superseded holder's heartbeat fails — it must self-fence and close.
-    expect(await store.renew(companionId, 'owner-aaa')).toBe(false);
-    expect(await store.renew(companionId, 'owner-bbb')).toBe(true);
+    expect(await store.renew(companionId, 'conn-aaa')).toBe(false);
+    expect(await store.renew(companionId, 'conn-bbb')).toBe(true);
   });
 
   it('refuses an older ULID while the holder is live', async () => {
-    await store.claim({ companionId, owner: 'owner-bbb', node: 'n1', ttlMs: TTL });
-    const lost = await store.claim({ companionId, owner: 'owner-aaa', node: 'n2', ttlMs: TTL });
+    await store.claim({ companionId, connectionId: 'conn-bbb', node: 'n1', ttlMs: TTL });
+    const lost = await store.claim({
+      companionId,
+      connectionId: 'conn-aaa',
+      node: 'n2',
+      ttlMs: TTL,
+    });
     expect(lost).toBeNull();
-    expect(await store.holds(companionId, 'owner-bbb')).toBe(true);
+    expect(await store.holds(companionId, 'conn-bbb', 1)).toBe(true);
   });
 
   it('reclaims a holder whose heartbeat has lapsed (crash backstop), even an older ULID', async () => {
-    await store.claim({ companionId, owner: 'owner-bbb', node: 'n1', ttlMs: TTL });
+    await store.claim({ companionId, connectionId: 'conn-bbb', node: 'n1', ttlMs: TTL });
     // Let the clock advance, then claim with a 1ms TTL so the prior heartbeat is "dead".
     await new Promise((resolve) => setTimeout(resolve, 10));
-    const reclaimed = await store.claim({ companionId, owner: 'owner-aaa', node: 'n2', ttlMs: 1 });
-    expect(reclaimed).toMatchObject({ owner: 'owner-aaa' });
-    expect(await store.holds(companionId, 'owner-bbb')).toBe(false);
+    const reclaimed = await store.claim({
+      companionId,
+      connectionId: 'conn-aaa',
+      node: 'n2',
+      ttlMs: 1,
+    });
+    expect(reclaimed).toMatchObject({ connectionId: 'conn-aaa' });
+    expect(await store.holds(companionId, 'conn-bbb', 1)).toBe(false);
   });
 
-  it('releases only when still the owner', async () => {
-    await store.claim({ companionId, owner: 'owner-aaa', node: 'n1', ttlMs: TTL });
-    await store.claim({ companionId, owner: 'owner-bbb', node: 'n2', ttlMs: TTL });
+  it('fences a stale claim by claim seq, even if a superseded ULID later recurs (ABA guard)', async () => {
+    // A holds the room at claim seq 1.
+    const a = await store.claim({ companionId, connectionId: 'conn-aaa', node: 'n1', ttlMs: TTL });
+    expect(a).toMatchObject({ connectionId: 'conn-aaa', claimSeq: 1 });
+    // A newer connection supersedes A.
+    await store.claim({ companionId, connectionId: 'conn-bbb', node: 'n2', ttlMs: TTL });
+    // The holder's heartbeat lapses, then a brand-new connection happens to reuse A's
+    // ULID — the speculative cross-node collision the claim seq guards against.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const reborn = await store.claim({
+      companionId,
+      connectionId: 'conn-aaa',
+      node: 'n3',
+      ttlMs: 1,
+    });
+    expect(reborn).toMatchObject({ connectionId: 'conn-aaa', claimSeq: 3 });
+    // The live claim holds at its own claim seq...
+    expect(await store.holds(companionId, 'conn-aaa', 3)).toBe(true);
+    // ...but original A — same connectionId string, stale claim seq — stays fenced out.
+    expect(await store.holds(companionId, 'conn-aaa', 1)).toBe(false);
+  });
+
+  it('releases only when still the holder', async () => {
+    await store.claim({ companionId, connectionId: 'conn-aaa', node: 'n1', ttlMs: TTL });
+    await store.claim({ companionId, connectionId: 'conn-bbb', node: 'n2', ttlMs: TTL });
     // The old holder's release is a no-op (it no longer owns the row).
-    await store.release(companionId, 'owner-aaa');
-    expect(await store.holds(companionId, 'owner-bbb')).toBe(true);
+    await store.release(companionId, 'conn-aaa');
+    expect(await store.holds(companionId, 'conn-bbb', 2)).toBe(true);
     // The current holder's release frees it.
-    await store.release(companionId, 'owner-bbb');
+    await store.release(companionId, 'conn-bbb');
     expect(await store.current(companionId, TTL)).toBeNull();
   });
 
   it('reports the current live claim', async () => {
     expect(await store.current(companionId, TTL)).toBeNull();
-    await store.claim({ companionId, owner: 'owner-aaa', node: 'n1', ttlMs: TTL });
-    expect(await store.current(companionId, TTL)).toMatchObject({ owner: 'owner-aaa' });
+    await store.claim({ companionId, connectionId: 'conn-aaa', node: 'n1', ttlMs: TTL });
+    expect(await store.current(companionId, TTL)).toMatchObject({ connectionId: 'conn-aaa' });
   });
 });

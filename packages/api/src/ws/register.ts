@@ -11,13 +11,14 @@ import { makeWsAuth } from './handshake.js';
 const EVENT_BATCH = 200;
 
 /**
- * Monotonic ULID owner tokens: within this process every token is strictly greater
- * than the last, so a later connection always force-claims over an earlier one even
- * within the same millisecond (the "newer wins" handoff rule). Across nodes a
- * same-ms tie is broken by the DB-stamped `generation` if strictness is ever needed
- * (deliver-scalability.md §5.2).
+ * Monotonic ULID connection-id tokens: within this process every token is strictly
+ * greater than the last, so a later connection always force-claims over an earlier one
+ * even within the same millisecond (the "newer wins" handoff rule). Across
+ * nodes/restarts a ULID could in principle recur; the fence (`holds`) matches
+ * `connectionId` AND the DB-stamped `claimSeq`, so a recurred token can't revive a
+ * superseded claim (deliver-scalability.md §5.2).
  */
-const nextOwner = monotonicFactory();
+const nextConnectionId = monotonicFactory();
 
 /**
  * Mount the realtime WebSocket endpoint (deliver-scalability.md §5.2, Phase D). The
@@ -84,11 +85,11 @@ async function embody(
   companionId: string,
   node: string,
 ): Promise<void> {
-  const owner = nextOwner();
+  const connectionId = nextConnectionId();
   const ttlMs = deps.config.wsClaimTtlMs;
   let claim;
   try {
-    claim = await deps.embodiment.claim({ companionId, owner, node, ttlMs });
+    claim = await deps.embodiment.claim({ companionId, connectionId, node, ttlMs });
   } catch (error) {
     deps.logger.error('ws embodiment claim failed', { operation: 'ws.embody', companionId, error });
     socket.close(1011, 'claim failed');
@@ -100,7 +101,7 @@ async function embody(
     connection.close(SUPERSEDED_CLOSE, 'superseded');
     return;
   }
-  connection.bindEmbodiment({ companionId, owner, generation: claim.generation });
+  connection.bindEmbodiment({ companionId, connectionId, claimSeq: claim.claimSeq });
 
   // Deliver only events that arrive AFTER connect; the client loads the transcript
   // snapshot (messages.list) for everything before, merging by id (D4). The initial
@@ -130,7 +131,7 @@ async function embody(
     void (async () => {
       let held: boolean;
       try {
-        held = await deps.embodiment.renew(companionId, owner);
+        held = await deps.embodiment.renew(companionId, connectionId);
       } catch (error) {
         deps.logger.error('ws heartbeat renew failed', {
           operation: 'ws.embody',
@@ -166,7 +167,7 @@ async function embody(
 
   socket.on('close', () => {
     clearInterval(heartbeat);
-    void deps.embodiment.release(companionId, owner).catch((error: unknown) => {
+    void deps.embodiment.release(companionId, connectionId).catch((error: unknown) => {
       deps.logger.error('ws embodiment release failed', {
         operation: 'ws.embody',
         companionId,

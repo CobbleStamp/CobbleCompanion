@@ -17,7 +17,7 @@ import { makeTestApp, type TestApp } from '../test/helpers.js';
 /**
  * Wraps a fake gateway, firing a one-shot hook at the start of the FIRST `stream()`
  * call. A test uses it to mutate state mid-turn — here, to force-claim the companion
- * from a newer owner between the loop's top-of-iteration lease check and the
+ * from a newer connection between the loop's top-of-iteration lease check and the
  * pre-finish re-check, deterministically staging a mid-turn handoff (§5.2) on
  * single-connection PGlite (which can't host two live connections at once).
  */
@@ -35,8 +35,8 @@ class MidStreamHookGateway implements LlmGateway {
   }
 }
 
-/** Lexically-maximal ULID — guaranteed to win the "newer owner" force-claim. */
-const NEWER_OWNER = 'Z'.repeat(26);
+/** Lexically-maximal ULID — guaranteed to win the "newer connection" force-claim. */
+const NEWER_CONNECTION = 'Z'.repeat(26);
 
 interface Envelope {
   id?: string;
@@ -200,13 +200,13 @@ describe('ws mid-turn embodiment fence (§5.2)', () => {
   it('stands the turn down when the room is claimed mid-loop, without writing a reply', async () => {
     const client = await open(`companion=${companionId}&access_token=${encodeURIComponent(token)}`);
 
-    // Once the turn enters its first LLM call, a newer owner force-claims the room
+    // Once the turn enters its first LLM call, a newer connection force-claims the room
     // (the user "moved" to another device). The loop's pre-finish lease re-check then
     // sees the claim has moved and stands down.
     gateway.onBeforeFirstStream = async () => {
       await ctx.deps.embodiment.claim({
         companionId,
-        owner: NEWER_OWNER,
+        connectionId: NEWER_CONNECTION,
         node: 'other-node',
         ttlMs: ctx.deps.config.wsClaimTtlMs,
       });

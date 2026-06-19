@@ -148,13 +148,18 @@ describe('DrizzleQueueMetricsReader', () => {
   it('counts live embodiments and excludes stale ones', async () => {
     const c1 = await newCompanion('alpha');
     const c2 = await newCompanion('bravo');
-    await embodiment.claim({ companionId: c1, owner: '01HOLDER', node: 'node-1', ttlMs: TTL_MS });
+    await embodiment.claim({
+      companionId: c1,
+      connectionId: '01HOLDER',
+      node: 'node-1',
+      ttlMs: TTL_MS,
+    });
     // A stale embodiment: last_heartbeat older than the TTL is not live.
     await db.insert(activeEmbodiment).values({
       companionId: c2,
-      owner: '01STALE',
+      connectionId: '01STALE',
       node: 'node-2',
-      generation: 1,
+      claimSeq: 1,
       lastHeartbeat: new Date(Date.now() - TTL_MS - 5_000),
     });
 

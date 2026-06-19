@@ -85,6 +85,20 @@
       "when": 1781771573545,
       "tag": "0011_new_wasp",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1781858000000,
+      "tag": "0012_familiar_silver_fox",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1781858100000,
+      "tag": "0013_curious_silver_surfer",
+      "breakpoints": true
     }
   ]
 }

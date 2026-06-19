@@ -26,7 +26,7 @@ export async function requireEmbodiment(
   if (!binding) {
     throw new NotEmbodiedError('this connection does not embody a companion');
   }
-  if (!(await embodiment.holds(binding.companionId, binding.owner))) {
+  if (!(await embodiment.holds(binding.companionId, binding.connectionId, binding.claimSeq))) {
     throw new NotEmbodiedError(
       'this connection was superseded — your companion moved to another room',
     );

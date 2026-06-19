@@ -506,9 +506,11 @@ export const companionEvents = pgTable(
 /**
  * Live embodiment claim (deliver-scalability.md §5.2, Phase D D2). Exactly one WS
  * connection "embodies" a companion at a time — the product's one-room rule. The
- * holder is identified by a **ULID** (`owner`, timestamp-sortable so "newer wins"
- * is a lexical compare); `generation` is a DB-stamped monotonic counter (bumped on
- * each claim) kept for observability + a strict-ordering fallback. A new connection
+ * holder is identified by the holding connection's **ULID** (`connection_id`,
+ * timestamp-sortable so "newer wins" is a lexical compare); `claim_seq` is a
+ * DB-stamped monotonic counter (bumped on each claim) that, together with
+ * `connection_id`, forms the fencing key — so a recurred ULID can't revive a
+ * superseded claim (ABA guard). A new connection
  * **force-claims** (its newer ULID wins); the prior holder self-fences when its
  * heartbeat renew finds it no longer owns the row. `last_heartbeat` + a TTL is the
  * crash backstop: a dead holder's claim lapses and is reclaimable.
@@ -521,11 +523,12 @@ export const activeEmbodiment = pgTable('active_embodiment', {
     .primaryKey()
     .references(() => companions.id, { onDelete: 'cascade' }),
   // The holding connection's ULID — the fencing token (sortable; newer wins).
-  owner: text('owner').notNull(),
+  connectionId: text('connection_id').notNull(),
   // Host/pid of the node holding the connection (observability/debugging).
   node: text('node').notNull(),
-  // Monotonic claim counter, bumped on each (re)claim.
-  generation: bigint('generation', { mode: 'number' }).notNull().default(0),
+  // Monotonic claim counter, bumped on each (re)claim. Part of the fencing key
+  // (connectionId + claimSeq) — guards the ABA case where a ULID could recur.
+  claimSeq: bigint('claim_seq', { mode: 'number' }).notNull().default(0),
   // Refreshed by the holder's heartbeat; a stale value past the TTL is reclaimable.
   lastHeartbeat: timestamp('last_heartbeat', { withTimezone: true }).notNull(),
   // Presence (D5): the claim row doubles as the presence signal — a live claim means

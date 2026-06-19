@@ -10,8 +10,8 @@ export const SUPERSEDED_CLOSE = 4002;
 /** The companion this connection embodies + the ULID it holds the claim with (D2). */
 export interface EmbodimentBinding {
   readonly companionId: string;
-  readonly owner: string;
-  readonly generation: number;
+  readonly connectionId: string;
+  readonly claimSeq: number;
 }
 
 /**

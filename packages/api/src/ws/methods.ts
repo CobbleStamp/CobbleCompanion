@@ -34,7 +34,7 @@ export function buildWsMethods(deps: AppDeps): WsMethods {
     },
     'embodiment.whoami': async (ctx) => {
       const binding = await requireEmbodiment(deps.embodiment, ctx);
-      return { companionId: binding.companionId, generation: binding.generation };
+      return { companionId: binding.companionId, claimSeq: binding.claimSeq };
     },
     ...companionMethods(deps),
     ...messageMethods(deps),

@@ -44,22 +44,34 @@ export function streamingMethods(deps: AppDeps): WsMethods {
   } = deps;
 
   /** Resolve the embodied companion as a DTO (for harness calls) — fenced. Carries the
-   *  ULID `owner` so the turn can re-check the lease mid-loop (the long-turn fence). */
+   *  ULID `connectionId` + `claimSeq` so the turn can re-check the exact lease
+   *  mid-loop (the long-turn fence). */
   async function embodiedCompanion(
     ctx: WsCallContext,
-  ): Promise<{ id: string; dto: CompanionDto; owner: string }> {
+  ): Promise<{ id: string; dto: CompanionDto; connectionId: string; claimSeq: number }> {
     const binding = await requireEmbodiment(embodiment, ctx);
     const dto = await identity.getCompanion(binding.companionId, ctx.userId);
     if (!dto) {
       throw new NotFoundError('companion not found');
     }
-    return { id: binding.companionId, dto, owner: binding.owner };
+    return {
+      id: binding.companionId,
+      dto,
+      connectionId: binding.connectionId,
+      claimSeq: binding.claimSeq,
+    };
   }
 
   /** The mid-turn embodiment fence handed to the harness: re-reads the DB claim so a
-   *  turn already running self-ends if a newer connection took the room (§5.2). */
-  function leaseGuard(companionId: string, owner: string): () => Promise<boolean> {
-    return () => embodiment.holds(companionId, owner);
+   *  turn already running self-ends if a newer connection took the room (§5.2). Matches
+   *  the exact claim (connectionId + claimSeq) so a recurred ULID can't revive a
+   *  stale fence. */
+  function leaseGuard(
+    companionId: string,
+    connectionId: string,
+    claimSeq: number,
+  ): () => Promise<boolean> {
+    return () => embodiment.holds(companionId, connectionId, claimSeq);
   }
 
   /**
@@ -103,7 +115,12 @@ export function streamingMethods(deps: AppDeps): WsMethods {
   return {
     'messages.send': async (ctx, params) => {
       const { content } = parseParams(sendMessageSchema, params, 'message content is required');
-      const { id: companionId, dto: companion, owner } = await embodiedCompanion(ctx);
+      const {
+        id: companionId,
+        dto: companion,
+        connectionId,
+        claimSeq,
+      } = await embodiedCompanion(ctx);
       presence.recordActivity(companionId);
       const overCap = await overCapGuard(quota, companionId);
       if (overCap) {
@@ -117,7 +134,7 @@ export function streamingMethods(deps: AppDeps): WsMethods {
               companion,
               userContent: content,
               ownerId: ctx.userId,
-              holdsLease: leaseGuard(companionId, owner),
+              holdsLease: leaseGuard(companionId, connectionId, claimSeq),
             }),
             growth,
             companionId,
@@ -147,7 +164,12 @@ export function streamingMethods(deps: AppDeps): WsMethods {
 
     'proposals.confirm': async (ctx, params) => {
       const { proposalId } = parseParams(confirmParams, params, 'a proposal id is required');
-      const { id: companionId, dto: companion, owner } = await embodiedCompanion(ctx);
+      const {
+        id: companionId,
+        dto: companion,
+        connectionId,
+        claimSeq,
+      } = await embodiedCompanion(ctx);
       const overCap = await overCapGuard(quota, companionId);
       if (overCap) {
         throw new OverCapError(overCap);
@@ -211,7 +233,7 @@ export function streamingMethods(deps: AppDeps): WsMethods {
               companion,
               ownerId: ctx.userId,
               outcome: result.content,
-              holdsLease: leaseGuard(companionId, owner),
+              holdsLease: leaseGuard(companionId, connectionId, claimSeq),
             }),
           ),
         );

@@ -1,0 +1,1 @@
+ALTER TABLE "active_embodiment" RENAME COLUMN "owner" TO "connection_id";

@@ -56,7 +56,7 @@ pg_snapshot_xmin(pg_current_snapshot())`, so any row that could still have an
 > - **Embodiment handoff fencing (designed, not yet built).** The WS lease is enforced
 >   per-request but **not inside a running turn**, so a superseded connection's agent
 >   loop can keep writing (two loops, one companion). Design updated in §5.2 (ULID
->   lease + per-iteration self-check + owner-fenced writes; new connection goes live
+>   lease + per-iteration self-check + connection-fenced writes; new connection goes live
 >   immediately, no blocking/NOTIFY). Build plan: `docs/plans/embodiment-handoff-fencing.md`.
 > - **Known gap (Q1):** the job-queue lease-expiry test is a wall-clock flake on
 >   PGlite under full-suite load (passes in isolation); claim/lease/fencing
@@ -511,26 +511,27 @@ instead of patching the fan-out.
   for the connection's life.
 - **Connecting claims the companion.** There is **no read-only connection** —
   establishing a connection takes exclusive embodiment. The claim is a DB row:
-  `companion_id → owner (ULID) · node · generation · last_heartbeat`.
+  `companion_id → connection_id (ULID) · node · claim_seq · last_heartbeat`.
 - **Ownership token = ULID lease.** The connection id is a **ULID**
-  (timestamp-prefixed, lexically sortable), stored as the claim row's `owner`, so
-  "newer wins" is just a string compare `new > current`. The ULID **is** the lease:
-  whoever's ULID is the current `owner` holds the embodiment. (A DB-stamped monotonic
-  `generation` rides alongside as a strict-ordering fallback, but the ULID compare is
-  the operative rule.)
+  (timestamp-prefixed, lexically sortable), stored as the claim row's `connection_id`,
+  so "newer wins" is just a string compare `new > current`. The ULID **is** the lease:
+  whoever's ULID is the current `connection_id` holds the embodiment. A DB-stamped
+  monotonic `claim_seq` rides alongside and, together with `connection_id`, forms the
+  fencing key — so a recurred ULID can't revive a superseded claim (ABA guard).
 - **Fencing on the token — three surfaces.** Every path that could let a superseded
-  ("zombie") connection act is gated by comparing its held ULID against the current
-  `owner` in the DB:
-  1. **Per-request** — each companion-scoped method checks `holds(companionId, owner)`
-     before acting; a stale connection's new requests are rejected at once.
+  ("zombie") connection act is gated by comparing its held claim against the current
+  `connection_id` (+ `claim_seq`) in the DB:
+  1. **Per-request** — each companion-scoped method checks
+     `holds(companionId, connectionId, claimSeq)` before acting; a stale connection's
+     new requests are rejected at once.
   2. **Per-agent-loop-iteration (the long-turn fence)** — a turn is not a single
      request; it is a multi-step agent loop that can run for seconds. So **at the top
      of every loop iteration the turn re-reads the lease and self-ends if a newer
-     `owner` now holds it.** This is what lets the old connection stand down mid-turn
-     without any external signal — it discovers the handoff by reading shared
+     `connection_id` now holds it.** This is what lets the old connection stand down
+     mid-turn without any external signal — it discovers the handoff by reading shared
      Postgres on its own cadence.
-  3. **Owner-fenced writes (correctness backstop)** — the loop's state-mutating writes
-     are conditional on still holding the lease (`… WHERE owner = $myOwner`), so the
+  3. **Connection-fenced writes (correctness backstop)** — the loop's state-mutating
+     writes are conditional on still holding the lease (`… WHERE connection_id = $mine`), so the
      one step already in flight when the handoff lands cannot commit under a stale
      lease. This is what makes a non-idempotent write (e.g. the `driveWeights` nudge)
      safe even though the per-iteration check is only checked between steps.
@@ -539,10 +540,10 @@ instead of patching the fan-out.
   upsert, so there is **no blocking, no acknowledgement, and no push/NOTIFY channel**.
   The previous connection **self-ends on its own**: its in-flight loop iteration
   finishes (its write fenced out if the lease already moved), the next iteration's
-  lease check sees the newer `owner`, and it pushes `superseded` to its client and
+  lease check sees the newer `connection_id`, and it pushes `superseded` to its client and
   closes. The client presents this as the companion _physically moving_ to the new
   room — a deliberate, visible action (you cannot be in two rooms at once). The
-  overlap is **bounded by one loop iteration** and made harmless by the owner-fenced
+  overlap is **bounded by one loop iteration** and made harmless by the connection-fenced
   writes; a holder that is *dead* (suspended phone, never runs another iteration) is
   collected by the TTL.
 - **TTL = crash backstop only.** `last_heartbeat` + a TTL lets a _dead_ holder be
@@ -569,13 +570,13 @@ sequenceDiagram
   participant DB as Postgres (claim row)
   participant New as New conn (laptop · node B)
 
-  Note over Old,DB: phone holds companion C (owner ULID₁), mid agent-loop turn
-  New->>DB: force-claim C (owner ULID₂ > ULID₁)
+  Note over Old,DB: phone holds companion C (connection_id ULID₁), mid agent-loop turn
+  New->>DB: force-claim C (connection_id ULID₂ > ULID₁)
   DB-->>New: claimed — you are the embodiment
   New->>New: go live immediately (no wait, no ack)
-  Note over Old: current iteration finishes; its write is fenced out (owner ≠ ULID₁)
-  Old->>DB: next iteration — re-read lease (owner ULID₁?)
-  DB-->>Old: current owner = ULID₂ → you are superseded
+  Note over Old: current iteration finishes; its write is fenced out (connection_id ≠ ULID₁)
+  Old->>DB: next iteration — re-read lease (connection_id ULID₁?)
+  DB-->>Old: current connection_id = ULID₂ → you are superseded
   Old->>Old: end turn, push `superseded`, self-close
   Note over New: if phone was already dead (no next iteration), TTL is the backstop
 ```
@@ -587,8 +588,8 @@ sequenceDiagram
 | Delivery transport | **One perm WebSocket per client; all traffic over it**     | Product allows one embodiment per companion (`product-overview.md` §2.2); a single connection makes delivery stateless (the node reads shared Postgres) and gives a natural place to serialize a companion's turns | **Client polls a `companion_events` table** — works and is simpler, but enforces no single-embodiment and doesn't serialize turns. **SSE + `LISTEN/NOTIFY`** — fixes fan-out but keeps a fragile push path and never models embodiment (and still leaves P6) |
 | Routing            | **NLB (L4), flow-pinned**                                  | A perm WS is one TCP flow; the NLB pins it to a node for its life — exactly the affinity the embodiment needs                                                                                                      | **L7 / ALB** — can't pin an arbitrary app-level key; HTTP-aware overhead a single duplex socket doesn't need                                                                                                                                                 |
 | Connect semantics  | **Connecting always claims; no read-only**                 | Simplest rule that matches "one room at a time" — any connection _is_ the embodiment                                                                                                                               | **Passive/observer connections** — an extra mode; a service read would still have to avoid evicting, complicating the rule                                                                                                                                   |
-| Handoff            | **Force-claim + new goes live immediately; old self-ends via a per-iteration ULID-lease check**, shown as "moving rooms" | New never blocks (zero handoff latency) and needs no push channel; the old discovers the handoff by re-reading the ULID lease at each agent-loop iteration and stands down. Owner-fenced writes bound the overlap to one in-flight step; TTL collects a dead holder                                                                                 | **Negotiated transfer-ack (block new until old confirms or times out)** — adds handoff latency and needs the old alive to ack (a suspended phone hangs to the timeout); the timeout reopens the overlap anyway, so it still needs the write-fence — all cost, no extra safety. **NOTIFY-driven immediate kill** — prompt, but adds a cross-node push channel that the per-iteration lease check makes unnecessary |
-| Ownership token    | **ULID** (DB `generation` if strictness ever needed)       | Sortable + timestamped → "newer wins" and zombie-fencing fall out for free                                                                                                                                         | **Opaque connection id** — unique but unordered; can't fence a revived zombie                                                                                                                                                                                |
+| Handoff            | **Force-claim + new goes live immediately; old self-ends via a per-iteration ULID-lease check**, shown as "moving rooms" | New never blocks (zero handoff latency) and needs no push channel; the old discovers the handoff by re-reading the ULID lease at each agent-loop iteration and stands down. Connection-fenced writes bound the overlap to one in-flight step; TTL collects a dead holder                                                                                 | **Negotiated transfer-ack (block new until old confirms or times out)** — adds handoff latency and needs the old alive to ack (a suspended phone hangs to the timeout); the timeout reopens the overlap anyway, so it still needs the write-fence — all cost, no extra safety. **NOTIFY-driven immediate kill** — prompt, but adds a cross-node push channel that the per-iteration lease check makes unnecessary |
+| Ownership token    | **ULID** + DB `claim_seq` (paired fencing key)             | Sortable + timestamped → "newer wins" and zombie-fencing fall out for free                                                                                                                                         | **Opaque connection id** — unique but unordered; can't fence a revived zombie                                                                                                                                                                                |
 | TTL                | **Heartbeat-refreshed; crash backstop only**               | Liveness without per-request write amplification; off the handoff critical path                                                                                                                                    | **Per-request TTL refresh** — hammers one hot row per companion for no added safety                                                                                                                                                                          |
 | Service clients    | **Same per-connection mechanism as web/device**            | Uniform — a service client is just another room with its own connection and claim                                                                                                                                  | **Special service path** — only _ambient/automation_ work differs, and that belongs on the **job queue**, not a connection                                                                                                                                   |
 
@@ -621,7 +622,7 @@ sequenceDiagram
 - **Handoff overlap is bounded, not zero.** Because the new connection goes live
   immediately and the old self-ends only at its next agent-loop iteration, both can
   be live for **up to one in-flight iteration**. This is acceptable because (a) the
-  old's write for that step is owner-fenced out, so it cannot commit under the moved
+  old's write for that step is connection-fenced out, so it cannot commit under the moved
   lease, and (b) the two stream to _different_ clients (the old is being told it
   moved). A single long step (slow tool / LLM call) widens the window for that step
   only; nothing corrupts.
@@ -828,7 +829,7 @@ Backpressure is a fleet-wide pending-`ingest` count; deferred jobs resume via
 
 #### D2 — Embodiment claim + fencing + handoff — ✅ DELIVERED
 
-- `active_embodiment` table (`companion_id` pk, owner **ULID**, node, generation,
+- `active_embodiment` table (`companion_id` pk, connection_id **ULID**, node, claim_seq,
   `last_heartbeat`) + `EmbodimentStore` (`claim`/`renew`/`holds`/`release`/`current`).
   The handshake resolves + ownership-checks the `?companion=` param; on connect the
   socket **force-claims** with a `monotonicFactory` ULID (newer wins). A server-side

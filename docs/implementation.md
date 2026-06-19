@@ -675,17 +675,20 @@ in-process runners used to get from a `Set`). Distinct from `active_embodiment`.
 | Field | Type | Notes |
 |---|---|---|
 | `companion_id` | uuid (PK, FK → `companions.id`, cascade) | one live connection per companion (the "one room at a time" rule) |
-| `owner` | text | the holding connection's **ULID** — the fencing token (timestamp-sortable, "newer wins" by lexical compare) |
+| `connection_id` | text | the holding connection's **ULID** — the fencing token (timestamp-sortable, "newer wins" by lexical compare) |
 | `node` | text | host/pid of the node holding the connection (observability) |
-| `generation` | bigint, default `0` | DB-stamped monotonic claim counter; observability + strict-ordering fallback |
+| `claim_seq` | bigint, default `0` | DB-stamped monotonic claim counter, bumped on each (re)claim; part of the fencing key (`connection_id` + `claim_seq`) so a recurred ULID can't revive a superseded claim (ABA guard) |
 | `last_heartbeat` | timestamptz | refreshed by the holder's heartbeat; a value past the TTL is reclaimable (crash backstop) |
 | `last_activity_at` | timestamptz, default `now()` | presence (D5): last real interaction (a turn) |
 | `tab_visible` | boolean, default `true` | presence: whether the room is foregrounded |
 | `updated_at` | timestamptz | |
 
 A new connection **force-claims** (its newer ULID wins); the prior holder self-fences when its
-heartbeat renew finds it no longer owns the row. Handoff design + the in-turn
-fence → `architecture.md` §6, `deliver-scalability.md` §5.2.
+heartbeat renew finds it no longer owns the row. The fence (`holds`) matches the exact claim —
+`connection_id` **and** `claim_seq` — so even in the (speculative) ABA case where a ULID
+`connection_id` value recurs across nodes/restarts, the stale binding's `claim_seq` won't match
+and it stays fenced out. Handoff design + the in-turn fence → `architecture.md` §6,
+`deliver-scalability.md` §5.2.
 
 #### `companion_events` — durable live-event log
 
