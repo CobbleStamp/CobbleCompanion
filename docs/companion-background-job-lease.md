@@ -88,7 +88,7 @@ stateDiagram-v2
     [*] --> Unclaimed
     Unclaimed --> Held: claimNextCompanion()<br/>generation++
     Held --> Held: renewClaim() → held:true<br/>(heartbeat extends claimed_until)
-    Held --> Released: releaseClaim()<br/>(drain done; owner-scoped delete)
+    Held --> Released: releaseClaim()<br/>(drain done — owner-scoped delete)
     Held --> Lapsed: no renewal for ~JOB_LEASE_MS<br/>(node wedged / partitioned)
     Lapsed --> Held: another node reclaims<br/>(claimNextCompanion, generation++)
     Released --> [*]
@@ -131,7 +131,7 @@ sequenceDiagram
 
     N1->>Q: claim (owner=N1, until=t₀+lease)
     activate N1
-    Note over N1: runJob — long/wedged; heartbeats slip
+    Note over N1: runJob — long/wedged, heartbeats slip
     Note over Q: t₀+lease passes → claim lapsed
     N2->>Q: claimNextCompanion() — lapsed claim is reclaimable
     Q-->>N2: ClaimedCompanion (owner=N2, generation++)
