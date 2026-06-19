@@ -81,8 +81,6 @@ export interface JobQueue {
   renewClaim(companionId: string, owner: string, leaseMs: number): Promise<RenewOutcome>;
   /** Release our claim (no-op if it has already been taken over). */
   releaseClaim(companionId: string, owner: string): Promise<void>;
-  /** Count of pending jobs that are due now — observability + poll wake. */
-  duePendingCount(): Promise<number>;
   /** Count of pending jobs of a type (any run_at) — fleet-wide backpressure (ingest). */
   pendingCountByType(type: JobType): Promise<number>;
 }
@@ -284,14 +282,6 @@ export class DrizzleJobQueue implements JobQueue {
     await this.db
       .delete(companionClaims)
       .where(and(eq(companionClaims.companionId, companionId), eq(companionClaims.owner, owner)));
-  }
-
-  async duePendingCount(): Promise<number> {
-    const rows = await this.db
-      .select({ n: sql<number>`count(*)::int` })
-      .from(jobs)
-      .where(and(eq(jobs.status, 'pending'), lte(jobs.runAt, sql`now()`)));
-    return rows[0]?.n ?? 0;
   }
 
   async pendingCountByType(type: JobType): Promise<number> {

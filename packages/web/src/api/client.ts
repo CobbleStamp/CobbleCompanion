@@ -19,7 +19,6 @@ import type {
   ProactivityDial,
   ProcedureDto,
   ProposalDto,
-  SectionDto,
   SemanticSearchResultDto,
   SourceDto,
   StaminaEnergyDto,
@@ -204,14 +203,6 @@ export async function listSources(companionId: string): Promise<SourceDto[]> {
   return sources;
 }
 
-/** One source plus its sections (verbatim text + provenance). */
-export async function getSourceDetail(
-  companionId: string,
-  sourceId: string,
-): Promise<{ source: SourceDto; sections: SectionDto[] }> {
-  return wsClient.call('sources.get', { sourceId }, companionId);
-}
-
 /** Ingestion progress for all sources ("Cobble has read N of M"). */
 export async function listIngestionJobs(companionId: string): Promise<IngestionJobDto[]> {
   const { jobs } = await wsClient.call<{ jobs: IngestionJobDto[] }>(
@@ -359,16 +350,6 @@ export async function sendHeartbeat(companionId: string, tabVisible: boolean): P
 export async function listLeads(companionId: string): Promise<LeadDto[]> {
   const { leads } = await wsClient.call<{ leads: LeadDto[] }>('leads.list', undefined, companionId);
   return leads;
-}
-
-/** "Go through your reading list": propose remembering the next leads. */
-export async function explore(companionId: string): Promise<ProposalDto[]> {
-  const { proposals } = await wsClient.call<{ proposals: ProposalDto[] }>(
-    'explore',
-    undefined,
-    companionId,
-  );
-  return proposals;
 }
 
 /** The companion's learned, reusable workflows (procedural memory, P3). */

@@ -2,12 +2,25 @@ import { DrizzleIdentityStore } from '../identity/store.js';
 import type { Logger } from '../logging.js';
 import { DrizzleJobQueue, reactionLearnDedupeKey } from './job-queue.js';
 import { JobProcessorPool, type JobHandlers } from './job-processor.js';
-import { companionClaims, type Database } from '@cobble/db';
+import { companionClaims, jobs, type Database } from '@cobble/db';
 import { createTestDatabase } from '@cobble/db/testing';
-import { eq } from 'drizzle-orm';
+import { and, eq, lte, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const silentLogger: Logger = { error() {}, warn() {}, info() {} };
+
+/**
+ * Test-local probe for the count of pending jobs that are due now. The queue no
+ * longer exposes this (it had no production caller); tests observe the state
+ * directly so lifecycle assertions stay meaningful.
+ */
+async function countDuePending(db: Database): Promise<number> {
+  const rows = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(jobs)
+    .where(and(eq(jobs.status, 'pending'), lte(jobs.runAt, sql`now()`)));
+  return rows[0]?.n ?? 0;
+}
 
 /**
  * Logic-level tests on in-memory PGlite. NOTE: PGlite is single-connection, so
@@ -17,6 +30,7 @@ const silentLogger: Logger = { error() {}, warn() {}, info() {} };
  * semantics.
  */
 describe('DrizzleJobQueue', () => {
+  let db: Database;
   let queue: DrizzleJobQueue;
   let close: () => Promise<void>;
   let companionA: string;
@@ -24,6 +38,7 @@ describe('DrizzleJobQueue', () => {
 
   beforeEach(async () => {
     const created = await createTestDatabase();
+    db = created.db;
     close = created.close;
     queue = new DrizzleJobQueue(created.db);
     const identity = new DrizzleIdentityStore(created.db);
@@ -133,7 +148,7 @@ describe('DrizzleJobQueue', () => {
       type: 'consolidate',
       runAt: new Date(Date.now() + 60_000),
     });
-    expect(await queue.duePendingCount()).toBe(0);
+    expect(await countDuePending(db)).toBe(0);
     expect(await queue.claimNextCompanion('node-1', 60_000)).toBeNull();
   });
 
@@ -149,7 +164,7 @@ describe('DrizzleJobQueue', () => {
       runAt: new Date(Date.now() - 1000), // already due
     });
     // The two collapse onto one row carrying the earlier (due) run_at.
-    expect(await queue.duePendingCount()).toBe(1);
+    expect(await countDuePending(db)).toBe(1);
     expect((await queue.claimNextCompanion('node-1', 60_000))?.companionId).toBe(companionA);
   });
 
@@ -225,7 +240,7 @@ describe('JobProcessorPool', () => {
     expect(handled.sort()).toEqual(
       [`${companionA}:consolidate`, `${companionB}:consolidate`].sort(),
     );
-    expect(await queue.duePendingCount()).toBe(0);
+    expect(await countDuePending(db)).toBe(0);
   });
 
   it('marks a job failed (terminal) when its handler throws, and moves on', async () => {
@@ -254,7 +269,7 @@ describe('JobProcessorPool', () => {
 
     // Both terminal (one failed, one done) → none left pending/due, and the
     // failure didn't block the sibling job.
-    expect(await queue.duePendingCount()).toBe(0);
+    expect(await countDuePending(db)).toBe(0);
   });
 
   it('stops draining a companion once its lease has been taken over by another node', async () => {
@@ -291,7 +306,7 @@ describe('JobProcessorPool', () => {
     // bounding the overlap to the one job already in flight. 'second' stays pending
     // for whichever node now holds the claim.
     expect(handled).toEqual(['first']);
-    expect(await queue.duePendingCount()).toBe(1);
+    expect(await countDuePending(db)).toBe(1);
   });
 
   it('leaves a job pending (does not complete it) when the lease is lost mid-run', async () => {
@@ -324,6 +339,6 @@ describe('JobProcessorPool', () => {
     await pool.whenIdle();
 
     // Not completed: the job is still pending+due for the node that now holds the claim.
-    expect(await queue.duePendingCount()).toBe(1);
+    expect(await countDuePending(db)).toBe(1);
   });
 });
