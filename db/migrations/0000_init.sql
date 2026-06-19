@@ -1,9 +1,36 @@
 CREATE EXTENSION IF NOT EXISTS vector;--> statement-breakpoint
+CREATE TABLE "active_embodiment" (
+	"companion_id" uuid PRIMARY KEY NOT NULL,
+	"connection_id" text NOT NULL,
+	"node" text NOT NULL,
+	"claim_seq" bigint DEFAULT 0 NOT NULL,
+	"last_heartbeat" timestamp with time zone NOT NULL,
+	"last_activity_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"tab_visible" boolean DEFAULT true NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE "companion_affect" (
 	"companion_id" uuid PRIMARY KEY NOT NULL,
 	"valence" real NOT NULL,
 	"note" text DEFAULT '' NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "companion_claims" (
+	"companion_id" uuid PRIMARY KEY NOT NULL,
+	"owner" text NOT NULL,
+	"generation" bigint DEFAULT 0 NOT NULL,
+	"claimed_until" timestamp with time zone NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "companion_events" (
+	"seq" bigserial PRIMARY KEY NOT NULL,
+	"companion_id" uuid NOT NULL,
+	"event" jsonb NOT NULL,
+	"xid" "xid8" DEFAULT pg_current_xact_id() NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "companion_growth" (
@@ -86,6 +113,20 @@ CREATE TABLE "ingestion_jobs" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE "jobs" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"companion_id" uuid NOT NULL,
+	"type" text NOT NULL,
+	"dedupe_key" text NOT NULL,
+	"payload" jsonb DEFAULT '{}'::jsonb NOT NULL,
+	"run_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"status" text DEFAULT 'pending' NOT NULL,
+	"attempts" integer DEFAULT 0 NOT NULL,
+	"last_error" text,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE "leads" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"seq" bigserial NOT NULL,
@@ -93,6 +134,17 @@ CREATE TABLE "leads" (
 	"url" text NOT NULL,
 	"why" text,
 	"status" text DEFAULT 'new' NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "message_reactions" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"message_id" uuid NOT NULL,
+	"companion_id" uuid NOT NULL,
+	"reactor" text NOT NULL,
+	"emoji" text NOT NULL,
+	"reward" real,
+	"reward_note" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
@@ -116,6 +168,7 @@ CREATE TABLE "proactive_outcomes" (
 	"proposal_id" uuid,
 	"drive" text NOT NULL,
 	"drive_snapshot" jsonb,
+	"read_sources" jsonb,
 	"driven_by_user_fact_id" uuid,
 	"reward" real,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -161,6 +214,16 @@ CREATE TABLE "sections" (
 	"embedding" vector(1024),
 	"fts" "tsvector" GENERATED ALWAYS AS (to_tsvector('english', original_text)) STORED,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "service_registry" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"client_id" text NOT NULL,
+	"secret" text NOT NULL,
+	"secret_type" text DEFAULT 'plaintext' NOT NULL,
+	"label" text,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"revoked_at" timestamp with time zone
 );
 --> statement-breakpoint
 CREATE TABLE "sources" (
@@ -222,12 +285,19 @@ CREATE TABLE "user_food" (
 --> statement-breakpoint
 CREATE TABLE "users" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"email" text NOT NULL,
+	"auth_source" text DEFAULT 'google' NOT NULL,
+	"service_client_id" text,
+	"external_id" text,
+	"email" text,
+	"is_admin" boolean DEFAULT false NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "users_email_unique" UNIQUE("email")
 );
 --> statement-breakpoint
+ALTER TABLE "active_embodiment" ADD CONSTRAINT "active_embodiment_companion_id_companions_id_fk" FOREIGN KEY ("companion_id") REFERENCES "public"."companions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "companion_affect" ADD CONSTRAINT "companion_affect_companion_id_companions_id_fk" FOREIGN KEY ("companion_id") REFERENCES "public"."companions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "companion_claims" ADD CONSTRAINT "companion_claims_companion_id_companions_id_fk" FOREIGN KEY ("companion_id") REFERENCES "public"."companions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "companion_events" ADD CONSTRAINT "companion_events_companion_id_companions_id_fk" FOREIGN KEY ("companion_id") REFERENCES "public"."companions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "companion_growth" ADD CONSTRAINT "companion_growth_companion_id_companions_id_fk" FOREIGN KEY ("companion_id") REFERENCES "public"."companions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "companions" ADD CONSTRAINT "companions_owner_id_users_id_fk" FOREIGN KEY ("owner_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "episodes" ADD CONSTRAINT "episodes_companion_id_companions_id_fk" FOREIGN KEY ("companion_id") REFERENCES "public"."companions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -236,7 +306,10 @@ ALTER TABLE "facts" ADD CONSTRAINT "facts_companion_id_companions_id_fk" FOREIGN
 ALTER TABLE "facts" ADD CONSTRAINT "facts_section_id_sections_id_fk" FOREIGN KEY ("section_id") REFERENCES "public"."sections"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "ingestion_jobs" ADD CONSTRAINT "ingestion_jobs_companion_id_companions_id_fk" FOREIGN KEY ("companion_id") REFERENCES "public"."companions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "ingestion_jobs" ADD CONSTRAINT "ingestion_jobs_source_id_sources_id_fk" FOREIGN KEY ("source_id") REFERENCES "public"."sources"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "jobs" ADD CONSTRAINT "jobs_companion_id_companions_id_fk" FOREIGN KEY ("companion_id") REFERENCES "public"."companions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "leads" ADD CONSTRAINT "leads_companion_id_companions_id_fk" FOREIGN KEY ("companion_id") REFERENCES "public"."companions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "message_reactions" ADD CONSTRAINT "message_reactions_message_id_messages_id_fk" FOREIGN KEY ("message_id") REFERENCES "public"."messages"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "message_reactions" ADD CONSTRAINT "message_reactions_companion_id_companions_id_fk" FOREIGN KEY ("companion_id") REFERENCES "public"."companions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "messages" ADD CONSTRAINT "messages_companion_id_companions_id_fk" FOREIGN KEY ("companion_id") REFERENCES "public"."companions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "messages" ADD CONSTRAINT "messages_source_id_sources_id_fk" FOREIGN KEY ("source_id") REFERENCES "public"."sources"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "proactive_outcomes" ADD CONSTRAINT "proactive_outcomes_companion_id_companions_id_fk" FOREIGN KEY ("companion_id") REFERENCES "public"."companions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -253,6 +326,7 @@ ALTER TABLE "tool_calls" ADD CONSTRAINT "tool_calls_companion_id_companions_id_f
 ALTER TABLE "user_facts" ADD CONSTRAINT "user_facts_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "user_facts" ADD CONSTRAINT "user_facts_learned_by_companion_id_companions_id_fk" FOREIGN KEY ("learned_by_companion_id") REFERENCES "public"."companions"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "user_food" ADD CONSTRAINT "user_food_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "companion_events_companion_seq_idx" ON "companion_events" USING btree ("companion_id","seq");--> statement-breakpoint
 CREATE INDEX "companions_owner_idx" ON "companions" USING btree ("owner_id");--> statement-breakpoint
 CREATE INDEX "episodes_companion_time_idx" ON "episodes" USING btree ("companion_id","occurred_end");--> statement-breakpoint
 CREATE INDEX "episodes_companion_seq_idx" ON "episodes" USING btree ("companion_id","seq_end");--> statement-breakpoint
@@ -263,8 +337,12 @@ CREATE INDEX "equipped_tools_companion_lru_idx" ON "equipped_tools" USING btree 
 CREATE INDEX "facts_companion_idx" ON "facts" USING btree ("companion_id","fact_type");--> statement-breakpoint
 CREATE INDEX "facts_section_idx" ON "facts" USING btree ("section_id");--> statement-breakpoint
 CREATE INDEX "ingestion_jobs_companion_idx" ON "ingestion_jobs" USING btree ("companion_id","status");--> statement-breakpoint
+CREATE UNIQUE INDEX "jobs_pending_companion_dedupe_idx" ON "jobs" USING btree ("companion_id","dedupe_key") WHERE status = 'pending';--> statement-breakpoint
+CREATE INDEX "jobs_due_idx" ON "jobs" USING btree ("status","run_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "leads_companion_url_uniq" ON "leads" USING btree ("companion_id","url");--> statement-breakpoint
 CREATE INDEX "leads_companion_status_idx" ON "leads" USING btree ("companion_id","status");--> statement-breakpoint
+CREATE UNIQUE INDEX "message_reactions_uniq" ON "message_reactions" USING btree ("message_id","reactor","emoji");--> statement-breakpoint
+CREATE INDEX "message_reactions_companion_idx" ON "message_reactions" USING btree ("companion_id");--> statement-breakpoint
 CREATE INDEX "messages_companion_idx" ON "messages" USING btree ("companion_id","seq");--> statement-breakpoint
 CREATE INDEX "proactive_outcomes_companion_idx" ON "proactive_outcomes" USING btree ("companion_id","seq");--> statement-breakpoint
 CREATE INDEX "proactive_outcomes_proposal_idx" ON "proactive_outcomes" USING btree ("proposal_id");--> statement-breakpoint
@@ -274,9 +352,12 @@ CREATE INDEX "sections_companion_idx" ON "sections" USING btree ("companion_id")
 CREATE INDEX "sections_source_idx" ON "sections" USING btree ("source_id","ord");--> statement-breakpoint
 CREATE INDEX "sections_embedding_hnsw_idx" ON "sections" USING hnsw ("embedding" vector_cosine_ops);--> statement-breakpoint
 CREATE INDEX "sections_fts_idx" ON "sections" USING gin ("fts");--> statement-breakpoint
+CREATE INDEX "service_registry_client_idx" ON "service_registry" USING btree ("client_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "service_registry_client_secret_uniq" ON "service_registry" USING btree ("client_id","secret");--> statement-breakpoint
 CREATE INDEX "sources_companion_idx" ON "sources" USING btree ("companion_id");--> statement-breakpoint
 CREATE INDEX "tool_calls_companion_idx" ON "tool_calls" USING btree ("companion_id","seq");--> statement-breakpoint
 CREATE INDEX "user_facts_user_predicate_idx" ON "user_facts" USING btree ("user_id","predicate");--> statement-breakpoint
 CREATE INDEX "user_facts_embedding_hnsw_idx" ON "user_facts" USING hnsw ("embedding" vector_cosine_ops);--> statement-breakpoint
 CREATE INDEX "user_facts_fts_idx" ON "user_facts" USING gin ("fts");--> statement-breakpoint
-CREATE UNIQUE INDEX "user_facts_one_current_name_uniq" ON "user_facts" USING btree ("user_id","predicate") WHERE "user_facts"."predicate" = 'name';
+CREATE UNIQUE INDEX "user_facts_one_current_name_uniq" ON "user_facts" USING btree ("user_id","predicate") WHERE "user_facts"."predicate" = 'name';--> statement-breakpoint
+CREATE UNIQUE INDEX "users_auth_source_client_external_uniq" ON "users" USING btree ("auth_source","service_client_id","external_id") WHERE "users"."external_id" is not null;

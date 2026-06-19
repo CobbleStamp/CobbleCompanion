@@ -1,1 +1,0 @@
-ALTER TABLE "companion_events" ADD COLUMN "xid" "xid8" DEFAULT pg_current_xact_id() NOT NULL;

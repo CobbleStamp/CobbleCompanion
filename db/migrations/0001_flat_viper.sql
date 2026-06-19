@@ -1,1 +1,0 @@
-ALTER TABLE "proactive_outcomes" ADD COLUMN "read_sources" jsonb;

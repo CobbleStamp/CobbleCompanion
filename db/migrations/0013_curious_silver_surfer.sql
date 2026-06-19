@@ -1,1 +1,0 @@
-ALTER TABLE "active_embodiment" RENAME COLUMN "generation" TO "claim_seq";

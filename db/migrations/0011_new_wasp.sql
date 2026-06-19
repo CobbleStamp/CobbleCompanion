@@ -1,1 +1,0 @@
-DROP TABLE "upload_staging" CASCADE;

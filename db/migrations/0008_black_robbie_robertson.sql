@@ -1,2 +1,0 @@
-ALTER TABLE "active_embodiment" ADD COLUMN "last_activity_at" timestamp with time zone DEFAULT now() NOT NULL;--> statement-breakpoint
-ALTER TABLE "active_embodiment" ADD COLUMN "tab_visible" boolean DEFAULT true NOT NULL;
