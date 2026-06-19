@@ -19,7 +19,7 @@
 ## 1. The gap this closes
 
 The companion's live embodiment is a single WS connection holding a ULID lease
-(`active_embodiment.owner`). Today the lease is enforced **per request**
+(`active_embodiment.connection_id`, fenced by a monotonic `claim_seq`). Today the lease is enforced **per request**
 (`companionOf → requireEmbodiment → embodiment.holds`, `ws/fencing.ts`), but **not
 inside a running turn**:
 
@@ -38,12 +38,13 @@ single-embodiment invariant the model exists to provide.
 
 ## 2. The design (per §5.2)
 
-- **ULID `owner` is the lease**, lexically comparable; "newer wins".
+- **ULID `connection_id` is the lease**, lexically comparable; "newer wins" (a
+  DB-stamped monotonic `claim_seq` is the fencing key against ULID recurrence).
 - **New connection goes live immediately** — claim is one DB upsert; no blocking, no
   ack, no NOTIFY.
 - **Old self-ends via a per-iteration lease check**: at the top of every agent-loop
-  iteration the turn re-reads the lease and stops if a newer `owner` holds it.
-- **Owner-fenced writes** are the correctness backstop for the one in-flight step
+  iteration the turn re-reads the lease and stops if a newer `connection_id` holds it.
+- **Connection-fenced writes** are the correctness backstop for the one in-flight step
   that may finish after the handoff lands.
 - **TTL** collects a holder that is dead and never runs another iteration.
 - **Bounded overlap:** at most one in-flight iteration; harmless under the write
@@ -52,9 +53,9 @@ single-embodiment invariant the model exists to provide.
 ## 3. Build steps (each independently green)
 
 ### Step 1 — Lease-check seam in the embodiment store
-`embodiment.holds(companionId, owner)` already answers "am I still the holder?" (a
+`embodiment.holds(companionId, connectionId, claimSeq)` already answers "am I still the holder?" (a
 single PK read on `active_embodiment`). Reuse it as-is; no schema change (the
-`owner` ULID + `generation` columns already exist). Confirm it is cheap enough to
+`connection_id` ULID + `claim_seq` columns already exist). Confirm it is cheap enough to
 call once per loop iteration (indexed PK lookup — yes).
 
 ### Step 2 — Per-iteration self-check in the agent loop  *(core)*
@@ -68,7 +69,7 @@ call once per loop iteration (indexed PK lookup — yes).
 - Re-check immediately **before `finish()`'s assistant append** (`harness.ts:892`) so
   a turn that lost the lease during its last LLM call does not write its reply.
 
-### Step 3 — Owner-fenced writes (correctness backstop)  *(core)*
+### Step 3 — Connection-fenced writes (correctness backstop)  *(core)*
 Enumerate the in-turn writes and gate them on the held lease:
 - assistant message + tool-step summaries + proposal preambles
   (`memory.appendMessage` at `harness.ts:892/869/921/931`);
@@ -76,16 +77,16 @@ Enumerate the in-turn writes and gate them on the held lease:
 
 Decision to make (layering): either (a) **pre-write `holdsLease()` re-check** (simple;
 a tiny TOCTOU window — acceptable single-node, the bounded overlap), or (b) a
-**conditional write** that commits only while the lease row still names this owner
+**conditional write** that commits only while the lease row still names this connection
 (robust at N nodes; couples the write to the lease — do via a guarded
 `INSERT … WHERE EXISTS (SELECT 1 FROM active_embodiment WHERE companion_id = ? AND
-owner = ?)`). **Recommendation:** ship (a) now (single-node MVP), adopt (b) as part
+connection_id = ? AND claim_seq = ?)`). **Recommendation:** ship (a) now (single-node MVP), adopt (b) as part
 of the multi-node (D7) hardening; the bounded-overlap note in §5.2.5 documents the
 residual until then.
 
 ### Step 4 — Prompt old-connection shutdown  *(api/ws)*
 - In the streaming method (`ws/methods/streaming.ts`), pass
-  `holdsLease: () => deps.embodiment.holds(companionId, binding.owner)` into
+  `holdsLease: () => deps.embodiment.holds(companionId, binding.connectionId, binding.claimSeq)` into
   `harness.runTurn` / `continueAfterApproval`.
 - When the turn ends because the lease moved, the connection pushes
   `embodiment.superseded` and **closes immediately** — no waiting for the heartbeat.
@@ -104,8 +105,8 @@ residual until then.
 - **core/harness:** a multi-iteration turn whose `holdsLease` flips to false mid-turn
   stops at the next iteration, emits no further tokens, and writes no assistant
   message. (Deterministic — the callback is injected.)
-- **core:** owner-fenced write skipped/rejected when the lease has moved (PGlite: flip
-  the `active_embodiment.owner` row, assert the append/nudge does not land).
+- **core:** connection-fenced write skipped/rejected when the lease has moved (PGlite: flip
+  the `active_embodiment.connection_id` row, assert the append/nudge does not land).
 - **api/ws:** supersede a connection mid-turn → old receives `embodiment.superseded`
   + close; new is live and its turn streams.
 - **Q1 (deferred, real Postgres):** the genuine two-connection concurrent-write

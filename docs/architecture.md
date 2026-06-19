@@ -863,9 +863,9 @@ flowchart TB
 - **Connecting claims the companion (embodiment).** A WS that names a companion takes **exclusive
   embodiment** — one live connection per companion, the product's "one room at a time" rule
   (`product-overview.md` §2.2). The claim is a row in **`active_embodiment`** keyed by a sortable
-  **ULID `owner`** ("newer wins"); a heartbeat renews it, a newer connection **force-claims** (the
+  **ULID `connection_id`** plus a DB-stamped monotonic **`claim_seq`** ("newer wins"); a heartbeat renews it, a newer connection **force-claims** (the
   user "moves rooms") and the prior one self-fences. The lease is enforced on **two** surfaces:
-  every companion-scoped method re-checks `holds(owner)` before acting (a superseded connection's
+  every companion-scoped method re-checks `holds(connection_id, claim_seq)` before acting (a superseded connection's
   new requests are rejected), and a **running turn** — a multi-step agent loop, not one request —
   re-reads the lease at the top of every iteration and again before persisting the reply, standing
   down without writing the assistant message (and skipping the non-idempotent post-turn affect
