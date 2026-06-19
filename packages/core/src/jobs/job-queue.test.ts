@@ -351,7 +351,7 @@ describe('JobProcessorPool', () => {
       error() {},
       info() {},
       warn(message: string, context?: Record<string, unknown>) {
-        warnings.push({ message, context });
+        warnings.push(context === undefined ? { message } : { message, context });
       },
     };
     const handlerError = new Error('handler exploded mid-run');
