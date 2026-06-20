@@ -852,6 +852,23 @@ export class Harness {
           // A `silent` tool (the companion's `react` emit) records no chrome row —
           // its own artifact is the user-visible record (companion-reactions.md §5).
           if (result.isError !== true && registry.get(gated.name)?.silent !== true) {
+            // Owner-fenced write (embodiment-handoff-fencing.md §3, deliver-scalability.md
+            // §5.2): tool dispatch above can run for seconds, during which the lease may
+            // have moved. Re-check before writing the tool-step transcript row so a turn
+            // that lost the lease mid-dispatch does not record chrome for the superseded
+            // connection. Stand down like the reply/held paths — the new connection's turn
+            // re-derives the step; otherwise both connections write rows for one companion.
+            if (await this.leaseLost(holdsLease)) {
+              this.logger.info(
+                'turn stood down before tool-step write — embodiment was superseded',
+                {
+                  operation: 'harness.runLoop',
+                  companionId: companion.id,
+                  iteration,
+                },
+              );
+              return true;
+            }
             yield* this.recordToolStep(registry, companion.id, gated.name, gated.args);
           }
         }

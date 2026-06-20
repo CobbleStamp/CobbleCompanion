@@ -164,7 +164,7 @@ async function drive(
 }
 
 describe('Harness mid-turn embodiment fence (§5.2)', () => {
-  it('stands down at the next iteration when the lease moves mid-turn', async () => {
+  it('stands down before the tool-step write when the lease moves mid-dispatch', async () => {
     const tool = recordingTool('web_fetch', false, 'PAGE TEXT');
     const gateway = new FakeLlmGateway([
       { chunks: ['Reading… '], toolCalls: [call('web_fetch', { url: 'https://x.dev' })] },
@@ -178,7 +178,8 @@ describe('Harness mid-turn embodiment fence (§5.2)', () => {
       registry: new ToolRegistry([tool]),
       logger: silentLogger,
     });
-    // Held at the top of iteration 0; lost by the top of iteration 1.
+    // Held at the top of iteration 0; lost by the pre-tool-step-write re-check,
+    // which fires after web_fetch dispatch returns within the same iteration.
     const lease = scriptedLease(true, false);
 
     const { events, superseded } = await drive(
@@ -191,14 +192,15 @@ describe('Harness mid-turn embodiment fence (§5.2)', () => {
     );
 
     expect(superseded).toBe(true);
-    expect(lease.calls).toBe(2); // top of iter 0 (held) + top of iter 1 (lost)
+    expect(lease.calls).toBe(2); // top of iter 0 (held) + pre-tool-step-write (lost)
     expect(events.some((e) => e.type === 'done')).toBe(false);
     // No assistant ANSWER row was persisted (the second model turn never ran).
     expect(
       mem.appended.some((m) => m.role === 'assistant' && (m.kind ?? 'message') === 'message'),
     ).toBe(false);
-    // The user message + the in-flight iteration's tool-step are the bounded overlap.
-    expect(mem.appended.map((m) => m.kind ?? 'message')).toEqual(['message', 'tool_step']);
+    // Only the user message persists: the superseded connection's tool-step row is
+    // fenced out (embodiment-handoff-fencing.md §3), so it never lands on disk.
+    expect(mem.appended.map((m) => m.kind ?? 'message')).toEqual(['message']);
   });
 
   it('does not write the reply if the lease moves during the final LLM call', async () => {
