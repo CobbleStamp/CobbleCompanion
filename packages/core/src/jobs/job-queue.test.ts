@@ -387,4 +387,32 @@ describe('JobProcessorPool', () => {
     const lostLease = warnings.find((w) => w.message.includes('lease lost mid-run'));
     expect(lostLease?.context?.handlerError).toBe(handlerError);
   });
+
+  it('marks a job failed when no handler is registered for its type (lease held)', async () => {
+    // No handler is a deterministic, terminal failure: while we still hold the
+    // lease the job is marked failed so it is not retried in a loop. (If the lease
+    // had been lost before dispatch, runJob instead leaves it pending for reclaim.)
+    const pool = new JobProcessorPool(
+      queue,
+      {},
+      {
+        owner: 'node-1',
+        concurrency: 1,
+        leaseMs: 60_000,
+        heartbeatMs: 10,
+        pollMs: 60_000,
+        logger: silentLogger,
+      },
+    );
+
+    await queue.enqueue({ companionId: companionA, type: 'consolidate' });
+
+    pool.nudge();
+    await pool.whenIdle();
+
+    expect(await countDuePending(db)).toBe(0);
+    const [row] = await db.select().from(jobs).where(eq(jobs.companionId, companionA));
+    expect(row?.status).toBe('failed');
+    expect(row?.lastError).toContain('no handler for job type consolidate');
+  });
 });

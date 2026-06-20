@@ -209,6 +209,17 @@ export class JobProcessorPool {
     const handler = this.handlers[job.type];
     if (!handler) {
       this.opts.logger.error('no handler for job type', { type: job.type, jobId: job.id });
+      // Only write the terminal failure if we still hold the lease. If the lease
+      // was lost, the reclaiming node now owns this job; marking it failed here
+      // would race that node (the C2 finding), so leave it pending for reclaim.
+      if (lease.aborted) {
+        this.opts.logger.warn('job lease lost before dispatch; leaving pending for reclaim', {
+          jobId: job.id,
+          type: job.type,
+          companionId: job.companionId,
+        });
+        return;
+      }
       await this.queue.markFailed(job.id, `no handler for job type ${job.type}`);
       return;
     }
