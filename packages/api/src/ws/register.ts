@@ -168,7 +168,7 @@ async function embody(
 
   socket.on('close', () => {
     clearInterval(heartbeat);
-    void deps.embodiment.release(companionId, connectionId).catch((error: unknown) => {
+    void deps.embodiment.release(companionId, connectionId, claimSeq).catch((error: unknown) => {
       deps.logger.error('ws embodiment release failed', {
         operation: 'ws.embody',
         companionId,

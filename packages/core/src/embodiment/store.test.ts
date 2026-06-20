@@ -110,11 +110,28 @@ describe('DrizzleEmbodimentStore', () => {
     await store.claim({ companionId, connectionId: 'conn-aaa', node: 'n1', ttlMs: TTL });
     await store.claim({ companionId, connectionId: 'conn-bbb', node: 'n2', ttlMs: TTL });
     // The old holder's release is a no-op (it no longer owns the row).
-    await store.release(companionId, 'conn-aaa');
+    await store.release(companionId, 'conn-aaa', 1);
     expect(await store.holds(companionId, 'conn-bbb', 2)).toBe(true);
     // The current holder's release frees it.
-    await store.release(companionId, 'conn-bbb');
+    await store.release(companionId, 'conn-bbb', 2);
     expect(await store.current(companionId, TTL)).toBeNull();
+  });
+
+  it('release is fenced on the claim seq (ABA — recurred connectionId)', async () => {
+    await store.claim({ companionId, connectionId: 'conn-aaa', node: 'n1', ttlMs: TTL });
+    // The holder lapses, then a brand-new connection reuses A's ULID on a newer claim.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const reborn = await store.claim({
+      companionId,
+      connectionId: 'conn-aaa',
+      node: 'n2',
+      ttlMs: 1,
+    });
+    expect(reborn).toMatchObject({ connectionId: 'conn-aaa', claimSeq: 2 });
+    // A late close from original A (same connectionId string, stale claim seq) must
+    // NOT delete the successor's live row.
+    await store.release(companionId, 'conn-aaa', 1);
+    expect(await store.holds(companionId, 'conn-aaa', 2)).toBe(true);
   });
 
   it('reports the current live claim', async () => {

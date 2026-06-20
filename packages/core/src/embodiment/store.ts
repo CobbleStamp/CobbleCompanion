@@ -50,9 +50,14 @@ export interface EmbodimentStore {
    * claim seq (monotonic per claim) won't match the stale binding's.
    */
   holds(companionId: string, connectionId: string, claimSeq: number): Promise<boolean>;
-  /** Release on clean disconnect — only if this connection is still the holder
-   *  (never stomps a successor). */
-  release(companionId: string, connectionId: string): Promise<void>;
+  /**
+   * Release on clean disconnect — only if this *exact* claim is still the holder.
+   * Matches on `connectionId` AND the DB-stamped `claimSeq` — same fence as
+   * {@link renew} and {@link holds} — so a late close from a superseded connection
+   * can't stomp a successor, even in the ABA case where a ULID `connectionId` value
+   * recurs on a newer claim (the recurred claim's seq won't match the stale binding's).
+   */
+  release(companionId: string, connectionId: string, claimSeq: number): Promise<void>;
   /** The current live (non-expired) claim, or null — used by presence (D5) + tests. */
   current(companionId: string, ttlMs: number): Promise<EmbodimentClaim | null>;
 }
@@ -131,13 +136,14 @@ export class DrizzleEmbodimentStore implements EmbodimentStore {
     return rows.length > 0;
   }
 
-  async release(companionId: string, connectionId: string): Promise<void> {
+  async release(companionId: string, connectionId: string, claimSeq: number): Promise<void> {
     await this.db
       .delete(activeEmbodiment)
       .where(
         and(
           eq(activeEmbodiment.companionId, companionId),
           eq(activeEmbodiment.connectionId, connectionId),
+          eq(activeEmbodiment.claimSeq, claimSeq),
         ),
       );
   }
