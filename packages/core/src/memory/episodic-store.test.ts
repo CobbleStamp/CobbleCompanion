@@ -110,6 +110,31 @@ describe('DrizzleEpisodicMemoryStore', () => {
     expect(await store.consolidatedThroughSeq(companionId)).toBe(25);
   });
 
+  it('does not duplicate episodes when the same window is consolidated twice', async () => {
+    // The lost-lease overlap: a node that lost its claim runs the consolidate job
+    // to completion while the reclaiming node re-runs the still-pending job. Both
+    // read the same cursor and produce the same span/episodes. The second writer
+    // to commit must INSERT nothing — the window is already consolidated.
+    const episode: NewEpisode = {
+      summary: 'You loved the ceviche in Lima',
+      seqStart: 1,
+      seqEnd: 8,
+      ...jan,
+      salience: 0.9,
+      embedding: await embedOne('You loved the ceviche in Lima'),
+    };
+
+    const first = await store.appendEpisodes(companionId, [episode], 8);
+    expect(first).toHaveLength(1);
+    expect(await store.consolidatedThroughSeq(companionId)).toBe(8);
+
+    // Re-run of the identical window (cursor already at 8): no rows, no advance.
+    const second = await store.appendEpisodes(companionId, [episode], 8);
+    expect(second).toHaveLength(0);
+    expect(await store.countEpisodes(companionId)).toBe(1);
+    expect(await store.consolidatedThroughSeq(companionId)).toBe(8);
+  });
+
   it('recalls the semantically closest episode first (vector arm)', async () => {
     const lima = await seed('You loved the ceviche in Lima', { seqStart: 1, seqEnd: 8, ...jan });
     await seed('We debugged your printer for an hour', { seqStart: 9, seqEnd: 20, ...mar });
