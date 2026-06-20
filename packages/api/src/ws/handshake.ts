@@ -29,6 +29,21 @@ export function makeWsAuth(
   deps: AppDeps,
 ): (req: FastifyRequest, reply: FastifyReply) => Promise<void> {
   return async function wsAuth(request, reply): Promise<void> {
+    // Cross-site WebSocket hijacking defense: @fastify/cors does not run on the
+    // upgrade, so pin the handshake to the configured app origin here. A browser
+    // always sends `Origin` on a WS upgrade — reject any that isn't our app before
+    // doing auth work. A non-browser service client sends no `Origin` (and proves
+    // itself with a bearer header), so absence is allowed. Defense-in-depth today
+    // since the bearer is non-ambient; load-bearing the moment it ever becomes so.
+    const origin = request.headers.origin;
+    if (typeof origin === 'string' && origin !== deps.config.appUrl) {
+      deps.logger.error('ws upgrade rejected: origin not allowed', {
+        operation: 'ws.auth',
+        origin,
+      });
+      await reply.code(403).send({ error: 'origin not allowed' });
+      return;
+    }
     const claims = await deps.tokenVerifier.verify(toWsAuthRequest(request));
     if (!claims.ok) {
       const { status, message, kind, cause } = claims.failure;

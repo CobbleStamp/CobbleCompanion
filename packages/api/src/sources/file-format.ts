@@ -38,6 +38,14 @@ export function magicByteError(kind: UploadSourceKind, bytes: Uint8Array): strin
     case 'txt':
     case 'md':
       return looksBinary(bytes) ? 'the uploaded file does not look like text' : null;
+    default: {
+      // Exhaustiveness guard: a future UploadSourceKind added without a case above
+      // is a compile error here, and at runtime the gate fails closed (rejects)
+      // rather than letting unvalidated bytes through to a parser.
+      const unsupported: never = kind;
+      void unsupported;
+      return 'unsupported file type';
+    }
   }
 }
 

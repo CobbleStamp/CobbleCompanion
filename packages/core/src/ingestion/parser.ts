@@ -77,12 +77,47 @@ export function parseMarkdown(markdown: string): ParsedDocument {
 }
 
 /**
+ * OOXML inputs (docx/pptx) are zips. The ingestion byte cap bounds the *compressed*
+ * upload, but a zip bomb can expand orders of magnitude beyond it, so the
+ * decompressed size must be bounded too. We stream every entry and abort once the
+ * running total crosses the cap — rather than trust the archive's *declared* sizes,
+ * which a crafted zip can understate. Streaming keeps live memory near the
+ * compressed input plus one chunk, so a bomb trips the cap instead of OOMing.
+ */
+const MAX_OOXML_ENTRIES = 4096;
+const MAX_OOXML_UNCOMPRESSED_BYTES = 200 * 1024 * 1024; // 200 MiB across all entries
+
+async function assertOoxmlWithinLimits(zip: JSZip): Promise<void> {
+  const entries = Object.values(zip.files).filter((entry) => !entry.dir);
+  if (entries.length > MAX_OOXML_ENTRIES) {
+    throw new Error('the uploaded document has too many internal entries');
+  }
+  let total = 0;
+  for (const entry of entries) {
+    await new Promise<void>((resolveEntry, rejectEntry) => {
+      const stream = entry.nodeStream('nodebuffer');
+      stream.on('data', (chunk: Buffer) => {
+        total += chunk.length;
+        if (total > MAX_OOXML_UNCOMPRESSED_BYTES) {
+          stream.pause(); // stop pulling more decompressed bytes into memory
+          rejectEntry(new Error('the uploaded document expands beyond the allowed size'));
+        }
+      });
+      stream.on('end', () => resolveEntry());
+      stream.on('error', rejectEntry);
+    });
+  }
+}
+
+/**
  * Parse a Word (.docx) source. mammoth extracts the document body as raw text
  * with blank lines between paragraphs, which the note splitter turns into
  * atomic paragraphs. No page concept in the OOXML flow, so provenance is
  * paragraph-ordinal only (like notes/links).
  */
 export async function parseDocx(bytes: Uint8Array): Promise<ParsedDocument> {
+  // Bound the decompressed size before mammoth (which runs its own unzip) sees it.
+  await assertOoxmlWithinLimits(await JSZip.loadAsync(bytes));
   const { value } = await mammoth.extractRawText({ buffer: Buffer.from(bytes) });
   if (value.trim().length === 0) {
     throw new Error('no extractable text found in the Word document');
@@ -114,6 +149,7 @@ function slideOrdinal(path: string): number {
  */
 export async function parsePptx(bytes: Uint8Array): Promise<ParsedDocument> {
   const zip = await JSZip.loadAsync(bytes);
+  await assertOoxmlWithinLimits(zip);
   const slidePaths = Object.keys(zip.files)
     .filter((path) => /^ppt\/slides\/slide\d+\.xml$/.test(path))
     .sort((a, b) => slideOrdinal(a) - slideOrdinal(b));

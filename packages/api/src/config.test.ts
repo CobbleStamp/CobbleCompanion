@@ -155,6 +155,45 @@ describe('loadConfig', () => {
       ).toThrow(/UPLOAD_STAGING_S3_BUCKET is required/);
     });
 
+    it('rejects a TTL beyond the 1-day bucket lifecycle cap', () => {
+      expect(() =>
+        loadConfig({
+          ...base,
+          ...fakeProviders,
+          UPLOAD_STAGING_TTL_MS: String(24 * 60 * 60 * 1000 + 1),
+        }),
+      ).toThrow();
+    });
+
+    it('rejects a prefix containing a traversal segment', () => {
+      expect(() =>
+        loadConfig({
+          ...base,
+          ...fakeProviders,
+          UPLOAD_STAGING_PREFIX: '../../etc',
+        }),
+      ).toThrow(/UPLOAD_STAGING_PREFIX/);
+    });
+
+    it('rejects a leading-slash (absolute) prefix', () => {
+      expect(() =>
+        loadConfig({
+          ...base,
+          ...fakeProviders,
+          UPLOAD_STAGING_PREFIX: '/abs/uploads',
+        }),
+      ).toThrow(/UPLOAD_STAGING_PREFIX/);
+    });
+
+    it('accepts a nested slash-separated prefix', () => {
+      const config = loadConfig({
+        ...base,
+        ...fakeProviders,
+        UPLOAD_STAGING_PREFIX: 'tmp/uploads-v2',
+      });
+      expect(config.uploadStaging.prefix).toBe('tmp/uploads-v2');
+    });
+
     it('builds the s3 backend from bucket + region', () => {
       const config = loadConfig({
         ...base,

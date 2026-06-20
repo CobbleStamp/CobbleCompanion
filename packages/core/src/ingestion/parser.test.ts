@@ -304,3 +304,31 @@ describe('parsePptx', () => {
     await expect(parsePptx(empty)).rejects.toThrow(/no slides/);
   });
 });
+
+describe('OOXML zip-bomb guard', () => {
+  it('rejects a pptx whose decompressed size exceeds the cap', async () => {
+    // 200 MiB + a margin of highly-compressible zeros: the *compressed* zip stays
+    // tiny (well under the ingestion byte cap), but the guard streams it and trips
+    // on the decompressed total before any slide is read.
+    const zip = new JSZip();
+    zip.file('ppt/slides/slide1.xml', Buffer.alloc(201 * 1024 * 1024));
+    const bomb = await zip.generateAsync({ type: 'uint8array' });
+    await expect(parsePptx(bomb)).rejects.toThrow(/expands beyond the allowed size/);
+  });
+
+  it('rejects a docx whose decompressed size exceeds the cap (before mammoth)', async () => {
+    const zip = new JSZip();
+    zip.file('word/document.xml', Buffer.alloc(201 * 1024 * 1024));
+    const bomb = await zip.generateAsync({ type: 'uint8array' });
+    await expect(parseDocx(bomb)).rejects.toThrow(/expands beyond the allowed size/);
+  });
+
+  it('rejects an archive with too many internal entries', async () => {
+    const zip = new JSZip();
+    for (let i = 0; i <= 4096; i++) {
+      zip.file(`ppt/slides/slide${i + 1}.xml`, '<p:sld/>');
+    }
+    const bomb = await zip.generateAsync({ type: 'uint8array' });
+    await expect(parsePptx(bomb)).rejects.toThrow(/too many internal entries/);
+  });
+});

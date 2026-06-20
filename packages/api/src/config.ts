@@ -174,7 +174,16 @@ const envSchema = z
     UPLOAD_STAGING_S3_BUCKET: z.string().default(''),
     // Falls back to the ambient AWS_REGION when unset (handled in loadConfig).
     UPLOAD_STAGING_S3_REGION: z.string().default(''),
-    UPLOAD_STAGING_PREFIX: z.string().min(1).default('tmp-uploads'),
+    // Slash-separated alphanumeric/_/- segments only: no dots (so no `..`), no
+    // leading/trailing slash, never absolute — a forged prefix can't point the fs
+    // `purgeExpired` sweep (resolve(root, prefix)) outside the staging root.
+    UPLOAD_STAGING_PREFIX: z
+      .string()
+      .regex(
+        /^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/,
+        'UPLOAD_STAGING_PREFIX must be slash-separated alphanumeric/_/- segments (no "..", no leading/trailing slash)',
+      )
+      .default('tmp-uploads'),
     UPLOAD_STAGING_FS_ROOT: z.string().default(''),
     // API origin the local upload-slot URL points at; empty → derived from PORT.
     UPLOAD_STAGING_PUBLIC_BASE_URL: z.string().default(''),
@@ -182,6 +191,9 @@ const envSchema = z
       .number()
       .int()
       .positive()
+      // Cap at 1 day so the minted presigned PUT capability can't outlive the S3
+      // bucket's 1-day expiry lifecycle rule.
+      .max(24 * 60 * 60 * 1000)
       .default(60 * 60 * 1000),
     USE_CONTEXT_HEADER: z
       .enum(['true', 'false'])
