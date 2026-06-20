@@ -28,10 +28,14 @@ export interface JobProcessorOptions {
    */
   readonly leaseMs: number;
   /**
-   * Heartbeat interval in ms — how often a live drain renews its claim. A drain
-   * that cannot renew for ~`leaseMs` (event-loop wedge or DB partition) loses the
-   * lease, stops, and leaves its in-flight job pending for the reclaiming node.
-   * Must be < `leaseMs`, with margin to survive a single missed beat.
+   * Heartbeat interval in ms — how often a live drain renews its claim. A single
+   * failed or errored renewal does NOT end the drain: the lease last secured runs
+   * for `leaseMs`, so a transient blip (DB hiccup, brief partition) is tolerated
+   * and retried on the next beat. The drain aborts — leaving its in-flight job
+   * pending for the reclaiming node — only when renewals have failed long enough
+   * that the lease is within one beat of expiry, or the DB authoritatively reports
+   * the claim was reclaimed by another owner. Must be < `leaseMs`; size `leaseMs`
+   * at several × this so a missed beat or two is survived before the abort fires.
    */
   readonly heartbeatMs: number;
   /** Coarse poll interval — the clock for idle/future-dated work. */
@@ -134,16 +138,50 @@ export class JobProcessorPool {
   private async drainCompanion(claim: ClaimedCompanion): Promise<void> {
     // One heartbeat for the whole drain: renew the claim every `heartbeatMs` so a
     // long job (or a long run of short ones) keeps the lease instead of losing it
-    // to a concurrent re-claim. If a renewal reports we no longer hold the claim —
-    // a multi-node reclaim after ours lapsed, or a DB partition — abort: stop
-    // taking new jobs and signal the in-flight one. The lease length now bounds
-    // only how long a wedged/partitioned node keeps its claim, not the slowest job.
+    // to a concurrent re-claim. Two loss signals, handled differently:
+    //  - `held: false` — the DB authoritatively says another owner holds the claim
+    //    (a reclaim after ours lapsed). Abort at once: that node is already eligible
+    //    to run this companion, so continuing would mean two nodes on it.
+    //  - a *thrown* renewal (DB transiently unreachable) — we cannot prove we hold
+    //    the claim, but we have not lost it either: the lease we last secured runs
+    //    until `lastRenewedAt + leaseMs`. Tolerate the blip and retry next beat
+    //    rather than abandon an in-flight job on one hiccup. We abort only once that
+    //    lease is within one beat of expiry — the point at which another node can
+    //    actually reclaim and overlap becomes possible. The same near-expiry guard
+    //    also covers a renewal that *hangs* (never resolves).
     const lease = new AbortController();
+    // Wall-clock of the last renewal we know extended the lease. `claimNextCompanion`
+    // set `claimed_until = now() + leaseMs`, so at drain start the lease is fresh.
+    let lastRenewedAt = Date.now();
+    let renewing = false;
     const heartbeat = setInterval(() => {
+      if (lease.signal.aborted) return;
+      // The lease we last secured runs until `lastRenewedAt + leaseMs`. Once we are
+      // within one beat of that — because renewals keep erroring, or one is hung —
+      // stop: another node is about to be able to reclaim, and continuing risks two
+      // nodes draining the same companion.
+      const elapsed = Date.now() - lastRenewedAt;
+      if (elapsed >= this.opts.leaseMs - this.opts.heartbeatMs) {
+        this.opts.logger.warn('claim lease near expiry without renewal; aborting drain', {
+          companionId: claim.companionId,
+          owner: this.opts.owner,
+          elapsedSinceRenewMs: elapsed,
+        });
+        lease.abort();
+        return;
+      }
+      // Don't stack a second renewal on a slow one: it's idempotent, but it would
+      // race `lastRenewedAt` and waste a round-trip.
+      if (renewing) return;
+      renewing = true;
       void this.queue
         .renewClaim(claim.companionId, this.opts.owner, this.opts.leaseMs)
         .then((outcome) => {
-          if (!outcome.held && !lease.signal.aborted) {
+          if (outcome.held) {
+            lastRenewedAt = Date.now();
+            return;
+          }
+          if (!lease.signal.aborted) {
             this.opts.logger.warn('claim lease lost; aborting drain', {
               companionId: claim.companionId,
               owner: this.opts.owner,
@@ -154,13 +192,17 @@ export class JobProcessorPool {
           }
         })
         .catch((error: unknown) => {
-          // A renewal that errors out (e.g. DB unreachable) is treated as lost: we
-          // cannot prove we still hold the claim, so stop rather than risk overlap.
+          // A renewal that errors (e.g. DB unreachable) does NOT prove the lease is
+          // gone — tolerate it and retry next beat. The near-expiry guard above is
+          // what ultimately stops the drain if these errors persist to expiry.
           this.opts.logger.error('claim heartbeat failed', {
             companionId: claim.companionId,
+            elapsedSinceRenewMs: Date.now() - lastRenewedAt,
             error,
           });
-          if (!lease.signal.aborted) lease.abort();
+        })
+        .finally(() => {
+          renewing = false;
         });
     }, this.opts.heartbeatMs);
     heartbeat.unref?.();
@@ -187,6 +229,9 @@ export class JobProcessorPool {
           });
           return;
         }
+        // This renewal also extended the lease — record it so the heartbeat's
+        // near-expiry guard measures from the latest renewal, not a stale one.
+        lastRenewedAt = Date.now();
       }
     } catch (error) {
       this.opts.logger.error('companion drain failed', {

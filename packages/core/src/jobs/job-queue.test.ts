@@ -1,7 +1,16 @@
 import { DrizzleIdentityStore } from '../identity/store.js';
 import type { Logger } from '../logging.js';
-import { DrizzleJobQueue, reactionLearnDedupeKey } from './job-queue.js';
+import {
+  DrizzleJobQueue,
+  reactionLearnDedupeKey,
+  type ClaimedCompanion,
+  type EnqueueParams,
+  type JobQueue,
+  type QueuedJob,
+  type RenewOutcome,
+} from './job-queue.js';
 import { JobProcessorPool, type JobHandlers } from './job-processor.js';
+import type { JobType } from '@cobble/shared';
 import { companionClaims, jobs, type Database } from '@cobble/db';
 import { createTestDatabase } from '@cobble/db/testing';
 import { and, eq, lte, sql } from 'drizzle-orm';
@@ -20,6 +29,59 @@ async function countDuePending(db: Database): Promise<number> {
     .from(jobs)
     .where(and(eq(jobs.status, 'pending'), lte(jobs.runAt, sql`now()`)));
   return rows[0]?.n ?? 0;
+}
+
+/**
+ * Wraps a real queue and makes the first `failures` heartbeat renewals throw, as a
+ * transient DB blip would. Every other call (and renewals after the blip) delegates
+ * to the inner queue unchanged — so the drain sees genuine `held` outcomes once the
+ * "outage" clears.
+ */
+class FlakyRenewQueue implements JobQueue {
+  private renewCalls = 0;
+  private claimCalls = 0;
+  /**
+   * @param failures  how many of the first `renewClaim` calls throw
+   * @param maxClaims cap on `claimNextCompanion` results — once reached it returns
+   *   null, so a drain that aborts and releases doesn't immediately re-claim the
+   *   still-pending job and spin (there is no second node in these tests to take it)
+   */
+  constructor(
+    private readonly inner: JobQueue,
+    private readonly failures: number,
+    private readonly maxClaims: number = Number.POSITIVE_INFINITY,
+  ) {}
+
+  enqueue(params: EnqueueParams): Promise<void> {
+    return this.inner.enqueue(params);
+  }
+  claimNextCompanion(owner: string, leaseMs: number): Promise<ClaimedCompanion | null> {
+    if (this.claimCalls >= this.maxClaims) return Promise.resolve(null);
+    this.claimCalls += 1;
+    return this.inner.claimNextCompanion(owner, leaseMs);
+  }
+  nextDueJob(companionId: string): Promise<QueuedJob | null> {
+    return this.inner.nextDueJob(companionId);
+  }
+  markDone(jobId: string): Promise<void> {
+    return this.inner.markDone(jobId);
+  }
+  markFailed(jobId: string, error: string): Promise<void> {
+    return this.inner.markFailed(jobId, error);
+  }
+  renewClaim(companionId: string, owner: string, leaseMs: number): Promise<RenewOutcome> {
+    this.renewCalls += 1;
+    if (this.renewCalls <= this.failures) {
+      return Promise.reject(new Error('transient: connection terminated unexpectedly'));
+    }
+    return this.inner.renewClaim(companionId, owner, leaseMs);
+  }
+  releaseClaim(companionId: string, owner: string): Promise<void> {
+    return this.inner.releaseClaim(companionId, owner);
+  }
+  pendingCountByType(type: JobType): Promise<number> {
+    return this.inner.pendingCountByType(type);
+  }
 }
 
 /**
@@ -414,5 +476,81 @@ describe('JobProcessorPool', () => {
     const [row] = await db.select().from(jobs).where(eq(jobs.companionId, companionA));
     expect(row?.status).toBe('failed');
     expect(row?.lastError).toContain('no handler for job type consolidate');
+  });
+
+  it('survives transient renewal errors and finishes the job instead of aborting on the first blip', async () => {
+    // A few heartbeat renewals throw (a brief DB hiccup), but the lease we last
+    // secured is nowhere near expiry — so the drain must tolerate the blip and run
+    // the job to completion rather than abandon it for reclaim on the first error.
+    const flaky = new FlakyRenewQueue(queue, 3);
+    let handled = false;
+    const handlers: JobHandlers = {
+      consolidate: async () => {
+        // Outlast several heartbeat ticks so the throwing renewals actually fire
+        // while the job is in flight.
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        handled = true;
+      },
+    };
+    const pool = new JobProcessorPool(flaky, handlers, {
+      owner: 'node-1',
+      concurrency: 1,
+      // leaseMs >> heartbeatMs, so 3 missed beats stay far from the near-expiry abort.
+      leaseMs: 60_000,
+      heartbeatMs: 10,
+      pollMs: 60_000,
+      logger: silentLogger,
+    });
+
+    await queue.enqueue({ companionId: companionA, type: 'consolidate' });
+
+    pool.nudge();
+    await pool.whenIdle();
+
+    // The transient errors did not abort the drain: the handler ran and the job is
+    // terminal (marked done), so nothing is left pending.
+    expect(handled).toBe(true);
+    expect(await countDuePending(db)).toBe(0);
+  });
+
+  it('aborts the drain once renewals fail long enough to near lease expiry', async () => {
+    // Every renewal throws and the lease window is short, so elapsed-since-renewal
+    // crosses `leaseMs - heartbeatMs`: the near-expiry guard fires, aborts the
+    // in-flight job, and leaves it pending for the node that can reclaim. maxClaims=1
+    // stops this single node from re-claiming the released job and looping.
+    const flaky = new FlakyRenewQueue(queue, Number.MAX_SAFE_INTEGER, 1);
+    const warnings: string[] = [];
+    const capturingLogger: Logger = {
+      error() {},
+      info() {},
+      warn(message: string) {
+        warnings.push(message);
+      },
+    };
+    const handlers: JobHandlers = {
+      consolidate: async () => {
+        // Run well past the lease window so the near-expiry abort must trip.
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      },
+    };
+    const pool = new JobProcessorPool(flaky, handlers, {
+      owner: 'node-1',
+      concurrency: 1,
+      leaseMs: 60,
+      heartbeatMs: 10,
+      pollMs: 60_000,
+      logger: capturingLogger,
+    });
+
+    await queue.enqueue({ companionId: companionA, type: 'consolidate' });
+
+    pool.nudge();
+    await pool.whenIdle();
+
+    // The near-expiry guard fired (not the authoritative `held:false` path)...
+    expect(warnings.some((w) => w.includes('near expiry without renewal'))).toBe(true);
+    // ...and aborted mid-run: no outcome recorded here, so the job stays pending+due
+    // for whichever node reclaims the lapsed lease.
+    expect(await countDuePending(db)).toBe(1);
   });
 });
