@@ -67,8 +67,10 @@ describe('S3UploadStagingStore', () => {
       byteSize: 700,
     });
 
-    // The fake echoes the signed content-length; the real adapter signs it so S3
-    // rejects any PUT whose body is not exactly this many bytes.
+    // The fake only echoes the value, proving the store passes byteSize through to
+    // presignPut. That SigV4 actually pins it (so S3 rejects any PUT whose body is
+    // not exactly this size) is proven against the real SDK in
+    // upload-staging-s3-aws.test.ts.
     expect(slot.url).toContain('len=700');
   });
 
