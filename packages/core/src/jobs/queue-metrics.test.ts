@@ -106,7 +106,7 @@ describe('DrizzleQueueMetricsReader', () => {
     expect(claim?.companionId).toBe(c1);
     const job = await queue.nextDueJob(c1);
     expect(job).not.toBeNull();
-    await queue.markFailed(job!.id, 'boom');
+    await queue.markFailed(job!.id, 'boom', claim!);
 
     const snap = await reader.snapshot();
     expect(snap.failedTotal).toBe(1);

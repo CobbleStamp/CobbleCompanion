@@ -1,6 +1,6 @@
 import type { JobPayload, JobType } from '@cobble/shared';
 import { companionClaims, type Database, jobs } from '@cobble/db';
-import { and, eq, lt, lte, or, isNull, sql } from 'drizzle-orm';
+import { and, eq, exists, lt, lte, or, isNull, sql } from 'drizzle-orm';
 import type { Logger } from '../logging.js';
 
 /**
@@ -75,8 +75,18 @@ export interface JobQueue {
   enqueue(params: EnqueueParams): Promise<void>;
   claimNextCompanion(owner: string, leaseMs: number): Promise<ClaimedCompanion | null>;
   nextDueJob(companionId: string): Promise<QueuedJob | null>;
-  markDone(jobId: string): Promise<void>;
-  markFailed(jobId: string, error: string): Promise<void>;
+  /**
+   * Record a job's terminal outcome, **fenced on the claim under which it ran**.
+   * The write lands only while `companion_claims` still shows the drain's
+   * `(owner, generation)` — so a stale drain whose lease lapsed and was reclaimed
+   * mid-write matches zero rows and cannot stomp the reclaiming node's outcome
+   * (the C1 race; the in-process `lease.aborted` check is a best-effort early-out,
+   * this is the authoritative DB fence). `generation` is the ABA-safe token: every
+   * reclaim bumps it, so a write from a superseded epoch always fails the predicate.
+   * Returns `true` if the row was written, `false` if it was fenced out.
+   */
+  markDone(jobId: string, claim: ClaimedCompanion): Promise<boolean>;
+  markFailed(jobId: string, error: string, claim: ClaimedCompanion): Promise<boolean>;
   /** Heartbeat: extend our lease. On failure, returns why we no longer hold it. */
   renewClaim(companionId: string, owner: string, leaseMs: number): Promise<RenewOutcome>;
   /** Release our claim (no-op if it has already been taken over). */
@@ -219,19 +229,45 @@ export class DrizzleJobQueue implements JobQueue {
     };
   }
 
-  async markDone(jobId: string): Promise<void> {
-    await this.db
-      .update(jobs)
-      .set({ status: 'done', updatedAt: sql`now()` })
-      .where(eq(jobs.id, jobId));
+  /**
+   * The fencing predicate: the companion's claim row still belongs to the drain's
+   * `(owner, generation)`. A reclaim bumps `generation` (tryClaim does `+ 1`), so a
+   * superseded epoch fails to match — ABA-safe even if the same node id reclaims
+   * later. Liveness (`claimed_until >= now()`) is deliberately NOT required: while a
+   * lease has lapsed but nobody has reclaimed, `generation` is unchanged and this
+   * drain's completed work is the only outcome — landing it avoids needlessly
+   * discarding work, and any reclaim would have bumped `generation` and rejected us.
+   */
+  private claimStillHeld(claim: ClaimedCompanion) {
+    return exists(
+      this.db
+        .select({ one: sql`1` })
+        .from(companionClaims)
+        .where(
+          and(
+            eq(companionClaims.companionId, claim.companionId),
+            eq(companionClaims.owner, claim.owner),
+            eq(companionClaims.generation, claim.generation),
+          ),
+        ),
+    );
   }
 
-  async markFailed(jobId: string, error: string): Promise<void> {
+  async markDone(jobId: string, claim: ClaimedCompanion): Promise<boolean> {
+    const rows = await this.db
+      .update(jobs)
+      .set({ status: 'done', updatedAt: sql`now()` })
+      .where(and(eq(jobs.id, jobId), this.claimStillHeld(claim)))
+      .returning({ id: jobs.id });
+    return rows.length > 0;
+  }
+
+  async markFailed(jobId: string, error: string, claim: ClaimedCompanion): Promise<boolean> {
     // Terminal for Phase B: a failed background pass simply waits for its next
     // trigger to re-enqueue (the old runners logged-and-moved-on too). `attempts`
     // + `lastError` are kept for observability; retry/backoff is a later tunable
-    // (deliver-scalability.md §5.1.6).
-    await this.db
+    // (deliver-scalability.md §5.1.6). Fenced on the claim (see {@link claimStillHeld}).
+    const rows = await this.db
       .update(jobs)
       .set({
         status: 'failed',
@@ -239,7 +275,9 @@ export class DrizzleJobQueue implements JobQueue {
         attempts: sql`${jobs.attempts} + 1`,
         updatedAt: sql`now()`,
       })
-      .where(eq(jobs.id, jobId));
+      .where(and(eq(jobs.id, jobId), this.claimStillHeld(claim)))
+      .returning({ id: jobs.id });
+    return rows.length > 0;
   }
 
   async renewClaim(companionId: string, owner: string, leaseMs: number): Promise<RenewOutcome> {

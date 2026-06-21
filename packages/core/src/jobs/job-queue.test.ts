@@ -63,11 +63,11 @@ class FlakyRenewQueue implements JobQueue {
   nextDueJob(companionId: string): Promise<QueuedJob | null> {
     return this.inner.nextDueJob(companionId);
   }
-  markDone(jobId: string): Promise<void> {
-    return this.inner.markDone(jobId);
+  markDone(jobId: string, claim: ClaimedCompanion): Promise<boolean> {
+    return this.inner.markDone(jobId, claim);
   }
-  markFailed(jobId: string, error: string): Promise<void> {
-    return this.inner.markFailed(jobId, error);
+  markFailed(jobId: string, error: string, claim: ClaimedCompanion): Promise<boolean> {
+    return this.inner.markFailed(jobId, error, claim);
   }
   renewClaim(companionId: string, owner: string, leaseMs: number): Promise<RenewOutcome> {
     this.renewCalls += 1;
@@ -123,15 +123,15 @@ describe('DrizzleJobQueue', () => {
     await close();
   });
 
-  async function drainClaimed(companionId: string): Promise<readonly string[]> {
+  async function drainClaimed(claim: ClaimedCompanion): Promise<readonly string[]> {
     const seen: string[] = [];
     for (
-      let job = await queue.nextDueJob(companionId);
+      let job = await queue.nextDueJob(claim.companionId);
       job;
-      job = await queue.nextDueJob(companionId)
+      job = await queue.nextDueJob(claim.companionId)
     ) {
       seen.push(job.dedupeKey);
-      await queue.markDone(job.id);
+      await queue.markDone(job.id, claim);
     }
     return seen;
   }
@@ -141,8 +141,8 @@ describe('DrizzleJobQueue', () => {
     await queue.enqueue({ companionId: companionA, type: 'consolidate' });
     await queue.enqueue({ companionId: companionA, type: 'consolidate' });
 
-    await queue.claimNextCompanion('node-1', 60_000);
-    expect(await drainClaimed(companionA)).toEqual(['consolidate']); // collapsed to one
+    const claim = await queue.claimNextCompanion('node-1', 60_000);
+    expect(await drainClaimed(claim!)).toEqual(['consolidate']); // collapsed to one
   });
 
   it('does not coalesce distinct reaction_learn events, but dedupes a re-react', async () => {
@@ -166,8 +166,8 @@ describe('DrizzleJobQueue', () => {
       payload: { messageId: 'm1', emoji: '👍' },
     });
 
-    await queue.claimNextCompanion('node-1', 60_000);
-    expect([...(await drainClaimed(companionA))].sort()).toEqual(
+    const claim = await queue.claimNextCompanion('node-1', 60_000);
+    expect([...(await drainClaimed(claim!))].sort()).toEqual(
       [reactionLearnDedupeKey('m1', '👍'), reactionLearnDedupeKey('m2', '🎉')].sort(),
     );
   });
@@ -240,6 +240,55 @@ describe('DrizzleJobQueue', () => {
       reason: 'reclaimed',
       heldBy: 'node-1',
     });
+  });
+
+  it('fences a terminal write to the claim that ran the job (C1: stale writer rejected)', async () => {
+    await queue.enqueue({ companionId: companionA, type: 'consolidate' });
+    const stale = await queue.claimNextCompanion('node-1', 60_000);
+    expect(stale).not.toBeNull();
+    const job = await queue.nextDueJob(companionA);
+    expect(job).not.toBeNull();
+
+    // A rival reclaims the companion — exactly the (owner, generation) bump that
+    // tryClaim's `generation + 1` produces on takeover.
+    const newGeneration = stale!.generation + 1;
+    await db
+      .update(companionClaims)
+      .set({ owner: 'node-2', generation: newGeneration })
+      .where(eq(companionClaims.companionId, companionA));
+
+    // node-1's stale terminal write matches zero rows: the job stays pending for
+    // the reclaiming node rather than being stamped done by the superseded epoch.
+    expect(await queue.markDone(job!.id, stale!)).toBe(false);
+    const [stillPending] = await db.select().from(jobs).where(eq(jobs.id, job!.id));
+    expect(stillPending?.status).toBe('pending');
+
+    // The reclaiming node's own claim lands the outcome.
+    const fresh: ClaimedCompanion = {
+      companionId: companionA,
+      owner: 'node-2',
+      generation: newGeneration,
+    };
+    expect(await queue.markDone(job!.id, fresh)).toBe(true);
+    const [done] = await db.select().from(jobs).where(eq(jobs.id, job!.id));
+    expect(done?.status).toBe('done');
+  });
+
+  it('fences markFailed to the claim that ran the job (stale failure does not stomp)', async () => {
+    await queue.enqueue({ companionId: companionA, type: 'consolidate' });
+    const stale = await queue.claimNextCompanion('node-1', 60_000);
+    const job = await queue.nextDueJob(companionA);
+    await db
+      .update(companionClaims)
+      .set({ owner: 'node-2', generation: stale!.generation + 1 })
+      .where(eq(companionClaims.companionId, companionA));
+
+    // A stale node marking it failed must not land — `consolidate` has no retry,
+    // so a stomped `failed` would silently drop work the reclaiming node completes.
+    expect(await queue.markFailed(job!.id, 'boom', stale!)).toBe(false);
+    const [row] = await db.select().from(jobs).where(eq(jobs.id, job!.id));
+    expect(row?.status).toBe('pending');
+    expect(row?.lastError).toBeNull();
   });
 });
 
@@ -340,7 +389,8 @@ describe('JobProcessorPool', () => {
       consolidate: async (job) => {
         handled.push(job.dedupeKey);
         // Simulate a rival node reclaiming the companion mid-drain: rewrite the
-        // claim's owner so node-1's between-jobs renewClaim no longer matches.
+        // claim's owner so node-1 no longer matches — both the per-job terminal-write
+        // fence and the between-jobs renewClaim now reject node-1.
         if (job.dedupeKey === 'first') {
           await db
             .update(companionClaims)
@@ -364,11 +414,13 @@ describe('JobProcessorPool', () => {
     pool.nudge();
     await pool.whenIdle();
 
-    // The lease moved after 'first', so node-1 bails before running 'second' —
-    // bounding the overlap to the one job already in flight. 'second' stays pending
-    // for whichever node now holds the claim.
+    // node-1 ran 'first's handler but the claim moved to node-2 mid-run, so its
+    // terminal write is fenced out (the C1 fix — node-1 must not stamp an outcome
+    // node-2 now owns); the between-jobs check then stops it before 'second'. Both
+    // jobs stay pending for whichever node now holds the claim — 'first' re-runs
+    // cleanly under the idempotent-handler invariant.
     expect(handled).toEqual(['first']);
-    expect(await countDuePending(db)).toBe(1);
+    expect(await countDuePending(db)).toBe(2);
   });
 
   it('leaves a job pending (does not complete it) when the lease is lost mid-run', async () => {
@@ -448,6 +500,55 @@ describe('JobProcessorPool', () => {
     // The handler error is surfaced on the lost-lease warning, not swallowed.
     const lostLease = warnings.find((w) => w.message.includes('lease lost mid-run'));
     expect(lostLease?.context?.handlerError).toBe(handlerError);
+  });
+
+  it('fences the terminal write when the claim is reclaimed in the heartbeat blind spot', async () => {
+    // The C1 race: the lease lapses and is reclaimed *between* heartbeats, so the
+    // in-process `lease.aborted` flag is still false when the job completes. With the
+    // heartbeat set far longer than the (instant) job, that flag never trips — the DB
+    // fence on markDone is the only backstop. The stale write must match zero rows so
+    // the job stays pending for the reclaiming node, instead of node-1 stamping `done`
+    // over node-2's outcome.
+    const warnings: Array<{ message: string; context?: Record<string, unknown> }> = [];
+    const capturingLogger: Logger = {
+      error() {},
+      info() {},
+      warn(message: string, context?: Record<string, unknown>) {
+        warnings.push(context === undefined ? { message } : { message, context });
+      },
+    };
+    const handlers: JobHandlers = {
+      consolidate: async () => {
+        // A rival reclaims mid-run: the (owner, generation) bump a real takeover makes.
+        // claimed_until is left live, so node-1's between-jobs renewal still fails on
+        // owner — but the terminal write has already happened by then.
+        await db
+          .update(companionClaims)
+          .set({ owner: 'node-2', generation: sql`${companionClaims.generation} + 1` })
+          .where(eq(companionClaims.companionId, companionA));
+      },
+    };
+    const pool = new JobProcessorPool(queue, handlers, {
+      owner: 'node-1',
+      concurrency: 1,
+      leaseMs: 60_000,
+      // Far longer than the instant job, so the heartbeat never fires and
+      // `lease.aborted` stays false: only the DB fence can catch the takeover.
+      heartbeatMs: 60_000,
+      pollMs: 60_000,
+      logger: capturingLogger,
+    });
+
+    await queue.enqueue({ companionId: companionA, type: 'consolidate' });
+
+    pool.nudge();
+    await pool.whenIdle();
+
+    // Stale write fenced out: the job is still pending+due for the reclaiming node.
+    expect(await countDuePending(db)).toBe(1);
+    const fenced = warnings.find((w) => w.message.includes('terminal job write fenced'));
+    expect(fenced?.context?.outcome).toBe('done');
+    expect(fenced?.context?.jobId).toBeDefined();
   });
 
   it('marks a job failed when no handler is registered for its type (lease held)', async () => {

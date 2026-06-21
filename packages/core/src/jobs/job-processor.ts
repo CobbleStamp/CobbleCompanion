@@ -210,7 +210,7 @@ export class JobProcessorPool {
       while (!this.stopping && !lease.signal.aborted) {
         const job = await this.queue.nextDueJob(claim.companionId);
         if (!job) return;
-        await this.runJob(job, lease.signal);
+        await this.runJob(job, claim, lease.signal);
         // Between-jobs ownership check. The heartbeat keeps the lease alive *during*
         // a job; this catches a takeover *between* jobs synchronously, bounding the
         // overlap to the one job already in flight rather than to a heartbeat tick.
@@ -250,7 +250,7 @@ export class JobProcessorPool {
     }
   }
 
-  private async runJob(job: QueuedJob, lease: AbortSignal): Promise<void> {
+  private async runJob(job: QueuedJob, claim: ClaimedCompanion, lease: AbortSignal): Promise<void> {
     const handler = this.handlers[job.type];
     if (!handler) {
       this.opts.logger.error('no handler for job type', { type: job.type, jobId: job.id });
@@ -265,7 +265,12 @@ export class JobProcessorPool {
         });
         return;
       }
-      await this.queue.markFailed(job.id, `no handler for job type ${job.type}`);
+      const wrote = await this.queue.markFailed(
+        job.id,
+        `no handler for job type ${job.type}`,
+        claim,
+      );
+      if (!wrote) this.logFencedWrite(job, 'failed');
       return;
     }
     let handlerError: unknown;
@@ -283,7 +288,12 @@ export class JobProcessorPool {
           companionId: job.companionId,
           error,
         });
-        await this.queue.markFailed(job.id, error instanceof Error ? error.message : String(error));
+        const wrote = await this.queue.markFailed(
+          job.id,
+          error instanceof Error ? error.message : String(error),
+          claim,
+        );
+        if (!wrote) this.logFencedWrite(job, 'failed');
         return;
       }
       handlerError = error;
@@ -305,7 +315,25 @@ export class JobProcessorPool {
       });
       return;
     }
-    await this.queue.markDone(job.id);
+    const wrote = await this.queue.markDone(job.id, claim);
+    if (!wrote) this.logFencedWrite(job, 'done');
+  }
+
+  /**
+   * The terminal write was fenced out: between the `lease.aborted` early-out and
+   * the DB write, this drain's claim was reclaimed (the C1 race window the
+   * in-process flag can't close, since the heartbeat only fires every
+   * `heartbeatMs`). The reclaiming node owns the job and will run it to a real
+   * outcome; our stale write matched zero rows. Surface it rather than swallow it.
+   */
+  private logFencedWrite(job: QueuedJob, outcome: 'done' | 'failed'): void {
+    this.opts.logger.warn('terminal job write fenced; claim reclaimed before write', {
+      jobId: job.id,
+      type: job.type,
+      companionId: job.companionId,
+      owner: this.opts.owner,
+      outcome,
+    });
   }
 }
 
