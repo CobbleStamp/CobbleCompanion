@@ -225,6 +225,18 @@ independent gates.
   related but tracked as its own workstream; here we only need the _queue_ to be
   fleet-coherent, not the _compute_ to be relocated.
 - Autoscaling policy/metrics tuning (that follows once correctness holds).
+- **Fleet-scale load-shedding & fairness.** This pass is **fault tolerance** (correctness under node
+  failure), not fault-free behavior under scale. Out of scope, deferred until scale is needed:
+  - **Fleet-wide concurrency + per-user connection caps.** The WS in-flight cap is _per connection_
+    (`ws/register.ts`, `WS_MAX_IN_FLIGHT`); there is no global semaphore on turn-producing methods
+    (`messages.send`/`proposals.confirm`/`greeting.stream`) and no per-user connection cap at the
+    handshake, so one authed user opening N connections runs N concurrent turns. The per-companion
+    vitality wallet caps spend, not concurrent compute across companions. Load is shed, not lost.
+  - **Live-delivery within-tick catch-up.** The heartbeat reads a bounded `EVENT_BATCH` per tick
+    (`ws/register.ts`); a sustained produce rate above one batch per tick grows backlog latency
+    unbounded. No event is dropped — the cursor only advances over delivered rows. Fix when needed:
+    loop the read within a tick until `< EVENT_BATCH` (capped), backed by a
+    `companion_events(companion_id, seq)` index.
 
 ## 5. Solution design
 

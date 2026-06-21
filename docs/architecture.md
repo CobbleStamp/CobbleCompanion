@@ -859,7 +859,9 @@ flowchart TB
   hardened against a single authed client: a **frame-size cap** (`WS_MAX_PAYLOAD_BYTES`) rejects an
   oversized frame at the transport before any parse, and a **per-connection in-flight cap**
   (`WS_MAX_IN_FLIGHT`) sheds load past N concurrently-dispatching requests (frames multiplex, so one
-  socket can otherwise fan out unbounded work against CPU / the DB pool).
+  socket can otherwise fan out unbounded work against CPU / the DB pool). This cap is _per
+  connection_, not fleet-wide; a fleet-scale concurrency limiter and a per-user connection cap are
+  out of scope here (§9).
 - **Connecting claims the companion (embodiment).** A WS that names a companion takes **exclusive
   embodiment** — one live connection per companion, the product's "one room at a time" rule
   (`product-overview.md` §2.2). The claim is a row in **`active_embodiment`** keyed by a sortable
@@ -881,6 +883,9 @@ flowchart TB
   were removed). The cursor read is gated on a **visibility horizon** (the inserting transaction's
   `xid` below `pg_snapshot_xmin`) so a late-committing row is never skipped — a `bigserial` seq is
   assigned at INSERT but visible at COMMIT, and commits can reorder (`deliver-scalability.md` §C).
+  The heartbeat reads a bounded batch per tick (`EVENT_BATCH`); no event is lost (the cursor only
+  advances over delivered rows), but under a sustained produce rate above one batch per tick the
+  backlog latency is unbounded — within-tick catch-up is out of scope here (§9).
 - **Establishment is snapshot + live, reconciled by id.** On (re)connect the client loads the
   transcript snapshot (`messages.list`) for everything up to the connect cursor and merges the live
   event stream **deduped by server message id** — so a reply that persists after the snapshot still
@@ -1082,7 +1087,18 @@ owned by `development-plan.md`.
   behind every node's settled cursor is safe), partitioning, or archival. (Upload staging, by
   contrast, *is* reclaimed — the S3 bucket lifecycle rule, or the `file` backend's wired
   `purgeExpired()` sweep; `implementation.md` §2.4, `docs/plans/staging-object-storage.md`.)
-- **Native surfaces** — Mobile/Desktop clients, OS-tool bridges, and the Sync Courier.
+- **Fleet-scale load-shedding & fairness.** This release delivers multi-node **fault tolerance**
+  (correctness under node failure — leases, fencing, single-writer drain, the visibility-gap guard,
+  clean scale-in; `deliver-scalability.md`), **not** fault-free behavior under scale. Two limits are
+  deliberately partial: (a) the WS in-flight cap (§6) is **per connection**, so there is no
+  fleet-wide concurrency limiter and no per-user connection cap — one authed user opening N
+  connections runs N concurrent turns (the per-companion vitality wallet caps spend, not concurrent
+  compute across companions); and (b) live delivery reads a bounded `EVENT_BATCH` per heartbeat (§6),
+  so a sustained produce rate above one batch per tick grows backlog latency unbounded. **Neither
+  loses data or corrupts state** — load is shed or slowed, the event cursor only advances over
+  delivered rows — so both are scale concerns, not correctness concerns. Deferred until scale is
+  needed: a global semaphore on turn-producing methods + a per-user connection cap at the handshake,
+  and a within-tick catch-up loop (capped) backed by a `companion_events(companion_id, seq)` index.
 - **Transcript compaction** — summarizing the compactible remainder when the context window fills.
 - **Security hardening** — encryption-at-rest specifics, data inspection/management/delete controls,
   on-device data-locality for native surfaces, and propose→approve audit-trail hardening (§8).
