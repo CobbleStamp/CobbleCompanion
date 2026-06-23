@@ -4,14 +4,16 @@
  * the TTL) means the user is embodying the companion now. This replaces the per-node
  * in-memory presence store, so a turn on one node and a motivation tick on another
  * see the same presence — and a dropped connection naturally becomes "absent" when
- * its claim lapses. Writes are best-effort/fire-and-forget (presence is volatile).
+ * its claim lapses. Writes are best-effort/fire-and-forget (presence is volatile)
+ * and fenced on the full claim key (connectionId + claimSeq), so a write that
+ * loses the claim mid-flight self-fences rather than stomping the successor.
  */
 
 import { activeEmbodiment, type Database } from '@cobble/db';
 import { and, eq, sql } from 'drizzle-orm';
 import { consoleLogger, type Logger } from '../logging.js';
 import type { PresenceSignal } from '../motivation/presence.js';
-import type { PresenceStore } from '../motivation/presence-store.js';
+import type { PresenceFence, PresenceStore } from '../motivation/presence-store.js';
 
 export class EmbodimentPresenceStore implements PresenceStore {
   constructor(
@@ -20,15 +22,15 @@ export class EmbodimentPresenceStore implements PresenceStore {
     private readonly logger: Logger = consoleLogger,
   ) {}
 
-  recordHeartbeat(companionId: string, opts: { tabVisible: boolean }): void {
+  recordHeartbeat(companionId: string, opts: { tabVisible: boolean; fence: PresenceFence }): void {
     // The claim's `last_heartbeat` is renewed by the connection's heartbeat loop;
     // a heartbeat only refreshes visibility here (not activity).
-    this.fireUpdate(companionId, { tabVisible: opts.tabVisible });
+    this.fireUpdate(companionId, opts.fence, { tabVisible: opts.tabVisible });
   }
 
-  recordActivity(companionId: string): void {
+  recordActivity(companionId: string, fence: PresenceFence): void {
     // Real activity (a turn) bumps last_activity_at and implies the room is in front.
-    this.fireUpdate(companionId, { lastActivityAt: sql`now()`, tabVisible: true });
+    this.fireUpdate(companionId, fence, { lastActivityAt: sql`now()`, tabVisible: true });
   }
 
   async get(companionId: string): Promise<PresenceSignal | null> {
@@ -60,12 +62,27 @@ export class EmbodimentPresenceStore implements PresenceStore {
 
   private fireUpdate(
     companionId: string,
+    fence: PresenceFence,
     patch: { lastActivityAt?: ReturnType<typeof sql>; tabVisible?: boolean },
   ): void {
+    // Fence the write on the full claim key (connectionId + claimSeq), not just
+    // companionId — the same fence `renew`/`holds` use. The caller already passed
+    // the dispatcher's `holds()` check, but that check and this write are not
+    // atomic: if a newer connection force-claims the room in between, an unfenced
+    // by-companionId write would stomp the successor's freshly-claimed
+    // tabVisible/lastActivityAt. Scoping the WHERE makes a superseded write a
+    // self-fencing no-op (presence is volatile — the live holder's next beat
+    // re-establishes the signal).
     void this.db
       .update(activeEmbodiment)
       .set({ ...patch, updatedAt: sql`now()` })
-      .where(eq(activeEmbodiment.companionId, companionId))
+      .where(
+        and(
+          eq(activeEmbodiment.companionId, companionId),
+          eq(activeEmbodiment.connectionId, fence.connectionId),
+          eq(activeEmbodiment.claimSeq, fence.claimSeq),
+        ),
+      )
       .catch((error: unknown) =>
         this.logger.error('failed to record presence on the embodiment claim', {
           operation: 'embodiment.presence',

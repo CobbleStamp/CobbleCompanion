@@ -121,7 +121,7 @@ export function streamingMethods(deps: AppDeps): WsMethods {
         connectionId,
         claimSeq,
       } = await embodiedCompanion(ctx);
-      presence.recordActivity(companionId);
+      presence.recordActivity(companionId, { connectionId, claimSeq });
       const overCap = await overCapGuard(quota, companionId);
       if (overCap) {
         throw new OverCapError(overCap);

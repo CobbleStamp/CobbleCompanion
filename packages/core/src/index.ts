@@ -337,7 +337,11 @@ export {
   type PresenceThresholds,
   presencePosture,
 } from './motivation/presence.js';
-export { InMemoryPresenceStore, type PresenceStore } from './motivation/presence-store.js';
+export {
+  InMemoryPresenceStore,
+  type PresenceFence,
+  type PresenceStore,
+} from './motivation/presence-store.js';
 // Motivation engine — drives, arbitration, explore burst, the engine (Phase 4)
 export {
   computeDrives,

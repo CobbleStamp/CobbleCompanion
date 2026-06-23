@@ -51,13 +51,39 @@ describe('EmbodimentPresenceStore', () => {
 
   it('records activity (bumps last activity) and visibility on the claim', async () => {
     await claims.claim({ companionId, connectionId: 'o1', node: 'n1', ttlMs: TTL });
-    presence.recordHeartbeat(companionId, { tabVisible: false });
+    const fence = { connectionId: 'o1', claimSeq: 1 };
+    presence.recordHeartbeat(companionId, { tabVisible: false, fence });
     await settle();
     expect((await presence.get(companionId))?.tabVisible).toBe(false);
 
-    presence.recordActivity(companionId);
+    presence.recordActivity(companionId, fence);
     await settle();
     expect((await presence.get(companionId))?.tabVisible).toBe(true);
+  });
+
+  it('ignores a write fenced to a superseded claim (no stomp of the successor)', async () => {
+    // o1 claims, then a newer connection o2 force-claims (its later write wins the
+    // room, bumping claimSeq to 2 and setting tabVisible=true). A late write from
+    // the superseded o1 must NOT flip the live successor's presence.
+    await claims.claim({ companionId, connectionId: 'o1', node: 'n1', ttlMs: TTL });
+    await claims.claim({ companionId, connectionId: 'o2', node: 'n1', ttlMs: TTL });
+
+    // o1's stale fence (connectionId o1, claimSeq 1) no longer matches the row.
+    presence.recordHeartbeat(companionId, {
+      tabVisible: false,
+      fence: { connectionId: 'o1', claimSeq: 1 },
+    });
+    await settle();
+    // Successor o2's foregrounded presence is intact — the stale write was a no-op.
+    expect((await presence.get(companionId))?.tabVisible).toBe(true);
+
+    // The live holder o2 (claimSeq 2) can still update presence.
+    presence.recordHeartbeat(companionId, {
+      tabVisible: false,
+      fence: { connectionId: 'o2', claimSeq: 2 },
+    });
+    await settle();
+    expect((await presence.get(companionId))?.tabVisible).toBe(false);
   });
 
   it('becomes absent when the claim lapses past the TTL', async () => {

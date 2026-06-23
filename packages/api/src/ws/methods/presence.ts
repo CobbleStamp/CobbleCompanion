@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import type { AppDeps } from '../../app.js';
 import type { WsMethods } from '../dispatch.js';
-import { companionOf, parseParams } from './helpers.js';
+import { requireEmbodiment } from '../fencing.js';
+import { parseParams } from './helpers.js';
 
 const heartbeatParams = z.object({ tabVisible: z.boolean() });
 
@@ -22,8 +23,11 @@ export function presenceMethods(deps: AppDeps): WsMethods {
         params,
         'tabVisible (boolean) is required',
       );
-      const companionId = await companionOf(embodiment, ctx);
-      presence.recordHeartbeat(companionId, { tabVisible });
+      const binding = await requireEmbodiment(embodiment, ctx);
+      presence.recordHeartbeat(binding.companionId, {
+        tabVisible,
+        fence: { connectionId: binding.connectionId, claimSeq: binding.claimSeq },
+      });
       return { ok: true };
     },
   };
