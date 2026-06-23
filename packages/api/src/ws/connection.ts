@@ -7,6 +7,12 @@ import type { WebSocket } from '@fastify/websocket';
  *  loses the renew) and a turn that self-fences mid-loop. */
 export const SUPERSEDED_CLOSE = 4002;
 
+/** WS close code for a connection whose outbound buffer outgrew `maxBufferedBytes`
+ *  — a slow/stuck/dead consumer the server stops feeding to protect node memory.
+ *  1013 ("try again later") signals the client to reconnect; it then resumes live
+ *  delivery from its cursor with no events lost (deliver-scalability.md §5.2). */
+export const SLOW_CONSUMER_CLOSE = 1013;
+
 /** The companion this connection embodies + the ULID it holds the claim with (D2). */
 export interface EmbodimentBinding {
   readonly companionId: string;
@@ -30,6 +36,9 @@ export class WsConnection {
   /** Requests currently dispatching on this connection (frames multiplex, so this
    *  can exceed 1); bounded by `maxInFlight` to shed load (S3). */
   private inFlight = 0;
+  /** Set once we've closed this connection for backpressure, so we log + close
+   *  exactly once even if more sends race in before the socket flips to CLOSING. */
+  private shedForBackpressure = false;
 
   constructor(
     private readonly socket: WebSocket,
@@ -37,6 +46,9 @@ export class WsConnection {
     private readonly logger: Logger,
     /** Max concurrent in-flight requests before frames are shed (`AppConfig.wsMaxInFlight`). */
     private readonly maxInFlight: number,
+    /** Max queued unsent bytes toward this client before it's closed as a slow
+     *  consumer (`AppConfig.wsMaxBufferedBytes`). */
+    private readonly maxBufferedBytes: number,
   ) {}
 
   get embodiment(): EmbodimentBinding | undefined {
@@ -89,6 +101,25 @@ export class WsConnection {
     // this connection and the method's terminal result is racing the close. A send is
     // then a silent no-op, not a failure worth logging.
     if (this.socket.readyState !== this.socket.OPEN) {
+      return;
+    }
+    // Backpressure (deliver-scalability.md §5.2): a WS write never blocks, so bytes a
+    // slow/stuck/dead client hasn't acked queue in the process heap (`bufferedAmount`).
+    // Past the ceiling, stop feeding this one connection and close it — a healthy
+    // client reconnects and resumes from its cursor (no events lost); a non-draining
+    // one is dropped before it can OOM the node. Drop this frame too: enqueuing it
+    // would only grow the backlog we're shedding.
+    if (this.socket.bufferedAmount > this.maxBufferedBytes) {
+      if (!this.shedForBackpressure) {
+        this.shedForBackpressure = true;
+        this.logger.warn('ws consumer too slow; closing to shed outbound backlog', {
+          operation: 'ws.send',
+          userId: this.userId,
+          bufferedAmount: this.socket.bufferedAmount,
+          maxBufferedBytes: this.maxBufferedBytes,
+        });
+        this.close(SLOW_CONSUMER_CLOSE, 'slow consumer');
+      }
       return;
     }
     try {

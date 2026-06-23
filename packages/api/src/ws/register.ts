@@ -48,7 +48,13 @@ export async function registerWebSocket(
       socket.close(4001, 'unauthenticated'); // preValidation guarantees a userId; defensive.
       return;
     }
-    const connection = new WsConnection(socket, userId, deps.logger, deps.config.wsMaxInFlight);
+    const connection = new WsConnection(
+      socket,
+      userId,
+      deps.logger,
+      deps.config.wsMaxInFlight,
+      deps.config.wsMaxBufferedBytes,
+    );
 
     // Dispatch frames immediately (don't await the claim below) so none are lost;
     // methods that mutate fence on the DB claim, so they're correct regardless of

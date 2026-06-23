@@ -105,6 +105,14 @@ export interface AppConfig {
    *  over it gets a `rate_limited` error, never dispatched) so a single authed
    *  client can't exhaust CPU / the DB pool. */
   readonly wsMaxInFlight: number;
+  /** Max bytes the server may have queued (unsent) toward a single connection
+   *  before it is treated as a non-draining (slow/stuck/dead) consumer and closed.
+   *  A WS write never blocks: bytes a slow client hasn't acked pile up in the
+   *  process heap (`socket.bufferedAmount`), so without this ceiling one stuck
+   *  connection can OOM the whole node. On close the client reconnects and resumes
+   *  live delivery from its cursor (no events lost), so this trades a slow client's
+   *  socket for the node's memory safety (deliver-scalability.md §5.2). */
+  readonly wsMaxBufferedBytes: number;
   /**
    * The token balance a new companion is seeded with in **each** vitality wallet
    * (stamina + energy). Not a cap — wallets only refill by feeding (architecture.md §4.8).
@@ -218,6 +226,15 @@ const envSchema = z
       .default(256 * 1024),
     // Per-connection in-flight dispatch cap (load-shedding backstop).
     WS_MAX_IN_FLIGHT: z.coerce.number().int().positive().default(32),
+    // Per-connection outbound backpressure ceiling: past this many unsent bytes
+    // queued toward one client, the connection is closed (slow/dead consumer) so a
+    // non-draining socket can't grow the heap without bound. 8 MiB is generous for
+    // a healthy client's transient catch-up burst while bounding worst-case memory.
+    WS_MAX_BUFFERED_BYTES: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(8 * 1024 * 1024),
     STARTING_VITALITY_TOKENS: z.coerce
       .number()
       .int()
@@ -464,6 +481,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     wsClaimTtlMs: parsed.WS_CLAIM_TTL_MS,
     wsMaxPayloadBytes: parsed.WS_MAX_PAYLOAD_BYTES,
     wsMaxInFlight: parsed.WS_MAX_IN_FLIGHT,
+    wsMaxBufferedBytes: parsed.WS_MAX_BUFFERED_BYTES,
     startingVitalityTokens: parsed.STARTING_VITALITY_TOKENS,
     mcpServers: parseMcpServers(parsed.MCP_SERVERS),
     serviceRegistrySeeds: parseServiceRegistrySeeds(parsed.SERVICE_REGISTRY_SEEDS),

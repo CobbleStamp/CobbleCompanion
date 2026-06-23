@@ -138,6 +138,7 @@ export const testConfig: AppConfig = {
   wsClaimTtlMs: 200,
   wsMaxPayloadBytes: 256 * 1024,
   wsMaxInFlight: 32,
+  wsMaxBufferedBytes: 8 * 1024 * 1024,
   startingVitalityTokens: 1_000_000,
   mcpServers: [],
   serviceRegistrySeeds: [],

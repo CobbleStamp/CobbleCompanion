@@ -29,6 +29,17 @@ describe('loadConfig', () => {
     expect(config.ingestionMaxBytes).toBeGreaterThan(0);
     expect(config.ingestionQueueMax).toBe(100);
     expect(config.startingVitalityTokens).toBe(1_000_000);
+    expect(config.wsMaxInFlight).toBe(32);
+    expect(config.wsMaxBufferedBytes).toBe(8 * 1024 * 1024);
+  });
+
+  it('overrides the WS outbound-backpressure ceiling from the environment', () => {
+    const config = loadConfig({ ...base, ...fakeProviders, WS_MAX_BUFFERED_BYTES: '1048576' });
+    expect(config.wsMaxBufferedBytes).toBe(1_048_576);
+  });
+
+  it('rejects a non-positive WS_MAX_BUFFERED_BYTES', () => {
+    expect(() => loadConfig({ ...base, ...fakeProviders, WS_MAX_BUFFERED_BYTES: '0' })).toThrow();
   });
 
   it('overrides the queue + starting-vitality knobs from the environment', () => {
