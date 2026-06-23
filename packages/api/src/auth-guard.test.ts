@@ -121,6 +121,7 @@ describe('makeRequireAuth success path', () => {
     serviceClientId: 'sprout',
     externalId: '11111111-2222-4333-8444-555555555555',
     email: null,
+    isAdmin: false,
     createdAt: '2026-06-13T00:00:00.000Z',
   };
 

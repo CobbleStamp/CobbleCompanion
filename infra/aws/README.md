@@ -29,8 +29,9 @@ deployment diagram, resource catalog, and runtime layout are in
 |---|---|
 | `src/network.ts` | VPC, one public subnet, IGW, route table, `cc-web` security group |
 | `src/registry.ts` | ECR repo + lifecycle policy + `imageUri`/`registryHost` helpers |
+| `src/storage.ts` | S3 bucket for upload staging — private (public-access-blocked), SSE-S3, **lifecycle TTL** on `tmp-uploads/` (1-day expiry = the staging GC backstop), **CORS** allowing presigned `PUT` from the app origin (staging-object-storage.md) |
 | `src/secrets.ts` | SSM Parameter Store `SecureString` params `OPENROUTER_API_KEY` + `DATABASE_URL` (placeholder value, set out of band; free Standard tier) |
-| `src/iam.ts` | EC2 instance role + profile (ECR pull; `ssm:GetParameter(s)` + scoped `kms:Decrypt`; SSM Session Manager) |
+| `src/iam.ts` | EC2 instance role + profile (ECR pull; `ssm:GetParameter(s)` + scoped `kms:Decrypt`; SSM Session Manager; **scoped `s3:{Put,Get,Delete}Object` on the uploads bucket's `tmp-uploads/*`** for presigning + ingest read/delete) |
 | `src/compute.ts` | EC2 instance (encrypted root), persistent encrypted EBS volume for Caddy certs (survives redeploy), EIP, `user-data` (swap, Docker app + Caddy, keep-alive timer) |
 
 ---
@@ -60,11 +61,13 @@ pulumi stack init dev            # first time only
 pulumi stack select dev
 
 pnpm install --ignore-workspace
-pulumi preview                   # VPC, subnet, SG, ECR, 2 secrets, IAM, EC2, EIP
+pulumi preview                   # VPC, subnet, SG, ECR, S3 uploads bucket, 2 secrets, IAM, EC2, EIP
 pulumi up
 ```
 
-`pulumi stack output` prints `ecrRepoUrl`, `instancePublicIp`, and `url`.
+`pulumi stack output` prints `ecrRepoUrl`, `instancePublicIp`, `url`, and `uploadsBucketName`.
+The app receives `UPLOAD_STAGING_BACKEND=s3` + the bucket name/region as non-secret env via
+`user-data` (no out-of-band step). Upload bytes never touch Postgres (staging-object-storage.md).
 
 ---
 

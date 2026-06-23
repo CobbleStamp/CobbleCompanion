@@ -11,7 +11,8 @@ For the full product vision see [`docs/product-overview.md`](./docs/product-over
 > own via a motivation engine with stamina/energy vitality (Phase 4); shows **growth** and a feeding
 > economy (Phase 5); acquires **MCP and CLI tools at runtime** with no redeploy (Phases 9–10); builds
 > a structured **user model** (Phases 11–13); **greets** on arrival (Phase 14); and pushes new
-> messages over a **standing event channel** (Phase 15). Native mobile/desktop surfaces (Phases 6–8)
+> messages live over a **permanent WebSocket** (the Phase 15 standing channel, reworked into the
+> stateless WS embodiment model in Phase D). Native mobile/desktop surfaces (Phases 6–8)
 > are the next frontier. A TypeScript monorepo (`packages/{shared,core,api,web}` + `db/`) with the
 > agent-loop harness, provider-agnostic LLM and embedding gateways, and an ≥80%-coverage test suite.
 > Deployment is managed with Pulumi under `infra/` — two options, AWS EC2 micro or
@@ -85,9 +86,14 @@ and cost for both live in [`docs/infra-setup.md`](./docs/infra-setup.md); the ap
 
 ```bash
 pnpm typecheck                # all packages
-pnpm test                     # full suite
+pnpm test                     # full suite (in-memory PGlite — no Docker needed)
 pnpm test:coverage            # suite + ≥80% coverage gate
 pnpm lint                     # prettier check (code)
+make test-integration         # *.integration.test.ts vs real Postgres in Docker
 ```
 
-These are exactly what CI runs (`.github/workflows/ci.yml`).
+`pnpm test` and `pnpm test:coverage` run against in-memory PGlite. The
+concurrency suites (`*.integration.test.ts`) need a real Postgres, so they are
+excluded from the default run; `make test-integration` boots the docker-compose
+`postgres` service and runs them against it. All of these are what CI runs
+(`.github/workflows/ci.yml`).

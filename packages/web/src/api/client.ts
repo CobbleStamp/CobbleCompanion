@@ -19,102 +19,65 @@ import type {
   ProactivityDial,
   ProcedureDto,
   ProposalDto,
-  SectionDto,
   SemanticSearchResultDto,
   SourceDto,
   StaminaEnergyDto,
+  UploadSlotDto,
   UsageDto,
   UserFactDto,
   UserFactsDto,
 } from '@cobble/shared';
-
-const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? '';
+import { authHeaders, SupersededError, wsClient } from './ws.js';
 
 export interface CurrentUser {
   readonly id: string;
-  readonly email: string;
+  readonly email: string | null;
 }
+
+// The bearer token is wired here (it rides the WS handshake and the file-upload
+// request); re-exported from the transport so <App/> need not know about ws.ts.
+export { setAccessTokenGetter, SupersededError } from './ws.js';
 
 /**
- * Returns the bearer token (a Google ID token, or null when auth is bypassed).
- * Wired up by <App/> once the user signs in, so the client need not import the
- * auth SDK.
+ * Whether the user is signed in (and who). Opening the WS authenticates at the
+ * handshake, so `auth.me` succeeding IS the gate; any failure (bad/expired token,
+ * no connection) reads as signed-out.
  */
-type AccessTokenGetter = () => Promise<string | null>;
-let getAccessToken: AccessTokenGetter = async () => null;
-
-export function setAccessTokenGetter(getter: AccessTokenGetter): void {
-  getAccessToken = getter;
-}
-
-async function authHeaders(): Promise<Record<string, string>> {
-  const token = await getAccessToken();
-  return token ? { authorization: `Bearer ${token}` } : {};
-}
-
-/**
- * The single fetch path: applies the bearer token (and a JSON content-type when
- * the body is a JSON string), then throws a body-aware error on any non-2xx.
- * Returns the raw Response so callers can read it as JSON, drain it as an SSE
- * stream, or ignore it (a 204). Every request flows through here so the
- * auth-header and error-surfacing contracts can't diverge between call sites.
- */
-async function send(path: string, init?: RequestInit): Promise<Response> {
-  const auth = await authHeaders();
-  // Only declare a JSON content-type for a string (JSON) body. A bodyless
-  // request must omit it — Fastify rejects an empty body with content-type:
-  // application/json (FST_ERR_CTP_EMPTY_JSON_BODY), 400-ing bodyless GET/POST.
-  // A FormData body (file upload) must also omit it so the browser can set the
-  // multipart boundary itself.
-  const contentType = typeof init?.body === 'string' ? { 'content-type': 'application/json' } : {};
-  const response = await fetch(`${API_URL}${path}`, {
-    ...init,
-    headers: { ...contentType, ...auth, ...(init?.headers ?? {}) },
-  });
-  if (!response.ok) {
-    const body = (await response.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? `request failed (${response.status})`);
-  }
-  return response;
-}
-
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await send(path, init);
-  return (await response.json()) as T;
-}
-
-/** Drive an endpoint that streams SSE chat events (chat + confirm). */
-async function* stream(path: string, init?: RequestInit): AsyncGenerator<ChatStreamEvent> {
-  const response = await send(path, init);
-  if (!response.body) throw new Error('streamed response has no body');
-  yield* readSse(response);
-}
-
 export async function fetchCurrentUser(): Promise<CurrentUser | null> {
-  const auth = await authHeaders();
-  const response = await fetch(`${API_URL}/auth/me`, { headers: auth });
-  if (!response.ok) return null;
-  const body = (await response.json()) as { user: CurrentUser };
-  return body.user;
+  try {
+    const { user } = await wsClient.call<{ user: CurrentUser }>('auth.me', undefined, null);
+    return user;
+  } catch {
+    return null;
+  }
 }
 
 export async function listCompanions(): Promise<CompanionDto[]> {
-  const body = await request<{ companions: CompanionDto[] }>('/companions');
-  return body.companions;
+  const { companions } = await wsClient.call<{ companions: CompanionDto[] }>(
+    'companions.list',
+    undefined,
+    null,
+  );
+  return companions;
 }
 
 export async function createCompanion(input: CreateCompanionBody): Promise<CompanionDto> {
-  const body = await request<{ companion: CompanionDto }>('/companions', {
-    method: 'POST',
-    body: JSON.stringify(input),
-  });
-  return body.companion;
+  const { companion } = await wsClient.call<{ companion: CompanionDto }>(
+    'companions.create',
+    input,
+    null,
+  );
+  return companion;
 }
 
 /** The companion's single continuous transcript (oldest-first). */
 export async function fetchMessages(companionId: string): Promise<MessageDto[]> {
-  const body = await request<{ messages: MessageDto[] }>(`/companions/${companionId}/messages`);
-  return body.messages;
+  const { messages } = await wsClient.call<{ messages: MessageDto[] }>(
+    'messages.list',
+    undefined,
+    companionId,
+  );
+  return messages;
 }
 
 /** Add an emoji reaction to one of the companion's messages (companion-reactions.md §8). */
@@ -123,10 +86,7 @@ export async function addReaction(
   messageId: string,
   emoji: string,
 ): Promise<void> {
-  await send(`/companions/${companionId}/messages/${messageId}/reactions`, {
-    method: 'POST',
-    body: JSON.stringify({ emoji }),
-  });
+  await wsClient.call('reactions.add', { messageId, emoji }, companionId);
 }
 
 /** Remove a previously added reaction. Idempotent — un-reacting a gone reaction is fine. */
@@ -135,16 +95,17 @@ export async function removeReaction(
   messageId: string,
   emoji: string,
 ): Promise<void> {
-  await send(
-    `/companions/${companionId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`,
-    { method: 'DELETE' },
-  );
+  await wsClient.call('reactions.remove', { messageId, emoji }, companionId);
 }
 
 /** Read-only snapshot of everything the companion holds (the memory browser). */
 export async function getCompanionMemory(companionId: string): Promise<MemorySnapshotDto> {
-  const body = await request<{ memory: MemorySnapshotDto }>(`/companions/${companionId}/memory`);
-  return body.memory;
+  const { memory } = await wsClient.call<{ memory: MemorySnapshotDto }>(
+    'memory.snapshot',
+    undefined,
+    companionId,
+  );
+  return memory;
 }
 
 /**
@@ -152,20 +113,17 @@ export async function getCompanionMemory(companionId: string): Promise<MemorySna
  * `beliefs` (read-only) the companion holds about the user (per-user).
  */
 export async function getUserFacts(): Promise<UserFactsDto> {
-  return request<UserFactsDto>('/user/facts');
+  return wsClient.call<UserFactsDto>('userFacts.list', undefined, null);
 }
 
 /** Correct a fact the companion holds about the user (authoritative user edit). */
 export async function updateUserFact(factId: string, object: string): Promise<UserFactDto> {
-  return request<UserFactDto>(`/user/facts/${factId}`, {
-    method: 'PATCH',
-    body: JSON.stringify({ object }),
-  });
+  return wsClient.call<UserFactDto>('userFacts.update', { factId, object }, null);
 }
 
 /** Forget a fact the companion holds about the user (it leaves the current set). */
 export async function forgetUserFact(factId: string): Promise<void> {
-  await send(`/user/facts/${factId}`, { method: 'DELETE' });
+  await wsClient.call('userFacts.delete', { factId }, null);
 }
 
 /** A source intake response: the created source and its queued ingestion job. */
@@ -188,10 +146,7 @@ export async function createNoteSource(
   companionId: string,
   input: CreateNoteSourceBody,
 ): Promise<SourceIntake> {
-  return request<SourceIntake>(`/companions/${companionId}/sources/note`, {
-    method: 'POST',
-    body: JSON.stringify(input),
-  });
+  return wsClient.call<SourceIntake>('sources.note', input, companionId);
 }
 
 /** Add a web link; the article is fetched and read in the background. */
@@ -199,68 +154,90 @@ export async function createLinkSource(
   companionId: string,
   input: CreateLinkSourceBody,
 ): Promise<SourceIntake> {
-  return request<SourceIntake>(`/companions/${companionId}/sources/link`, {
-    method: 'POST',
-    body: JSON.stringify(input),
-  });
+  return wsClient.call<SourceIntake>('sources.link', input, companionId);
 }
 
-/** Upload a document file (PDF/txt/md/docx/pptx); reading happens in the background. */
+/**
+ * Upload a document file (PDF/txt/md/docx/pptx); reading happens in the background.
+ * Three steps (staging-object-storage.md): (1) request a direct-upload slot over
+ * the WS — the server derives the kind from the filename; (2) PUT the bytes
+ * straight to the slot URL; (3) enqueue the source referencing the staged bytes.
+ *
+ * Step 2's target differs by backend: the S3 backend returns a presigned,
+ * cross-origin URL that must NOT carry our Authorization header (it would break
+ * the signature), while the local filesystem backend returns the same-origin
+ * `/uploads/local/...` route, which requires the bearer. Detect by the path.
+ */
 export async function uploadFileSource(companionId: string, file: File): Promise<FileSourceIntake> {
-  const form = new FormData();
-  form.append('file', file);
-  const response = await send(`/companions/${companionId}/sources/file`, {
-    method: 'POST',
-    body: form,
-  });
-  return (await response.json()) as FileSourceIntake;
+  const slot = await wsClient.call<UploadSlotDto>(
+    'sources.requestFileUpload',
+    { filename: file.name, byteSize: file.size },
+    companionId,
+  );
+
+  const origin = globalThis.location?.origin ?? 'http://localhost';
+  const isLocalRoute = new URL(slot.url, origin).pathname.startsWith('/uploads/local/');
+  const headers: Record<string, string> = { ...(slot.headers ?? {}) };
+  if (isLocalRoute) {
+    Object.assign(headers, await authHeaders());
+  }
+  const put = await fetch(slot.url, { method: slot.method, headers, body: file });
+  if (!put.ok) {
+    throw new Error(`upload failed (${put.status})`);
+  }
+
+  return wsClient.call<FileSourceIntake>(
+    'sources.file',
+    { uploadId: slot.uploadId, filename: file.name },
+    companionId,
+  );
 }
 
 /** The companion's sources, newest first. */
 export async function listSources(companionId: string): Promise<SourceDto[]> {
-  const body = await request<{ sources: SourceDto[] }>(`/companions/${companionId}/sources`);
-  return body.sources;
-}
-
-/** One source plus its sections (verbatim text + provenance). */
-export async function getSourceDetail(
-  companionId: string,
-  sourceId: string,
-): Promise<{ source: SourceDto; sections: SectionDto[] }> {
-  return request(`/companions/${companionId}/sources/${sourceId}`);
+  const { sources } = await wsClient.call<{ sources: SourceDto[] }>(
+    'sources.list',
+    undefined,
+    companionId,
+  );
+  return sources;
 }
 
 /** Ingestion progress for all sources ("Cobble has read N of M"). */
 export async function listIngestionJobs(companionId: string): Promise<IngestionJobDto[]> {
-  const body = await request<{ jobs: IngestionJobDto[] }>(`/companions/${companionId}/ingestion`);
-  return body.jobs;
+  const { jobs } = await wsClient.call<{ jobs: IngestionJobDto[] }>(
+    'ingestion.list',
+    undefined,
+    companionId,
+  );
+  return jobs;
 }
 
 /** Delete a source (and its job + sections) — e.g. dropping a job parked at the cap. */
 export async function deleteSource(companionId: string, sourceId: string): Promise<void> {
-  await send(`/companions/${companionId}/sources/${sourceId}`, { method: 'DELETE' });
+  await wsClient.call('sources.delete', { sourceId }, companionId);
 }
 
 /** A companion's stamina-wallet balance (the live indicator). */
 export async function getUsage(companionId: string): Promise<UsageDto> {
-  const body = await request<{ usage: UsageDto }>(`/companions/${companionId}/usage`);
-  return body.usage;
+  const { usage } = await wsClient.call<{ usage: UsageDto }>('usage.get', undefined, companionId);
+  return usage;
 }
 
 /** The companion's two vitality wallets — stamina + energy (Phase 4 meter). */
 export async function fetchBudget(companionId: string): Promise<StaminaEnergyDto> {
-  return request<StaminaEnergyDto>(`/companions/${companionId}/budget`);
+  return wsClient.call<StaminaEnergyDto>('budget.get', undefined, companionId);
 }
 
 /** The signed-in user's food pantry — the Kitchen's supply (per user). */
 export async function getFood(): Promise<FoodInventoryDto> {
-  const body = await request<{ food: FoodInventoryDto }>(`/food`);
-  return body.food;
+  const { food } = await wsClient.call<{ food: FoodInventoryDto }>('food.get', undefined, null);
+  return food;
 }
 
 /** The companion's four-axis growth standing (Phase 5). */
 export async function fetchGrowth(companionId: string): Promise<GrowthDto> {
-  return request<GrowthDto>(`/companions/${companionId}/growth`);
+  return wsClient.call<GrowthDto>('growth.get', undefined, companionId);
 }
 
 /**
@@ -271,16 +248,16 @@ export async function fetchActivity(
   companionId: string,
   before?: number,
 ): Promise<ProactiveActivityDto> {
-  const query = before !== undefined ? `?before=${before}` : '';
-  return request<ProactiveActivityDto>(`/companions/${companionId}/activity${query}`);
+  return wsClient.call<ProactiveActivityDto>(
+    'activity.list',
+    before !== undefined ? { before } : {},
+    companionId,
+  );
 }
 
 /** Feed the companion a food — consumes one from the user's pantry, refills a wallet. */
 export async function feedCompanion(companionId: string, food: FoodType): Promise<FeedResultDto> {
-  return request<FeedResultDto>(`/companions/${companionId}/feed`, {
-    method: 'POST',
-    body: JSON.stringify({ food }),
-  });
+  return wsClient.call<FeedResultDto>('feed', { food }, companionId);
 }
 
 /** Set the companion's proactivity dial (off / gentle / active). */
@@ -288,11 +265,12 @@ export async function setProactivityDial(
   companionId: string,
   dial: ProactivityDial,
 ): Promise<ProactivityDial> {
-  const body = await request<{ dial: ProactivityDial }>(`/companions/${companionId}/proactivity`, {
-    method: 'PATCH',
-    body: JSON.stringify({ dial }),
-  });
-  return body.dial;
+  const result = await wsClient.call<{ dial: ProactivityDial }>(
+    'proactivity.set',
+    { dial },
+    companionId,
+  );
+  return result.dial;
 }
 
 /** Search the companion's semantic memory (the browser's recall window). */
@@ -300,17 +278,22 @@ export async function searchMemory(
   companionId: string,
   query: string,
 ): Promise<SemanticSearchResultDto[]> {
-  const body = await request<{ results: SemanticSearchResultDto[] }>(
-    `/companions/${companionId}/memory/search`,
-    { method: 'POST', body: JSON.stringify({ query }) },
+  const { results } = await wsClient.call<{ results: SemanticSearchResultDto[] }>(
+    'memory.search',
+    { query },
+    companionId,
   );
-  return body.results;
+  return results;
 }
 
 /** The companion's consolidated episodic memories, most recent first. */
 export async function listEpisodes(companionId: string): Promise<EpisodeDto[]> {
-  const body = await request<{ episodes: EpisodeDto[] }>(`/companions/${companionId}/episodes`);
-  return body.episodes;
+  const { episodes } = await wsClient.call<{ episodes: EpisodeDto[] }>(
+    'episodes.list',
+    undefined,
+    companionId,
+  );
+  return episodes;
 }
 
 /** Recall episodes by topic (the browser's episodic recall window). */
@@ -318,22 +301,27 @@ export async function searchEpisodes(
   companionId: string,
   query: string,
 ): Promise<EpisodeSearchResultDto[]> {
-  const body = await request<{ results: EpisodeSearchResultDto[] }>(
-    `/companions/${companionId}/episodes/search`,
-    { method: 'POST', body: JSON.stringify({ query }) },
+  const { results } = await wsClient.call<{ results: EpisodeSearchResultDto[] }>(
+    'episodes.search',
+    { query },
+    companionId,
   );
-  return body.results;
+  return results;
 }
 
 /** The companion's pending approval queue (propose→approve, P3). */
 export async function listProposals(companionId: string): Promise<ProposalDto[]> {
-  const body = await request<{ proposals: ProposalDto[] }>(`/companions/${companionId}/proposals`);
-  return body.proposals;
+  const { proposals } = await wsClient.call<{ proposals: ProposalDto[] }>(
+    'proposals.list',
+    undefined,
+    companionId,
+  );
+  return proposals;
 }
 
 /**
  * Approve a held action. The companion executes it, then RE-ENTERS the agent
- * loop to narrate the outcome and continue the task, streamed back as SSE — so
+ * loop to narrate the outcome and continue the task, streamed back — so
  * approving "remember this and summarize it" yields the summary, not a dead
  * tool-result line. The streamed turn's rows land in the transcript.
  */
@@ -341,56 +329,45 @@ export async function* confirmProposal(
   companionId: string,
   proposalId: string,
 ): AsyncGenerator<ChatStreamEvent> {
-  yield* stream(`/companions/${companionId}/proposals/${proposalId}/confirm`, { method: 'POST' });
+  yield* asChatStream(wsClient.callStream('proposals.confirm', { proposalId }, companionId));
 }
 
 /** Decline a held action (nothing executes). */
 export async function rejectProposal(companionId: string, proposalId: string): Promise<void> {
-  await send(`/companions/${companionId}/proposals/${proposalId}/reject`, { method: 'POST' });
+  await wsClient.call('proposals.reject', { proposalId }, companionId);
 }
 
 /**
- * Tell the backend the user is present (Phase 4). The motivation engine reads
- * this volatile signal to decide whether/how to initiate. Fire-and-forget.
+ * Tell the backend the tab's foreground/background state (Phase 4). D5 derives
+ * presence from the standing WS connection itself; this records only the visibility
+ * bit the motivation engine reads. Fire-and-forget.
  */
 export async function sendHeartbeat(companionId: string, tabVisible: boolean): Promise<void> {
-  await send(`/companions/${companionId}/heartbeat`, {
-    method: 'POST',
-    body: JSON.stringify({ tabVisible }),
-  });
+  await wsClient.call('presence.heartbeat', { tabVisible }, companionId);
 }
 
 /** The companion's reading list — leads it discovered but hasn't acted on (P3). */
 export async function listLeads(companionId: string): Promise<LeadDto[]> {
-  const body = await request<{ leads: LeadDto[] }>(`/companions/${companionId}/leads`);
-  return body.leads;
-}
-
-/** "Go through your reading list": propose remembering the next leads. */
-export async function explore(companionId: string): Promise<ProposalDto[]> {
-  const body = await request<{ proposals: ProposalDto[] }>(`/companions/${companionId}/explore`, {
-    method: 'POST',
-  });
-  return body.proposals;
+  const { leads } = await wsClient.call<{ leads: LeadDto[] }>('leads.list', undefined, companionId);
+  return leads;
 }
 
 /** The companion's learned, reusable workflows (procedural memory, P3). */
 export async function listProcedures(companionId: string): Promise<ProcedureDto[]> {
-  const body = await request<{ procedures: ProcedureDto[] }>(
-    `/companions/${companionId}/procedures`,
+  const { procedures } = await wsClient.call<{ procedures: ProcedureDto[] }>(
+    'procedures.list',
+    undefined,
+    companionId,
   );
-  return body.procedures;
+  return procedures;
 }
 
-/** Send a message and yield streamed chat events (SSE). */
+/** Send a message and yield streamed chat events. */
 export async function* sendMessage(
   companionId: string,
   content: string,
 ): AsyncGenerator<ChatStreamEvent> {
-  yield* stream(`/companions/${companionId}/messages`, {
-    method: 'POST',
-    body: JSON.stringify({ content }),
-  });
+  yield* asChatStream(wsClient.callStream('messages.send', { content }, companionId));
 }
 
 /**
@@ -399,67 +376,44 @@ export async function* sendMessage(
  * events when the gate decides to stay quiet. Opened on mount and on tab-return.
  */
 export async function* streamGreeting(companionId: string): AsyncGenerator<ChatStreamEvent> {
-  yield* stream(`/companions/${companionId}/greeting`, { method: 'POST' });
+  yield* asChatStream(wsClient.callStream('greeting.stream', undefined, companionId));
 }
 
 /**
- * Subscribe to the standing companion event channel (architecture.md §6): yields
- * each transcript row the server pushes (`{ type: 'message' }`) — a turn reply, an
- * ingestion note, a greeting — for as long as the connection stays open. `signal`
- * cancels the underlying fetch (the caller aborts it on unmount), and an abort
- * ends the generator quietly rather than surfacing as an error; the caller owns
- * any reconnect. GET (no side effects); the bearer rides the `Authorization`
- * header via `send`, so no `EventSource` cookie workaround is needed.
+ * Subscribe to the embodiment connection's live event stream (architecture.md
+ * §6): yields each transcript row / reaction the server pushes for as long as the
+ * embodiment connection stays open. `signal` cancels it (the caller aborts on unmount), and an
+ * abort — or a clean socket drop — ends the generator quietly rather than as an
+ * error; the caller owns reconnect. A takeover by another tab/device (superseded)
+ * also ends it quietly — {@link onEmbodimentMoved} carries that to the UI.
  */
-export async function* subscribeCompanionEvents(
+export function subscribeCompanionEvents(
   companionId: string,
   signal: AbortSignal,
 ): AsyncGenerator<CompanionStreamEvent> {
-  let response: Response;
-  try {
-    response = await send(`/companions/${companionId}/events`, { method: 'GET', signal });
-  } catch (error) {
-    if (signal.aborted) return; // an unmount/abort is a clean stop, not a failure
-    throw error;
-  }
-  if (!response.body) throw new Error('event channel response has no body');
-  try {
-    for await (const payload of readSseData(response)) {
-      yield JSON.parse(payload) as CompanionStreamEvent;
-    }
-  } catch (error) {
-    if (signal.aborted) return;
-    throw error;
-  }
+  return wsClient.events(companionId, signal);
 }
 
 /**
- * Yield the JSON payload of each `data:` SSE frame from a `text/event-stream`
- * body. Splits on the `\n\n` frame boundary, carries any partial trailing frame
- * across reads, and skips non-`data:` lines (e.g. the standing channel's `: ping`
- * heartbeat comments). Shared by the per-turn parser and the channel subscription.
+ * Notify the UI when this companion was claimed by a newer connection (another tab
+ * or device). The owner stops reconnecting until {@link reclaimEmbodiment}; the UI
+ * offers a "use here" affordance. Returns an unsubscribe.
  */
-async function* readSseData(response: Response): AsyncGenerator<string> {
-  const reader = response.body!.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const frames = buffer.split('\n\n');
-    buffer = frames.pop() ?? '';
-    for (const frame of frames) {
-      const line = frame.trim();
-      if (!line.startsWith('data:')) continue;
-      yield line.slice('data:'.length).trim();
-    }
-  }
+export function onEmbodimentMoved(listener: () => void): () => void {
+  return wsClient.onState((state) => {
+    if (state === 'superseded') listener();
+  });
 }
 
-/** Parse a `text/event-stream` body into chat events (shared by chat + confirm). */
-async function* readSse(response: Response): AsyncGenerator<ChatStreamEvent> {
-  for await (const payload of readSseData(response)) {
-    yield JSON.parse(payload) as ChatStreamEvent;
+/** Take the room back after a move: the next call/subscription reconnects and
+ *  force-claims (newer wins). Pair with re-subscribing the event channel. */
+export function reclaimEmbodiment(): void {
+  wsClient.reclaim();
+}
+
+/** Adapt the transport's untyped stream chunks to typed chat events. */
+async function* asChatStream(stream: AsyncGenerator<unknown>): AsyncGenerator<ChatStreamEvent> {
+  for await (const chunk of stream) {
+    yield chunk as ChatStreamEvent;
   }
 }

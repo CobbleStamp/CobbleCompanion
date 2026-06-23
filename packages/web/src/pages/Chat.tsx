@@ -26,6 +26,8 @@ import {
   addReaction,
   confirmProposal,
   fetchMessages,
+  onEmbodimentMoved,
+  reclaimEmbodiment,
   removeReaction,
   sendMessage,
   streamGreeting,
@@ -283,6 +285,11 @@ export function Chat({
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusOpen, setStatusOpen] = useState(false);
+  // The companion's room was taken over by another tab/device (D2 "newer wins").
+  // We stop reconnecting (no claim war) and offer "use here" to take it back;
+  // bumping `claimNonce` re-runs the establishment effect, which force-claims.
+  const [moved, setMoved] = useState(false);
+  const [claimNonce, setClaimNonce] = useState(0);
   // The companion is composing a server-initiated greeting (P14) — show a typing
   // indicator until it lands or the gate stays quiet.
   const [composing, setComposing] = useState(false);
@@ -307,9 +314,10 @@ export function Chat({
   // whether/how to initiate; volatile and best-effort.
   usePresenceHeartbeat(companion.id);
 
-  // While a send is streaming or a file is uploading, the composer is locked so
-  // the two intake paths never overlap.
-  const locked = busy || attaching;
+  // While a send is streaming, a file is uploading, or the room has moved to another
+  // window, the composer is locked so the two intake paths never overlap and a
+  // yielded room takes no input until reclaimed.
+  const locked = busy || attaching || moved;
   // Keep the refs the async channel consumer reads in step with render.
   readyRef.current = ready;
   lockedRef.current = locked;
@@ -382,6 +390,15 @@ export function Chat({
   useEffect(() => {
     const controller = new AbortController();
     let cancelled = false;
+
+    // A takeover by another tab/device: stop reconnecting (the transport has yielded
+    // the claim) and surface the banner. "Use here" (onUseHere) bumps claimNonce,
+    // which re-runs this effect and force-claims the room back.
+    const offMoved = onEmbodimentMoved(() => {
+      setMoved(true);
+      cancelled = true;
+      controller.abort();
+    });
 
     // Hold rows until the snapshot has landed and no turn is mid-flight (the
     // per-turn stream owns its optimistic lines until then); the buffer is flushed,
@@ -463,8 +480,18 @@ export function Chat({
     return () => {
       cancelled = true;
       controller.abort();
+      offMoved();
     };
-  }, [companion.id]);
+  }, [companion.id, claimNonce]);
+
+  // Take the room back after a move: reclaim the embodiment, then re-run the
+  // establishment effect (re-subscribe + re-snapshot) by bumping claimNonce.
+  const onUseHere = useCallback((): void => {
+    reclaimEmbodiment();
+    setMoved(false);
+    setReady(false);
+    setClaimNonce((nonce) => nonce + 1);
+  }, []);
 
   // Once the snapshot has landed and no turn is in flight, flush the rows the
   // channel buffered in the meantime (deduped by id against what's already shown).
@@ -747,6 +774,14 @@ export function Chat({
         </nav>
       </header>
       {error && <p className="error">{error}</p>}
+      {moved && (
+        <div className="moved-banner" role="alert">
+          <span>{companion.name} is active in another window.</span>
+          <button type="button" onClick={onUseHere}>
+            Use here
+          </button>
+        </div>
+      )}
       <ul className="transcript">
         {lines.map((line, index) => {
           const key = line.id ?? index;

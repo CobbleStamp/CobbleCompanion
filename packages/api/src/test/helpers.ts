@@ -8,8 +8,12 @@ import { EMBEDDING_DIMENSIONS } from '@cobble/db';
 import { createTestDatabase } from '@cobble/db/testing';
 import {
   composeRetrieveContext,
-  ConsolidationRunner,
   ConsolidationService,
+  DrizzleJobQueue,
+  DrizzleQueueMetricsReader,
+  JobProcessorPool,
+  makeCompanionWorkRequester,
+  makeReactionWorkRequester,
   createEpisodicRetrieveContext,
   createMemoizingEmbeddingGateway,
   createApprovalGate,
@@ -45,8 +49,11 @@ import {
   Harness,
   InMemoryPresenceStore,
   IngestionPipeline,
-  IngestionRunner,
   type IngestionTarget,
+  type LlmGateway,
+  DrizzleEmbodimentStore,
+  makeIngestJobHandler,
+  makeIngestWorkRequester,
   DrizzleProactiveOutcomeStore,
   DrizzleReactionStore,
   ReactionLearner,
@@ -55,14 +62,15 @@ import {
   LlmUserModelReflector,
   LlmUserPersonaSynthesizer,
   MotivationEngine,
-  MotivationRunner,
   reinforceFromDelta,
-  InProcessCompanionEventBus,
+  DurableCompanionEventBus,
+  DrizzleCompanionEventLog,
   PublishingMemoryStore,
   type RetrieveContext,
   ToolRegistry,
   TranscriptMemoryStore,
   type Logger,
+  type UploadStagingStore,
 } from '@cobble/core';
 import type { FastifyInstance } from 'fastify';
 import { buildApp, type AppDeps } from '../app.js';
@@ -74,6 +82,7 @@ import {
   type TokenVerifier,
 } from '../auth/jwt-verifier.js';
 import type { AppConfig } from '../config.js';
+import { InMemoryUploadStagingStore } from './fake-upload-staging.js';
 
 export const silentLogger: Logger = { error: () => {}, warn: () => {}, info: () => {} };
 
@@ -111,8 +120,25 @@ export const testConfig: AppConfig = {
   embeddingDimensions: EMBEDDING_DIMENSIONS,
   ingestionModel: 'test-ingestion-model',
   ingestionMaxBytes: 25 * 1024 * 1024,
+  uploadStaging: {
+    backend: 'file',
+    prefix: 'tmp-uploads',
+    ttlMs: 60 * 60 * 1000,
+    root: '/tmp/cc-test-staging',
+    publicBaseUrl: 'http://localhost:3000',
+  },
   useContextHeader: true,
   ingestionQueueMax: 100,
+  jobLeaseMs: 60_000,
+  jobHeartbeatMs: 30_000,
+  jobPollIntervalMs: 30_000,
+  jobConcurrency: 4,
+  // Short WS embodiment timers so handoff/supersession is observable in tests.
+  wsHeartbeatMs: 40,
+  wsClaimTtlMs: 200,
+  wsMaxPayloadBytes: 256 * 1024,
+  wsMaxInFlight: 32,
+  wsMaxBufferedBytes: 8 * 1024 * 1024,
   startingVitalityTokens: 1_000_000,
   mcpServers: [],
   serviceRegistrySeeds: [],
@@ -146,8 +172,6 @@ export interface TestApp {
 /** Overrides for tests exercising config-driven behavior (limits, queue cap). */
 export interface TestAppOptions {
   readonly config?: Partial<AppConfig>;
-  /** Replace the runner entirely (fault injection, e.g. a queue-full race). */
-  readonly ingestion?: IngestionRunner;
   /**
    * Replace the pipeline the motivation engine drives for autonomous reads. A
    * real read needs the network + scripted LLM passes, so route/DoD tests inject
@@ -192,6 +216,20 @@ export interface TestAppOptions {
    * vector-arm recall across such a turn injects a fake that models that adjacency.
    */
   readonly embeddings?: EmbeddingGateway;
+  /**
+   * Replace the LLM gateway (default: a {@link FakeLlmGateway} over `chunks`). Lets a
+   * test wrap the fake to observe or perturb a turn mid-stream — e.g. force-claim the
+   * companion from a second owner inside `stream()` to deterministically exercise the
+   * mid-turn embodiment fence (deliver-scalability.md §5.2) on single-connection PGlite.
+   */
+  readonly llmGateway?: LlmGateway;
+  /**
+   * Replace the upload-staging store (default: a {@link InMemoryUploadStagingStore}).
+   * A test exercising the filesystem upload route injects a real
+   * {@link FilesystemUploadStagingStore} over a temp dir so the `PUT /uploads/local`
+   * route is mounted and writes are observable on disk.
+   */
+  readonly staging?: UploadStagingStore;
 }
 
 export async function makeTestApp(
@@ -210,7 +248,8 @@ export async function makeTestApp(
   const userModel = new DrizzleUserModelStore(db);
   // Mirror production wiring (index.ts): the publish-on-append decorator over the
   // transcript store so tests exercise the same event-channel publish path.
-  const eventBus = new InProcessCompanionEventBus();
+  const eventLog = new DrizzleCompanionEventLog(db);
+  const eventBus = new DurableCompanionEventBus(eventLog, silentLogger);
   const memory = new PublishingMemoryStore(new TranscriptMemoryStore(db), eventBus, silentLogger);
   const reactions = new DrizzleReactionStore(db);
   const semantic = new DrizzleSemanticMemoryStore(db);
@@ -220,7 +259,10 @@ export async function makeTestApp(
   // Retrieval arms share a memoizing gateway (mirrors index.ts); ingestion and
   // consolidation use the raw fake.
   const retrievalEmbeddings = createMemoizingEmbeddingGateway(embeddings);
-  const llmGateway = new FakeLlmGateway(chunks);
+  // The default fake (always returned as `gateway` for assertions); a test may
+  // substitute its own gateway for wiring via `options.llmGateway`.
+  const fakeGateway = new FakeLlmGateway(chunks);
+  const llmGateway: LlmGateway = options.llmGateway ?? fakeGateway;
   const tokenVerifier = new FakeTokenVerifier();
   // Queue cap comes from config, mirroring production wiring (index.ts).
   const ingestionPipeline = new IngestionPipeline({
@@ -242,9 +284,10 @@ export async function makeTestApp(
       logger: silentLogger,
     }),
   });
-  const ingestion =
-    options.ingestion ??
-    new IngestionRunner(ingestionPipeline, silentLogger, config.ingestionQueueMax);
+  const staging =
+    options.staging ??
+    new InMemoryUploadStagingStore(config.uploadStaging.prefix, config.uploadStaging.ttlMs);
+  const embodiment = new DrizzleEmbodimentStore(db);
   // Phase 12: the User-Model Reflector derives Tier-2 beliefs from the transcript on
   // its own cursor; the consolidation service fires it after each run.
   const userModelReflector = new LlmUserModelReflector({
@@ -269,23 +312,61 @@ export async function makeTestApp(
     quota,
     logger: silentLogger,
   });
-  const consolidation = new ConsolidationRunner(
-    new ConsolidationService({
-      episodic,
-      memory,
-      identity,
-      llm: llmGateway,
-      embeddings,
-      consolidationModel: config.ingestionModel,
-      embeddingModel: config.embeddingModel,
-      embeddingDimensions: config.embeddingDimensions,
-      quota,
+  const consolidationService = new ConsolidationService({
+    episodic,
+    memory,
+    identity,
+    llm: llmGateway,
+    embeddings,
+    consolidationModel: config.ingestionModel,
+    embeddingModel: config.embeddingModel,
+    embeddingDimensions: config.embeddingDimensions,
+    quota,
+    logger: silentLogger,
+    reflector: userModelReflector,
+    userPersonaSynthesizer,
+  });
+  // Background job queue (same wiring as production index.ts), built before the
+  // tool registry because the ingest_source tool + intake routes enqueue through
+  // the requester. consolidate/motivation/reaction_learn handlers reference services
+  // declared below; they run only at drain time, so the forward reference is safe.
+  const jobQueue = new DrizzleJobQueue(db);
+  const jobPool = new JobProcessorPool(
+    jobQueue,
+    {
+      consolidate: (job) => consolidationService.consolidate(job.companionId),
+      motivation: async (job) => {
+        await motivationEngine.tick(job.companionId);
+      },
+      reaction_learn: async (job) => {
+        const { messageId, emoji } = job.payload;
+        if (!messageId || !emoji) {
+          return;
+        }
+        await reactionLearner.learnForMessage(job.companionId, messageId, emoji);
+      },
+      ingest: makeIngestJobHandler({
+        pipeline: ingestionPipeline,
+        semantic,
+        staging,
+        logger: silentLogger,
+      }),
+    },
+    {
+      owner: 'test',
+      concurrency: 4,
+      leaseMs: 60_000,
+      heartbeatMs: 30_000,
+      pollMs: 60_000,
       logger: silentLogger,
-      reflector: userModelReflector,
-      userPersonaSynthesizer,
-    }),
-    silentLogger,
+    },
   );
+  const consolidation = makeCompanionWorkRequester(jobPool, 'consolidate');
+  const motivation = makeCompanionWorkRequester(jobPool, 'motivation');
+  const reactionLearn = makeReactionWorkRequester(jobPool);
+  const ingest = makeIngestWorkRequester(jobPool, jobQueue, config.ingestionQueueMax);
+  const queueMetrics = new DrizzleQueueMetricsReader(db, config.wsClaimTtlMs);
+
   // The Phase 3 tool surface: read-only memory_search + effectful ingest_source
   // (web_fetch is omitted here — it needs a live resolver and isn't exercised by
   // route tests). The proposal store + audit log back the approval queue.
@@ -297,7 +378,7 @@ export async function makeTestApp(
       embeddingDimensions: config.embeddingDimensions,
       logger: silentLogger,
     }),
-    createIngestSourceTool({ semantic, ingestion, logger: silentLogger }),
+    createIngestSourceTool({ semantic, ingest, staging, logger: silentLogger }),
     createReactTool({ reactions, eventBus, logger: silentLogger }),
   ];
   // Phases 9–10: wire tool acquisition when the test configures a source — an MCP
@@ -352,26 +433,23 @@ export async function makeTestApp(
     memory,
     logger: silentLogger,
   });
-  const motivation = new MotivationRunner(
-    new MotivationEngine(
-      {
-        identity,
-        presence,
-        energy,
-        leads,
-        semantic,
-        pipeline: options.motivationPipeline ?? ingestionPipeline,
-        memory,
-        rewards,
-        // Phase 12: curiosity sources its topics from the user's interest beliefs.
-        userModel,
-        llm: llmGateway,
-        model: config.ingestionModel,
-        logger: silentLogger,
-      },
-      {},
-    ),
-    silentLogger,
+  const motivationEngine = new MotivationEngine(
+    {
+      identity,
+      presence,
+      energy,
+      leads,
+      semantic,
+      pipeline: options.motivationPipeline ?? ingestionPipeline,
+      memory,
+      rewards,
+      // Phase 12: curiosity sources its topics from the user's interest beliefs.
+      userModel,
+      llm: llmGateway,
+      model: config.ingestionModel,
+      logger: silentLogger,
+    },
+    {},
   );
   // Greeting on arrival (P14) — voiced greetings spend STAMINA (the `quota` wallet).
   const greeting = new GreetingService({
@@ -390,14 +468,18 @@ export async function makeTestApp(
     userModel,
     memory,
     eventBus,
+    eventLog,
     semantic,
     episodic,
     embeddings,
-    ingestion,
+    staging,
+    ingest,
+    embodiment,
     consolidation,
     tools,
     proposals,
     toolCallLog,
+    queueMetrics,
     leads,
     procedural,
     presence,
@@ -407,7 +489,7 @@ export async function makeTestApp(
     food,
     rewards,
     reactions,
-    reactionLearner,
+    reactionLearn,
     growth,
     growthStore,
     harness: new Harness({
@@ -498,19 +580,14 @@ export async function makeTestApp(
     app,
     deps,
     tokenVerifier,
-    gateway: llmGateway,
+    gateway: fakeGateway,
     bearerFor,
     close: async () => {
-      await ingestion.whenIdle();
-      await consolidation.whenIdle();
-      // Drain proactive ticks (GET/POST messages request them) before the db
-      // closes, so a background tick can't write to a torn-down database.
-      await motivation.close();
-      // Drain fire-and-forget reaction reads (the POST reaction route floats one)
-      // for the same reason — a detached read must not outlive the db.
-      await reactionLearner.whenIdle();
-      // Growth recompute runs inline as the tail of each turn's stream, so there's
-      // no background runner to drain here.
+      // Drain the job pool (consolidate + motivation + reaction_learn + ingest)
+      // before the db closes, so a background job can't write to a torn-down
+      // database. Ingestion + the reaction read now run as queued jobs, so the pool
+      // drain covers them; growth recompute runs inline in the turn stream.
+      await jobPool.close();
       await app.close();
       if (ownsDb) {
         await closeDb();

@@ -190,7 +190,7 @@ deployment doesn't use.
 there's no Caddy, no Elastic IP, no VPC, and no instance to bootstrap — Google runs
 the box. `minInstances=1` keeps one instance warm so the first chat message after
 idle isn't a cold start; `maxInstanceRequestConcurrency=80` and a long request
-timeout (`3600s`) let one instance hold many concurrent SSE chat streams. The
+timeout (`3600s`) let one instance hold many concurrent long-lived WebSocket connections. The
 public invoker is `allUsers` — the API still enforces auth at the app layer.
 
 ### GCP resources (`infra/gcp`)

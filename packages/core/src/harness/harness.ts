@@ -136,6 +136,18 @@ export interface HarnessOptions {
   readonly logger?: Logger;
 }
 
+/**
+ * The mid-turn embodiment fence (deliver-scalability.md §5.2). A turn is a
+ * multi-step agent loop, not a single request, so the per-request `holds()` check
+ * cannot stop a turn that is already running when a newer connection force-claims
+ * the companion (the user moved rooms). When supplied, the loop re-reads this at the
+ * top of every iteration and again before persisting the reply, and stands down
+ * cleanly the moment it returns false — no assistant write, no post-turn nudge.
+ * Omitted = no fence (single-connection tests / the pre-Phase-D path), the turn always
+ * runs to completion.
+ */
+export type HoldsLease = () => Promise<boolean>;
+
 export interface RunTurnParams {
   readonly companion: CompanionDto;
   readonly userContent: string;
@@ -143,6 +155,8 @@ export interface RunTurnParams {
    *  User-Model facts shape the persona + receive any captured identity facts. */
   readonly ownerId?: string;
   readonly signal?: AbortSignal;
+  /** Mid-turn embodiment fence (see {@link HoldsLease}); omitted = no fence. */
+  readonly holdsLease?: HoldsLease;
 }
 
 /** Resume after an approved action (continueAfterApproval). */
@@ -153,6 +167,8 @@ export interface ContinueParams {
   /** The completed action's result line, injected so the model knows it's done. */
   readonly outcome: string;
   readonly signal?: AbortSignal;
+  /** Mid-turn embodiment fence (see {@link HoldsLease}); omitted = no fence. */
+  readonly holdsLease?: HoldsLease;
 }
 
 /** The assembled prompt + retrieval results shared by both loop entry points. */
@@ -233,8 +249,8 @@ export class Harness {
    * user message is persisted on entry; the assistant message on exit (the
    * transcript is the source of truth, §4.7).
    */
-  async *runTurn(params: RunTurnParams): AsyncGenerator<ChatStreamEvent> {
-    const { companion, userContent, ownerId, signal } = params;
+  async *runTurn(params: RunTurnParams): AsyncGenerator<ChatStreamEvent, boolean> {
+    const { companion, userContent, ownerId, signal, holdsLease } = params;
     const trace = this.traceSink.startTrace({
       traceId: randomUUID(),
       name: 'turn',
@@ -256,7 +272,24 @@ export class Harness {
         this.affect || capturesUserFacts
           ? await this.memory.getRecentMessages(companion.id, this.recentLimit)
           : [];
-      yield* this.runLoop(companion, ownerId, prep, signal, trace, userMessage.id);
+      const superseded = yield* this.runLoop(
+        companion,
+        ownerId,
+        prep,
+        signal,
+        trace,
+        holdsLease,
+        userMessage.id,
+      );
+      // Mid-turn handoff (deliver-scalability.md §5.2): a newer connection
+      // force-claimed this companion while the loop ran, so the loop stood down
+      // without writing the reply. SKIP all post-turn perception — the affect read
+      // hands a non-idempotent `driveWeights` nudge to the will, and the live turn
+      // the user now sees (on the new connection) owns that learning. The trace
+      // still ends in `finally`. Tell the caller so it stops streaming + closes.
+      if (superseded) {
+        return true;
+      }
       // Perception + learning (Phase 4.2) — launched AFTER the reply has fully
       // streamed (all tokens + `done` already yielded) and deliberately NOT
       // awaited: the generator returns immediately so the SSE socket closes on
@@ -281,9 +314,13 @@ export class Harness {
           this.chainUserFacts(ownerId, companion.id, perceptionSnapshot, userContent),
         );
       }
+      return false;
     } catch (error) {
       traceError = error instanceof Error ? error.message : String(error);
       yield this.failed(companion.id, error);
+      // A failed turn is not a handoff — the caller should surface the error and
+      // keep the connection, not close it as superseded.
+      return false;
     } finally {
       // End the turn trace on EVERY exit — normal, error, or consumer abort
       // (generator .return()), so a trace is never left open. Best-effort.
@@ -321,8 +358,8 @@ export class Harness {
    * record, but it's filtered out of context), so the model narrates the outcome
    * and continues whatever was asked ("…then summarize what you saved").
    */
-  async *continueAfterApproval(params: ContinueParams): AsyncGenerator<ChatStreamEvent> {
-    const { companion, ownerId, outcome, signal } = params;
+  async *continueAfterApproval(params: ContinueParams): AsyncGenerator<ChatStreamEvent, boolean> {
+    const { companion, ownerId, outcome, signal, holdsLease } = params;
     const trace = this.traceSink.startTrace({
       traceId: randomUUID(),
       name: 'turn',
@@ -338,10 +375,11 @@ export class Harness {
           `[Your proposed action was approved and has completed: ${outcome} ` +
           `Continue with what the user asked — do not propose it again.]`,
       });
-      yield* this.runLoop(companion, ownerId, prep, signal, trace);
+      return yield* this.runLoop(companion, ownerId, prep, signal, trace, holdsLease);
     } catch (error) {
       traceError = error instanceof Error ? error.message : String(error);
       yield this.failed(companion.id, error);
+      return false;
     } finally {
       trace.end(traceError !== undefined ? { error: traceError } : undefined);
     }
@@ -643,8 +681,9 @@ export class Harness {
     prep: PreparedTurn,
     signal: AbortSignal | undefined,
     trace: TraceHandle,
+    holdsLease: HoldsLease | undefined,
     currentUserMessageId?: string,
-  ): AsyncGenerator<ChatStreamEvent> {
+  ): AsyncGenerator<ChatStreamEvent, boolean> {
     const { messages, citations, retrievalUsage, coPromptRefs } = prep;
     // Citations are retrieval-time data: surface the grounding sources as soon
     // as they are known, before (and independent of) the token stream.
@@ -673,6 +712,23 @@ export class Harness {
     let lastText = '';
     try {
       for (let iteration = 0; ; iteration++) {
+        // The long-turn embodiment fence (deliver-scalability.md §5.2): a turn is a
+        // multi-step loop, so the per-request `holds()` check can't stop one already
+        // running when a newer connection force-claims the companion. Re-read the
+        // lease at the TOP of every iteration; if it moved, stand down WITHOUT
+        // writing the reply — the turn the user now sees runs on the new connection.
+        // `settledNormally` stays false so the `finally` debits the tokens already
+        // metered (retrieval + completed steps were really spent) and tears down any
+        // in-flight stream. The bounded overlap is one in-flight step.
+        if (await this.leaseLost(holdsLease)) {
+          this.logger.info('turn stood down mid-loop — embodiment was superseded', {
+            operation: 'harness.runLoop',
+            companionId: companion.id,
+            iteration,
+          });
+          return true;
+        }
+
         if (this.exhausted(iteration, acc.total())) {
           this.logger.error('turn hit its budget ceiling; exiting with partial', {
             operation: 'harness.runLoop',
@@ -688,7 +744,7 @@ export class Harness {
             retrievalUsage,
             acc,
           );
-          return;
+          return false;
         }
 
         // The effective registry is resolved PER STEP (companion-tools.md §4), so a
@@ -721,9 +777,21 @@ export class Harness {
 
         // No tool calls → this is the assistant's answer; the run EXITs (§4.1).
         if (toolCalls.length === 0) {
+          // Owner-fenced write (deliver-scalability.md §5.2): the last LLM call can
+          // run for seconds, during which the lease may have moved. Re-check before
+          // persisting the reply so a turn that lost the lease mid-call does not
+          // write its assistant message. `finally` debits the metered tokens.
+          if (await this.leaseLost(holdsLease)) {
+            this.logger.info('turn stood down before reply — embodiment was superseded', {
+              operation: 'harness.runLoop',
+              companionId: companion.id,
+              iteration,
+            });
+            return true;
+          }
           settledNormally = true;
           yield* this.finish(companion.id, turnText, citations, retrievalUsage, acc);
-          return;
+          return false;
         }
 
         // The model wants tools. Replay its tool-call turn into the running
@@ -784,6 +852,23 @@ export class Harness {
           // A `silent` tool (the companion's `react` emit) records no chrome row —
           // its own artifact is the user-visible record (companion-reactions.md §5).
           if (result.isError !== true && registry.get(gated.name)?.silent !== true) {
+            // Owner-fenced write (embodiment-handoff-fencing.md §3, deliver-scalability.md
+            // §5.2): tool dispatch above can run for seconds, during which the lease may
+            // have moved. Re-check before writing the tool-step transcript row so a turn
+            // that lost the lease mid-dispatch does not record chrome for the superseded
+            // connection. Stand down like the reply/held paths — the new connection's turn
+            // re-derives the step; otherwise both connections write rows for one companion.
+            if (await this.leaseLost(holdsLease)) {
+              this.logger.info(
+                'turn stood down before tool-step write — embodiment was superseded',
+                {
+                  operation: 'harness.runLoop',
+                  companionId: companion.id,
+                  iteration,
+                },
+              );
+              return true;
+            }
             yield* this.recordToolStep(registry, companion.id, gated.name, gated.args);
           }
         }
@@ -792,6 +877,17 @@ export class Harness {
         // and each proposal row (so they survive reload), surface the proposals,
         // and EXIT. Approving re-enters via continueAfterApproval (confirm route).
         if (blocked) {
+          // Owner-fenced write: don't persist the pre-amble + proposal rows (nor
+          // surface the proposals) under a stale lease. The new connection's turn
+          // re-derives the held action; otherwise both turns would write it.
+          if (await this.leaseLost(holdsLease)) {
+            this.logger.info('held turn stood down — embodiment was superseded', {
+              operation: 'harness.runLoop',
+              companionId: companion.id,
+              iteration,
+            });
+            return true;
+          }
           settledNormally = true;
           yield* this.finishBlocked(
             companion.id,
@@ -802,7 +898,7 @@ export class Harness {
             retrievalUsage,
             acc,
           );
-          return;
+          return false;
         }
       }
     } finally {
@@ -842,6 +938,29 @@ export class Harness {
         error,
       });
       return this.registry;
+    }
+  }
+
+  /**
+   * Has this turn lost the embodiment lease (deliver-scalability.md §5.2)? A single
+   * indexed PK read on `active_embodiment` — cheap enough to call once per loop
+   * iteration and before the reply append. No fence wired (tests / pre-Phase-D) → the
+   * turn always holds. A read failure is treated as STILL HELD (`false`): a transient
+   * DB hiccup must not abandon a turn the connection legitimately owns — the bounded
+   * overlap is the deliberate tradeoff, and the next iteration's check retries.
+   */
+  private async leaseLost(holdsLease: HoldsLease | undefined): Promise<boolean> {
+    if (!holdsLease) {
+      return false;
+    }
+    try {
+      return !(await holdsLease());
+    } catch (error) {
+      this.logger.error('embodiment lease check failed; treating turn as still held', {
+        operation: 'harness.leaseLost',
+        error,
+      });
+      return false;
     }
   }
 

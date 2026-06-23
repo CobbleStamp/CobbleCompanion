@@ -13,7 +13,7 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Logger } from '../logging.js';
 import { DrizzleIdentityStore } from '../identity/store.js';
-import type { IngestionTarget } from '../ingestion/runner.js';
+import type { IngestionTarget } from '../ingestion/pipeline.js';
 import type { IngestionRunParams } from '../ingestion/pipeline.js';
 import { FakeLlmGateway } from '../llm/fake.js';
 import { TranscriptMemoryStore } from '../memory/store.js';
@@ -279,7 +279,8 @@ describe('MotivationEngine.tick', () => {
 
   it('does not self-initiate while the user is actively engaged', async () => {
     await seedLeads(4);
-    presence.recordActivity(companionId); // user just acted → active
+    // user just acted → active (in-memory store ignores the fence)
+    presence.recordActivity(companionId, { connectionId: 'c', claimSeq: 1 });
 
     const result = await engine.tick(companionId);
     expect(result.initiated).toBe(false);

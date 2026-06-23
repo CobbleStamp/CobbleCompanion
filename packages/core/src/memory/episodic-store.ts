@@ -140,6 +140,33 @@ export class DrizzleEpisodicMemoryStore implements EpisodicMemoryStore {
     // written without the cursor moved (which would duplicate them on re-run) or
     // the cursor moved without the episodes (which would lose the span).
     return this.db.transaction(async (tx) => {
+      // Lock the companion "home" row up front so two writers consolidating the
+      // SAME window can't interleave. This is the lost-lease overlap the job
+      // processor bounds but does not eliminate (job-processor.ts §runJob): the
+      // node that lost its lease keeps running to completion while the reclaiming
+      // node re-runs the still-pending job. Both read the same cursor and produce
+      // the same span. FOR UPDATE serializes them — the second writer blocks here,
+      // then re-reads the cursor the first one advanced and skips below. Without
+      // the lock, both read a stale cursor and both INSERT (the guard on the cursor
+      // UPDATE alone never gated the episode rows), duplicating the episodes.
+      const [row] = await tx
+        .select({ cursor: companions.consolidatedThroughSeq })
+        .from(companions)
+        .where(eq(companions.id, companionId))
+        .limit(1)
+        .for('update');
+      // Companion deleted between trigger and run — nothing to anchor episodes to.
+      if (!row) {
+        return [];
+      }
+      // Already consolidated through (or past) this span — a concurrent or
+      // successor run won the window. Skip the INSERT entirely (so no duplicate
+      // rows) and leave the cursor where it is. Equal is allowed to fall through
+      // only on a strictly-advancing span; `<` makes a re-run of the exact same
+      // window a clean no-op.
+      if (row.cursor >= throughSeq) {
+        return [];
+      }
       let inserted: readonly EpisodeRecord[] = [];
       if (newEpisodes.length > 0) {
         const rows = await tx
@@ -159,6 +186,9 @@ export class DrizzleEpisodicMemoryStore implements EpisodicMemoryStore {
           .returning();
         inserted = rows.map(toEpisodeRecord);
       }
+      // Cursor advance. The row is locked and we've confirmed `cursor < throughSeq`
+      // above, so this only ever moves forward — no separate monotonic predicate
+      // needed now that the read and write are serialized.
       await tx
         .update(companions)
         .set({ consolidatedThroughSeq: throughSeq })

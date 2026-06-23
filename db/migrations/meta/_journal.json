@@ -5,29 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1781074842607,
-      "tag": "0000_lively_umar",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1781165788363,
-      "tag": "0001_flat_viper",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1781179532878,
-      "tag": "0002_round_clint_barton",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1781341880336,
-      "tag": "0003_busy_human_torch",
+      "when": 1781855803261,
+      "tag": "0000_init",
       "breakpoints": true
     }
   ]

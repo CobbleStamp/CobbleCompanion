@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "lint": "prettier --check \"**/*.{ts,tsx,json}\"",
     "format": "prettier --write \"**/*.{ts,tsx,json}\"",
     "build": "pnpm -r run build",

@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install dev test typecheck lint coverage ci \
+.PHONY: help install dev test test-integration typecheck lint coverage ci \
         run-docker build-docker stop-docker clean-docker logs-docker \
         pulumi-preview pulumi push-image-dev deploy-dev \
         pulumi-preview-gcp pulumi-gcp push-image-gcp deploy-gcp
@@ -18,6 +18,15 @@ dev: ## Run Postgres + migrate + API + web on the host (scripts/dev.sh)
 
 test: ## Run the full test suite
 	pnpm test
+
+test-integration: ## Run integration tests against real Postgres (boots docker-compose Postgres)
+	@echo "→ starting Postgres (pgvector/pgvector:pg16)…"
+	docker compose up -d postgres
+	@echo "→ waiting for Postgres to report healthy…"
+	@until [ "$$(docker inspect -f '{{.State.Health.Status}}' $$(docker compose ps -q postgres) 2>/dev/null)" = "healthy" ]; do \
+	  sleep 1; done
+	@echo "→ running *.integration.test.ts against localhost:5432/cobble"
+	DATABASE_URL=postgres://postgres:postgres@localhost:5432/cobble pnpm test:integration
 
 coverage: ## Run tests with the >=80% coverage gate
 	pnpm test:coverage

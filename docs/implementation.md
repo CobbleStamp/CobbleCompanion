@@ -86,6 +86,7 @@ erDiagram
 | `service_client_id` | text, nullable | the owning consumer (`service_registry.client_id`) when `auth_source = service`; null for `google`. Namespaces `external_id` so two consumers can reuse the same id without colliding |
 | `external_id` | text, nullable | the consumer's opaque user id (e.g. a Sprout UUID) when `auth_source = service`; null for `google`. Unique within `(auth_source, service_client_id)` |
 | `email` | text, nullable, unique | login identity when `auth_source = google`; null for `service` (a service user has no email) |
+| `is_admin` | boolean, default `false` | gates the operator-only `/admin/queue` snapshot (queue/embodiment observability, `architecture.md` §6). Set out-of-band; no self-service path |
 | `created_at` | timestamptz | |
 
 ### `service_registry`
@@ -185,7 +186,7 @@ Server-to-server consumer credentials (§5). One row per `(client_id, secret)`, 
 > (`architecture.md` §4.7); a reaction is **mutable** (added later, removed, re-added). Keeping mutable
 > annotation state out of the canonical turn preserves that invariant. A reaction is **not** a
 > transcript turn: it never enters the LLM-context projection, and it is delivered as a
-> `reaction_added` / `reaction_removed` event on the standing channel (§2.4) — a mutation on an existing
+> `reaction_added` / `reaction_removed` event on the live channel (§2.4) — a mutation on an existing
 > row rather than a new `{ type: 'message' }`. Full mechanism → `companion-reactions.md`.
 
 > **The reward path** generalizes the `companion_affect` `report_affect` machinery (below): a user
@@ -238,8 +239,8 @@ Server-to-server consumer credentials (§5). One row per `(client_id, secret)`, 
 | `parsed_doc` | jsonb, nullable | parsed paragraphs held while `deferred`, so the AI passes resume without a re-upload; null otherwise |
 | `created_at` / `updated_at` | timestamptz | |
 
-> The durable status surface is what makes the in-process runner replaceable by a real worker
-> with no schema/API change (`architecture.md` §4.8, §8), and lets deferred jobs survive a restart.
+> The durable status surface is what let the in-process runner give way to the durable job-queue
+> worker with no schema/API change (`architecture.md` §4.8, §8), and lets deferred jobs survive a restart.
 
 The `status` column is a state machine. Parsing extracts text without the LLM; the three AI passes
 (segment → enrich → embed) are metered, so a job the companion can't afford from stamina is parked in
@@ -281,7 +282,7 @@ the companion — no separate wallet table):
 > turn can't drive it negative, so there is no debt); feeding increments it. No cap, no window, no
 > auto-refill — a balance only goes down (spending) or up (feeding). Postgres-backed so it is correct
 > across replicas. Routes enforce stamina inline: chat/search 429 when empty, ingestion defers until
-> it has tokens again (`architecture.md` §4.8). `GET /companions/:id/usage` exposes the stamina
+> it has tokens again (`architecture.md` §4.8). The `usage.get` WS method exposes the stamina
 > balance for the web client's live indicator. One store meters both columns, picked by a
 > `'stamina' | 'energy'` discriminator (`packages/core/src/quota/vitality-store.ts`).
 
@@ -292,7 +293,7 @@ the companion — no separate wallet table):
 | `ration` / `spark` / `treat` | integer, not null | counts of each food type. Seeded with `initialFood` (default 10 each) on the row's first creation; a feed decrements one (atomic SQL `count - 1`, guarded ≥ 0). Not replenished in the PoC. |
 | `updated_at` | timestamptz | |
 
-> The feeding economy's supply (`companion-economy.md`). `POST /companions/:id/feed` consumes one
+> The feeding economy's supply (`companion-economy.md`). The `feed` WS method consumes one
 > food from this row and adds its grants to the fed companion's wallet(s). When a count hits 0 the
 > feed returns 409; a developer raises it directly in the DB (no buying in the PoC).
 
@@ -595,8 +596,8 @@ erDiagram
   (`companion-motivation.md` §7). It also carries **`read_sources`** (jsonb, nullable): a snapshot of
   the sources the burst read (`{sourceId, title}[]`, captured at read time so the labels survive a
   later source deletion). This log is surfaced read-only to the user as the **Activity view** via
-  **`GET /companions/:companionId/activity`** (`?limit=`, default 30 / max 100, keyset-paginated by
-  `?before=<seq>`): the store's `listDetailed` LEFT-JOINs the report-note text and the driving belief
+  the **`activity.list`** WS method (`limit`, default 30 / max 100, keyset-paginated by
+  `before=<seq>`): the store's `listDetailed` LEFT-JOINs the report-note text and the driving belief
   onto each row, batch-loads each read source's **findings** (its section topic titles — empty when
   the read yielded only boilerplate), and the route returns them newest-first alongside the initiative
   `stats` (the same `{ total, positive }` the Growth Initiative axis reads).
@@ -608,7 +609,9 @@ erDiagram
   outcome **by `note_message_id`** rather than the ambient `findLatestUnresolved`. Full mechanism →
   `companion-reactions.md`.
 
-Presence is **not** a table — it is a volatile, heartbeat-fed in-memory signal (§4.5).
+Presence is **derived from the `active_embodiment` claim** (below), not a separate table: a
+live (non-expired) claim *is* presence, with `last_activity_at`/`tab_visible` carrying the
+foreground/idle detail (D5; `core/src/embodiment/presence.ts`, `architecture.md` §4.5).
 
 - **`companion_growth`** —
   the bond/growth standing as a **MIRROR**, fully **decoupled** from feeding (growing earns nothing
@@ -620,12 +623,110 @@ Presence is **not** a table — it is a volatile, heartbeat-fed in-memory signal
   `observed_capabilities` (jsonb `CapabilityKey[]`). The mark exists ONLY to make reflections
   **idempotent**: `advance` is a compare-and-set on the monotonic band indices + observed-capability
   set (the same trick as the consolidation cursor), so two concurrent post-turn recomputes (e.g. rapid
-  back-to-back turns, or two app instances) can never double-post a growth reflection. (`GET /growth`
-  itself is read-only — it never recomputes — so a read can never post.) The row is created lazily on
+  back-to-back turns, or two app instances) can never double-post a growth reflection. (the `growth.get`
+  WS method itself is read-only — it never recomputes — so a read can never post.) The row is created lazily on
   first recompute. Growth curves and the capabilities catalogue are centralized in
   `core/src/growth/config.ts` (`DEFAULT_GROWTH_CONFIG`) — no scattered literals — alongside the
   feeding economy's constants (food grants, the food seed), which drive the separate **feeding**
   flow; see `companion-economy.md`.
+
+### Scalability & delivery tables
+
+The stateless/horizontally-scalable backend (`docs/plans/deliver-scalability.md`) adds five
+tables. All three claim/lease/log mechanisms are **independent and never conflated** — the
+job-queue lease, the WS embodiment claim, and atomic per-row writes each have their own row and
+semantics.
+
+#### `jobs` — durable background work queue
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | uuid (PK) | |
+| `companion_id` | uuid (FK → `companions.id`, cascade) | the companion the work is for |
+| `type` | text (`JobType`) | `consolidate` \| `motivation` \| `ingest` \| `reaction_learn` |
+| `dedupe_key` | text | coalescing key — bare type for companion-wide work, discriminated by payload for per-event work |
+| `payload` | jsonb (`JobPayload`), default `{}` | type-specific reference, never bulk data (e.g. `reaction_learn` → messageId + emoji) |
+| `run_at` | timestamptz, default `now()` | earliest eligible time (`now()` for immediate; future for backoff / "deferred") |
+| `status` | text (`JobStatus`), default `pending` | `pending` \| `done` \| `failed` |
+| `attempts` | integer, default `0` | retry counter |
+| `last_error` | text, nullable | user-/operator-safe last failure reason; internal detail stays in logs |
+| `created_at` / `updated_at` | timestamptz | |
+
+Indexes: **partial-unique** `(companion_id, dedupe_key) WHERE status='pending'` (coalescing — a
+repeat enqueue upserts onto the pending row rather than piling up duplicates); `(status, run_at)`
+for the "due, pending, oldest-first" claiming scan. Mechanism → `deliver-scalability.md` §5.1.
+
+#### `companion_claims` — per-companion work lease
+
+| Field | Type | Notes |
+|---|---|---|
+| `companion_id` | uuid (PK, FK → `companions.id`, cascade) | one lease row per companion |
+| `owner` | text | opaque id of the processor/node holding the lease (observability) |
+| `generation` | bigint, default `0` | monotonic claim counter, bumped on each (re)claim — a fencing token |
+| `claimed_until` | timestamptz | the lease is live only while `now() < claimed_until`; a crashed processor's claim lapses and another node reclaims |
+| `updated_at` | timestamptz | |
+
+A processor claims a whole companion before draining its jobs, so exactly one processor
+fleet-wide touches a companion's background state at a time (the single-writer invariant the
+in-process runners used to get from a `Set`). Distinct from `active_embodiment`.
+
+#### `active_embodiment` — the live WS embodiment claim
+
+| Field | Type | Notes |
+|---|---|---|
+| `companion_id` | uuid (PK, FK → `companions.id`, cascade) | one live connection per companion (the "one room at a time" rule) |
+| `connection_id` | text | the holding connection's **ULID** — the fencing token (timestamp-sortable, "newer wins" by lexical compare) |
+| `node` | text | host/pid of the node holding the connection (observability) |
+| `claim_seq` | bigint, default `0` | DB-stamped monotonic claim counter, bumped on each (re)claim; part of the fencing key (`connection_id` + `claim_seq`) so a recurred ULID can't revive a superseded claim (ABA guard) |
+| `last_heartbeat` | timestamptz | refreshed by the holder's heartbeat; a value past the TTL is reclaimable (crash backstop) |
+| `last_activity_at` | timestamptz, default `now()` | presence (D5): last real interaction (a turn) |
+| `tab_visible` | boolean, default `true` | presence: whether the room is foregrounded |
+| `updated_at` | timestamptz | |
+
+A new connection **force-claims** (its newer ULID wins); the prior holder self-fences when its
+heartbeat renew finds it no longer owns the row. The fence (`holds`) matches the exact claim —
+`connection_id` **and** `claim_seq` — so even in the (speculative) ABA case where a ULID
+`connection_id` value recurs across nodes/restarts, the stale binding's `claim_seq` won't match
+and it stays fenced out. Handoff design + the in-turn fence → `architecture.md` §6,
+`deliver-scalability.md` §5.2.
+
+#### `companion_events` — durable live-event log
+
+| Field | Type | Notes |
+|---|---|---|
+| `seq` | bigserial (PK) | per-row monotonic cursor the embodiment connection reads past |
+| `companion_id` | uuid (FK → `companions.id`, cascade) | indexed `(companion_id, seq)` |
+| `event` | jsonb (`CompanionStreamEvent`) | the event to push over the WS |
+| `xid` | xid8, default `pg_current_xact_id()` | the inserting transaction id — the live reader's **visibility horizon** |
+| `created_at` | timestamptz | |
+
+Sole live-delivery substrate: every publish point appends a row; the one embodiment connection's
+node reads rows past its cursor on each heartbeat and pushes them, so an event written on **any**
+node is delivered cross-node from shared Postgres (no in-process fan-out). The reader only
+delivers rows whose `xid` is below `pg_snapshot_xmin` so a `seq` that commits out of order is
+never skipped — the **visibility-gap guard** (`core/src/events/log.ts`; `architecture.md` §6).
+
+#### Upload staging — object storage, not Postgres
+
+Upload bytes are **not** stored in Postgres. They live in object storage (S3 in production)
+or a local filesystem root (dev/CI), behind the `UploadStagingStore` port
+(`core/src/ingestion/upload-staging*.ts`); the backend is chosen by
+`UPLOAD_STAGING_BACKEND` (`s3` | `file`). The `uploadId` *is* the object key —
+`tmp-uploads/<ownerId>/<uuid>__<kind>` — so there is no staging metadata table: the owner
+(authorization at enqueue) and kind (payload reconstruction) are read back from the key.
+
+- **File uploads** are a presigned, direct-to-backend flow: `sources.requestFileUpload`
+  issues a slot, the client PUTs the bytes to it (straight to S3, or to the local
+  `PUT /uploads/local/:uploadId` route for the `file` backend), then `sources.file` validates
+  the staged object (a `head` size check + a ranged magic-byte `peek`) and enqueues the
+  `ingest` job. The job reads the bytes on **any** node and deletes the object when done.
+- **note/link** sources (and the `ingest_source` tool) are small text the API already holds,
+  so they stage server-side via `stage()` and enqueue, same as before.
+- **Expiry** of a staged-but-never-consumed object is the backend's job, not an app row: the
+  S3 bucket has a lifecycle rule on the prefix (TTL), and the `file` backend is swept by
+  `purgeExpired()` (wired in `api/src/index.ts` next to the other periodic sweeps). Full
+  design → `docs/plans/staging-object-storage.md` (supersedes the byte-storage part of
+  `deliver-scalability.md` §6 D-A).
 
 ### Migrations & versioning
 
@@ -758,7 +859,7 @@ fencing. The how-to (changing/adding a prompt) lives in `guide-prompts.md`.
   call, writes its outcome as a `tool_step` row, then calls `Harness.continueAfterApproval` — which
   retrieves recent context, injects the outcome as an **ephemeral** observation (the persisted row is
   UI-only and filtered from context), and runs the loop so the companion narrates and continues. No new
-  user message is persisted; the response **streams** back over SSE like a normal turn.
+  user message is persisted; the response **streams** back over the WS like a normal turn.
 - **Streamed tool calls:** the OpenRouter gateway accumulates `choices[].delta.tool_calls` fragments
   by `index` (the first carries id+name+partial args, later frames append arg-string pieces) and
   `JSON.parse`s the assembled arguments at `[DONE]`; malformed args degrade to `{}` (failures are
@@ -771,50 +872,61 @@ fencing. The how-to (changing/adding a prompt) lives in `guide-prompts.md`.
 The proactive `Initiator` seam is filled by the motivation engine in `motivation/` (see §1
 and `companion-motivation.md`).
 
-### 2.4 Event delivery — the companion event channel
+### 2.4 Event delivery — the durable log + WebSocket push
 
-The standing per-companion push channel (`architecture.md` §6). No schema change — the bus is
-**in-process pub/sub**; durability lives in the `messages` / `message_reactions` tables, the channel
-only delivers. It carries a `CompanionStreamEvent` union: a `{ type: 'message' }` for each appended
-transcript row, plus `reaction_added` / `reaction_removed` for emoji reactions (§1,
-`companion-reactions.md` §8).
+Live delivery rides the **permanent WebSocket** (`architecture.md` §6, Phase D). Every publish
+**appends a row** to the durable `companion_events` log; the one embodiment connection's node reads
+new rows past a cursor on each heartbeat and pushes them. There is **no in-process pub/sub and no SSE
+route** — the durable log is the sole substrate, so an event written on any node is delivered
+cross-node from shared Postgres. The wire payload is the same `CompanionStreamEvent` union: a
+`{ type: 'message' }` for each appended transcript row, plus `reaction_added` / `reaction_removed`
+for emoji reactions (§1, `companion-reactions.md` §8).
 
 - **Publish points.** Transcript rows publish through `appendMessage` (`memory/store.ts`), the single
   chokepoint every persistence path flows through (turn reply, greeting, ingestion announcer, upload
   turns): a **`PublishingMemoryStore`** decorator wraps the real store and, after a successful append,
   calls `CompanionEventBus.publish(companionId, { type: 'message', message })`. Reaction events are
-  published **directly** — by the reaction route (`reaction.routes.ts`, user reactions) and the
-  `react` tool (`reactions/react-tool.ts`, the companion's own), each only on an actual insert/delete
-  so a re-tap or no-op delete broadcasts nothing. The publish is **best-effort**: wrapped in
-  `try/catch`, logged at `error` on failure, and never allowed to fail the originating write (a
+  published **directly** — by the reaction WS methods (`ws/methods/reactions.ts`, user reactions) and
+  the `react` tool (`reactions/react-tool.ts`, the companion's own), each only on an actual
+  insert/delete so a re-tap or no-op delete broadcasts nothing. The publish is **best-effort**:
+  the append is logged at `error` on failure and never allowed to fail the originating write (a
   delivery hiccup must not break persistence — `common/logging.md`). The decorator is wired once at
   the composition root (`api/src/index.ts`) — `new PublishingMemoryStore(new TranscriptMemoryStore(db),
   bus, logger)` — so harness, greeter, and announcer all publish through the one shared instance with
   no call-site change.
-- **Bus.** `CompanionEventBus` (`core/src/events/`) is an interface; `InProcessCompanionEventBus`
-  keeps a `Map<companionId, Set<subscriber>>` and exposes `publish` + `subscribe(companionId) →
-  { events: AsyncIterableIterator<CompanionStreamEvent>; close() }` (a bounded queue + waiter bridges
-  callback → async-iterable). The interface is the seam for a Postgres `LISTEN/NOTIFY` / Redis
-  implementation when the API runs on >1 replica (`architecture.md` §9) — publishers and the route are
-  unchanged.
-- **Channel route.** `GET /companions/:companionId/events` (`requireAuth` + ownership check) opens an
-  **open-ended** SSE (`streamChannel`, distinct from the finite `streamSse`): it subscribes to the
-  bus and writes each event through to the wire **as-is** (the bus already carries the wire
-  `CompanionStreamEvent`), emits a heartbeat comment (`: ping`) on an interval to keep intermediaries
-  from reaping the idle connection, and registers `request.raw.on('close', …)` to **unsubscribe +
-  clear the heartbeat + end** — the close-driven cleanup the per-turn streams don't need. Published
-  message events include `tool_step`/`proposal` kinds, so a client that wasn't the turn's initiator
-  still renders a complete transcript.
-- **Client transport + establishment.** `subscribeCompanionEvents(companionId, signal)` (`web/src/api/
-  client.ts`) reads the channel via the shared `fetch`-based `send()` (so the bearer header is set —
-  no `EventSource` limitation) and an SSE parser, threading an `AbortSignal`. The chat's establishment
-  effect: open the subscription **first** (buffering), **then** `fetchMessages` the snapshot, and feed
-  both through a reducer keyed by server id — a `message` event goes through `mergeMessage(lines, dto)`
+- **Bus = durable append.** `CompanionEventBus` (`core/src/events/bus.ts`) is now a one-method
+  interface (`publish(companionId, event)`); the production `DurableCompanionEventBus`
+  (`durable-bus.ts`) implements `publish` as a **fire-and-forget append** to the
+  `CompanionEventLog` (`log.ts`, table `companion_events`). The former in-process
+  `InProcessCompanionEventBus` (the `Map<companionId, Set<subscriber>>` + SSE seam) was **removed**.
+- **Log read = the delivery path.** The embodiment connection's heartbeat
+  (`api/src/ws/register.ts`) calls `eventLog.readSince(companionId, cursor, limit)` and pushes each
+  row as a `{ event: 'companion', data }` WS frame, advancing the cursor to the max seq delivered.
+  Reads are **visibility-horizon gated**: only rows whose inserting transaction id (`xid`) is below
+  `pg_snapshot_xmin(pg_current_snapshot())` are returned, so a `bigserial` `seq` that was assigned at
+  INSERT but commits *after* a higher seq is never skipped (the connect cursor is `latestSettledSeq`,
+  not the raw max, for the same reason — §1, `deliver-scalability.md` §C). Message events include
+  `tool_step`/`proposal` kinds, so a surface that wasn't the turn's initiator still renders a complete
+  transcript.
+- **Retention — none (accepted unbounded growth).** `companion_events` is **append-only with no
+  retention sweep**: `append` only inserts, `readSince` only reads forward past a cursor, and the
+  schema has no `expires_at` — the sole deletion is the `companions` `onDelete: 'cascade'`, so for a
+  live companion every appended event persists for the companion's lifetime. The table is the durable
+  replay/resume substrate, so the PoC **accepts** this growth rather than trimming behind the read
+  cursor. (Unlike upload staging, whose TTL is now reclaimed — the S3 bucket lifecycle rule, or the
+  `file` backend's wired `purgeExpired()` sweep — `companion_events` has no such backstop.) A
+  long-lived deployment needs one of: a time- or watermark-based retention sweep, table partitioning,
+  or archival — see `architecture.md` §9.
+- **Client transport + establishment.** The web client holds **one permanent WebSocket** via the
+  `wsClient` transport singleton (`web/src/api/ws.ts`): all requests correlate by envelope `id`, turns
+  stream as `{ id, stream }` chunks, and `{ event, data }` frames are the live channel. The chat's
+  establishment effect loads the transcript snapshot (`messages.list`) and merges the live event
+  stream through a reducer keyed by server id — a `message` event goes through `mergeMessage(lines, dto)`
   (present id ⇒ ignore; an id-less optimistic line matching `role`+`content`(+`sourceId`) ⇒ replace it
   adopting the id; else insert in `createdAt` order), and a `reaction_*` event through
   `applyReaction(lines, event)` (add/remove the chip on the addressed line, deduped by
-  `(reactor, emoji)`). On stream error while mounted it reconnects with backoff, re-running the
-  snapshot each (re)connect; on unmount it aborts. Ordering uses `createdAt` (the DTO carries no
+  `(reactor, emoji)`). A dropped socket reconnects and re-runs the snapshot; a takeover pushes
+  `embodiment.superseded` (the companion "moved rooms"). Ordering uses `createdAt` (the DTO carries no
   `seq`); add `seq` to `MessageDto` if equal-timestamp ordering ever glitches.
 
 ## 3. Configuration
@@ -839,6 +951,8 @@ Loaded from environment / a secret manager; required values validated at startup
 | `USE_CONTEXT_HEADER` | `true` (default) \| `false` — prefix the Pass-2 context header onto embedding inputs (the eval A/B knob, `companion-memory.md` §5) |
 | `STARTING_VITALITY_TOKENS` | The token balance a new companion is seeded with in **each** vitality column (`stamina_balance_tokens` + `energy_balance_tokens`) at creation (default 1 000 000). Not a cap — wallets only refill by feeding (§4.8). |
 | `INGESTION_QUEUE_MAX` | Backstop cap on queued+in-flight ingestion runs across all owners; submissions past it get 429 (default 100) |
+| `WS_MAX_PAYLOAD_BYTES` | Max size of a single inbound WS frame (default 256 KiB); `ws` closes (1009) an oversized frame at the transport before any `JSON.parse`, bounding event-loop stall (`architecture.md` §6) |
+| `WS_MAX_IN_FLIGHT` | Per-connection cap on concurrently-dispatching requests (default 32); frames multiplex, so past the cap a frame is shed with a `rate_limited` error rather than fanning out unbounded work against CPU / the DB pool |
 | `MCP_SERVERS` | Developer whitelist of MCP servers as a JSON array of `{ ref, endpoint, label?, authTokenEnv? }` — the trust boundary for tool acquisition.<br>Empty (default `[]`) disables MCP. HTTP/SSE endpoints only (`companion-tools.md` §7) |
 | `MAX_EQUIPPED_TOOLS` | Per-companion cap on the equipped-tool set (default 8); the single tier evicts LRU past it (`development-plan.md` Phase 9) |
 | `CLI_TOOLS_PATH` | Directory of CLI tool-definition folders (each a `TOOL.json` + `TOOL.md`) — the CLI track's trust boundary, must be **read-only + deployment-controlled** and not overlap the CLI scratch dir (rejected at startup).<br>Empty (default) disables the CLI track (`companion-tools.md` §6) |
@@ -860,8 +974,8 @@ detail: `runbook-tracing.md`.
 **Loop & tool tuning constants** are in-code defaults (not secrets, so not env-wired): the loop
 ceilings `DEFAULT_MAX_TOOL_ITERATIONS` (default 6) + the optional per-run token budget (`harness.ts`,
 overridable via `HarnessOptions`), `web_fetch`'s returned-text cap (`web-fetch.ts`, default 8000
-chars) and link-harvest cap (`MAX_HARVESTED_LINKS`, default 20), and the `/explore` burst size
-(`inventory.routes.ts`, default 3).
+chars) and link-harvest cap (`MAX_HARVESTED_LINKS`, default 20), and the `explore` burst size
+(`ws/methods/inventory.ts`, default 3).
 
 **Motivation tuning constants** are likewise in-code: the motivation **sweep cadence**
 (`MOTIVATION_SWEEP_INTERVAL_MS`, `api/src/index.ts`) and the autonomous-burst focus length
@@ -869,10 +983,10 @@ chars) and link-harvest cap (`MAX_HARVESTED_LINKS`, default 20), and the `/explo
 `STARTING_VITALITY_TOKENS` (`api/src/index.ts`), and the post-turn **affect read** runs on
 `INGESTION_MODEL` (spent from the companion's stamina) — see §1 and `companion-motivation.md` §7–§8.
 
-**Event-channel constants** are in-code (not secrets): the standing channel's **heartbeat interval**
-(the `: ping` keep-alive cadence, `api/src/sse.ts`) and the client's **reconnect backoff** bounds
-(`web/src/api/client.ts`). No env wiring — the channel is in-process pub/sub with no provider or
-credential (§2.4).
+**WS delivery constants** are in-code (not secrets): the embodiment **heartbeat interval**
+(`WS_HEARTBEAT_MS` — doubles as the background-event read cadence) and **claim TTL**
+(`WS_CLAIM_TTL_MS`), plus the client's **reconnect backoff** bounds (`web/src/api/ws.ts`). The live
+channel is the durable `companion_events` log read over the WS — no provider or credential (§2.4).
 
 **User-model decay constants** _(Phase 13)_ are also in-code: `BELIEF_SALIENCE_HALF_LIFE_DAYS` (the
 uniform half-life of the lazy `effectiveSalience` view) and `STALE_SALIENCE_FLOOR` (below which a decayed

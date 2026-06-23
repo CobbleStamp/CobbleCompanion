@@ -209,7 +209,7 @@ terse"). It is stored as the companion's **rolling read of the user** (`companio
 per companion; see `implementation.md` §1). This is a **body** capability — it lives *in* the agent
 loop (`architecture.md` §4.5), not as a bolt-on in a route handler — and it is **launched after the
 reply streams (all tokens + `done` already sent) and not awaited**, so it adds zero latency to the
-answer and never holds the SSE socket open. It is taken on every turn, not only after the companion acted.
+answer and never holds the turn's response stream open. It is taken on every turn, not only after the companion acted.
 Its tokens ride the chat turn, so they are billed to **stamina**, not energy.
 
 **Fast loop — attunement (adjusts behaviour, learns nothing).** The stored read is fed *forward*

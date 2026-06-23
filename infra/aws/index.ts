@@ -7,9 +7,11 @@
 // deploy outputs (`pulumi stack output`).
 import { repo } from './src/registry';
 import { publicIp, appUrl } from './src/compute';
+import { uploadsBucket } from './src/storage';
 import './src/secrets';
 import './src/iam';
 
 export const ecrRepoUrl = repo.repositoryUrl;
 export const instancePublicIp = publicIp;
 export const url = appUrl;
+export const uploadsBucketName = uploadsBucket.bucket;

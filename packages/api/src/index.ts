@@ -4,10 +4,10 @@
  * starts the Fastify server.
  */
 
+import { hostname } from 'node:os';
 import { createPgDatabase, EMBEDDING_DIMENSIONS, seedCredentials, type Database } from '@cobble/db';
 import {
   composeRetrieveContext,
-  ConsolidationRunner,
   ConsolidationService,
   consoleLogger,
   createEpisodicRetrieveContext,
@@ -45,25 +45,32 @@ import {
   GrowthService,
   DEFAULT_GROWTH_CONFIG,
   Harness,
-  InMemoryPresenceStore,
+  EmbodimentPresenceStore,
   IngestionPipeline,
-  IngestionRunner,
+  DrizzleEmbodimentStore,
+  makeIngestJobHandler,
+  makeIngestWorkRequester,
+  sweepIngestion,
   LlmIngestionAnnouncer,
   LlmPersonalityEvolver,
   LlmUserModelReflector,
   LlmUserPersonaSynthesizer,
   MotivationEngine,
-  MotivationRunner,
   OpenRouterEmbeddingGateway,
   OpenRouterGateway,
   reinforceFromDelta,
-  resumeDeferredJobs,
   sweepConsolidation,
   sweepMotivation,
   ToolRegistry,
-  InProcessCompanionEventBus,
+  DurableCompanionEventBus,
+  DrizzleCompanionEventLog,
   PublishingMemoryStore,
   TranscriptMemoryStore,
+  DrizzleJobQueue,
+  DrizzleQueueMetricsReader,
+  JobProcessorPool,
+  makeCompanionWorkRequester,
+  makeReactionWorkRequester,
   type EmbeddingGateway,
   type LlmGateway,
 } from '@cobble/core';
@@ -75,6 +82,7 @@ import {
   type TokenVerifier,
 } from './auth/jwt-verifier.js';
 import { loadConfig, type AppConfig } from './config.js';
+import { createUploadStagingStore } from './upload-staging-factory.js';
 import { FileSystemCliToolStore } from './cli/fs-tool-store.js';
 import { createSubprocessSandbox } from './cli/subprocess-sandbox.js';
 import { StreamableHttpMcpGateway } from './mcp/sdk-client.js';
@@ -139,7 +147,11 @@ async function main(): Promise<void> {
   // bus fans appended rows out to subscribed surfaces, and wrapping the store in a
   // publish-on-append decorator HERE means every persistence path downstream
   // (announcer, harness, greeter) publishes through the one shared instance.
-  const eventBus = new InProcessCompanionEventBus();
+  // Durable cross-node delivery (D4): publishes append to companion_events, which the
+  // live embodiment connection's heartbeat reads by cursor on any node (the log is
+  // the single delivery substrate — the SSE in-process bus is gone).
+  const eventLog = new DrizzleCompanionEventLog(db);
+  const eventBus = new DurableCompanionEventBus(eventLog, consoleLogger);
   const memory = new PublishingMemoryStore(new TranscriptMemoryStore(db), eventBus, consoleLogger);
   // Reinforcement log + the rolling affect read — built early so the harness can
   // sense the user's mood each turn (Phase 4.2) and the will can learn from it.
@@ -193,7 +205,64 @@ async function main(): Promise<void> {
       logger: consoleLogger,
     }),
   });
-  const ingestion = new IngestionRunner(ingestionPipeline, consoleLogger, config.ingestionQueueMax);
+  // Upload staging (staging-object-storage.md): raw bytes live in object storage
+  // (S3) or a local filesystem root, never Postgres; the `ingest` job reads them
+  // back on any node by their key. Backend chosen by config.
+  const staging = createUploadStagingStore(config.uploadStaging);
+
+  // Live embodiment claim (Phase D D2): one WS connection holds a companion at a
+  // time; the handshake claims it and the heartbeat renews it.
+  const embodiment = new DrizzleEmbodimentStore(db);
+
+  // Background job queue (deliver-scalability.md §5.1): the durable, fleet-coherent
+  // replacement for the in-process runners + their per-process coalescing Sets.
+  // consolidate/motivation/reaction_learn/ingest run as claim-serialised jobs
+  // drained by a bounded pool on every node, so duplicate sweeps can't run the same
+  // work N times and a reaction's drive-weight write can't race a concurrent one.
+  // The consolidate/motivation/reaction_learn handlers reference services
+  // constructed below; they only run at drain time (after pool.start()), so the
+  // forward reference is safe. Built here — before the tool registry — because the
+  // `ingest_source` tool and the upload routes enqueue through the same requester.
+  const jobQueue = new DrizzleJobQueue(db, consoleLogger);
+  const jobPool = new JobProcessorPool(
+    jobQueue,
+    {
+      consolidate: (job) => consolidationService.consolidate(job.companionId),
+      motivation: async (job) => {
+        await motivationEngine.tick(job.companionId);
+      },
+      reaction_learn: async (job) => {
+        const { messageId, emoji } = job.payload;
+        if (!messageId || !emoji) {
+          return;
+        }
+        await reactionLearner.learnForMessage(job.companionId, messageId, emoji);
+      },
+      ingest: makeIngestJobHandler({
+        pipeline: ingestionPipeline,
+        semantic,
+        staging,
+        logger: consoleLogger,
+      }),
+    },
+    {
+      owner: `${hostname()}-${process.pid}`,
+      concurrency: config.jobConcurrency,
+      leaseMs: config.jobLeaseMs,
+      heartbeatMs: config.jobHeartbeatMs,
+      pollMs: config.jobPollIntervalMs,
+      logger: consoleLogger,
+    },
+  );
+  // Triggers (message routes, reaction route, intake routes/tool) + the catch-up
+  // sweeps enqueue through these requesters — coalesced, with a local nudge.
+  const consolidation = makeCompanionWorkRequester(jobPool, 'consolidate');
+  const motivation = makeCompanionWorkRequester(jobPool, 'motivation');
+  const reactionLearn = makeReactionWorkRequester(jobPool);
+  const ingest = makeIngestWorkRequester(jobPool, jobQueue, config.ingestionQueueMax);
+  // Read-only queue/embodiment observability for the admin surface (C2). Uses the
+  // same claim TTL as the WS heartbeat so "live" matches the embodiment semantics.
+  const queueMetrics = new DrizzleQueueMetricsReader(db, config.wsClaimTtlMs);
 
   // Phase 3 tool surface + trust machinery, built before the harness so the
   // propose→approve gate and the tool-call log can be wired into the loop.
@@ -201,9 +270,12 @@ async function main(): Promise<void> {
   const toolCallLog = new DrizzleToolCallLog(db);
   const leads = new DrizzleLeadStore(db);
   const procedural = new DrizzleProceduralStore(db);
-  // Volatile presence (P4) — fed by the heartbeat route and message sends; the
-  // motivation engine reads it to decide whether/how to initiate.
-  const presence = new InMemoryPresenceStore();
+  // Presence (P4) derived from the live embodiment claim (D5): a live claim means
+  // the user is here. Fleet-wide (shared Postgres), so a turn on one node and a
+  // motivation tick on another see the same presence; a dropped connection becomes
+  // absent when its claim lapses. The motivation engine reads it to decide whether
+  // to self-initiate.
+  const presence = new EmbodimentPresenceStore(db, config.wsClaimTtlMs, consoleLogger);
   const baseTools = [
     // web_fetch harvests outbound links into the reading list (the P4 substrate).
     createWebFetchTool({
@@ -218,7 +290,7 @@ async function main(): Promise<void> {
       embeddingDimensions: config.embeddingDimensions,
       logger: consoleLogger,
     }),
-    createIngestSourceTool({ semantic, ingestion, logger: consoleLogger }),
+    createIngestSourceTool({ semantic, ingest, staging, logger: consoleLogger }),
     // The companion's expressive emoji reaction (companion-reactions.md §5): free,
     // ungated, silent; binds to the message that triggered the turn.
     createReactTool({ reactions, eventBus, logger: consoleLogger }),
@@ -396,7 +468,6 @@ async function main(): Promise<void> {
     reflector: userModelReflector,
     userPersonaSynthesizer,
   });
-  const consolidation = new ConsolidationRunner(consolidationService, consoleLogger);
 
   // Motivation engine (P4): the "will" that works the lead inventory on idle.
   // Self-initiated work spends the per-companion ENERGY wallet (a separate wallet
@@ -418,7 +489,6 @@ async function main(): Promise<void> {
     model: config.ingestionModel,
     logger: consoleLogger,
   });
-  const motivation = new MotivationRunner(motivationEngine, consoleLogger);
 
   // Greeting on arrival (P14): the bond-driven reaction to the user returning.
   // Voiced greetings are interaction, so they spend STAMINA (the `quota` wallet),
@@ -459,15 +529,19 @@ async function main(): Promise<void> {
     userModel,
     memory,
     eventBus,
+    eventLog,
     semantic,
     episodic,
     embeddings,
-    ingestion,
+    staging,
+    ingest,
+    embodiment,
     consolidation,
     harness,
     tools,
     proposals,
     toolCallLog,
+    queueMetrics,
     leads,
     procedural,
     presence,
@@ -478,7 +552,7 @@ async function main(): Promise<void> {
     food,
     rewards,
     reactions,
-    reactionLearner,
+    reactionLearn,
     affect: affectStore,
     growth,
     growthStore,
@@ -487,21 +561,21 @@ async function main(): Promise<void> {
     logger: consoleLogger,
   });
 
-  // Restart recovery: jobs interrupted mid-run lost their in-memory state, so
-  // fail them (the user re-uploads); deferred jobs kept their parse and resume.
-  const failed = await semantic.failInterruptedJobs();
-  if (failed > 0) {
-    consoleLogger.info('failed interrupted ingestion jobs on startup', { count: failed });
-  }
+  // Restart recovery is lease-driven, not a boot sweep: a node never fails jobs at
+  // startup (that would corrupt ingestions running live on its peers). An ingestion
+  // stranded mid-pipeline by a crash keeps its still-pending `ingest` job; once the
+  // dead runner's per-companion claim lapses, another node re-claims it and the
+  // ingest handler reconciles the stranded row (deliver-scalability.md D7).
 
   // Resume parked (deferred) jobs now and on a timer, so work that hit an empty
-  // wallet drains as companions are fed (architecture.md §4.8). Serial + wallet-gated,
-  // so it never overspends.
-  const sweepDeps = { semantic, quota, ingestion, logger: consoleLogger };
-  await resumeDeferredJobs(sweepDeps);
+  // wallet drains as companions are fed (architecture.md §4.8). Enqueues an `ingest`
+  // job per under-cap deferred source; the handler resumes from the held parse and
+  // the pipeline re-checks the wallet, so it never overspends.
+  const ingestionSweepDeps = { semantic, quota, ingest, logger: consoleLogger };
+  await sweepIngestion(ingestionSweepDeps);
   const sweepTimer = setInterval(() => {
-    void resumeDeferredJobs(sweepDeps).catch((error: unknown) => {
-      consoleLogger.error('deferred-job sweep failed', { error });
+    void sweepIngestion(ingestionSweepDeps).catch((error: unknown) => {
+      consoleLogger.error('deferred-ingestion sweep failed', { error });
     });
   }, DEFERRED_SWEEP_INTERVAL_MS);
   sweepTimer.unref();
@@ -531,6 +605,26 @@ async function main(): Promise<void> {
   }, MOTIVATION_SWEEP_INTERVAL_MS);
   motivationTimer.unref();
 
+  // Reclaim upload-staging objects that were staged but never consumed — a crash
+  // or lost enqueue between staging and the `ingest` job's success-path delete
+  // would otherwise leak them (staging-object-storage.md §1, the issue-#3 fix).
+  // For the S3 backend this is a no-op (the bucket lifecycle rule owns TTL); for
+  // the filesystem backend it deletes files past their TTL.
+  await staging.purgeExpired().catch((error: unknown) => {
+    consoleLogger.error('upload-staging purge failed', { error });
+  });
+  const stagingPurgeTimer = setInterval(() => {
+    void staging.purgeExpired().catch((error: unknown) => {
+      consoleLogger.error('upload-staging purge failed', { error });
+    });
+  }, STAGING_PURGE_INTERVAL_MS);
+  stagingPurgeTimer.unref();
+
+  // Start draining the job queue: a bounded pool of ephemeral processors that
+  // claim companions and run their due consolidate/motivation jobs, with a coarse
+  // poll as the clock for idle / future-dated work (deliver-scalability.md §5.1).
+  jobPool.start();
+
   // Graceful shutdown: stop the catch-up timers and drain in-flight background
   // work before exit so nothing is killed mid-write. Fastify runs onClose after
   // it has stopped accepting requests, so no new turns trigger work past here.
@@ -538,10 +632,9 @@ async function main(): Promise<void> {
     clearInterval(sweepTimer);
     clearInterval(consolidationTimer);
     clearInterval(motivationTimer);
-    await ingestion.whenIdle();
+    clearInterval(stagingPurgeTimer);
+    await jobPool.close();
     await harness.whenIdle();
-    await consolidation.close();
-    await motivation.close();
     await mcpGateway.close();
   });
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
@@ -566,6 +659,10 @@ const CONSOLIDATION_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 /** How often to catch up proactive ticks (cheap; a leads-pending scan). */
 const MOTIVATION_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+
+/** How often to reclaim never-consumed staged uploads (filesystem backend; the
+ *  S3 backend's call is a no-op since the bucket lifecycle owns TTL). */
+const STAGING_PURGE_INTERVAL_MS = 5 * 60 * 1000;
 
 main().catch((error: unknown) => {
   consoleLogger.error('api failed to start', { error });

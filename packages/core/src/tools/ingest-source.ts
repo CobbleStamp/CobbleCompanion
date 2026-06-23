@@ -4,13 +4,14 @@
  * reading a page (web_fetch) is free, but *remembering* one mutates what the
  * companion is and spends ingestion tokens, so the gate holds it for approval.
  * Run only ever fires post-approval; it mirrors the source-upload enqueue path
- * (create source + job → hand to the background runner).
+ * (create source + job → stage the link → enqueue an `ingest` job).
  */
 
+import type { SourceKind } from '@cobble/shared';
 import type { ToolResult } from '../harness/hooks.js';
 import { consoleLogger, type Logger } from '../logging.js';
-import type { IngestionRunParams } from '../ingestion/pipeline.js';
-import { IngestionQueueFullError } from '../ingestion/runner.js';
+import { ingestionPayloadBytes } from '../ingestion/ingest-job.js';
+import type { IngestWorkRequester } from '../jobs/job-processor.js';
 import { readHttpUrlArg, readStringArg, type Tool, toolErrorMessage } from './tool.js';
 
 /** The slice of the semantic store this tool needs to register a new source. */
@@ -22,15 +23,18 @@ export interface SourceRegistrationPort {
   createJob(companionId: string, sourceId: string): Promise<{ id: string }>;
 }
 
-/** The slice of the ingestion runner this tool needs to start a background read. */
-export interface IngestionEnqueuePort {
-  enqueue(params: IngestionRunParams): void;
-  isFull(): boolean;
+/** The slice of the staging store this tool needs to make the link bytes durable. */
+export interface UploadStagingPort {
+  stage(params: { ownerId: string; kind: SourceKind; bytes: Uint8Array }): Promise<{ id: string }>;
 }
+
+/** The slice of the ingest requester this tool needs (enqueue + backpressure). */
+export type IngestEnqueuePort = Pick<IngestWorkRequester, 'request' | 'isFull'>;
 
 export interface IngestSourceOptions {
   readonly semantic: SourceRegistrationPort;
-  readonly ingestion: IngestionEnqueuePort;
+  readonly ingest: IngestEnqueuePort;
+  readonly staging: UploadStagingPort;
   readonly logger?: Logger;
 }
 
@@ -65,7 +69,7 @@ export function createIngestSourceTool(options: IngestSourceOptions): Tool {
         };
       }
       const title = readStringArg(rawArgs, 'title') ?? undefined;
-      if (options.ingestion.isFull()) {
+      if (await options.ingest.isFull()) {
         return {
           name: 'ingest_source',
           content: 'Cobble is busy reading other sources right now — try again shortly.',
@@ -80,20 +84,21 @@ export function createIngestSourceTool(options: IngestSourceOptions): Tool {
           rawText: '',
         });
         const job = await options.semantic.createJob(ctx.companionId, source.id);
-        options.ingestion.enqueue({
+        // Stage the link durably (uniform with file uploads), then enqueue the
+        // `ingest` job that reads it on any node (deliver-scalability.md §6 D-A).
+        const { kind, bytes } = ingestionPayloadBytes({ kind: 'link', url });
+        const { id: uploadId } = await options.staging.stage({ ownerId: ctx.ownerId, kind, bytes });
+        options.ingest.request({
           companionId: ctx.companionId,
-          ownerId: ctx.ownerId,
           sourceId: source.id,
           jobId: job.id,
-          sourceTitle: title ?? url,
-          payload: { kind: 'link', url },
+          uploadId,
         });
         return {
           name: 'ingest_source',
           content: `Started reading ${url} into memory; it will be recallable once done.`,
         };
       } catch (error) {
-        const busy = error instanceof IngestionQueueFullError;
         logger.error('ingest_source failed', {
           operation: 'tool.ingest_source',
           companionId: ctx.companionId,
@@ -102,9 +107,7 @@ export function createIngestSourceTool(options: IngestSourceOptions): Tool {
         });
         return {
           name: 'ingest_source',
-          content: busy
-            ? 'Cobble is busy reading other sources right now — try again shortly.'
-            : `Error remembering ${url}: ${toolErrorMessage(error)}`,
+          content: `Error remembering ${url}: ${toolErrorMessage(error)}`,
           isError: true,
         };
       }

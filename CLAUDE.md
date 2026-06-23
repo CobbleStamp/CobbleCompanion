@@ -32,7 +32,9 @@ read docs/product-overview.md
 | Emoji reactions (reward + expression) | `docs/companion-reactions.md`  |
 | Feeding economy (food pantry & vitality) | `docs/companion-economy.md`        |
 | Tool acquisition & use (MCP/CLI) | `docs/companion-tools.md`          |
-| Realtime delivery (standing event channel / SSE push) | `docs/architecture.md` §6, `docs/implementation.md` §2.4 |
+| Realtime delivery (permanent WebSocket / embodiment + durable event log) | `docs/architecture.md` §6, `docs/implementation.md` §2.4 |
+| WebSocket endpoint contract (client integration: methods, envelopes, errors, events) | `docs/companion-endpoints.md` |
+| Background-job lease & abort (single-writer drain, heartbeat) | `docs/companion-background-job-lease.md` |
 | Prompt management & iteration | `docs/guide-prompts.md`             |
 | Running evals (offline harness) | `docs/howto-run-evals.md`         |
 | Online tracing / observability | `docs/runbook-tracing.md`          |

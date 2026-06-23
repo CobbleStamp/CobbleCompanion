@@ -6,7 +6,7 @@
 > _expressive_ act the companion emits to feel present. This doc owns the reaction surface, its data
 > model, and how its signal plugs into learning; the **drive model, arbitration, and change-as-reward
 > loop it extends** are owned by `companion-motivation.md` §7. For the agent-loop seam the companion's
-> own reaction is emitted from see `architecture.md` §4.5; for the standing event channel reactions
+> own reaction is emitted from see `architecture.md` §4.5; for the WS live channel reactions
 > ride see `architecture.md` §6; for the **stamina** wallet the read it triggers spends see
 > `companion-economy.md`; for the user model / beliefs the reflection layer feeds see
 > `companion-memory.md` §4; for canonical schema (`message_reactions`) see `implementation.md` §1; for
@@ -14,7 +14,7 @@
 >
 > **Status: built (Phase 16), with two designed fast-follows.** The reaction substrate, delivery, the
 > user-reaction reward channel, and the companion's current-turn `react` action all ship
-> (`packages/core/src/reactions/`, `packages/api/src/routes/reaction.routes.ts`, the web chat). Two
+> (`packages/core/src/reactions/`, `packages/api/src/ws/methods/reactions.ts`, the web chat). Two
 > pieces of §5 are designed but deferred — request-scoped `[n]` **addressing handles** (reacting to a
 > non-latest message) and reaction **read-back** (a reaction re-entering context on a later turn) — both
 > because they tag the production composed recall stack; see the _Built scope_ notes in §5 and §11. Phase
@@ -95,11 +95,11 @@ sequenceDiagram
     participant R as ReactionLearner (body — senses)
     participant W as ReactionLearner (will — learns)
 
-    C->>API: POST …/messages/:id/reactions {emoji}
+    C->>API: reactions.add { messageId, emoji } (WS)
     API->>DB: upsert row (reactor=user)
-    API->>CH: publish reaction_added
-    CH-->>C: live update (this + other surfaces)
-    API-->>C: 200 (tap never blocks)
+    API->>CH: append reaction_added (companion_events)
+    CH-->>C: live update (the live embodiment)
+    API-->>C: result (tap never blocks)
     Note over API,R: after response, not awaited
     API->>R: onUserReaction(companionId, messageId, emoji)
     R->>R: inline read — value created? (§7)<br/>→ reward ∈ [−1,1] + note, or null
@@ -164,8 +164,9 @@ not a side-channel perception. The intended property is **react-early-then-work*
 validate something, a 👀 lands on your message, _then_ the tool steps stream, _then_ the verdict. That
 depends on the reaction being _in_ the plan, decided by the model that understands the request.
 
-> **Built scope — delivery timing.** The `react` action publishes its event to the **standing channel**
-> (not the per-turn stream), and the web client **buffers channel events during a turn**, so today the
+> **Built scope — delivery timing.** The `react` action appends its event to the **durable log**
+> (delivered over the WS live channel, not the per-turn stream), and the web client **buffers channel
+> events during a turn**, so today the
 > companion's reaction appears on the user's message at **turn completion**, not live mid-turn. It is
 > reliably delivered and correctly attributed (the user message's own channel event reconciles the
 > optimistic line's id first, then the reaction applies) — but the ~instant "👀 _before_ the work"
@@ -356,15 +357,16 @@ property, trimmed, with a ≤32-char cap generous enough for multi-codepoint ZWJ
 guards the companion's `react` tool, so free-text never lands in `message_reactions` from either
 direction.
 
-**Delivery** — reactions ride the **standing companion event channel** (`architecture.md` §6): two new
-`CompanionStreamEvent` variants, `reaction_added` / `reaction_removed`, carrying
-`{ messageId, reactor, emoji }`. This is how the companion's own reaction appears live, and how a
-reaction placed on one surface syncs to another.
+**Delivery** — reactions ride the **WS live channel** (the durable `companion_events` log, read over
+the permanent WebSocket — `architecture.md` §6): two new `CompanionStreamEvent` variants,
+`reaction_added` / `reaction_removed`, carrying `{ messageId, reactor, emoji }`. This is how the
+companion's own reaction appears live on the active embodiment, and how a reaction is reflected on any
+surface that re-establishes (via the transcript snapshot).
 
-**API** — `POST /companions/:id/messages/:messageId/reactions {emoji}` and
-`DELETE …/reactions/:emoji`: validate, persist, publish, **return immediately**; the inline read +
+**WS methods** — `reactions.add { messageId, emoji }` and `reactions.remove { messageId, emoji }`:
+validate, persist, publish, **return immediately**; the inline read +
 reinforcement run after the response, best-effort. Persisting the reaction itself is free, so the
-routes never 429 — instead the **read is wallet-gated** in the learner: an empty stamina wallet means
+methods never reject for capacity — instead the **read is wallet-gated** in the learner: an empty stamina wallet means
 no read and no learning (the same pre-flight every other billed consumer does). An un-react →
 re-react **toggle of the same emoji is debounced** in the learner — the delete takes the recorded
 reward with it, so the re-insert would otherwise re-bill the read and re-nudge the drives for a
@@ -451,7 +453,7 @@ because it was a deliberate bet you're rewarding). Same up/down mechanism, diffe
    All plain-answer reactions route to `approval` (not split across drives — that's deferred diffuse
    credit, §6); the note also feeds reflection (§4).
 7. **A reaction lives outside the append-only transcript** (it is mutable) in `message_reactions`,
-   delivered live over the standing event channel as `reaction_added` / `reaction_removed` (§8).
+   delivered live over the WS live channel as `reaction_added` / `reaction_removed` (§8).
 8. **No emoji is whitelisted, either direction.** Because the reward is interpreted in context (not a
    lexicon), there is no constraint to enforce: the user reacts with anything (the quick-react bar is a
    shortcut), and the companion picks freely, guided by taste/legibility rather than an allowed set
@@ -497,7 +499,7 @@ because it was a deliberate bet you're rewarding). Same up/down mechanism, diffe
 - `companion-memory.md` §4 — the user model / beliefs the reflection layer feeds and refines.
 - `companion-greeting.md` — the other edge-/event-triggered reaction (arrival), a sibling pattern.
 - `architecture.md` §4.5 — the agent-loop seam the companion's expressive reaction is emitted from.
-- `architecture.md` §6 — the standing companion event channel reactions are delivered over.
+- `architecture.md` §6 — the permanent WebSocket / durable event log reactions are delivered over.
 - `companion-economy.md` — the **stamina** wallet the inline read and expressive reactions spend.
 - `implementation.md` §1 — canonical schema (`message_reactions`, `companion_affect`,
   `proactive_outcomes`).

@@ -94,15 +94,15 @@ flowchart TB
     SOC0["Social reactions<br/>greeting · emoji reactions"]
     TOOL0["Tools &amp; Acquisition<br/>registry · approval gate · MCP · CLI · procedural"]
     GROW0["Growth &amp; Economy<br/>growth axes · food pantry · vitality wallets"]
-    DELIV0["Live Delivery<br/>event bus → event channel (§6)"]
+    DELIV0["Live Delivery<br/>durable event log → WS push (§6)"]
     GW0["Gateways<br/>LLM · embedding"]
     ID0["Identity Store<br/>companion 'home'"]
   end
   PG0[("Postgres + pgvector")]
   OR0["OpenRouter<br/>(LLM + embeddings)"]
 
-  USER -->|HTTPS · SSE| WEB0
-  WEB0 -->|request| API0
+  USER -->|HTTPS · WSS| WEB0
+  WEB0 -->|"WS (all req/resp + events)"| API0
   API0 --> H0
   H0 --> MEM0
   H0 --> WILL0
@@ -112,8 +112,8 @@ flowchart TB
   H0 --> GW0
   WILL0 -.->|spends energy| GROW0
   GROW0 -.->|reads substrate| MEM0
-  MEM0 -.->|publish-on-append| DELIV0
-  DELIV0 -->|live push| WEB0
+  MEM0 -.->|append-on-publish| DELIV0
+  DELIV0 -->|"heartbeat cursor-read → WS push"| WEB0
   GW0 -->|HTTPS| OR0
   CORE0 --> PG0
 
@@ -135,7 +135,7 @@ flowchart TB
     WEB["Web Client<br/>(React + Vite)"]
   end
   subgraph BOUNDARY["Surface ↔ Core Boundary"]
-    API["API / BFF (Fastify)<br/>auth · sessions · streaming · uploads"]
+    API["API / BFF (Fastify)<br/>auth · WS transport · streaming · uploads"]
   end
   subgraph CORE["Companion Core — surface-agnostic"]
     H["Harness<br/>agent loop + extension hooks"]
@@ -143,7 +143,7 @@ flowchart TB
     EGW["Embedding Gateway<br/>provider-agnostic"]
     MEM["MemoryStore (interface)<br/>transcript"]
     SEM["Semantic Store<br/>sources · sections · facts"]
-    ING["Ingestion Pipeline + Runner<br/>parse → segment → enrich → embed"]
+    ING["Ingestion Pipeline<br/>parse → segment → enrich → embed"]
     ID["Identity Store<br/>companion 'home'"]
   end
   subgraph DATA["Persistence"]
@@ -151,7 +151,7 @@ flowchart TB
   end
   LLM["LLM Provider<br/>(OpenRouter)"]
 
-  WEB -->|HTTPS · stream| API
+  WEB -->|"WSS · permanent socket"| API
   API --> H
   API --> ING
   H --> ID
@@ -171,18 +171,18 @@ flowchart TB
 
 | Component                                                       | Owns                                                                                                                                                                                                                                                                                                                                                         | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Web Client**                                                  | Chat UI (incl. citations, in-chat ingestion-status panel, persisted upload turns, and live updates pushed over the companion event channel §6), create-a-companion, auth flows, sources page, memory browser + search                                                                                                                                        | Thin client over the API (invariant #1); the chat establishes the standing channel **subscribe-then-snapshot** on (re)mount (§6) so a surface torn down by in-app navigation is immediately current on return — no manual refresh                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| **API / BFF**                                                   | Auth, sessions, routing, response streaming, source intake (multipart), memory routes                                                                                                                                                                                                                                                                        | The only thing surfaces talk to                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| **Web Client**                                                  | Chat UI (incl. citations, in-chat ingestion-status panel, persisted upload turns, and live updates pushed over the permanent WebSocket §6), create-a-companion, auth flows, sources page, memory browser + search                                                                                                                                        | Thin client over the API (invariant #1); the chat establishes the WS embodiment + loads a transcript snapshot on (re)mount (§6) so a surface torn down by in-app navigation is immediately current on return — no manual refresh                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| **API / BFF**                                                   | Auth, the permanent-WS transport (request/response + turn streaming + event push), source intake (presigned object-storage upload)                                                                                                                                                                                                                                                                        | The only thing surfaces talk to                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | **Harness**                                                     | The agent loop; defines memory/tool/initiation hooks                                                                                                                                                                                                                                                                                                         | See §4; the memory hook is filled with semantic recall                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | **LLM Gateway**                                                 | Provider-agnostic chat-model access                                                                                                                                                                                                                                                                                                                          | Default OpenRouter; provider pluggable                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | **Prompt Registry**                                             | Code-as-truth, versioned prompts (`core/src/prompts`) — every system/tool prompt is a typed `PromptTemplate` rendered at its call site                                                                                                                                                                                                                       | Single source for prompt wording; each LLM call stamps the `promptRef` (semver + content hash) that produced it. See `guide-prompts.md`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | **Embedding Gateway**                                           | Provider-agnostic embedding access                                                                                                                                                                                                                                                                                                                           | OpenRouter `/embeddings`; deterministic fake for tests                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| **MemoryStore**                                                 | Boundary for the transcript (episodic substrate)                                                                                                                                                                                                                                                                                                             | The companion's single transcript (`messages`), keyed by `companion_id`; a turn may carry an optional `source_id` (an upload's attachment + acknowledgement) so the chat reconstructs them on reload. Wrapped by a **publish-on-append** decorator (`PublishingMemoryStore`) that emits each appended row to the **Companion Event Bus** for live delivery (§6) — so every persistence path publishes with no call-site change                                                                                                                                                                                                                                       |
-| **Ingestion Announcer**                                         | Proactive transcript note when a read ends (§4.8)                                                                                                                                                                                                                                                                                                            | On `done`/`failed`, posts an in-character, **metered** assistant turn (canned fallback when stamina is empty / on failure); fired by the pipeline, decoupled from it. Reaches an open chat by **push** over the companion event channel (§6), like any appended row                                                                                                                                                                                                                                                                                                                                                                                                  |
-| **Companion Event Bus**                                         | In-process per-companion pub/sub of appended transcript rows (`core/src/events/`)                                                                                                                                                                                                                                                                            | Fed by the publish-on-append MemoryStore decorator, so a turn reply, a greeting, and an ingestion note all emit uniformly. Interface-seamed so a single-instance `EventEmitter` gives way to Postgres `LISTEN/NOTIFY` (or Redis) when running >1 API replica (§9) — without touching publishers or the channel                                                                                                                                                                                                                                                                                                                                                       |
-| **Companion Event Channel**                                     | The standing `GET /companions/:id/events` SSE that streams the bus to a surface (§6)                                                                                                                                                                                                                                                                         | The durable delivery path: pushes every appended row (`{ type: 'message' }`) to any subscribed surface. Heartbeat-kept, close-cleaned (unsubscribes on client disconnect); the client establishes **subscribe-then-snapshot** and merges **deduped by message id**                                                                                                                                                                                                                                                                                                                                                                                                   |
+| **MemoryStore**                                                 | Boundary for the transcript (episodic substrate)                                                                                                                                                                                                                                                                                                             | The companion's single transcript (`messages`), keyed by `companion_id`; a turn may carry an optional `source_id` (an upload's attachment + acknowledgement) so the chat reconstructs them on reload. Wrapped by a **publish-on-append** decorator (`PublishingMemoryStore`) that appends each row to the **durable companion event log** for live delivery (§6) — so every persistence path publishes with no call-site change                                                                                                                                                                                                                                       |
+| **Ingestion Announcer**                                         | Proactive transcript note when a read ends (§4.8)                                                                                                                                                                                                                                                                                                            | On `done`/`failed`, posts an in-character, **metered** assistant turn (canned fallback when stamina is empty / on failure); fired by the pipeline, decoupled from it. Reaches an open chat by **push** over the permanent WebSocket (§6), like any appended row                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Durable Companion Event Log**                                 | Durable per-companion append-log (`companion_events`; `core/src/events/`) — sole live-delivery substrate (Phase D)                                                                                                                                                                                                                                                                            | Every publish **appends a row** (no in-process pub/sub); the embodiment connection's node reads new rows past a cursor on each heartbeat and pushes them, so an event written on **any** node is delivered cross-node from shared Postgres. Reads are **visibility-horizon gated** (inserting `xid` below `pg_snapshot_xmin`) so a late-committing row is never skipped. The former in-process `EventEmitter` bus + SSE channel were **removed**                                                                                                                                                                                                                                                                                                                                                       |
+| **WS Transport & Embodiment**                                   | The permanent WebSocket (`/ws`, `api/src/ws/`) carrying all request/response + events; claims `active_embodiment` (§6)                                                                                                                                                                                                                                                                         | One connection per companion (the "one room at a time" rule), claimed by a sortable **ULID `connection_id`**; a newer connection force-claims and the prior self-fences (handoff = "moving rooms", §5.2). Requests correlate by envelope `id`; turns stream as `{ id, stream }` chunks; events push as `{ event, data }`. The client establishes **snapshot + live**, merged **deduped by message id**                                                                                                                                                                                                                                                                                                                                                                                                   |
 | **Semantic Store**                                              | Sources (verbatim), sections (vector + FTS), fact overlay, ingestion jobs                                                                                                                                                                                                                                                                                    | Hybrid retrieval with provenance; contract → `ontology.md`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| **Ingestion Pipeline + Runner**                                 | Two-pass source reading off the request path (§4.8)                                                                                                                                                                                                                                                                                                          | Durable status in `ingestion_jobs`; replaceable by a real worker                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| **Ingestion Pipeline**                                          | Two-pass source reading off the request path (§4.8)                                                                                                                                                                                                                                                                                                          | Durable status in `ingestion_jobs`; runs on the durable job queue (§5), which replaced the in-process runner                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | **Episodic Store**                                              | Consolidated, time-anchored episodes (vector + FTS) + the consolidation cursor                                                                                                                                                                                                                                                                               | Derived from the transcript (rebuildable); hybrid recall by topic (§4.3)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | **Consolidation Service + Runner**                              | Off-request reflection: transcript window → consolidated episodes, filler dropped                                                                                                                                                                                                                                                                            | Mirrors the ingestion runner — coalesced, serial, quota-gated; post-turn trigger + startup/periodic sweep                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | **Personality Evolver**                                         | Re-synthesizes `evolvedPersona` from episodes after consolidation                                                                                                                                                                                                                                                                                            | Cursor-gated, metered; blended into the persona prompt beside the seed                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
@@ -205,10 +205,10 @@ flowchart TB
 | **Lead Inventory**                                              | The companion's reading list (`leads`) — discovered-but-unread URLs                                                                                                                                                                                                                                                                                          | Populated by `web_fetch` link harvest; worked on command (`/explore`) and by the motivation engine on idle (§4.5)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | **Procedural Store**                                            | Learned, reusable workflows seeded from approved actions (`procedural_memories`)                                                                                                                                                                                                                                                                             | Browseable, and surfaced as a `RetrieveContext` hint arm (§4.3) so a routine resurfaces and is reused                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | **Motivation Engine**                                           | Fills the `Initiator` seam — drives × presence → bounded autonomous explore burst                                                                                                                                                                                                                                                                            | Reads the lead inventory into memory on its own (no approval), bounded by energy; posts an in-character report note. Includes presence, change-as-reward reinforcement, and an off-request runner/sweep. Mechanism → §4.5, `companion-motivation.md`                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| **Greeting Service**                                            | The bond-driven reaction to the user _arriving_ (`packages/core/src/greeting/`) — the social sibling of the explore burst                                                                                                                                                                                                                                    | A token-free `decideGreeting` gate (first-meeting override → dial → continuation floor → gap × open loop) + a service that voices one in-character greeting billed to **stamina** (or a fixed exhausted line), recording a `bond` outcome. Reads the durable `companions.last_seen_at` clock; streamed to the client (`composing` → `done`) by `POST /companions/:id/greeting`. Mechanism → `companion-greeting.md`                                                                                                                                                                                                                                                  |
-| **Reaction Service**                                            | Emoji reactions both ways (`message_reactions`) — a second reward channel beside the affect loop                                                                                                                                                                                                                                                             | A user reaction triggers an event-scoped **inline value-created read** (the `report_affect` machinery generalized) → a reward attributed **by `note_message_id`**, nudging the served drive (or approval/competence on an ordinary answer); the companion's own reaction is a **planned, free, ungated agent action** emitted mid-turn (react-early-then-work). Delivered live over the event channel (§6). Mechanism → `companion-reactions.md`                                                                                                                                                                                                                     |
+| **Greeting Service**                                            | The bond-driven reaction to the user _arriving_ (`packages/core/src/greeting/`) — the social sibling of the explore burst                                                                                                                                                                                                                                    | A token-free `decideGreeting` gate (first-meeting override → dial → continuation floor → gap × open loop) + a service that voices one in-character greeting billed to **stamina** (or a fixed exhausted line), recording a `bond` outcome. Reads the durable `companions.last_seen_at` clock; streamed to the client (`composing` → `done`) by the `greeting.stream` WS method. Mechanism → `companion-greeting.md`                                                                                                                                                                                                                                                  |
+| **Reaction Service**                                            | Emoji reactions both ways (`message_reactions`) — a second reward channel beside the affect loop                                                                                                                                                                                                                                                             | A user reaction triggers an event-scoped **inline value-created read** (the `report_affect` machinery generalized) → a reward attributed **by `note_message_id`**, nudging the served drive (or approval/competence on an ordinary answer); the companion's own reaction is a **planned, free, ungated agent action** emitted mid-turn (react-early-then-work). Delivered live over the WS (§6). Mechanism → `companion-reactions.md`                                                                                                                                                                                                                     |
 | **Energy Wallet**                                               | The self-initiated half of the §4.8 two-wallet vitality (`companions.energy_balance_tokens`)                                                                                                                                                                                                                                                                 | Per-companion token balance; a separate wallet from stamina (the `Stamina Wallet` above), metered by the same `VitalityStore`, so autonomy can't starve interaction                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| **Food Pantry**                                                 | The user's seeded inventory of typed foods (`user_food`) — the feeding economy's supply                                                                                                                                                                                                                                                                      | Per-user counts of `ration`/`spark`/`treat`; `POST /feed` consumes one and refills the fed companion's wallet(s) (`companion-economy.md`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| **Food Pantry**                                                 | The user's seeded inventory of typed foods (`user_food`) — the feeding economy's supply                                                                                                                                                                                                                                                                      | Per-user counts of `ration`/`spark`/`treat`; the `feed` WS method consumes one and refills the fed companion's wallet(s) (`companion-economy.md`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | **Growth Service**                                              | Derives the four MIRROR axes (knowledge, bond, initiative, character) + the observed-capabilities checklist from substrate                                                                                                                                                                                                                                   | Growth is DERIVED — a readout that may move either way, never scored or floored. Recompute is post-turn and token-free; the read is a snapshot. Decoupled from feeding. The procedural retrieval-as-hint arm that makes a capability _functional_ is §4.3; the axis-derivation mechanism → `development-plan.md` §3 (Phase 5); data model → `implementation.md` §1                                                                                                                                                                                                                                                                                                   |
 
 ## 4. The Agent Loop & Harness
@@ -607,7 +607,7 @@ sequenceDiagram
     participant LLM as LLM Provider
 
     User->>Web: send message
-    Web->>API: POST message (authed)
+    Web->>API: messages.send (over the WS, authed)
     API->>H: ENTRY → dispatch turn
     H->>Id: load companion "home"
     H->>Mem: retrieve context (recent transcript)
@@ -617,7 +617,7 @@ sequenceDiagram
     LLM-->>GW: token stream
     GW-->>H: stream
     H-->>API: stream tokens
-    API-->>Web: SSE / WebSocket
+    API-->>Web: { id, stream } chunks over the WS
     Note over H: no tool calls → EXIT
     H->>Mem: persist turn
 ```
@@ -639,8 +639,8 @@ sequenceDiagram
   `message` rows** (tool steps + proposals are UI chrome and never re-enter the model's context, nor
   episodic consolidation). Live streaming is a _progressive preview_ of rows that will be persisted; a
   turn that produced tool-step/proposal rows reconciles the surface against the transcript on settle.
-  Across navigation and multiple open surfaces, the **companion event channel** (§6) is what keeps
-  _live_ equal to _projection_: it pushes every appended row to any subscribed surface, and a
+  Across navigation, the **permanent WebSocket** (§6) is what keeps
+  _live_ equal to _projection_: the embodiment connection pushes every appended row, and a
   re-established surface merges by id — so what you see live is exactly what a reload would show, never
   a richer ephemeral reality that a refresh could lose.
 - **State is authoritative only at the home.** Surfaces never hold loop state (§6); a run reads from
@@ -679,8 +679,8 @@ Design rules (the "improved staged hybrid"; memory guide → `companion-memory.m
   metadata paths (source, fact-overlay entity) — every hit carries provenance (source, chapter,
   paragraph/page range) so answers cite and can show the original passage.
 - **Failures are data.** A failed run lands on the job as a user-safe error; the durable
-  status surface (`ingestion_jobs`) is what makes the in-process runner replaceable by a real
-  worker with no schema or API change (§8). It also makes restart recovery clean: interrupted
+  status surface (`ingestion_jobs`) is what let the in-process runner be **replaced by the durable
+  job-queue worker** (§5.1, Phase D-A) with no schema or API change. It also makes restart recovery clean: interrupted
   in-flight jobs are failed on startup (re-upload), while `deferred` jobs keep their parse and
   resume.
 - **The companion speaks up when a read ends.** On a terminal outcome (`done`/`failed`, never
@@ -692,15 +692,15 @@ Design rules (the "improved staged hybrid"; memory guide → `companion-memory.m
   the job flips to its terminal status, so a client polling the job sees the note already in the
   transcript; an announcement failure is logged and never changes the job's recorded outcome.
   Surfacing: the upload's own attachment + acknowledgement turns are persisted (`messages.source_id`)
-  too. The proactive note reaches an open chat by **push over the companion event channel** (§6) the
+  too. The proactive note reaches an open chat by **push over the permanent WebSocket** (§6) the
   moment it's appended — the same delivery path as any other transcript row, so no status-poll pull is
-  needed for delivery (the channel supersedes it; an ingestion-status poll remains only for the
+  needed for delivery (the live push supersedes it; an ingestion-status poll remains only for the
   reading-progress UI).
 - **Re-running a source is idempotent.** A run writes a source's whole section set in one call,
   _replacing_ (not appending to) any prior sections for that source — so a re-run never duplicates
   sections/facts or inflates counts (orphaned facts cascade with their sections). This holds
-  however a re-run is triggered, which lets the in-process runner give way to an at-least-once
-  worker without a dedupe layer. The deferred-job sweeper reinforces this upstream: it **atomically
+  however a re-run is triggered, which let the in-process runner give way to the durable
+  job-queue worker (§5.1) — an at-least-once worker — without a dedupe layer. The deferred-job sweeper reinforces this upstream: it **atomically
   claims** each parked job (`deferred → queued`, conditional) before enqueue, so two overlapping
   sweeps can't resume — and re-bill — the same job twice.
 - **Vitality wallets = the spend control.** The real resource is LLM/embedding **tokens**, so each
@@ -736,7 +736,7 @@ Design rules (the "improved staged hybrid"; memory guide → `companion-memory.m
     §4.5) while chat keeps running on stamina. (A real-money **account** spend ceiling across all of a
     user's companions would be a _separate_ per-user concept — deferred, §9; it is not the companion's
     stamina.) The user replenishes both by **feeding** from a per-user **pantry** of typed foods
-    (`ration`→stamina, `spark`→energy, `treat`→both; `POST /feed`, mechanism → `companion-economy.md`)
+    (`ration`→stamina, `spark`→energy, `treat`→both; the `feed` WS method, mechanism → `companion-economy.md`)
     — there is no currency and no auto-refill. **Autonomous reads spend real tokens** drawn from energy
     via a per-run **meter override** on the shared ingestion pipeline — the run spends the companion's
     energy wallet instead of its stamina and skips deferral (the engine gates on energy itself,
@@ -749,12 +749,13 @@ Design rules (the "improved staged hybrid"; memory guide → `companion-memory.m
 #### Supported source formats (acceptance contract)
 
 A source reaches a parser through one of **three input channels** — a **file upload**
-(`POST .../sources/file`, multipart), a **typed note** (JSON `text`), or a **link** (fetched
+(a presigned, direct-to-object-storage upload: `sources.requestFileUpload` → client PUT →
+`sources.file`; staging-object-storage.md), a **typed note** (WS `text`), or a **link** (fetched
 URL). All three converge on **one content-type → parser registry**, so a format is parsed the
 same way no matter how it arrived. The channels differ only in how they _identify_ content:
 
 - **Upload** — content type follows from the filename extension, then **confirmed against magic
-  bytes — never the extension alone** (the route rejects a `.docx` that isn't a zip, a `.pdf`
+  bytes — never the extension alone** (enqueue rejects a `.docx` that isn't a zip, a `.pdf`
   without `%PDF-`, etc.).
 - **Link** — the resolver fetches the URL (SSRF-guarded, size-capped) and **detects the content
   type**: the HTTP `Content-Type` header first, then a magic-byte sniff, then the URL extension,
@@ -808,6 +809,8 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
 | Language / runtime | **TypeScript end-to-end** (Node + React)                                                          | I/O-bound LLM workload (single-thread is a non-issue); richest agent/tool/**MCP** + LLM ecosystem; shared types across surfaces                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | API framework      | **Fastify** (Node)                                                                                | TS-first, fast, light; swappable behind the API package                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | Web client         | **React + Vite** (SPA)                                                                            | Thin client; keeps the core↔surface boundary explicit. Next.js considered; SPA keeps the boundary cleaner                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Realtime transport | **One permanent WebSocket per client; connecting claims exclusive embodiment**                    | One embodiment per companion (the product's "one room at a time" rule). A single socket carries all request/response + turn streaming + event push, which makes delivery **stateless** (the holding node reads shared Postgres — no cross-node fan-out) and gives a natural place to serialize a companion's turns. Replaced REST routes + two SSE channels (Phase D); behind an L4 NLB when multi-node. Design → `deliver-scalability.md` §5.2 |
+| Background work    | **Durable Postgres job queue** (`jobs` + per-companion `companion_claims` lease)                  | The cross-node successor to the in-process runners (consolidation / motivation / ingestion / reaction-learn): work is claimed at companion granularity so it runs **once** fleet-wide, survives restarts, and never double-applies. Design → `deliver-scalability.md` §5.1                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | Store engine       | **Postgres + `pgvector`**                                                                         | Multi-tenant cloud home; one store for relational + vectors; scales across phases                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | Data access        | Type-safe query layer (Drizzle)                                                                   | Explicit types end-to-end; no raw SQL by default                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | LLM access         | **Provider-agnostic gateway, default OpenRouter**                                                 | Swap models/providers without touching the harness                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
@@ -834,7 +837,7 @@ flowchart TB
     openrouter["OpenRouter<br/>(LLM + embeddings)"]
     langfuse["Langfuse Cloud<br/>(optional, redacted traces)"]
 
-    user -->|"HTTPS / SSE"| surface
+    user -->|"HTTPS + WSS"| surface
     surface -.->|"ID token"| google
     api -->|"outbound HTTPS<br/>(trust boundary §8)"| openrouter
     api -.->|"sampled, scrubbed<br/>(off by default)"| langfuse
@@ -844,57 +847,77 @@ flowchart TB
   and streaming contract lives in shared types. No surface-specific logic crosses into the core
   (invariant #1). Future mobile and desktop surfaces consume the _same_ contract; their OS access
   is exposed _to the core as tools_, not as new core APIs.
-- **Streaming & delivery.** Two complementary **server-sent-event** channels, both `fetch`-based so
-  the bearer token rides the `Authorization` header (no `EventSource` cookie workaround):
-  - **Per-turn stream** — the `POST .../messages` response (and `/greeting`, `/confirm`) streams the
-    in-flight turn's events (`token` / `citations` / `tool_step` / `proposal` / `done`) so the UI
-    shows tokens as they arrive despite multi-second model latency. It is **request-scoped**: it
-    exists only for that turn, and it is owned by the component that opened it.
-  - **Companion event channel** — a **standing** `GET .../events` subscription that pushes a
-    `CompanionStreamEvent` for every companion event, regardless of which request produced it: every
-    row appended to the transcript as a `{ type: 'message' }` event, plus `reaction_added` /
-    `reaction_removed` events for emoji reactions. This is the durable delivery path: a turn reply, an
-    ingestion "finished reading…" note, a proactive nudge, and a greeting all reach an open client the
-    moment they persist — **push, not poll**. It's backed by the in-process **Companion Event Bus**,
-    fed by a publish-on-append hook on the MemoryStore (§3) for transcript rows and by the reaction
-    route / `react` tool directly for reaction events, so nothing at the call sites changes to emit.
-    Emoji reactions are mutations on an existing row rather than new transcript turns, so a reaction
-    placed on one surface, or by the companion itself, appears live on every open surface
-    (`companion-reactions.md` §8).
-  - **Establishment is subscribe-then-snapshot.** On (re)connect the client opens the channel
-    **first** (buffering live events), **then** fetches the transcript snapshot, and merges both
-    **deduped by message id**. Subscribe-first can only ever double-deliver (harmless under id dedup),
-    never drop — the opposite ordering reopens a gap. This closes the reconnect/navigation race: a
-    reply that persists _after_ the snapshot still arrives over the live channel. The channel sends
-    periodic heartbeat comments; the client reconnects with backoff and re-runs the snapshot per
-    reconnect, so rows that landed while disconnected are recovered without any server-side replay
-    (deferred, §9). A surface torn down by in-app navigation simply re-establishes on return and is
-    immediately current — the message-loss / forced-refresh failure this design exists to remove.
-  - **Reconciliation by id.** Three sources can deliver the same row — the active per-turn stream's
-    `done`, the snapshot, and the channel — so the client merges by server message id, and replaces a
-    still-optimistic (id-less) line with its authoritative event rather than duplicating it. This is
-    the surface realization of the §4.7 _transcript-is-truth_ invariant.
+- **Transport & delivery — one permanent WebSocket** (Phase D). Every client opens a single
+  **permanent WebSocket** (`/ws`, authenticated once at the handshake via `?access_token=`) and
+  sends _all_ requests and receives _all_ events over it: request/response is correlated by an
+  envelope `id`, a turn's tokens stream as `{ id, stream }` chunks terminated by the result, and
+  unsolicited events arrive as `{ event, data }` pushes. This one socket **replaced the former REST
+  routes and the two SSE channels**. The only HTTP left is the public `/auth/config`, the
+  **filesystem upload sink** (`PUT /uploads/local/:uploadId` — mounted only for the local `file`
+  staging backend, the local stand-in for a presigned S3 PUT; staging-object-storage.md), `/health`,
+  the admin-only **`/admin/queue`** observability read, and the SPA static serve. The socket is
+  hardened against a single authed client: a **frame-size cap** (`WS_MAX_PAYLOAD_BYTES`) rejects an
+  oversized frame at the transport before any parse, and a **per-connection in-flight cap**
+  (`WS_MAX_IN_FLIGHT`) sheds load past N concurrently-dispatching requests (frames multiplex, so one
+  socket can otherwise fan out unbounded work against CPU / the DB pool). This cap is _per
+  connection_, not fleet-wide; a fleet-scale concurrency limiter and a per-user connection cap are
+  out of scope here (§9).
+- **Connecting claims the companion (embodiment).** A WS that names a companion takes **exclusive
+  embodiment** — one live connection per companion, the product's "one room at a time" rule
+  (`product-overview.md` §2.2). The claim is a row in **`active_embodiment`** keyed by a sortable
+  **ULID `connection_id`** plus a DB-stamped monotonic **`claim_seq`** ("newer wins"); a heartbeat renews it, a newer connection **force-claims** (the
+  user "moves rooms") and the prior one self-fences. The lease is enforced on **two** surfaces:
+  every companion-scoped method re-checks `holds(connection_id, claim_seq)` before acting (a superseded connection's
+  new requests are rejected), and a **running turn** — a multi-step agent loop, not one request —
+  re-reads the lease at the top of every iteration and again before persisting the reply, standing
+  down without writing the assistant message (and skipping the non-idempotent post-turn affect
+  nudge) when the room has moved. The streaming method then pushes `embodiment.superseded` and
+  closes immediately rather than waiting for the next heartbeat. Full handoff design + the in-turn
+  fence: `deliver-scalability.md` §5.2 + `docs/plans/embodiment-handoff-fencing.md`.
+- **Live delivery is a cursor read from a durable log — no fan-out.** Every publish point (a
+  transcript append via the publish-on-append MemoryStore decorator; a reaction add/remove; the
+  `react` tool) appends a row to the durable **`companion_events`** log. The one embodiment
+  connection's node reads new rows **past a cursor on each heartbeat** and pushes them over the WS.
+  Because the log is shared Postgres, an event written on **any** node is delivered by the holding
+  node — there is no in-process pub/sub and no cross-node fan-out (the former in-process bus + SSE
+  were removed). The cursor read is gated on a **visibility horizon** (the inserting transaction's
+  `xid` below `pg_snapshot_xmin`) so a late-committing row is never skipped — a `bigserial` seq is
+  assigned at INSERT but visible at COMMIT, and commits can reorder (`deliver-scalability.md` §C).
+  The heartbeat reads a bounded batch per tick (`EVENT_BATCH`); no event is lost (the cursor only
+  advances over delivered rows), but under a sustained produce rate above one batch per tick the
+  backlog latency is unbounded — within-tick catch-up is out of scope here (§9).
+- **Establishment is snapshot + live, reconciled by id.** On (re)connect the client loads the
+  transcript snapshot (`messages.list`) for everything up to the connect cursor and merges the live
+  event stream **deduped by server message id** — so a reply that persists after the snapshot still
+  arrives live, and a surface torn down by in-app navigation is immediately current on return (no
+  manual refresh). The connect cursor is the **settled** horizon, not the raw max seq, so an event
+  in-flight at connect isn't stranded between the snapshot and live delivery. The per-turn stream's
+  terminal, the snapshot, and the live channel can each deliver the same row; the client merges by id
+  and replaces a still-optimistic (id-less) line with its authoritative event. This is the surface
+  realization of the §4.7 _transcript-is-truth_ invariant.
 
-  The standing channel's path from any companion event to every open surface:
+  The path from any companion event to the live embodiment (one connection per companion):
 
 ```mermaid
 flowchart LR
-  subgraph CORE["Core"]
+  subgraph CORE["Core (any node)"]
     APPEND["transcript append<br/>turn reply · greeting · ingestion note"]
     PUB["PublishingMemoryStore<br/>publish-on-append decorator"]
-    REACT["reaction route / react tool<br/>reaction_added · reaction_removed"]
-    BUS["Companion Event Bus<br/>in-process per-companion pub/sub"]
-    CHAN["Event Channel<br/>GET /companions/:id/events (SSE)"]
+    REACT["reaction method / react tool<br/>reaction_added · reaction_removed"]
+    LOG[("companion_events<br/>durable append-log")]
   end
-  S1["Surface A"]
-  S2["Surface B<br/>(other tab / device)"]
+  subgraph NODE["Embodiment connection's node"]
+    HB["heartbeat: read rows past cursor<br/>(visibility-horizon gated)"]
+    WS(["permanent WebSocket /ws"])
+  end
+  S1["Surface — the live embodiment"]
 
   APPEND --> PUB
-  PUB -->|"emit { type: message }"| BUS
-  REACT -->|emit reaction_* event| BUS
-  BUS --> CHAN
-  CHAN -->|"push · dedup by id"| S1
-  CHAN -->|"push · dedup by id"| S2
+  PUB -->|"append { type: message }"| LOG
+  REACT -->|append reaction_* event| LOG
+  LOG --> HB
+  HB -->|"push · dedup by id"| WS
+  WS --> S1
 ```
 
 - **External services.** The **LLM Provider** (OpenRouter) is the only external dependency —
@@ -917,8 +940,10 @@ flowchart LR
       prompts/         code-as-truth versioned prompt registry (catalog + render/version) — guide-prompts.md
       tracing/         online-tracing seam (TraceSink + noop, redaction, sampling) — runbook-tracing.md
       embedding/       provider-agnostic embedding gateway (request-path memoizing wrapper)
-      ingestion/       parse → segment → enrich → embed pipeline + runner + deferred-job sweeper (§4.8)
-      events/          in-process Companion Event Bus — per-companion pub/sub of appended transcript rows; fed by the publish-on-append MemoryStore decorator, drained by the standing event-channel route (§6)
+      ingestion/       parse → segment → enrich → embed pipeline + `ingest` job handler + deferred-job sweep (§4.8)
+      events/          durable Companion Event Log (`companion_events`) — publish = append; read by cursor (visibility-horizon gated) by the embodiment connection's node and pushed over the WS (§6). The former in-process bus was removed (Phase D)
+      embodiment/      live WS embodiment claim (`active_embodiment`) — one connection per companion, ULID connection id, force-claim + heartbeat + TTL; claim-derived presence (§6, deliver-scalability.md §5.2)
+      jobs/            durable Postgres job queue (`jobs` + `companion_claims`) — companion-granularity lease, drained by an ephemeral worker pool; the cross-node successor to the in-process runners (deliver-scalability.md §5.1); queue/embodiment metrics reader (Phase C2)
       memory/          MemoryStore (transcript) + the publish-on-append PublishingMemoryStore decorator (§6) + SemanticMemoryStore + EpisodicMemoryStore + consolidation service/runner
       user-model/      UserModelStore (user_facts: Tier-1 profile + Tier-2 beliefs) + inline User-Fact Extractor + background User-Model Reflector (Tier-2 beliefs + reconciliation; Tier-3 user_persona) (§4.3/§4.5)
       tools/           tool framework + registry, the three tools, the approval gate, proposal/tool-call/lead/procedural stores (§4.2/§4.4)
@@ -932,10 +957,10 @@ flowchart LR
       reactions/       emoji reactions: ReactionStore (mutable rows) + senseReaction/ReactionLearner (the value-created read → reward by note_message_id); the companion's react action is a free agent-loop emit (Phase D) — companion-reactions.md
       growth/          four mirror axes derived from substrate (§4.3 hint arm + development-plan.md §3) + the feeding economy: axis readings (band+fill), capabilities registry, growth store/service/runner, foods, the per-user food pantry/store (§4.8)
       quota/           per-companion vitality wallets (stamina + energy) (§4.8)
-    api/               BFF / surface boundary (Fastify); memory + source + usage + proposal/inventory routes; presence + proactivity (dial/energy) routes; growth + feed routes; the autonomous-activity log route (read-only `proactive_outcomes`); the standing companion event-channel route (§6)
+    api/               BFF / surface boundary (Fastify). The product runs over the **WS transport** (`ws/` — register · handshake · connection · dispatch · fencing · per-domain methods; all req/resp + streaming + event push, §6). Only HTTP left: `/auth/config`, the filesystem upload sink `/uploads/local` (local `file` staging backend only), `/health`, the admin-only `/admin/queue` (Phase C2), and the SPA serve
       acquisition/, mcp/, cli/   API-side wiring of the runtime tool-acquisition spine + MCP/CLI executors (§9, Phases 9–10)
       tracing/         Langfuse Cloud TraceSink adapter (fetch-based; sampling + redaction before export) — runbook-tracing.md
-    web/               React web client; chat w/ citations + ingestion-status panel + approval cards (subscribe-then-snapshot establishment over the companion event channel, §6), sources page, memory browser (incl. editable user-model profile/beliefs panel), usage badge; vitality meter + proactivity dial; growth view + kitchen; activity view (autonomous-initiative log)
+    web/               React web client over the permanent WebSocket (`src/api/ws.ts` transport singleton; snapshot + live establishment, §6); chat w/ citations + ingestion-status panel + approval cards + "moved rooms" re-claim, sources page, memory browser (incl. editable user-model profile/beliefs panel), usage badge; vitality meter + proactivity dial; growth view + kitchen; activity view (autonomous-initiative log)
     shared/            shared TS types / contracts
     eval/              dataset/scorer/runner offline eval framework: memory-recall + stateless (affect-sense, user-extract) + injection red-team (→ companion-memory.md §5)
   db/                  migrations & schema (→ implementation.md)
@@ -951,15 +976,20 @@ flowchart LR
 from the same origin via `@fastify/static`) deploys to **one of two clouds** — choose per environment:
 
 - **AWS EC2 `t3.micro`** (canonical): one always-on box runs the container with **Caddy** in front
-  terminating TLS and reverse-proxying to it on localhost; a keep-alive timer pings Supabase so the
-  free tier doesn't auto-pause. IaC in `infra/aws` (VPC, EC2, ECR, SSM Parameter Store secrets, IAM).
+  terminating TLS and reverse-proxying to it on localhost — Caddy's `reverse_proxy` **upgrades the
+  permanent WebSocket transparently**, so the WS surface needs no infra change on the single-node MVP;
+  a keep-alive timer pings Supabase so the free tier doesn't auto-pause. IaC in `infra/aws` (VPC, EC2,
+  ECR, SSM Parameter Store secrets, IAM).
 - **GCP Cloud Run** (alternative): the container runs as a serverless service with `minInstances=1`
   to keep the hot chat path warm; Secret Manager supplies secrets and the `*.run.app` URL is the
   entry point. IaC in `infra/gcp` (Cloud Run, Artifact Registry, Secret Manager, IAM).
 
 Either way the workload is I/O-bound (mostly awaiting the LLM), so one Node process holds many
-concurrent conversations; CPU-heavy work (future PDF parse/embedding) moves off the request path to
-workers later. **Postgres is managed by Supabase** (`pgvector`), external to both clouds.
+concurrent conversations; background work (ingestion, consolidation, motivation, reaction-learning)
+already runs off the request path on the **durable job queue** (§5.1). The backend is **stateless** —
+all authority lives in Postgres, the WS embodiment re-claims from the DB on any node — so it scales
+horizontally behind an L4 NLB; the MVP runs on **one micro** and the multi-node flip is deferred
+until needed (`deliver-scalability.md`). **Postgres is managed by Supabase** (`pgvector`), external to both clouds.
 Infrastructure is managed as code with **Pulumi** under `infra/` (`infra/aws` + `infra/gcp` for the
 deploy targets; `infra/github` for branch protection). Auth is per-request Google Sign-In +
 service-token (no auth service to provision). (Deployment diagrams, resource catalogs, and cost →
@@ -977,7 +1007,14 @@ service-token (no auth service to provision). (Deployment diagrams, resource cat
   unauthenticated caller cannot spoof a user. Each consumer may hold several secrets at once, so a
   secret can be **rotated with overlap and revoked** (a soft `revoked_at`, kept for audit) without
   downtime; secrets are deployment-managed, never committed, and TLS is mandatory.
-- **Transport** — HTTPS/TLS everywhere; secure DB connections.
+- **Transport** — HTTPS/TLS everywhere, **WSS** for the permanent WebSocket; secure DB connections.
+- **Embodiment claim (one room at a time)** — a WS that names a companion is authenticated once at
+  the handshake (which ownership-checks the companion) and takes an exclusive lease keyed by a
+  sortable **ULID `connection_id`** (`active_embodiment`). Companion-scoped methods re-check the lease before
+  acting, so a superseded ("zombie") connection cannot inject an action after a handoff. (In-turn
+  fencing of a long-running agent loop is the hardening tracked in `docs/plans/embodiment-handoff-fencing.md`.)
+- **Admin surface** — the `/admin/queue` observability read is gated behind authentication **and** a
+  `users.is_admin` flag (operator-promoted out-of-band); an ordinary signed-in user gets 403.
 - **Input validation** — all client and external (LLM) data validated at the boundary before use.
 - **Server-side fetch boundary (SSRF)** — link ingestion fetches user-supplied URLs from the
   server, so destinations are restricted to public HTTP(S): the URL is checked for scheme and
@@ -1044,7 +1081,24 @@ owned by `development-plan.md`.
   never replenishes it (a user who runs out asks a developer to raise the count). A real product needs
   a way to _get more food_ — earned, purchased, or granted — and the currency/monetization model that
   implies. Out of scope here (`companion-economy.md` §7).
-- **Native surfaces** — Mobile/Desktop clients, OS-tool bridges, and the Sync Courier.
+- **Event-log retention** — the durable `companion_events` log (§6) is **append-only with no
+  retention sweep**, so it grows for a companion's lifetime; the PoC accepts this (it is the
+  replay/resume substrate). A long-lived deployment needs a retention sweep (a `seq`-watermark delete
+  behind every node's settled cursor is safe), partitioning, or archival. (Upload staging, by
+  contrast, *is* reclaimed — the S3 bucket lifecycle rule, or the `file` backend's wired
+  `purgeExpired()` sweep; `implementation.md` §2.4, `docs/plans/staging-object-storage.md`.)
+- **Fleet-scale load-shedding & fairness.** This release delivers multi-node **fault tolerance**
+  (correctness under node failure — leases, fencing, single-writer drain, the visibility-gap guard,
+  clean scale-in; `deliver-scalability.md`), **not** fault-free behavior under scale. Two limits are
+  deliberately partial: (a) the WS in-flight cap (§6) is **per connection**, so there is no
+  fleet-wide concurrency limiter and no per-user connection cap — one authed user opening N
+  connections runs N concurrent turns (the per-companion vitality wallet caps spend, not concurrent
+  compute across companions); and (b) live delivery reads a bounded `EVENT_BATCH` per heartbeat (§6),
+  so a sustained produce rate above one batch per tick grows backlog latency unbounded. **Neither
+  loses data or corrupts state** — load is shed or slowed, the event cursor only advances over
+  delivered rows — so both are scale concerns, not correctness concerns. Deferred until scale is
+  needed: a global semaphore on turn-producing methods + a per-user connection cap at the handshake,
+  and a within-tick catch-up loop (capped) backed by a `companion_events(companion_id, seq)` index.
 - **Transcript compaction** — summarizing the compactible remainder when the context window fills.
 - **Security hardening** — encryption-at-rest specifics, data inspection/management/delete controls,
   on-device data-locality for native surfaces, and propose→approve audit-trail hardening (§8).

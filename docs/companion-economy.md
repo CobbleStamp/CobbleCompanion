@@ -16,8 +16,8 @@
 >
 > **Where it lives.** `packages/core/src/growth/economy.ts` (the feed), the per-user food store in
 > `packages/core/src/growth/food-store.ts` (the pantry + atomic consume), the food catalogue in `contracts.ts`
-> (`FOODS`), and the route `POST /companions/:companionId/feed`
-> (`packages/api/src/routes/growth.routes.ts`). The Growth view's "Kitchen"
+> (`FOODS`), and the `feed` WS method
+> (`packages/api/src/ws/methods/vitality.ts`). The Growth view's "Kitchen"
 > (`packages/web/src/pages/Growth.tsx`) is the one mutating affordance.
 
 ## 1. What it is
@@ -39,7 +39,7 @@ fully **decoupled** — growing earns no food, and feeding changes no axis. See 
 ```mermaid
 flowchart LR
     S["User's PANTRY<br/>(seeded foods:<br/>Rations, Sparks, Treats)"]
-    F["User feeds a companion a FOOD<br/>(the Kitchen, POST /feed)"]
+    F["User feeds a companion a FOOD<br/>(the Kitchen, the feed WS method)"]
     V["Food refills that companion's<br/>VITALITY wallet<br/>(stamina / energy)"]
     P["Powers conversation (stamina) /<br/>autonomous work (energy)"]
     S --> F --> V -->|powers| P
@@ -81,7 +81,7 @@ drift; token grants are product constants single-sourced there.
 
 ## 5. Spending — the feed flow
 
-Feeding is `POST /companions/:companionId/feed` (owner-scoped; body `{ food: 'ration' | 'spark' |
+Feeding is the `feed` WS method (owner-scoped; params `{ food: 'ration' | 'spark' |
 'treat' }`). The mechanism (`economy.ts` `feed`) is **consume-first, atomically guarded**, so a food
 is never granted for free:
 

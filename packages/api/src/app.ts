@@ -2,8 +2,10 @@ import { CompanionNotFoundError } from '@cobble/core';
 import type {
   CompanionAffectStore,
   CompanionEventBus,
-  ConsolidationRunner,
+  CompanionEventLog,
+  CompanionWorkRequester,
   EmbeddingGateway,
+  EmbodimentStore,
   EpisodicMemoryStore,
   FoodStore,
   GreetingService,
@@ -11,55 +13,46 @@ import type {
   GrowthStore,
   Harness,
   IdentityStore,
-  IngestionRunner,
+  IngestWorkRequester,
   LeadStore,
   Logger,
   MemoryStore,
-  MotivationRunner,
   PresenceStore,
   ProactiveOutcomeStore,
   ProceduralStore,
   ProposalStore,
-  ReactionLearner,
+  QueueMetricsReader,
   ReactionStore,
+  ReactionWorkRequester,
   SemanticMemoryStore,
+  UploadStagingStore,
   ToolCallLog,
   ToolRegistry,
   UserModelStore,
   VitalityStore,
 } from '@cobble/core';
 import cors from '@fastify/cors';
-import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
-import { makeRequireAuth } from './auth-guard.js';
+import Fastify, { type FastifyError, type FastifyInstance, type FastifyRequest } from 'fastify';
+import { makeRequireAdmin, makeRequireAuth } from './auth-guard.js';
 import type { TokenVerifier } from './auth/jwt-verifier.js';
 import type { AppConfig } from './config.js';
+import { registerAdminRoutes } from './routes/admin.routes.js';
 import { registerAuthRoutes } from './routes/auth.routes.js';
-import { registerCompanionRoutes } from './routes/companion.routes.js';
-import { registerEpisodeRoutes } from './routes/episode.routes.js';
-import { registerEventRoutes } from './routes/event.routes.js';
-import { registerGreetingRoutes } from './routes/greeting.routes.js';
-import { registerGrowthRoutes } from './routes/growth.routes.js';
-import { registerMemoryRoutes } from './routes/memory.routes.js';
-import { registerUserModelRoutes } from './routes/user-model.routes.js';
-import { registerMessageRoutes } from './routes/message.routes.js';
-import { registerInventoryRoutes } from './routes/inventory.routes.js';
-import { registerPresenceRoutes } from './routes/presence.routes.js';
-import { registerProactiveActivityRoutes } from './routes/proactive-activity.routes.js';
-import { registerProactivityRoutes } from './routes/proactivity.routes.js';
-import { registerProposalRoutes } from './routes/proposal.routes.js';
-import { registerReactionRoutes } from './routes/reaction.routes.js';
 import { registerSourceRoutes } from './routes/source.routes.js';
-import { registerUsageRoutes } from './routes/usage.routes.js';
 import { registerUuidParamGuard } from './uuid.js';
+import { registerWebSocket } from './ws/register.js';
+import { buildWsMethods } from './ws/methods.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
     userId?: string;
+    /** The companion a WS connection embodies, resolved + ownership-checked at the
+     *  handshake (Phase D D2). Absent on HTTP requests and transport-only sockets. */
+    companionId?: string;
   }
 }
 
@@ -73,12 +66,22 @@ export interface AppDeps {
   /** The standing companion event channel's bus (architecture.md §6) — fed by the
    *  publish-on-append MemoryStore decorator, drained by the event-channel route. */
   readonly eventBus: CompanionEventBus;
+  /** Durable cross-node event log (Phase D D4) — the live embodiment connection's
+   *  heartbeat reads it by cursor and pushes events over the WS. */
+  readonly eventLog: CompanionEventLog;
   readonly semantic: SemanticMemoryStore;
   readonly episodic: EpisodicMemoryStore;
   readonly embeddings: EmbeddingGateway;
-  readonly ingestion: IngestionRunner;
+  /** Durable byte staging for the two-part upload (deliver-scalability.md §6 D-A). */
+  readonly staging: UploadStagingStore;
+  /** Enqueues `ingest` jobs (with fleet-wide backpressure) — the durable successor
+   *  to the in-process IngestionRunner. */
+  readonly ingest: IngestWorkRequester;
+  /** The live embodiment claim (Phase D D2): one WS connection holds a companion at
+   *  a time; the handshake claims it, the heartbeat renews it. */
+  readonly embodiment: EmbodimentStore;
   /** Off-request episodic reflection — the message route requests it post-turn. */
-  readonly consolidation: ConsolidationRunner;
+  readonly consolidation: CompanionWorkRequester;
   readonly harness: Harness;
   /** The tools available to the companion (P3) — also used to run approved calls. */
   readonly tools: ToolRegistry;
@@ -86,6 +89,9 @@ export interface AppDeps {
   readonly proposals: ProposalStore;
   /** The "every tool call is logged" audit log (P3). */
   readonly toolCallLog: ToolCallLog;
+  /** Read-only queue/embodiment observability snapshot — the admin `/admin/queue`
+   *  surface (deliver-scalability.md §C "C2"). */
+  readonly queueMetrics: QueueMetricsReader;
   /** The lead inventory — the companion's reading list (P3 substrate). */
   readonly leads: LeadStore;
   /** Procedural memory — learned, reusable workflows (P3 seed). */
@@ -93,7 +99,7 @@ export interface AppDeps {
   /** Volatile presence signal per companion — the motivation engine's environment (P4). */
   readonly presence: PresenceStore;
   /** Off-request proactive ticks — routes request it on activity/return (P4). */
-  readonly motivation: MotivationRunner;
+  readonly motivation: CompanionWorkRequester;
   /** The arrival greeting — the bond-driven reaction to the user returning (P14). */
   readonly greeting: GreetingService;
   /** Per-companion STAMINA wallet — the user-initiated budget (chat/search/tasks). */
@@ -106,9 +112,10 @@ export interface AppDeps {
   readonly rewards: ProactiveOutcomeStore;
   /** Emoji reactions on transcript messages, both directions (companion-reactions.md). */
   readonly reactions: ReactionStore;
-  /** The will's half of the reaction loop — reads a user reaction's value and
-   *  learns from it after the route responds (companion-reactions.md §4). */
-  readonly reactionLearner: ReactionLearner;
+  /** The will's half of the reaction loop — enqueues a `reaction_learn` job so the
+   *  read + drive-weight learning runs off-request under the companion claim
+   *  (companion-reactions.md §4; deliver-scalability.md §5.1). */
+  readonly reactionLearn: ReactionWorkRequester;
   /** The rolling read of the user's mood, sensed in the agent loop (P4.2). */
   readonly affect: CompanionAffectStore;
   /**
@@ -125,16 +132,57 @@ export interface AppDeps {
 }
 
 // API route prefixes that must 404 (not fall through to the SPA index.html).
-const API_PREFIXES = ['/auth', '/companions', '/food', '/health'] as const;
+const API_PREFIXES = ['/admin', '/auth', '/companions', '/food', '/health'] as const;
+
+// Query-string params that carry a live bearer credential and must never reach the
+// access log. A browser `WebSocket` cannot set an Authorization header, so the bearer
+// rides the WS handshake URL as `?access_token=<jwt>` (see ws/handshake.ts). Fastify's
+// default `req` serializer logs the full URL — query string included — so without this
+// redaction a replayable token would land in stdout/access logs.
+const SENSITIVE_QUERY_PARAMS = ['access_token', 'token'] as const;
+
+/** Redact credential-bearing query params from a request URL before it is logged. */
+export function redactUrl(url: string): string {
+  const queryStart = url.indexOf('?');
+  if (queryStart === -1) {
+    return url;
+  }
+  const path = url.slice(0, queryStart);
+  const params = new URLSearchParams(url.slice(queryStart + 1));
+  let redacted = false;
+  for (const name of SENSITIVE_QUERY_PARAMS) {
+    if (params.has(name)) {
+      params.set(name, 'REDACTED');
+      redacted = true;
+    }
+  }
+  return redacted ? `${path}?${params.toString()}` : url;
+}
 
 /** Build the Fastify app — the only surface↔core boundary (invariant #1). */
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const app = Fastify({
     // Request access logging — every request/response (method, url, status,
     // remoteAddress, responseTime). Fastify's default serializers do NOT log
-    // headers, so the Authorization bearer never lands in the access log.
-    // Application/business logging still flows through deps.logger.
-    logger: true,
+    // headers, so the Authorization bearer never lands in the access log — but the
+    // default DOES log the full URL, query string included, and a browser WS client
+    // sends its bearer as `?access_token=<jwt>` (ws/handshake.ts). Override the `req`
+    // serializer to redact credential-bearing query params so the token never lands
+    // in the log. Application/business logging still flows through deps.logger.
+    logger: {
+      serializers: {
+        req(request: FastifyRequest) {
+          const remotePort = request.socket?.remotePort;
+          return {
+            method: request.method,
+            url: redactUrl(request.url),
+            host: request.host,
+            remoteAddress: request.ip,
+            ...(remotePort === undefined ? {} : { remotePort }),
+          };
+        },
+      },
+    },
     // Behind a reverse proxy (Caddy) terminating TLS on the same host: honour the
     // X-Forwarded-* headers so request.ip / request.protocol reflect the real
     // client, not the proxy. Safe because the Node listener binds localhost and is
@@ -148,11 +196,6 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   await app.register(cors, {
     origin: deps.config.appUrl,
     allowedHeaders: ['Content-Type', 'Authorization'],
-  });
-
-  // Multipart uploads (PDF sources), capped at the configured size.
-  await app.register(multipart, {
-    limits: { fileSize: deps.config.ingestionMaxBytes, files: 1 },
   });
 
   // Tolerate an empty body on application/json requests. Fastify's default JSON
@@ -191,7 +234,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     const context: Record<string, unknown> = {
       operation: 'http.request',
       method: request.method,
-      url: request.url,
+      // redactUrl, not request.url: a WS handshake error reaches here too, and the
+      // browser WS bearer rides the URL as `?access_token=<jwt>` (ws/handshake.ts).
+      url: redactUrl(request.url),
       statusCode,
       code: error.code,
       userId: request.userId,
@@ -212,27 +257,21 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.get('/health', async () => ({ status: 'ok' }));
 
   const requireAuth = makeRequireAuth(deps);
+  const requireAdmin = makeRequireAdmin(deps);
 
-  // The per-companion vitality wallet (architecture.md §4.8) is the cost
-  // guardrail; routes enforce it inline (chat/search pre-flight, ingestion
-  // defer), so there are no per-route request-count limiters.
-  registerAuthRoutes(app, deps, requireAuth);
-  registerCompanionRoutes(app, deps, requireAuth);
-  registerMessageRoutes(app, deps, requireAuth);
-  registerReactionRoutes(app, deps, requireAuth);
-  registerEventRoutes(app, deps, requireAuth);
-  registerMemoryRoutes(app, deps, requireAuth);
-  registerUserModelRoutes(app, deps, requireAuth);
-  registerEpisodeRoutes(app, deps, requireAuth);
+  // The product surface is the realtime WS (below). Only a few HTTP routes remain:
+  // the public auth bootstrap (fetched before the client can authenticate), the
+  // filesystem upload sink (mounted only for the local `file` staging backend — the
+  // local equivalent of a presigned S3 PUT; staging-object-storage.md), and the
+  // admin-only observability read (ops tooling speaks HTTP, not the WS envelope).
+  // Everything else is a WS method (deliver-scalability.md §6).
+  registerAuthRoutes(app, deps);
   registerSourceRoutes(app, deps, requireAuth);
-  registerProposalRoutes(app, deps, requireAuth);
-  registerInventoryRoutes(app, deps, requireAuth);
-  registerPresenceRoutes(app, deps, requireAuth);
-  registerGreetingRoutes(app, deps, requireAuth);
-  registerProactivityRoutes(app, deps, requireAuth);
-  registerProactiveActivityRoutes(app, deps, requireAuth);
-  registerGrowthRoutes(app, deps, requireAuth);
-  registerUsageRoutes(app, deps, requireAuth);
+  registerAdminRoutes(app, deps, requireAuth, requireAdmin);
+
+  // Realtime WS transport (Phase D): authenticated at the handshake, request/
+  // response correlated by id, with server-push events — the one product surface.
+  await registerWebSocket(app, deps, buildWsMethods(deps));
 
   registerSpa(app);
 

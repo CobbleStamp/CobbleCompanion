@@ -31,8 +31,9 @@ export {
 export {
   createIngestSourceTool,
   type IngestSourceOptions,
-  type IngestionEnqueuePort,
+  type IngestEnqueuePort,
   type SourceRegistrationPort,
+  type UploadStagingPort,
 } from './tools/ingest-source.js';
 
 // MCP tool acquisition (companion-tools.md — Phase 9): a whitelisted catalog the
@@ -162,12 +163,52 @@ export {
 export { TranscriptMemoryStore, type MemoryStore, type TranscriptEntry } from './memory/store.js';
 export { PublishingMemoryStore } from './memory/publishing-store.js';
 
-// Event channel (architecture.md §6) — the standing companion event channel's substrate
+// Event channel (architecture.md §6) — the companion event sink interface
+export { type CompanionEventBus } from './events/bus.js';
+// Durable cross-node delivery (deliver-scalability.md §6 D4)
 export {
-  InProcessCompanionEventBus,
-  type CompanionEventBus,
-  type CompanionSubscription,
-} from './events/bus.js';
+  DrizzleCompanionEventLog,
+  type CompanionEventLog,
+  type LoggedEvent,
+} from './events/log.js';
+export { DurableCompanionEventBus } from './events/durable-bus.js';
+// Background job queue (deliver-scalability.md §5.1, Phase B)
+export {
+  DrizzleJobQueue,
+  reactionLearnDedupeKey,
+  type ClaimedCompanion,
+  type EnqueueParams,
+  type JobQueue,
+  type QueuedJob,
+} from './jobs/job-queue.js';
+// Queue / embodiment observability (deliver-scalability.md §C "C2")
+export {
+  DrizzleQueueMetricsReader,
+  type QueueMetricsReader,
+  type QueueMetricsSnapshot,
+} from './jobs/queue-metrics.js';
+// Live embodiment claim (deliver-scalability.md §5.2, Phase D D2)
+export {
+  DrizzleEmbodimentStore,
+  type ClaimParams,
+  type EmbodimentClaim,
+  type EmbodimentStore,
+} from './embodiment/store.js';
+// Presence derived from the embodiment claim (Phase D D5)
+export { EmbodimentPresenceStore } from './embodiment/presence.js';
+export {
+  JobProcessorPool,
+  makeCompanionWorkRequester,
+  makeIngestWorkRequester,
+  makeReactionWorkRequester,
+  type CompanionWorkRequester,
+  type IngestRequest,
+  type IngestWorkRequester,
+  type ReactionWorkRequester,
+  type JobHandler,
+  type JobHandlers,
+  type JobProcessorOptions,
+} from './jobs/job-processor.js';
 export {
   consolidateWindow,
   parseEpisodes,
@@ -187,6 +228,7 @@ export {
   DrizzleSemanticMemoryStore,
   type CreateSourceInput,
   type DeferredJob,
+  type IngestionRunContext,
   type JobPatch,
   type JobRecord,
   type NewFact,
@@ -295,7 +337,11 @@ export {
   type PresenceThresholds,
   presencePosture,
 } from './motivation/presence.js';
-export { InMemoryPresenceStore, type PresenceStore } from './motivation/presence-store.js';
+export {
+  InMemoryPresenceStore,
+  type PresenceFence,
+  type PresenceStore,
+} from './motivation/presence-store.js';
 // Motivation engine — drives, arbitration, explore burst, the engine (Phase 4)
 export {
   computeDrives,
@@ -539,23 +585,46 @@ export {
   type HttpLinkResolverOptions,
 } from './ingestion/link-resolver.js';
 export {
-  IngestionQueueFullError,
-  IngestionRunner,
-  type IngestionTarget,
-} from './ingestion/runner.js';
-export {
   IngestionPipeline,
   type IngestionPayload,
   type IngestionPipelineOptions,
   type IngestionRunParams,
+  type IngestionTarget,
 } from './ingestion/pipeline.js';
+export {
+  IngestionQueueFullError,
+  ingestionPayloadBytes,
+  makeIngestJobHandler,
+  type IngestJobDeps,
+} from './ingestion/ingest-job.js';
+export {
+  buildUploadKey,
+  parseUploadKey,
+  type CreateUploadSlotParams,
+  type ParsedUploadKey,
+  type StagedUpload,
+  type StagedUploadConsumer,
+  type StageUploadParams,
+  type UploadSlot,
+  type UploadStagingStore,
+} from './ingestion/upload-staging.js';
+export {
+  FilesystemUploadStagingStore,
+  type FilesystemStagingConfig,
+} from './ingestion/upload-staging-fs.js';
+export {
+  S3UploadStagingStore,
+  type S3Operations,
+  type S3StagingConfig,
+} from './ingestion/upload-staging-s3.js';
+export { AwsS3Operations, createAwsS3Operations } from './ingestion/upload-staging-s3-aws.js';
+export { sweepIngestion, type IngestionSweepDeps } from './ingestion/ingest-sweep.js';
 export {
   LlmIngestionAnnouncer,
   type IngestionAnnouncer,
   type IngestionOutcome,
   type LlmIngestionAnnouncerOptions,
 } from './ingestion/announcer.js';
-export { resumeDeferredJobs, type DeferredSweepDeps } from './ingestion/deferred-sweeper.js';
 
 // Logging
 export { consoleLogger, type Logger } from './logging.js';

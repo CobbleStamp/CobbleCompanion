@@ -31,6 +31,28 @@ export function pathsOverlap(a: string, b: string): boolean {
  */
 
 /**
+ * Where staged upload bytes live (staging-object-storage.md). A discriminated
+ * union so the wiring can build the matching store and the type system guarantees
+ * the backend's required fields are present (validated in `superRefine`).
+ */
+export type UploadStagingConfig =
+  | {
+      readonly backend: 's3';
+      readonly prefix: string;
+      readonly ttlMs: number;
+      readonly bucket: string;
+      readonly region: string;
+    }
+  | {
+      readonly backend: 'file';
+      readonly prefix: string;
+      readonly ttlMs: number;
+      readonly root: string;
+      /** API origin used to build the local upload-slot URL. */
+      readonly publicBaseUrl: string;
+    };
+
+/**
  * Runtime configuration (implementation.md §3). Required secrets are validated at
  * startup — fail fast (security.md). Tests construct an AppConfig directly.
  */
@@ -47,10 +69,50 @@ export interface AppConfig {
   readonly ingestionModel: string;
   /** Upload size cap for source files. */
   readonly ingestionMaxBytes: number;
+  /** Where staged upload bytes live between accept and ingest (staging-object-storage.md). */
+  readonly uploadStaging: UploadStagingConfig;
   /** A/B knob: prefix the Pass-2 context header onto embedding inputs. */
   readonly useContextHeader: boolean;
   /** Backstop cap on queued+in-flight ingestion runs across all owners. */
   readonly ingestionQueueMax: number;
+  /** Job-queue claim lease — a companion drain holds its claim this long. The
+   *  heartbeat renews it *during* a drain, so the lease no longer has to exceed the
+   *  slowest job; it only bounds how long a wedged/partitioned node keeps its claim
+   *  before the work is reclaimed (job-processor.ts). Must exceed jobHeartbeatMs. */
+  readonly jobLeaseMs: number;
+  /** How often a drain renews its claim while running. The "silence cap": if the
+   *  node cannot renew for ~jobLeaseMs (event-loop wedge or DB partition), the lease
+   *  lapses and the work is reclaimed. Must be < jobLeaseMs (renew several times per
+   *  lease so a single missed beat never expires it). */
+  readonly jobHeartbeatMs: number;
+  /** Coarse poll interval — the clock for idle/future-dated background work. */
+  readonly jobPollIntervalMs: number;
+  /** Max concurrent companion drains per node (K) — sized to resource ceilings. */
+  readonly jobConcurrency: number;
+  /** WS embodiment heartbeat interval — the node renews its claim this often while
+   *  the socket is open (deliver-scalability.md §5.2). */
+  readonly wsHeartbeatMs: number;
+  /** WS embodiment claim TTL — a claim with no heartbeat for this long is dead and
+   *  reclaimable (crash backstop). A small multiple of the heartbeat. */
+  readonly wsClaimTtlMs: number;
+  /** Max bytes for a single inbound WS frame. Frames are JSON control envelopes, so
+   *  this is small — it caps the synchronous `JSON.parse` cost and rejects an
+   *  oversized frame at the transport before any work (security: bounds event-loop
+   *  stall from a giant frame). */
+  readonly wsMaxPayloadBytes: number;
+  /** Max requests dispatched concurrently on one connection. Frames multiplex, so
+   *  one socket can fan out many handlers; this sheds load past the cap (a frame
+   *  over it gets a `rate_limited` error, never dispatched) so a single authed
+   *  client can't exhaust CPU / the DB pool. */
+  readonly wsMaxInFlight: number;
+  /** Max bytes the server may have queued (unsent) toward a single connection
+   *  before it is treated as a non-draining (slow/stuck/dead) consumer and closed.
+   *  A WS write never blocks: bytes a slow client hasn't acked pile up in the
+   *  process heap (`socket.bufferedAmount`), so without this ceiling one stuck
+   *  connection can OOM the whole node. On close the client reconnects and resumes
+   *  live delivery from its cursor (no events lost), so this trades a slow client's
+   *  socket for the node's memory safety (deliver-scalability.md §5.2). */
+  readonly wsMaxBufferedBytes: number;
   /**
    * The token balance a new companion is seeded with in **each** vitality wallet
    * (stamina + energy). Not a cap — wallets only refill by feeding (architecture.md §4.8).
@@ -113,11 +175,66 @@ const envSchema = z
       .int()
       .positive()
       .default(25 * 1024 * 1024),
+    // Upload staging (staging-object-storage.md). `s3` in production (bytes go
+    // straight to a bucket via presigned PUT); `file` for local/CI (a root dir is
+    // required — validated below). TTL mirrors the S3 bucket lifecycle rule.
+    UPLOAD_STAGING_BACKEND: z.enum(['s3', 'file']).default('file'),
+    UPLOAD_STAGING_S3_BUCKET: z.string().default(''),
+    // Falls back to the ambient AWS_REGION when unset (handled in loadConfig).
+    UPLOAD_STAGING_S3_REGION: z.string().default(''),
+    // Slash-separated alphanumeric/_/- segments only: no dots (so no `..`), no
+    // leading/trailing slash, never absolute — a forged prefix can't point the fs
+    // `purgeExpired` sweep (resolve(root, prefix)) outside the staging root.
+    UPLOAD_STAGING_PREFIX: z
+      .string()
+      .regex(
+        /^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/,
+        'UPLOAD_STAGING_PREFIX must be slash-separated alphanumeric/_/- segments (no "..", no leading/trailing slash)',
+      )
+      .default('tmp-uploads'),
+    UPLOAD_STAGING_FS_ROOT: z.string().default(''),
+    // API origin the local upload-slot URL points at; empty → derived from PORT.
+    UPLOAD_STAGING_PUBLIC_BASE_URL: z.string().default(''),
+    UPLOAD_STAGING_TTL_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      // Cap at 1 day so the minted presigned PUT capability can't outlive the S3
+      // bucket's 1-day expiry lifecycle rule.
+      .max(24 * 60 * 60 * 1000)
+      .default(60 * 60 * 1000),
     USE_CONTEXT_HEADER: z
       .enum(['true', 'false'])
       .default('true')
       .transform((value) => value === 'true'),
     INGESTION_QUEUE_MAX: z.coerce.number().int().positive().default(100),
+    // Job-queue tuning (deliver-scalability.md §5.1.6). The lease is renewed
+    // *during* a drain by the heartbeat, so it no longer has to exceed the slowest
+    // job — it only bounds how long a wedged/partitioned node keeps its claim.
+    JOB_LEASE_MS: z.coerce.number().int().positive().default(60_000),
+    JOB_HEARTBEAT_MS: z.coerce.number().int().positive().default(20_000),
+    JOB_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(30_000),
+    JOB_CONCURRENCY: z.coerce.number().int().positive().default(4),
+    WS_HEARTBEAT_MS: z.coerce.number().int().positive().default(10_000),
+    WS_CLAIM_TTL_MS: z.coerce.number().int().positive().default(30_000),
+    // A WS frame is a JSON control envelope; 256 KiB is generous for any message
+    // (e.g. pasted chat content) while bounding the per-frame JSON.parse cost.
+    WS_MAX_PAYLOAD_BYTES: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(256 * 1024),
+    // Per-connection in-flight dispatch cap (load-shedding backstop).
+    WS_MAX_IN_FLIGHT: z.coerce.number().int().positive().default(32),
+    // Per-connection outbound backpressure ceiling: past this many unsent bytes
+    // queued toward one client, the connection is closed (slow/dead consumer) so a
+    // non-draining socket can't grow the heap without bound. 8 MiB is generous for
+    // a healthy client's transient catch-up burst while bounding worst-case memory.
+    WS_MAX_BUFFERED_BYTES: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(8 * 1024 * 1024),
     STARTING_VITALITY_TOKENS: z.coerce
       .number()
       .int()
@@ -196,6 +313,35 @@ const envSchema = z
         path: ['LANGFUSE_SECRET_KEY'],
       });
     }
+    // Upload staging: each backend has its own required field (fail fast — a
+    // misconfigured staging store loses uploads silently otherwise).
+    if (env.UPLOAD_STAGING_BACKEND === 's3' && env.UPLOAD_STAGING_S3_BUCKET.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'UPLOAD_STAGING_S3_BUCKET is required when UPLOAD_STAGING_BACKEND=s3',
+        path: ['UPLOAD_STAGING_S3_BUCKET'],
+      });
+    }
+    if (
+      env.UPLOAD_STAGING_BACKEND === 's3' &&
+      env.UPLOAD_STAGING_S3_REGION.length === 0 &&
+      (process.env.AWS_REGION ?? '').length === 0
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'UPLOAD_STAGING_S3_REGION (or the ambient AWS_REGION) is required when ' +
+          'UPLOAD_STAGING_BACKEND=s3',
+        path: ['UPLOAD_STAGING_S3_REGION'],
+      });
+    }
+    if (env.UPLOAD_STAGING_BACKEND === 'file' && env.UPLOAD_STAGING_FS_ROOT.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'UPLOAD_STAGING_FS_ROOT is required when UPLOAD_STAGING_BACKEND=file',
+        path: ['UPLOAD_STAGING_FS_ROOT'],
+      });
+    }
     // The read-only CLI tool dir must not overlap the writable CLI scratch dir
     // (its default is the OS temp dir when CLI_SCRATCH_DIR is unset) — else a
     // scratch write could land a binary inside the trust boundary (companion-tools.md §6).
@@ -210,6 +356,16 @@ const envSchema = z
           path: ['CLI_TOOLS_PATH'],
         });
       }
+    }
+    // The drain renews its claim every JOB_HEARTBEAT_MS; the lease must outlast a
+    // few beats or a single slow/missed renewal would expire it and hand a live
+    // companion to another node (job-processor.ts).
+    if (env.JOB_HEARTBEAT_MS >= env.JOB_LEASE_MS) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'JOB_HEARTBEAT_MS must be less than JOB_LEASE_MS',
+        path: ['JOB_HEARTBEAT_MS'],
+      });
     }
   });
 
@@ -279,6 +435,28 @@ function parseServiceRegistrySeeds(raw: string): readonly ServiceCredentialSeed[
     }));
 }
 
+/**
+ * Resolve the upload-staging backend config from validated env. The discriminant
+ * has been checked in `superRefine`, so the required field for each backend is
+ * present here. The fs `publicBaseUrl` falls back to a local API origin; the s3
+ * region falls back to the ambient `AWS_REGION`.
+ */
+function buildUploadStagingConfig(parsed: z.infer<typeof envSchema>): UploadStagingConfig {
+  const prefix = parsed.UPLOAD_STAGING_PREFIX;
+  const ttlMs = parsed.UPLOAD_STAGING_TTL_MS;
+  if (parsed.UPLOAD_STAGING_BACKEND === 's3') {
+    return {
+      backend: 's3',
+      prefix,
+      ttlMs,
+      bucket: parsed.UPLOAD_STAGING_S3_BUCKET,
+      region: parsed.UPLOAD_STAGING_S3_REGION || (process.env.AWS_REGION ?? ''),
+    };
+  }
+  const publicBaseUrl = parsed.UPLOAD_STAGING_PUBLIC_BASE_URL || `http://localhost:${parsed.PORT}`;
+  return { backend: 'file', prefix, ttlMs, root: parsed.UPLOAD_STAGING_FS_ROOT, publicBaseUrl };
+}
+
 /** Load and validate config from the environment; throws on invalid config. */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const parsed = envSchema.parse(env);
@@ -292,8 +470,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     embeddingDimensions: parsed.EMBEDDING_DIM,
     ingestionModel: parsed.INGESTION_MODEL,
     ingestionMaxBytes: parsed.INGESTION_MAX_BYTES,
+    uploadStaging: buildUploadStagingConfig(parsed),
     useContextHeader: parsed.USE_CONTEXT_HEADER,
     ingestionQueueMax: parsed.INGESTION_QUEUE_MAX,
+    jobLeaseMs: parsed.JOB_LEASE_MS,
+    jobHeartbeatMs: parsed.JOB_HEARTBEAT_MS,
+    jobPollIntervalMs: parsed.JOB_POLL_INTERVAL_MS,
+    jobConcurrency: parsed.JOB_CONCURRENCY,
+    wsHeartbeatMs: parsed.WS_HEARTBEAT_MS,
+    wsClaimTtlMs: parsed.WS_CLAIM_TTL_MS,
+    wsMaxPayloadBytes: parsed.WS_MAX_PAYLOAD_BYTES,
+    wsMaxInFlight: parsed.WS_MAX_IN_FLIGHT,
+    wsMaxBufferedBytes: parsed.WS_MAX_BUFFERED_BYTES,
     startingVitalityTokens: parsed.STARTING_VITALITY_TOKENS,
     mcpServers: parseMcpServers(parsed.MCP_SERVERS),
     serviceRegistrySeeds: parseServiceRegistrySeeds(parsed.SERVICE_REGISTRY_SEEDS),

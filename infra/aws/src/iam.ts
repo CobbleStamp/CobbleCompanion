@@ -5,6 +5,7 @@ import * as aws from '@pulumi/aws';
 import * as pulumi from '@pulumi/pulumi';
 import { repo } from './registry';
 import { parameterArns } from './secrets';
+import { uploadsBucket, UPLOAD_PREFIX } from './storage';
 
 const tags = { Project: 'cobblecompanion', ManagedBy: 'pulumi' };
 const region = new pulumi.Config('aws').require('region');
@@ -67,6 +68,25 @@ new aws.iam.RolePolicy('cc-secrets-read', {
           Action: ['kms:Decrypt'],
           Resource: '*',
           Condition: { StringEquals: { 'kms:ViaService': `ssm.${region}.amazonaws.com` } },
+        },
+      ],
+    }),
+  ),
+});
+
+// Upload staging: the app signs presigned PUTs and the `ingest` job reads/deletes
+// the staged bytes, all scoped to the `tmp-uploads/` prefix of the uploads bucket
+// (staging-object-storage.md). HeadObject is covered by s3:GetObject.
+new aws.iam.RolePolicy('cc-uploads-rw', {
+  role: instanceRole.id,
+  policy: uploadsBucket.arn.apply((bucketArn) =>
+    JSON.stringify({
+      Version: '2012-10-17',
+      Statement: [
+        {
+          Effect: 'Allow',
+          Action: ['s3:PutObject', 's3:GetObject', 's3:DeleteObject'],
+          Resource: `${bucketArn}/${UPLOAD_PREFIX}/*`,
         },
       ],
     }),

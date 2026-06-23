@@ -1,7 +1,7 @@
 /**
  * Shared vitality-meter assembly (architecture.md §4.8) — builds the
  * stamina/energy `StaminaEnergyDto` from the two wallets. Used by both the
- * proactivity route's meter and the feed route, so the meter shape is single-sourced.
+ * `proactivity.*` meter and the `feed` WS method, so the meter shape is single-sourced.
  * Each wallet reports just its remaining balance — no cap, no window (the wallet
  * refills only by feeding).
  */
