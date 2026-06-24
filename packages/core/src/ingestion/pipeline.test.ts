@@ -474,6 +474,15 @@ describe('IngestionPipeline', () => {
     const llm = new ScriptedLlmGateway([SEGMENT_RESPONSE]);
     const { sourceId, jobId } = await seedSourceAndJob();
 
+    // Capture the failure log so we can assert it carries the link URL, the
+    // failure reason, and a stack — the trio needed to debug a bad lead without
+    // joining sourceId back to the sources table.
+    const errors: { message: string; context: Record<string, unknown> }[] = [];
+    const capturingLogger: Logger = {
+      ...silentLogger,
+      error: (message, context) => errors.push({ message, context }),
+    };
+
     // No recognized content-type, no magic-byte match, no parseable extension,
     // and a NUL byte rules out the plain-text fallback → the resolver rejects.
     await new IngestionPipeline({
@@ -484,7 +493,7 @@ describe('IngestionPipeline', () => {
       embeddingModel: 'fake-embed',
       embeddingDimensions: EMBEDDING_DIMENSIONS,
       useContextHeader: false,
-      logger: silentLogger,
+      logger: capturingLogger,
       sourceParser: linkSourceParser(
         async () =>
           new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01]), {
@@ -502,6 +511,14 @@ describe('IngestionPipeline', () => {
 
     const [job] = await semantic.listJobs(companionId);
     expect(job?.status).toBe('failed');
+
+    const failure = errors.find((e) => e.message === 'ingestion run failed');
+    expect(failure).toBeDefined();
+    expect(failure?.context.sourceUrl).toBe('https://example.com/photo.png');
+    const loggedError = failure?.context.error;
+    expect(loggedError).toBeInstanceOf(Error);
+    expect((loggedError as Error).message).toBe('the link did not return content Cobble can read');
+    expect((loggedError as Error).stack).toBeTruthy();
   });
 
   it('fails the job when a link body exceeds the byte ceiling', async () => {

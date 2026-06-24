@@ -654,16 +654,16 @@ lever, so the model _reads everything_ but _emits almost nothing_ (~1% of input 
 ~10% in Pass 2).
 
 ```mermaid
-flowchart LR
-    UP["upload (file · note · link)<br/>202 + queued job · 429 only if queue full"] --> RUN["Ingestion Runner<br/>(off request path)"]
-    RUN --> PARSE["parse → atomic paragraphs<br/>(never split mid-paragraph)"]
-    PARSE --> GATE{"companion's<br/>stamina empty?"}
-    GATE -->|yes| DEFER["status: deferred<br/>(hold parse; sweeper resumes once fed)"]
-    GATE -->|no| P1["Pass 1 — segment:<br/>LLM emits ONLY boundaries + topics"]
-    P1 --> SECT["sections = verbatim paragraph slices<br/>(the model never rewrites text)"]
-    SECT --> P2["Pass 2 — enrich:<br/>one context line + typed facts (ontology.md)"]
-    P2 --> EMB["embed: [context header +] verbatim text<br/>→ pgvector · FTS"]
-    EMB --> DONE["job done — recallable with citations"]
+flowchart TB
+    UP["upload (file · note · link)<br/>202 + queued job · 429 only if queue full<br/><i>ws/methods/sources.ts · finishEnqueue → ingest.request</i>"] --> RUN["Ingestion Runner (off request path)<br/><i>ingest-job.ts · makeIngestJobHandler<br/>→ pipeline.ts · IngestionPipeline.run</i>"]
+    RUN --> PARSE["parse → atomic paragraphs (never split mid-paragraph)<br/><i>source-parser.ts · SourceParser.parse<br/>(link only: → link-resolver.ts · resolve → detectContentType)<br/>→ content-parser.ts · parseContent (parser.ts)</i>"]
+    PARSE --> GATE{"companion's stamina empty?<br/><i>pipeline.ts · IngestionPipeline.isEmpty</i>"}
+    GATE -->|yes| DEFER["status: deferred (hold parse; sweeper resumes once fed)<br/><i>pipeline.ts · updateJob('deferred', parsedDoc)</i>"]
+    GATE -->|no| P1["Pass 1 — segment: LLM emits ONLY boundaries + topics<br/><i>pipeline.ts · segmentIntoSections<br/>→ segmenter.ts · segmentParagraphs</i>"]
+    P1 --> SECT["sections = verbatim paragraph slices (the model never rewrites text)<br/><i>segmenter.ts · parseBoundaries</i>"]
+    SECT --> P2["Pass 2 — enrich: one context line + typed facts (ontology.md)<br/><i>pipeline.ts · enrichSections<br/>→ enricher.ts · enrichSection</i>"]
+    P2 --> EMB["embed: [context header +] verbatim text → pgvector · FTS<br/><i>pipeline.ts · embedSections<br/>→ embedder.ts · buildEmbeddingInput</i>"]
+    EMB --> DONE["job done — recallable with citations<br/><i>pipeline.ts · updateJob('done')</i>"]
 ```
 
 Design rules (the "improved staged hybrid"; memory guide → `companion-memory.md`):

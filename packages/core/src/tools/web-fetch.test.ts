@@ -98,6 +98,45 @@ describe('createWebFetchTool', () => {
     expect(leads.captured[0]!.why).toContain('found while reading');
   });
 
+  it('harvests only <a> anchors, skipping <link rel> asset hrefs', async () => {
+    const leads = fakeLeads();
+    const html = `<html><head>
+      <link rel="icon" href="/static/favicon/wikipedia.ico">
+      <link rel="apple-touch-icon" href="/static/apple-touch/wikipedia.png">
+      <link rel="stylesheet" href="https://cdn.dev/site.css">
+      <link rel="canonical" href="https://other.dev/canonical">
+    </head><body>
+      <a href="https://other.dev/article">read me</a>
+    </body></html>`;
+    const tool = createWebFetchTool({
+      resolver: htmlResolver(html, 'https://src.dev/page'),
+      leads,
+    });
+    await tool.run({ url: 'https://src.dev/page' }, ctx);
+    // Only the <a> anchor is harvested — no <link rel="…"> href, even a real
+    // page URL like rel="canonical", is a navigation link.
+    expect(leads.captured.map((c) => c.url)).toEqual(['https://other.dev/article']);
+  });
+
+  it('skips <a> anchors that point straight at a non-document asset', async () => {
+    const leads = fakeLeads();
+    const html = `<html><body>
+      <a href="https://other.dev/diagram.png">image</a>
+      <a href="https://other.dev/FAVICON.ICO">icon (upper-case ext)</a>
+      <a href="https://other.dev/styles.css">stylesheet</a>
+      <a href="https://other.dev/report.pdf">a real document</a>
+      <a href="https://other.dev/post">an article</a>
+    </body></html>`;
+    const tool = createWebFetchTool({
+      resolver: htmlResolver(html, 'https://src.dev/page'),
+      leads,
+    });
+    await tool.run({ url: 'https://src.dev/page' }, ctx);
+    const urls = leads.captured.map((c) => c.url);
+    // Assets are dropped; a parseable document (.pdf) and a plain article stay.
+    expect(urls).toEqual(['https://other.dev/report.pdf', 'https://other.dev/post']);
+  });
+
   it('does not harvest when no lead store is configured', async () => {
     const tool = createWebFetchTool({
       resolver: htmlResolver('<a href="https://x.dev">x</a>', 'https://s.dev'),

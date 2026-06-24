@@ -157,11 +157,19 @@ export class IngestionPipeline {
       await semantic.updateJob(jobId, { status: 'done' });
       await this.debit(params, usage);
     } catch (error) {
+      // For a link source, surface which URL we tried — a content-type/fetch
+      // failure (e.g. a harvested favicon/image lead) is otherwise only
+      // identifiable by joining sourceId back to the sources table. The reason
+      // and stack travel in `error` (the logger serialises an Error's message +
+      // stack). sourceTitle is the URL for autonomous-burst link reads.
+      const sourceUrl = params.payload?.kind === 'link' ? params.payload.url : undefined;
       logger.error('ingestion run failed', {
         operation: 'ingestion.pipeline.run',
         companionId,
         sourceId,
         jobId,
+        sourceTitle: params.sourceTitle,
+        ...(sourceUrl !== undefined ? { sourceUrl } : {}),
         error,
       });
       await this.announce(params, 'failed');
