@@ -45,8 +45,8 @@ Prerequisites: Node ≥22, pnpm 10, Docker (for local Postgres).
 ```bash
 pnpm install
 pnpm db:generate              # generate SQL migrations from the schema
-cp .env.example .env          # set GOOGLE_CLIENT_ID + OPENROUTER_API_KEY
-                              # (or set LLM_PROVIDER=fake)
+cp .env.example .env          # set GOOGLE_CLIENT_ID + JWT_SIGNING_SECRET + OPENROUTER_API_KEY
+                              # (or set LLM_PROVIDER=fake; JWT_SIGNING_SECRET: openssl rand -base64 48)
 
 # one-shot: start Postgres, migrate, run API + web
 ./scripts/dev.sh
@@ -59,7 +59,10 @@ pnpm dev                      # API on :3000, web on :3001
 
 Then open <http://localhost:3001>. The web client signs in with **Google Sign-In**, so set
 `GOOGLE_CLIENT_ID` to an OAuth Web client ID with `http://localhost:3001` as an authorized origin
-(see `infra/README.md`) — the API will not boot without it.
+(see `infra/README.md`) — the API will not boot without it. The browser exchanges that Google ID
+token **once** (at `POST /auth/session`) for the API's own short-lived access token plus a refresh
+cookie, so the API also needs `JWT_SIGNING_SECRET` (a ≥32-byte HS256 key it signs those tokens with —
+`openssl rand -base64 48`); it will not boot without it either, and the secret must never be committed.
 
 Auth is per-request, not a server-wide mode: Google Sign-In and service-token auth are always live at
 once, so CobbleCompanion can back another service while also serving browser clients. Register a

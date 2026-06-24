@@ -6,6 +6,8 @@ import { loadConfig, pathsOverlap } from './config.js';
 const base = {
   DATABASE_URL: 'postgres://localhost/cobble',
   GOOGLE_CLIENT_ID: 'test-google-client-id',
+  // Required: the API signs its own session tokens (>=32 bytes).
+  JWT_SIGNING_SECRET: 'test-jwt-signing-secret-at-least-32-bytes!!',
   // Default staging backend is `file`, which requires a root (see superRefine).
   UPLOAD_STAGING_FS_ROOT: '/tmp/cc-staging',
 };
@@ -60,6 +62,30 @@ describe('loadConfig', () => {
         ...fakeProviders,
       }),
     ).toThrow(/GOOGLE_CLIENT_ID is required/);
+  });
+
+  it('requires a JWT_SIGNING_SECRET of at least 32 bytes', () => {
+    const { JWT_SIGNING_SECRET: _omit, ...withoutSecret } = base;
+    expect(() => loadConfig({ ...withoutSecret, ...fakeProviders })).toThrow(
+      /JWT_SIGNING_SECRET is required and must be at least 32 bytes/,
+    );
+    expect(() =>
+      loadConfig({ ...base, ...fakeProviders, JWT_SIGNING_SECRET: 'too-short' }),
+    ).toThrow(/JWT_SIGNING_SECRET is required and must be at least 32 bytes/);
+  });
+
+  it('parses the session-token TTLs (defaults + overrides)', () => {
+    const defaults = loadConfig({ ...base, ...fakeProviders });
+    expect(defaults.accessTokenTtlSec).toBe(15 * 60);
+    expect(defaults.refreshTokenTtlSec).toBe(24 * 60 * 60);
+    const overridden = loadConfig({
+      ...base,
+      ...fakeProviders,
+      ACCESS_TOKEN_TTL_SEC: '300',
+      REFRESH_TOKEN_TTL_SEC: '3600',
+    });
+    expect(overridden.accessTokenTtlSec).toBe(300);
+    expect(overridden.refreshTokenTtlSec).toBe(3600);
   });
 
   it('runs in production with Google + service-token auth', () => {

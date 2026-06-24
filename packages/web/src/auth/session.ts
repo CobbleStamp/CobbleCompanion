@@ -1,24 +1,22 @@
 /**
- * Persists the Google ID token across page refreshes. Without this the token
- * lives only in React state, so a browser refresh drops the user back to the
- * sign-in gate even though the credential is still valid.
- *
- * We use `sessionStorage` (not `localStorage`): the bearer credential survives
- * refreshes and in-tab navigation but is cleared when the tab/browser closes —
- * a conservative posture for a credential. Google ID tokens are short-lived
- * (~1h), so this only restores a session within that window; an expired token
- * is dropped rather than sent.
+ * Client-side JWT expiry inspection for the app **access** token. The token lives only
+ * in memory (session-manager.ts) — never in web storage — so there is no persistence
+ * here: a page reload re-establishes the session by replaying the HttpOnly refresh
+ * cookie against `POST /auth/refresh`. This module's sole job is to let the session
+ * manager decide *when* an access token is close enough to its `exp` to refresh ahead
+ * of a request. The value is advisory only; the API verifies every token authoritatively.
  */
-const STORAGE_KEY = 'cobble.idToken';
 
 /**
- * Read a JWT's `exp` (seconds since epoch) without verifying its signature. The
- * value is only used client-side to avoid restoring or sending a token we can
- * already tell is stale — the API still verifies every token authoritatively.
+ * Read a JWT's `exp` (seconds since epoch) without verifying its signature. Returns
+ * null when the token is malformed or carries no numeric `exp`.
  */
 function tokenExpirySeconds(token: string): number | null {
-  const [, payloadSegment, signatureSegment] = token.split('.');
-  if (payloadSegment === undefined || signatureSegment === undefined) return null;
+  const segments = token.split('.');
+  const [headerSegment, payloadSegment] = segments;
+  // Require all three JWT segments (header.payload.signature) before trusting the
+  // payload, so a malformed token fails closed (treated as expired → a refresh).
+  if (segments.length !== 3 || !headerSegment || !payloadSegment) return null;
   try {
     const json = atob(payloadSegment.replace(/-/g, '+').replace(/_/g, '/'));
     const payload = JSON.parse(json) as { exp?: unknown };
@@ -28,28 +26,13 @@ function tokenExpirySeconds(token: string): number | null {
   }
 }
 
-/** True when the token has no readable future expiry. */
+/**
+ * True when the token has no readable future expiry as of `nowMs`. Pass a `nowMs`
+ * skewed into the future (e.g. `Date.now() + 30_000`) to treat a token that is about
+ * to expire as already expired, so the caller refreshes ahead of the deadline.
+ */
 export function isTokenExpired(token: string, nowMs: number = Date.now()): boolean {
   const exp = tokenExpirySeconds(token);
   if (exp === null) return true;
   return exp * 1000 <= nowMs;
-}
-
-/** The persisted ID token if one is stored and still valid; otherwise null. */
-export function loadStoredToken(): string | null {
-  const token = sessionStorage.getItem(STORAGE_KEY);
-  if (token === null) return null;
-  if (isTokenExpired(token)) {
-    sessionStorage.removeItem(STORAGE_KEY);
-    return null;
-  }
-  return token;
-}
-
-export function storeToken(token: string): void {
-  sessionStorage.setItem(STORAGE_KEY, token);
-}
-
-export function clearStoredToken(): void {
-  sessionStorage.removeItem(STORAGE_KEY);
 }

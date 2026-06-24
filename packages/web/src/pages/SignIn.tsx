@@ -2,11 +2,13 @@ import { GoogleLogin } from '@react-oauth/google';
 import { useState } from 'react';
 
 interface SignInProps {
-  /** Called with the Google ID token from a successful sign-in. */
-  readonly onCredential: (idToken: string) => void;
+  /** Exchange the Google ID token for an app session. Resolves `true` on success;
+   *  `false` if the API rejected the exchange, so this gate can show an error. */
+  readonly onCredential: (idToken: string) => Promise<boolean>;
 }
 
-/** Step 1 of the walking skeleton: sign in with Google (ID-token flow). */
+/** The sign-in gate: obtain a Google ID token, then hand it to the app-session
+ *  exchange. Surfaces both a Google failure and an exchange rejection. */
 export function SignIn({ onCredential }: SignInProps): JSX.Element {
   const [error, setError] = useState<string | null>(null);
 
@@ -22,7 +24,9 @@ export function SignIn({ onCredential }: SignInProps): JSX.Element {
             return;
           }
           setError(null);
-          onCredential(idToken);
+          void onCredential(idToken).then((ok) => {
+            if (!ok) setError('Sign-in could not be completed. Please try again.');
+          });
         }}
         onError={() => setError('Google sign-in failed. Please try again.')}
       />

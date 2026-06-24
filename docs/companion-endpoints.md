@@ -27,14 +27,17 @@
 
 ## 1. What still speaks HTTP
 
-Only five HTTP routes remain; everything else is a WS method (§4):
+Only a handful of HTTP routes remain; everything else is a WS method (§4):
 
 | Route | Purpose |
 |-------|---------|
 | `GET /auth/config` | Public, pre-auth bootstrap (which auth provider / client id). |
+| `POST /auth/session` | Exchange a Google ID token (sent as the `Bearer`) for the app **access token** (body) + a refresh-token `HttpOnly` cookie (`implementation.md` §5). |
+| `POST /auth/refresh` | Mint a fresh access token from the refresh cookie (no Google round-trip); re-issues the cookie. `401` when the cookie is missing/expired. |
+| `POST /auth/logout` | Clear the refresh cookie. |
 | `PUT /uploads/local/:uploadId` | Filesystem upload sink — **local backend only**; the S3 backend issues a presigned PUT instead (`staging-object-storage.md`). |
 | `GET /health` | Liveness/readiness check. |
-| `POST /admin/queue` | Admin-only job-queue observability (Phase C2). |
+| `GET /admin/queue` | Admin-only job-queue observability (Phase C2). |
 | `GET /*` (SPA) | Static web-client serve. |
 
 File **bytes** still travel over HTTP (the presigned/local PUT); the *enqueue* that
@@ -52,11 +55,15 @@ wss://<host>/ws?access_token=<jwt>[&companion=<companionId>]
 
 - **Auth happens once, at the upgrade** (`handshake.ts`). The resolved `userId` is fixed
   for the connection's lifetime; there is **no per-message auth**.
+- `<jwt>` is the **app access token** the browser obtained from `POST /auth/session` (§1),
+  not the Google ID token — the per-request verifier no longer accepts a Google token here.
+  Service clients send their service-token headers instead.
 - The bearer may be sent **either** as an `Authorization: Bearer <jwt>` header **or** as
   the `access_token` query param. A browser `WebSocket` cannot set headers, so it uses the
   query param; service clients may use either.
 - A bad/expired token **aborts the upgrade** — the socket never opens. (Token expiry is
-  logged at `info`; the client must reconnect with a fresh bearer.)
+  logged at `info`.) The client refreshes the access token (`POST /auth/refresh`) and
+  reconnects; if the refresh itself fails it returns to the sign-in gate (`implementation.md` §5).
 
 ### 2.2 Embodiment (the `companion` param)
 

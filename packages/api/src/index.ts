@@ -81,6 +81,7 @@ import {
   ServiceTokenVerifier,
   type TokenVerifier,
 } from './auth/jwt-verifier.js';
+import { AppSessionVerifier } from './auth/session-tokens.js';
 import { loadConfig, type AppConfig } from './config.js';
 import { createUploadStagingStore } from './upload-staging-factory.js';
 import { FileSystemCliToolStore } from './cli/fs-tool-store.js';
@@ -103,12 +104,14 @@ function createEmbeddingGateway(config: AppConfig): EmbeddingGateway {
   return new OpenRouterEmbeddingGateway({ apiKey: config.openrouterApiKey });
 }
 
-// Both schemes are live at once; the composite routes each request by its credentials
-// (jwt-verifier.ts): service callers by the X-Service-Client-Id header, browser bearers
-// to Google.
+// The per-request verifier: the composite routes each request by its credentials
+// (jwt-verifier.ts) — service callers by the X-Service-Client-Id header, browser
+// bearers verified as the API's own session **access** token (session-tokens.ts).
+// Google ID tokens are verified only at /auth/session (createGoogleVerifier), to
+// bootstrap a session; they no longer authenticate ordinary requests.
 function createTokenVerifier(config: AppConfig, db: Database): TokenVerifier {
   return new CompositeVerifier(
-    new GoogleIdTokenVerifier(config.googleClientId),
+    new AppSessionVerifier(config.jwtSigningSecret),
     new ServiceTokenVerifier(new DrizzleServiceRegistry(db)),
   );
 }
@@ -557,6 +560,7 @@ async function main(): Promise<void> {
     growth,
     growthStore,
     tokenVerifier: createTokenVerifier(config, db),
+    googleVerifier: new GoogleIdTokenVerifier(config.googleClientId),
     config,
     logger: consoleLogger,
   });

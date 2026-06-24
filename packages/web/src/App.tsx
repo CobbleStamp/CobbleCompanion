@@ -1,8 +1,8 @@
 import { googleLogout } from '@react-oauth/google';
 import type { CompanionDto } from '@cobble/shared';
 import { useEffect, useState } from 'react';
-import { fetchCurrentUser, listCompanions, setAccessTokenGetter } from './api/client.js';
-import { clearStoredToken, loadStoredToken, storeToken } from './auth/session.js';
+import { fetchCurrentUser, listCompanions } from './api/client.js';
+import { sessionManager } from './auth/session-manager.js';
 import { Activity } from './pages/Activity.js';
 import { Chat } from './pages/Chat.js';
 import { CreateCompanion } from './pages/CreateCompanion.js';
@@ -11,31 +11,46 @@ import { MemoryBrowser } from './pages/MemoryBrowser.js';
 import { SignIn } from './pages/SignIn.js';
 import { Sources } from './pages/Sources.js';
 
+type AuthStatus = 'restoring' | 'signed-out' | 'signed-in';
+
 /**
- * Top-level entry: gate the companion flow behind Google Sign-In. The ID token from
- * the <GoogleLogin> credential is sent as the bearer on every request (stateless
- * — the API verifies it against Google's JWKS). It is persisted to
- * `sessionStorage` so a page refresh restores the session instead of bouncing
- * back to the sign-in gate; an expired token is dropped on load (see
- * ./auth/session.ts). The lazy initializer wires the token getter synchronously
- * on first render, before <CompanionFlow> mounts and calls fetchCurrentUser.
+ * Top-level entry: gate the companion flow behind an app-managed session
+ * (implementation.md §5). The <GoogleLogin> credential is exchanged **once** for the
+ * API's own access token (held in memory by {@link sessionManager}) plus an HttpOnly
+ * refresh cookie. On load the session is restored from that cookie via `/auth/refresh`
+ * — no sign-in prompt — and the manager refreshes the access token transparently
+ * thereafter. When a refresh fails for good (the refresh token expired), the expire
+ * handler routes back to the sign-in gate, which also unmounts <Chat> and so stops its
+ * WS reconnect loop.
  */
 export function App(): JSX.Element {
-  const [idToken, setIdToken] = useState<string | null>(() => {
-    const restored = loadStoredToken();
-    if (restored !== null) {
-      setAccessTokenGetter(async () => restored);
-    }
-    return restored;
-  });
+  const [status, setStatus] = useState<AuthStatus>('restoring');
 
-  if (!idToken) {
+  useEffect(() => {
+    let cancelled = false;
+    const off = sessionManager.setOnExpire(() => {
+      if (!cancelled) setStatus('signed-out');
+    });
+    void (async () => {
+      const restored = await sessionManager.restore();
+      if (!cancelled) setStatus(restored ? 'signed-in' : 'signed-out');
+    })();
+    return () => {
+      cancelled = true;
+      off();
+    };
+  }, []);
+
+  if (status === 'restoring') {
+    return <main className="card">Loading…</main>;
+  }
+  if (status === 'signed-out') {
     return (
       <SignIn
-        onCredential={(token) => {
-          storeToken(token);
-          setAccessTokenGetter(async () => token);
-          setIdToken(token);
+        onCredential={async (idToken) => {
+          const ok = await sessionManager.signIn(idToken);
+          if (ok) setStatus('signed-in');
+          return ok;
         }}
       />
     );
@@ -44,9 +59,8 @@ export function App(): JSX.Element {
     <CompanionFlow
       onSignOut={() => {
         googleLogout();
-        clearStoredToken();
-        setAccessTokenGetter(async () => null);
-        setIdToken(null);
+        void sessionManager.signOut();
+        setStatus('signed-out');
       }}
     />
   );
