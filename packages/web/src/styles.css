@@ -49,17 +49,34 @@ button:disabled {
   color: #c0263a;
 }
 
-.moved-banner {
+.moved-screen {
+  text-align: center;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.5rem 0.75rem;
-  margin-bottom: 0.5rem;
-  border-radius: 0.5rem;
-  background: #fff4d6;
-  border: 1px solid #e6c34d;
-  color: #7a5a00;
+  gap: 1rem;
+}
+
+.moved-screen .moved-icon {
+  font-size: 3rem;
+  margin: 0;
+  line-height: 1;
+}
+
+.moved-screen h1 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.moved-screen p {
+  margin: 0;
+  color: #4a4a63;
+  line-height: 1.5;
+}
+
+.moved-screen button {
+  margin-top: 0.5rem;
+  align-self: stretch;
 }
 
 .chat {

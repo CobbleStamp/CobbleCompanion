@@ -1,4 +1,4 @@
-import type { Logger } from '@cobble/core';
+import { type Logger, withContext } from '@cobble/core';
 import type { WsServerMessage } from '@cobble/shared';
 import type { WebSocket } from '@fastify/websocket';
 
@@ -39,17 +39,34 @@ export class WsConnection {
   /** Set once we've closed this connection for backpressure, so we log + close
    *  exactly once even if more sends race in before the socket flips to CLOSING. */
   private shedForBackpressure = false;
+  /** This connection's logger, pre-bound with `connectionId` + `userId` so every line
+   *  emitted on its behalf (here, in dispatch, embody, and method handlers) is
+   *  attributable to one connection — telling a superseded connection apart from its
+   *  successor in the logs (deliver-scalability.md §5.2). */
+  private readonly boundLogger: Logger;
 
   constructor(
     private readonly socket: WebSocket,
     readonly userId: string,
-    private readonly logger: Logger,
+    /** Per-connection ULID: the log-correlation id AND the token the embodiment claim
+     *  is fenced on (monotonic, so a later connection always force-claims over an
+     *  earlier one — the "newer wins" handoff rule). */
+    readonly connectionId: string,
+    logger: Logger,
     /** Max concurrent in-flight requests before frames are shed (`AppConfig.wsMaxInFlight`). */
     private readonly maxInFlight: number,
     /** Max queued unsent bytes toward this client before it's closed as a slow
      *  consumer (`AppConfig.wsMaxBufferedBytes`). */
     private readonly maxBufferedBytes: number,
-  ) {}
+  ) {
+    this.boundLogger = withContext(logger, { connectionId, userId });
+  }
+
+  /** This connection's `connectionId`/`userId`-bound logger — use it for any log
+   *  emitted while serving this connection so the line carries its `connectionId`. */
+  get logger(): Logger {
+    return this.boundLogger;
+  }
 
   get embodiment(): EmbodimentBinding | undefined {
     return this.boundEmbodiment;
@@ -112,9 +129,8 @@ export class WsConnection {
     if (this.socket.bufferedAmount > this.maxBufferedBytes) {
       if (!this.shedForBackpressure) {
         this.shedForBackpressure = true;
-        this.logger.warn('ws consumer too slow; closing to shed outbound backlog', {
+        this.boundLogger.warn('ws consumer too slow; closing to shed outbound backlog', {
           operation: 'ws.send',
-          userId: this.userId,
           bufferedAmount: this.socket.bufferedAmount,
           maxBufferedBytes: this.maxBufferedBytes,
         });
@@ -125,7 +141,7 @@ export class WsConnection {
     try {
       this.socket.send(JSON.stringify(message));
     } catch (error) {
-      this.logger.error('ws send failed', { operation: 'ws.send', error });
+      this.boundLogger.error('ws send failed', { operation: 'ws.send', error });
     }
   }
 

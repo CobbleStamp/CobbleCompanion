@@ -10,6 +10,10 @@ export interface WsCallContext {
   readonly embodiment: EmbodimentBinding | undefined;
   readonly connection: WsConnection;
   readonly emit: (chunk: unknown) => void;
+  /** This connection's `connectionId`/`userId`-bound logger. Method handlers must use
+   *  it (not the process-wide `deps.logger`) for any log so the line is attributable to
+   *  one connection — e.g. telling a superseded connection apart from its successor. */
+  readonly logger: Logger;
 }
 
 /**
@@ -80,24 +84,39 @@ export async function dispatchMessage(
         embodiment: connection.embodiment,
         connection,
         emit: (chunk: unknown) => connection.stream(requestId, chunk),
+        logger,
       },
       parsed.params,
     );
     connection.result(parsed.id, result ?? null);
   } catch (error) {
-    logger.error('ws method failed', {
-      operation: 'ws.dispatch',
-      method: parsed.method,
-      userId: connection.userId,
-      error,
-    });
     // Allowlist client-facing messages by type, not by a "has a string `code`"
     // heuristic: a `WsClientError` is a tagged, intentionally client-safe failure
     // (e.g. NotEmbodiedError) — pass its message and code through. Anything else
     // (a `pg` DatabaseError whose `code` is a SQLSTATE, a Node system error, a
     // gateway/harness fault) could leak internal detail, so report it generically
-    // (mirrors the HTTP 5xx handler in app.ts). The full error is logged above.
+    // (mirrors the HTTP 5xx handler in app.ts).
     const clientError = error instanceof WsClientError ? error : undefined;
+    if (clientError) {
+      // An expected, client-handled rejection — e.g. a `not_embodied` reply to an
+      // in-flight request on a connection a room handoff just superseded. This is
+      // normal, so log it at info WITHOUT a stack (an `error`-level stack here reads
+      // as a fault and floods the logs during a routine "moved to another room").
+      logger.info('ws method rejected', {
+        operation: 'ws.dispatch',
+        method: parsed.method,
+        requestId: parsed.id,
+        code: clientError.code,
+        reason: clientError.message,
+      });
+    } else {
+      logger.error('ws method failed', {
+        operation: 'ws.dispatch',
+        method: parsed.method,
+        requestId: parsed.id,
+        error,
+      });
+    }
     const message = clientError?.message ?? 'internal error';
     connection.fail(parsed.id, message, clientError?.code);
   }

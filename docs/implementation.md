@@ -926,7 +926,12 @@ for emoji reactions (§1, `companion-reactions.md` §8).
   adopting the id; else insert in `createdAt` order), and a `reaction_*` event through
   `applyReaction(lines, event)` (add/remove the chip on the addressed line, deduped by
   `(reactor, emoji)`). A dropped socket reconnects and re-runs the snapshot; a takeover pushes
-  `embodiment.superseded` (the companion "moved rooms"). Ordering uses `createdAt` (the DTO carries no
+  `embodiment.superseded` (the companion "moved rooms"). On that event the transport stops
+  reconnecting (no claim war — "newer wins") and the chat replaces its whole surface with the
+  full-screen `MovedAway` takeover (`web/src/components/MovedAway.tsx`): a quiet "{name} is on another
+  device" screen whose single **Move {name} here** action calls `reclaimEmbodiment()` and re-runs the
+  establishment effect, reconnecting with a strictly-greater owner token that force-claims the room
+  back. Ordering uses `createdAt` (the DTO carries no
   `seq`); add `seq` to `MessageDto` if equal-timestamp ordering ever glitches.
 
 ## 3. Configuration
@@ -1011,17 +1016,32 @@ Implements the trust-model boundaries in `architecture.md` §8.
 - **Authentication** — **per-request, not a server-wide mode.** Every scheme is live at once and a
   request is routed by the credentials it carries (a composite verifier dispatches on the
   `X-Service-Client-Id` header — unique to service callers — else treats the request as a browser
-  bearer). So a Google-token browser client and a service-token backend hit the same endpoints
-  simultaneously. The browser sign-in is **Google Sign-In** (Google as the OIDC provider):
-  the SPA uses Google Identity Services (`@react-oauth/google`) to obtain a Google **ID token** and
-  sends it as a `Bearer` header; the Fastify API validates the RS256 token against Google's JWKS
-  (issuer `accounts.google.com`, audience = `GOOGLE_CLIENT_ID`, expiry, `jose`), requires
-  `email_verified === true`, and JIT-provisions the user from the verified `email` claim.
-  (ID tokens last ~1h, with no refresh
-  token, so a session lasts within that window.) An **expired** token is an expected client condition,
-  not a server fault: the API guard classifies `jose`'s `ERR_JWT_EXPIRED` and logs it at `info`
-  (no stack), reserving `error`-level logs for genuine verification anomalies (bad signature, wrong
-  audience, missing claims).
+  bearer). So an app-session browser client and a service-token backend hit the same endpoints
+  simultaneously. The browser sign-in is **Google Sign-In** (Google as the OIDC provider) exchanged
+  for an **app-managed session**: the SPA uses Google Identity Services (`@react-oauth/google`) to
+  obtain a Google **ID token**, then `POST /auth/session` sends it as a `Bearer`; the Fastify API
+  validates the RS256 token against Google's JWKS (issuer `accounts.google.com`, audience =
+  `GOOGLE_CLIENT_ID`, expiry, `jose`), requires `email_verified === true`, JIT-provisions the user
+  from the verified `email` claim, and then mints the API's **own** session tokens
+  (`auth/session-tokens.ts`): a short-lived **access token** (default 15 min, returned in the body)
+  and a longer-lived **refresh token** (default 24 h, set as an `HttpOnly` cookie). Both are HS256
+  JWTs signed with `JWT_SIGNING_SECRET` and carry a `typ` (`access`/`refresh`) so one can't be
+  presented in the other's place. The **access token is the per-request bearer** thereafter (the
+  composite's browser branch verifies it — a Google ID token no longer authenticates an ordinary
+  request); the browser refreshes it against `POST /auth/refresh` (the cookie, no Google round-trip),
+  and `POST /auth/logout` clears the cookie. This decouples session lifetime from Google's ~1h ID
+  token: the user only re-authenticates with Google when the refresh token expires. An **expired**
+  access token is an expected client condition, not a server fault: the verifier classifies it
+  (`kind: 'expired'`) and the guard logs it at `info` (no stack), reserving `error`-level logs for
+  genuine anomalies (bad signature, missing claims). **Cookie posture:** the refresh cookie is
+  `HttpOnly` (out of JS reach — XSS can't read it), `Secure`, `Path=/auth` (rides only the
+  refresh/logout/session calls, never the WS handshake), and a **session cookie** (no `Max-Age`, so it
+  clears on browser close); `SameSite=Lax` in production (SPA served same-origin) and `SameSite=None`
+  in dev (SPA `:3001` → API `:3000` cross-origin, with `credentials: true` CORS pinned to `APP_URL`).
+  **Trade-off:** tokens are stateless (no session table, matching the per-request model), so there is
+  **no server-side revocation** before `exp` — sign-out clears the cookie but a leaked token stays
+  valid until it lapses; refresh-token rotation + reuse-detection (which needs server state) is the
+  documented future step (§6).
 - **Service-to-service auth** — always live alongside Google (no mode switch); a request is routed
   here whenever it carries the `X-Service-Client-Id` header. A trusted backend consumer (e.g. Sprout)
   calls CobbleCompanion on behalf of its own anonymous-UUID users. It sends `X-Service-Client-Id:
@@ -1043,14 +1063,17 @@ Implements the trust-model boundaries in `architecture.md` §8.
   remains the path for rotation/revocation. Only counts are logged, never a secret. Secrets are
   deployment-managed, never committed, and TLS is required (§8). No per-route changes: once
   `request.userId` is resolved, all tenancy scoping is identical across modes.
-- **Client session persistence** — the SPA persists the ID token to **`sessionStorage`**
-  (`packages/web/src/auth/session.ts`) so a page refresh restores the session instead of bouncing to
-  the sign-in gate. On load the token is restored synchronously before the first authenticated
-  request; its `exp` is decoded client-side (no verification — the API remains the authority) and an
-  already-expired token is dropped rather than sent. `sessionStorage` (not `localStorage`) is a
-  deliberate posture: the credential survives refresh and in-tab navigation but clears on tab/browser
-  close. Because the ID token lives ~1h with no refresh token, this only restores a session within
-  that window (§6).
+- **Client session persistence** — the access token lives **in memory only** (never web storage),
+  held by the session manager (`packages/web/src/auth/session-manager.ts`); the only persisted
+  credential is the `HttpOnly` refresh cookie, which the browser cannot read. On page load the SPA
+  re-establishes the session by replaying that cookie against `POST /auth/refresh` (no sign-in
+  prompt); the manager is the transport's token getter (`api/ws.ts`), so it refreshes the access
+  token transparently just before its `exp` (decoded client-side, advisory only — the API remains the
+  authority) and de-duplicates concurrent refreshes to one request. A definitive `401` on refresh
+  means the session is gone: the manager fires an expire handler that routes the app back to the
+  sign-in gate (which unmounts `Chat` and so stops its WS reconnect loop); a transient failure does
+  not force sign-in. Holding the access token in memory (not `localStorage`/`sessionStorage`) is a
+  deliberate XSS posture — a script can't exfiltrate a token that isn't in the DOM or storage.
 - **Transport** — HTTPS/TLS for client traffic; secure (TLS) Postgres connections.
 - **Tenancy** — every query filtered by `owner_id`/`companion_id`; authorization checked at the
   API boundary before reaching the core.
@@ -1113,8 +1136,10 @@ Out of scope for this release; the roadmap is owned by `development-plan.md`.
 **Out of scope / future.**
 - **Onboarding personality seed** — drive weights stay neutral so the character card is *earned*.
 - **Deeper reinforcement** — a contextual-bandit policy beyond the additive change-as-reward nudge.
-- **Auth** — an app-issued session JWT and silent refresh / 401-driven re-auth beyond the ~1h
-  Google ID token.
+- **Auth** — refresh-token **rotation + reuse-detection** and server-side **revocation**, which need
+  per-session server state the current stateless app-session tokens (§5) deliberately omit; plus
+  `iss`/`aud` binding on the session tokens (defense-in-depth so a `JWT_SIGNING_SECRET` accidentally
+  shared across environments can't cross-replay — until then the secret must be unique per env).
 - **Background workers & push** — worker tuning and push-notification credentials.
 - **Transcript compaction** — summarizing the compactible remainder when the context window fills.
 - **Security hardening** — encryption-at-rest, data inspection/management/delete controls,

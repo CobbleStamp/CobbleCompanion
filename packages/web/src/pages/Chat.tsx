@@ -38,6 +38,7 @@ import { IngestionPanel } from '../components/IngestionPanel.js';
 import { IngestionStatusButton } from '../components/IngestionStatusButton.js';
 import { MarkdownMessage } from '../components/MarkdownMessage.js';
 import { Modal } from '../components/Modal.js';
+import { MovedAway } from '../components/MovedAway.js';
 import { ProposalCard } from '../components/ProposalCard.js';
 import { BudgetMeter } from '../components/BudgetMeter.js';
 import { ProactivityDial } from '../components/ProactivityDial.js';
@@ -314,10 +315,10 @@ export function Chat({
   // whether/how to initiate; volatile and best-effort.
   usePresenceHeartbeat(companion.id);
 
-  // While a send is streaming, a file is uploading, or the room has moved to another
-  // window, the composer is locked so the two intake paths never overlap and a
-  // yielded room takes no input until reclaimed.
-  const locked = busy || attaching || moved;
+  // While a send is streaming or a file is uploading, the composer is locked so the
+  // two intake paths never overlap. (A moved room renders the full-screen MovedAway
+  // takeover instead of the composer, so it needn't gate `locked`.)
+  const locked = busy || attaching;
   // Keep the refs the async channel consumer reads in step with render.
   readyRef.current = ready;
   lockedRef.current = locked;
@@ -392,8 +393,8 @@ export function Chat({
     let cancelled = false;
 
     // A takeover by another tab/device: stop reconnecting (the transport has yielded
-    // the claim) and surface the banner. "Use here" (onUseHere) bumps claimNonce,
-    // which re-runs this effect and force-claims the room back.
+    // the claim) and surface the full-screen MovedAway takeover. "Move here"
+    // (onMoveHere) bumps claimNonce, which re-runs this effect and force-claims back.
     const offMoved = onEmbodimentMoved(() => {
       setMoved(true);
       cancelled = true;
@@ -486,7 +487,7 @@ export function Chat({
 
   // Take the room back after a move: reclaim the embodiment, then re-run the
   // establishment effect (re-subscribe + re-snapshot) by bumping claimNonce.
-  const onUseHere = useCallback((): void => {
+  const onMoveHere = useCallback((): void => {
     reclaimEmbodiment();
     setMoved(false);
     setReady(false);
@@ -738,6 +739,14 @@ export function Chat({
     if (file) void onAttach(file);
   }
 
+  // The room moved to another tab/device: take over the whole surface with the
+  // MovedAway screen until the user moves the companion back here. Rendered after all
+  // hooks so the establishment effect (and its onEmbodimentMoved listener) stays
+  // mounted — "Move here" re-runs it to force-claim the room back.
+  if (moved) {
+    return <MovedAway companionName={companion.name} onMoveHere={onMoveHere} />;
+  }
+
   return (
     <main
       className="chat"
@@ -774,14 +783,6 @@ export function Chat({
         </nav>
       </header>
       {error && <p className="error">{error}</p>}
-      {moved && (
-        <div className="moved-banner" role="alert">
-          <span>{companion.name} is active in another window.</span>
-          <button type="button" onClick={onUseHere}>
-            Use here
-          </button>
-        </div>
-      )}
       <ul className="transcript">
         {lines.map((line, index) => {
           const key = line.id ?? index;

@@ -10,7 +10,7 @@ import type {
   MessageDto,
 } from '@cobble/shared';
 import { fileSourceAcknowledgement } from '@cobble/shared';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   addReaction,
@@ -19,6 +19,8 @@ import {
   listIngestionJobs,
   listProposals,
   listSources,
+  onEmbodimentMoved,
+  reclaimEmbodiment,
   removeReaction,
   sendMessage,
   streamGreeting,
@@ -926,6 +928,44 @@ describe('Chat event channel (push delivery)', () => {
     await waitFor(() => expect(fetchMessages).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.getAllByText('hello')).toHaveLength(1));
     expect(screen.getAllByText('Hi!')).toHaveLength(1);
+  });
+});
+
+describe('Chat room handoff (moved to another device)', () => {
+  beforeEach(() => {
+    vi.mocked(fetchMessages).mockReset().mockResolvedValue([]);
+    vi.mocked(onEmbodimentMoved).mockReset();
+    vi.mocked(reclaimEmbodiment).mockReset();
+  });
+
+  it('takes over with the MovedAway screen on supersession, and moves it back on click', async () => {
+    // Capture the listener the chat registers so the test can fire the takeover.
+    let fireMoved: () => void = () => {};
+    vi.mocked(onEmbodimentMoved).mockImplementation((listener: () => void) => {
+      fireMoved = listener;
+      return () => undefined;
+    });
+
+    renderChat();
+    // The chat is live (composer enabled) before the room is taken over.
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText(/Message Pebble/) as HTMLTextAreaElement).disabled).toBe(
+        false,
+      ),
+    );
+
+    // Another tab/device claims the companion → the server supersedes this connection.
+    act(() => fireMoved());
+
+    // The whole chat surface is replaced by the dedicated "moved" screen...
+    await waitFor(() => expect(screen.getByText(/is on another device/)).toBeTruthy());
+    // ...and the composer is gone — this window has gone quiet.
+    expect(screen.queryByPlaceholderText(/Message Pebble/)).toBeNull();
+
+    // "Move <name> here" reclaims the room and returns to the live chat.
+    fireEvent.click(screen.getByRole('button', { name: /Move .* here/ }));
+    expect(reclaimEmbodiment).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.getByPlaceholderText(/Message Pebble/)).toBeTruthy());
   });
 });
 

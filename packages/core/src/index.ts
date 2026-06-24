@@ -627,4 +627,4 @@ export {
 } from './ingestion/announcer.js';
 
 // Logging
-export { consoleLogger, type Logger } from './logging.js';
+export { consoleLogger, withContext, type Logger } from './logging.js';

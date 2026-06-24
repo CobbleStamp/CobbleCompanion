@@ -22,7 +22,13 @@ export function episodeMethods(deps: AppDeps): WsMethods {
         'a search query is required',
       );
       const companionId = await companionOf(embodiment, ctx);
-      const queryEmbedding = await embedSearchQuery(deps, companionId, query, 'episodes.search');
+      const queryEmbedding = await embedSearchQuery(
+        deps,
+        companionId,
+        query,
+        'episodes.search',
+        ctx.logger,
+      );
       const hits = await episodic.searchEpisodes(companionId, {
         queryEmbedding,
         queryText: query,

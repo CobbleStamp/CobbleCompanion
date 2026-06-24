@@ -51,7 +51,7 @@ const FILE_TOO_LARGE = 'the uploaded file is too large';
  * payload server-side and enqueue; the rest read.
  */
 export function sourceMethods(deps: AppDeps): WsMethods {
-  const { semantic, staging, ingest, embodiment, memory, config, logger } = deps;
+  const { semantic, staging, ingest, embodiment, memory, config } = deps;
 
   /** Create the source + job and enqueue the `ingest` job for already-staged bytes. */
   async function finishEnqueue(
@@ -185,7 +185,7 @@ export function sourceMethods(deps: AppDeps): WsMethods {
         );
         messages = [attachment, acknowledgement];
       } catch (error) {
-        logger.error('failed to append upload turns to transcript', {
+        ctx.logger.error('failed to append upload turns to transcript', {
           operation: 'sources.file.appendTranscript',
           companionId,
           sourceId: source.id,
