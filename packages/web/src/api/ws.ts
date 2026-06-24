@@ -158,6 +158,11 @@ class WsClient {
   private readonly eventListeners = new Set<(event: WsEventMessage) => void>();
   private readonly closeListeners = new Set<() => void>();
   private readonly stateListeners = new Set<StateListener>();
+  /** Resolver for an in-progress {@link open} that is waiting for the socket to
+   *  become usable — transport up for an agnostic socket, or the embodiment lease
+   *  granted (`embodiment.ready`) for a companion-scoped one. Null when no open is
+   *  pending. */
+  private pendingOpen: { resolve: () => void; reject: (error: Error) => void } | null = null;
 
   /** Subscribe to connection-state changes (currently only `superseded`). Returns an
    *  unsubscribe. The UI uses this to offer "use here" without polling. */
@@ -292,15 +297,41 @@ class WsClient {
     socket.onmessage = (event: MessageEvent): void => {
       this.onMessage(typeof event.data === 'string' ? event.data : String(event.data));
     };
-    await new Promise<void>((resolve, reject) => {
-      socket.onopen = (): void => resolve();
-      socket.onerror = (): void => reject(new Error('websocket connection failed'));
-      socket.onclose = (event: CloseEvent): void =>
-        reject(new Error(`websocket closed before open (${event.code})`));
-    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        this.pendingOpen = { resolve, reject };
+        // A transport-only socket (no companion) is usable the instant the upgrade
+        // completes. An embodying socket is usable only once the server grants the
+        // lease (`embodiment.ready`, routed in onMessage → settleOpen) — so a
+        // companion-scoped call can never race the server's asynchronous claim and
+        // be rejected `not_embodied`. That is the connect-time window this closes.
+        socket.onopen = (): void => {
+          if (companionId === null) this.settleOpen();
+        };
+        socket.onerror = (): void => this.settleOpen(new Error('websocket connection failed'));
+        socket.onclose = (event: CloseEvent): void =>
+          this.settleOpen(new Error(`websocket closed before open (${event.code})`));
+      });
+    } finally {
+      this.pendingOpen = null;
+    }
     // Steady state: errors are logged, a close cleans up in-flight work.
     socket.onerror = null;
     socket.onclose = (): void => this.onClose(socket);
+  }
+
+  /** Settle the promise an in-progress {@link open} awaits: resolve once the socket
+   *  is usable (transport up, or the embodiment lease granted), or reject with the
+   *  failure. A no-op once already settled. */
+  private settleOpen(error?: Error): void {
+    const pending = this.pendingOpen;
+    if (!pending) return;
+    this.pendingOpen = null;
+    if (error) {
+      pending.reject(error);
+    } else {
+      pending.resolve();
+    }
   }
 
   /** Drop a socket without firing the close cleanup (a deliberate reconnect). */
@@ -346,9 +377,17 @@ class WsClient {
       this.pending.delete(message.id);
       return;
     }
+    if (message.event === 'embodiment.ready') {
+      // The server granted the embodiment lease; an embodying open() can now resolve.
+      this.settleOpen();
+      return;
+    }
     if (message.event === 'embodiment.superseded') {
       this.superseded = true;
       this.emitState('superseded');
+      // Lost the room before the lease was granted: fail the in-progress open so the
+      // caller sees SupersededError instead of hanging on a grant that won't come.
+      this.settleOpen(new SupersededError());
       return;
     }
     for (const listener of this.eventListeners) {

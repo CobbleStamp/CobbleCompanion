@@ -875,8 +875,13 @@ flowchart TB
   re-reads the lease at the top of every iteration and again before persisting the reply, standing
   down without writing the assistant message (and skipping the non-idempotent post-turn affect
   nudge) when the room has moved. The streaming method then pushes `embodiment.superseded` and
-  closes immediately rather than waiting for the next heartbeat. Full handoff design + the in-turn
-  fence: `deliver-scalability.md` §5.2 + `docs/plans/embodiment-handoff-fencing.md`.
+  closes immediately rather than waiting for the next heartbeat. Because the claim is **asynchronous**
+  (the upgrade completes before the DB claim resolves), the server pushes a positive
+  **`embodiment.ready`** once the claim is held and the live cursor is armed; the client **gates its
+  companion-scoped sends on that grant** so an early frame can't race the claim. The fence stays
+  fail-closed regardless — a premature companion-scoped frame is rejected `not_embodied` — so the
+  grant is a client-side optimization on top of the invariant, not a trust dependency. Full handoff
+  design + the in-turn fence: `deliver-scalability.md` §5.2 + `docs/plans/embodiment-handoff-fencing.md`.
 - **Live delivery is a cursor read from a durable log — no fan-out.** Every publish point (a
   transcript append via the publish-on-append MemoryStore decorator; a reaction add/remove; the
   `react` tool) appends a row to the durable **`companion_events`** log. The one embodiment
