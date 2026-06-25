@@ -29,6 +29,13 @@ export interface LeadStore {
   /** Advance a lead's lifecycle (new→read→ingested/discarded). */
   markStatus(companionId: string, leadId: string, status: LeadStatus): Promise<void>;
   /**
+   * Delete every lead for this companion — a full reading-list reset. Rows are
+   * removed (not marked `discarded`) so re-reading the same page re-discovers its
+   * links rather than colliding with a tombstone on the `(companionId, url)` index.
+   * Returns the number of leads cleared.
+   */
+  clear(companionId: string): Promise<number>;
+  /**
    * Distinct companions with at least one `new` lead — the Phase 4 motivation
    * sweep's worklist (a companion worth a tick because there's something to
    * explore). Cheap scan; the engine's gate still decides whether to act.
@@ -70,6 +77,14 @@ export class DrizzleLeadStore implements LeadStore {
       .update(leads)
       .set({ status })
       .where(and(eq(leads.id, leadId), eq(leads.companionId, companionId)));
+  }
+
+  async clear(companionId: string): Promise<number> {
+    const deleted = await this.db
+      .delete(leads)
+      .where(eq(leads.companionId, companionId))
+      .returning({ id: leads.id });
+    return deleted.length;
   }
 
   async companionsWithNewLeads(): Promise<readonly string[]> {

@@ -274,6 +274,7 @@ confirm and reject advance the originating lead's lifecycle (best-effort).
 | Method | Scope | Params | Result | Errors |
 |--------|-------|--------|--------|--------|
 | `leads.list` | companion | — | `{ leads: LeadDto[] }` (status `new`/`read`) | `not_embodied` |
+| `leads.clear` | companion | — | `{ cleared: number }` (deletes every lead — a full reading-list reset) | `not_embodied` |
 | `explore` | companion | — | `{ proposals: ProposalDto[] }` | `not_embodied` |
 | `procedures.list` | companion | — | `{ procedures: ProcedureDto[] }` (latest 50) | `not_embodied` |
 

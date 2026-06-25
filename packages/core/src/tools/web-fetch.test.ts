@@ -46,6 +46,9 @@ function fakeLeads(): LeadStore & { captured: { url: string; why?: string }[] } 
       return [];
     },
     async markStatus(_c: string, _id: string, _s: LeadStatus) {},
+    async clear(): Promise<number> {
+      return 0;
+    },
     async companionsWithNewLeads(): Promise<readonly string[]> {
       return [];
     },

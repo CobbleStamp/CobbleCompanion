@@ -49,6 +49,23 @@ describe('DrizzleLeadStore', () => {
     ]);
   });
 
+  it('clears every lead and lets the same url be re-discovered afterwards', async () => {
+    await store.record(companionId, 'https://a.dev');
+    await store.record(companionId, 'https://b.dev');
+    const [a] = await store.listByStatus(companionId, ['new']);
+    await store.markStatus(companionId, a!.id, 'ingested'); // a non-reading-list status too
+
+    const cleared = await store.clear(companionId);
+    expect(cleared).toBe(2); // deletes regardless of status
+    expect(await store.listByStatus(companionId, ['new', 'read', 'ingested'])).toHaveLength(0);
+
+    // A reset removes rows (not a tombstone), so re-reading re-discovers the url.
+    await store.record(companionId, 'https://a.dev', 'found again');
+    expect((await store.listByStatus(companionId, ['new'])).map((l) => l.url)).toEqual([
+      'https://a.dev',
+    ]);
+  });
+
   it('reaches the terminal states (ingested / discarded) and leaves the reading list', async () => {
     await store.record(companionId, 'https://ingest.dev');
     await store.record(companionId, 'https://discard.dev');

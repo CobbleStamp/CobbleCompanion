@@ -450,10 +450,36 @@ button:disabled {
   opacity: 0.65;
 }
 
+/* Section heading + an inline action (e.g. the reading list's Clear button). */
+.memory-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
 .memory-list {
   list-style: none;
   padding: 0;
   margin: 0.5rem 0 0;
+}
+
+/* Stack a row's primary content above its muted secondary line (the URL above
+   "found while reading …"); inline spans otherwise render with no separator. */
+.memory-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.35rem 0;
+}
+
+.memory-list .content {
+  overflow-wrap: anywhere;
+}
+
+.memory-list .who {
+  font-size: 0.75rem;
+  opacity: 0.6;
 }
 
 .memory-row {
