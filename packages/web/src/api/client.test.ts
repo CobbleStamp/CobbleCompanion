@@ -46,6 +46,12 @@ class FakeWebSocket {
     queueMicrotask(() => {
       this.readyState = FakeWebSocket.OPEN;
       this.onopen?.();
+      // Mirror the server granting the embodiment lease: a companion-scoped socket
+      // becomes usable only after `embodiment.ready`, which the transport waits for
+      // before sending companion-scoped frames.
+      if (this.url.includes('companion=')) {
+        this.onmessage?.({ data: JSON.stringify({ event: 'embodiment.ready', data: {} }) });
+      }
     });
   }
 

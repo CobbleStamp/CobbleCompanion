@@ -148,6 +148,15 @@ export interface AppConfig {
   readonly cliScratchDir: string;
   readonly appUrl: string;
   readonly googleClientId: string;
+  /** HS256 secret the API signs its own session access/refresh tokens with
+   *  (auth/session-tokens.ts). Never shipped to the browser; deployment-managed. */
+  readonly jwtSigningSecret: string;
+  /** Lifetime (seconds) of an app access token — short, since it rides the WS
+   *  handshake URL and is refreshed on demand against /auth/refresh. */
+  readonly accessTokenTtlSec: number;
+  /** Lifetime (seconds) of the refresh token in the HttpOnly cookie — the hard cap
+   *  on a session before the user must re-authenticate with Google. */
+  readonly refreshTokenTtlSec: number;
   readonly port: number;
   readonly isProduction: boolean;
   // Online tracing (Phase C, runbook-tracing.md). Default OFF + strict + 0-rate,
@@ -259,6 +268,24 @@ const envSchema = z
     // Public OAuth Web client ID — shipped to the browser, not a secret. Required:
     // Google Sign-In is the browser scheme (validated below).
     GOOGLE_CLIENT_ID: z.string().default(''),
+    // HS256 secret for the API's own session tokens (auth/session-tokens.ts).
+    // Required (validated below); >=32 bytes so the HMAC key has adequate entropy.
+    // Never committed — supply via the deployment environment.
+    JWT_SIGNING_SECRET: z.string().default(''),
+    // App access-token lifetime (seconds); default 15 min. Short — it's refreshed
+    // on demand and travels the WS handshake URL.
+    ACCESS_TOKEN_TTL_SEC: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(15 * 60),
+    // Refresh-token (HttpOnly cookie) lifetime (seconds); default 24h — the hard cap
+    // before a Google re-authentication is required.
+    REFRESH_TOKEN_TTL_SEC: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(24 * 60 * 60),
     PORT: z.coerce.number().int().positive().default(3000),
     NODE_ENV: z.string().default('development'),
     TRACING_PROVIDER: z.enum(['none', 'langfuse']).default('none'),
@@ -300,6 +327,16 @@ const envSchema = z
         code: z.ZodIssueCode.custom,
         message: 'GOOGLE_CLIENT_ID is required',
         path: ['GOOGLE_CLIENT_ID'],
+      });
+    }
+    // The API signs its own session tokens, so the HMAC secret is always required.
+    if (env.JWT_SIGNING_SECRET.length < 32) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'JWT_SIGNING_SECRET is required and must be at least 32 bytes (never hardcoded; ' +
+          'supply via the deployment environment)',
+        path: ['JWT_SIGNING_SECRET'],
       });
     }
     if (
@@ -490,6 +527,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     cliScratchDir: parsed.CLI_SCRATCH_DIR,
     appUrl: parsed.APP_URL,
     googleClientId: parsed.GOOGLE_CLIENT_ID,
+    jwtSigningSecret: parsed.JWT_SIGNING_SECRET,
+    accessTokenTtlSec: parsed.ACCESS_TOKEN_TTL_SEC,
+    refreshTokenTtlSec: parsed.REFRESH_TOKEN_TTL_SEC,
     port: parsed.PORT,
     isProduction: parsed.NODE_ENV === 'production',
     tracingProvider: parsed.TRACING_PROVIDER,

@@ -2,6 +2,7 @@ import type { CompanionDto, MemorySnapshotDto, MessageDto } from '@cobble/shared
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  clearLeads,
   fetchMessages,
   getCompanionMemory,
   listEpisodes,
@@ -61,6 +62,7 @@ vi.mock('../api/client.js', () => ({
   searchEpisodes: vi.fn(),
   listProcedures: vi.fn(() => Promise.resolve([])),
   listLeads: vi.fn(() => Promise.resolve([])),
+  clearLeads: vi.fn(() => Promise.resolve(0)),
   // The usage badge polls this; reject so it stays hidden in these tests.
   getUsage: vi.fn(() => Promise.reject(new Error('no usage'))),
 }));
@@ -73,6 +75,7 @@ describe('MemoryBrowser', () => {
     vi.mocked(searchEpisodes).mockReset().mockResolvedValue([]);
     vi.mocked(listProcedures).mockReset().mockResolvedValue([]);
     vi.mocked(listLeads).mockReset().mockResolvedValue([]);
+    vi.mocked(clearLeads).mockReset().mockResolvedValue(0);
   });
 
   afterEach(() => {
@@ -251,6 +254,31 @@ describe('MemoryBrowser', () => {
 
     await waitFor(() => expect(screen.getByText('https://lima-eats.example')).toBeTruthy());
     expect(screen.getByText('follow-up on ceviche')).toBeTruthy();
+  });
+
+  it('clears the reading list when Clear is pressed', async () => {
+    vi.mocked(listLeads).mockResolvedValue([
+      {
+        id: 'lead1',
+        url: 'https://lima-eats.example',
+        why: 'follow-up on ceviche',
+        status: 'new',
+        createdAt: '2026-02-01T00:00:00.000Z',
+      },
+    ]);
+    vi.mocked(clearLeads).mockResolvedValue(1);
+
+    render(<MemoryBrowser companion={companion} onBack={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText('https://lima-eats.example')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+
+    await waitFor(() => expect(clearLeads).toHaveBeenCalledWith(companion.id));
+    // The list empties and the empty-state copy returns.
+    await waitFor(() =>
+      expect(screen.getByText(/Nothing waiting — Cobble collects links/)).toBeTruthy(),
+    );
+    expect(screen.queryByText('https://lima-eats.example')).toBeNull();
   });
 
   it('logs and surfaces an error when the reading list fails to load', async () => {

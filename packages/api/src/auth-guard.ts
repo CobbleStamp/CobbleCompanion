@@ -1,9 +1,38 @@
+import type { UserClaim, UserRecord } from '@cobble/core';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { redactUrl, type AppDeps } from './app.js';
 import type { AuthRequest } from './auth/jwt-verifier.js';
 
 /** A Fastify preHandler that enforces authentication. */
 export type RequireAuth = (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
+
+/**
+ * JIT-provision the user named by an authenticated claim and best-effort seed their
+ * display name. Shared by the per-request guard and the `POST /auth/session` exchange
+ * so provisioning behaves identically however a user first arrives. The name seed
+ * (Google `name` claim, or `X-User-Name`) is written only if the user has no name
+ * fact yet, so a later sign-in can never resurrect the seed over a name the user has
+ * since stated/edited (seedName is idempotent + resurrection-guarded). Best-effort: a
+ * seed hiccup must not block the request.
+ */
+export async function provisionUser(
+  deps: AppDeps,
+  identity: UserClaim,
+  seedName: string | undefined,
+): Promise<UserRecord> {
+  const user = await deps.identity.ensureUserByClaim(identity);
+  if (seedName) {
+    try {
+      await deps.userModel.seedName(user.id, seedName);
+    } catch (error) {
+      deps.logger.error('failed to seed user name from sign-in', {
+        operation: 'auth.seedName',
+        error,
+      });
+    }
+  }
+  return user;
+}
 
 /** Adapt a `FastifyRequest` to the framework-free {@link AuthRequest} the verifier sees. */
 function toAuthRequest(request: FastifyRequest): AuthRequest {
@@ -47,23 +76,8 @@ export function makeRequireAuth(deps: AppDeps): RequireAuth {
       return;
     }
 
-    const user = await deps.identity.ensureUserByClaim(claims.identity);
+    const user = await provisionUser(deps, claims.identity, claims.seedName);
     request.userId = user.id;
-    // Seed the display name (Google `name` claim, or the `X-User-Name` header) as an
-    // `auth_seed` user-fact — only if the user has no name fact yet, so a later request
-    // can never resurrect the seed over a name the user has since stated/edited
-    // (seedName is idempotent + resurrection-guarded, user-model/store.ts). Best-effort:
-    // a seed hiccup must not block the request.
-    if (claims.seedName) {
-      try {
-        await deps.userModel.seedName(user.id, claims.seedName);
-      } catch (error) {
-        deps.logger.error('failed to seed user name from sign-in', {
-          operation: 'auth.seedName',
-          error,
-        });
-      }
-    }
   };
 }
 

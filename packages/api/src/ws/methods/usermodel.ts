@@ -1,4 +1,4 @@
-import { beliefPhrase } from '@cobble/core';
+import { beliefPhrase, type Logger } from '@cobble/core';
 import { isTier2Predicate, userFactEditSchema, type UserFactsDto } from '@cobble/shared';
 import { z } from 'zod';
 import type { AppDeps } from '../../app.js';
@@ -37,7 +37,7 @@ export function userModelMethods(deps: AppDeps): WsMethods {
         throw new NotFoundError('fact not found');
       }
       const embedding = isBelief(target.predicate)
-        ? await embedBelief(deps, target.predicate, object)
+        ? await embedBelief(deps, target.predicate, object, ctx.logger)
         : undefined;
       const updated = await userModel.editFact(ctx.userId, factId, object, embedding);
       if (!updated) {
@@ -62,6 +62,7 @@ async function embedBelief(
   deps: AppDeps,
   predicate: string | null,
   object: string,
+  logger: Logger,
 ): Promise<readonly number[] | undefined> {
   try {
     const { vectors } = await deps.embeddings.embed({
@@ -71,7 +72,7 @@ async function embedBelief(
     });
     return vectors[0];
   } catch (error) {
-    deps.logger.error('failed to re-embed an edited belief; keeping the prior vector', {
+    logger.error('failed to re-embed an edited belief; keeping the prior vector', {
       operation: 'userFacts.update.embed',
       error,
     });

@@ -123,19 +123,35 @@ async function harvestLinks(
   }
 }
 
-/** Pull absolute http(s) hrefs out of HTML, resolved against the base, deduped. */
+/**
+ * Pull outbound links out of HTML for the reading list. Two filters keep junk
+ * out of the lead inventory:
+ *   1. Only `<a href>` anchors — real navigation links. A blanket "any href"
+ *      sweep also captured `<link rel="icon">`, `<link rel="apple-touch-icon">`,
+ *      `<link rel="stylesheet">`, `rel="preload">` assets, and feed links —
+ *      none of which is a readable document, so each could only fail ingestion's
+ *      content-type detection (`link-resolver.ts`).
+ *   2. A static non-document extension skip as a backstop, for an anchor that
+ *      points straight at an asset (`<a href="…/photo.png">`).
+ * Hrefs are resolved against the base and deduped. Best-effort — this is a
+ * reading list, not a crawler.
+ */
 function extractLinks(html: string, baseUrl: string): string[] {
   const seen = new Set<string>();
-  const hrefPattern = /href\s*=\s*["']([^"'#]+)["']/gi;
+  // `<a …>` only: word boundary after `a` (so `<article>` never matches), then
+  // any in-tag attributes up to an ` href="…"`. `[^>]` keeps the match inside
+  // the one anchor tag.
+  const anchorHrefPattern = /<a\b[^>]*?\shref\s*=\s*["']([^"'#]+)["']/gi;
   let match: RegExpExecArray | null;
-  while ((match = hrefPattern.exec(html)) !== null) {
+  while ((match = anchorHrefPattern.exec(html)) !== null) {
     const raw = match[1];
     if (!raw) continue;
     try {
       const resolved = new URL(raw, baseUrl);
       if (
         (resolved.protocol === 'http:' || resolved.protocol === 'https:') &&
-        resolved.href !== baseUrl
+        resolved.href !== baseUrl &&
+        !isNonDocumentAsset(resolved)
       ) {
         seen.add(resolved.href);
       }
@@ -144,6 +160,55 @@ function extractLinks(html: string, baseUrl: string): string[] {
     }
   }
   return [...seen];
+}
+
+/**
+ * Extensions whose content ingestion can never read as a document — images,
+ * fonts, stylesheets/scripts, media, archives. A lead pointing at one can only
+ * fail content-type detection (`link-resolver.ts`), so skip it before it is
+ * ever harvested. Document formats the pipeline *can* parse (pdf/txt/md/docx/
+ * pptx) are deliberately absent.
+ */
+const NON_DOCUMENT_EXTENSIONS: ReadonlySet<string> = new Set([
+  '.ico',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.svg',
+  '.webp',
+  '.bmp',
+  '.avif',
+  '.woff',
+  '.woff2',
+  '.ttf',
+  '.otf',
+  '.eot',
+  '.css',
+  '.js',
+  '.mjs',
+  '.map',
+  '.mp4',
+  '.webm',
+  '.mov',
+  '.avi',
+  '.mp3',
+  '.wav',
+  '.ogg',
+  '.zip',
+  '.gz',
+  '.tar',
+  '.rar',
+  '.7z',
+]);
+
+/** A URL whose last path segment ends in a known non-document extension. */
+function isNonDocumentAsset(url: URL): boolean {
+  const lastSegment = url.pathname.split('/').pop() ?? '';
+  const dot = lastSegment.lastIndexOf('.');
+  // No extension, or a dotfile with no name (`.htaccess`) — not an asset link.
+  if (dot <= 0) return false;
+  return NON_DOCUMENT_EXTENSIONS.has(lastSegment.slice(dot).toLowerCase());
 }
 
 /** The host shown in a `tool_step` line ("Read example.com"); falls back to the raw URL. */

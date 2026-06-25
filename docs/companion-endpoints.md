@@ -27,14 +27,17 @@
 
 ## 1. What still speaks HTTP
 
-Only five HTTP routes remain; everything else is a WS method (§4):
+Only a handful of HTTP routes remain; everything else is a WS method (§4):
 
 | Route | Purpose |
 |-------|---------|
 | `GET /auth/config` | Public, pre-auth bootstrap (which auth provider / client id). |
+| `POST /auth/session` | Exchange a Google ID token (sent as the `Bearer`) for the app **access token** (body) + a refresh-token `HttpOnly` cookie (`implementation.md` §5). |
+| `POST /auth/refresh` | Mint a fresh access token from the refresh cookie (no Google round-trip); re-issues the cookie. `401` when the cookie is missing/expired. |
+| `POST /auth/logout` | Clear the refresh cookie. |
 | `PUT /uploads/local/:uploadId` | Filesystem upload sink — **local backend only**; the S3 backend issues a presigned PUT instead (`staging-object-storage.md`). |
 | `GET /health` | Liveness/readiness check. |
-| `POST /admin/queue` | Admin-only job-queue observability (Phase C2). |
+| `GET /admin/queue` | Admin-only job-queue observability (Phase C2). |
 | `GET /*` (SPA) | Static web-client serve. |
 
 File **bytes** still travel over HTTP (the presigned/local PUT); the *enqueue* that
@@ -52,11 +55,15 @@ wss://<host>/ws?access_token=<jwt>[&companion=<companionId>]
 
 - **Auth happens once, at the upgrade** (`handshake.ts`). The resolved `userId` is fixed
   for the connection's lifetime; there is **no per-message auth**.
+- `<jwt>` is the **app access token** the browser obtained from `POST /auth/session` (§1),
+  not the Google ID token — the per-request verifier no longer accepts a Google token here.
+  Service clients send their service-token headers instead.
 - The bearer may be sent **either** as an `Authorization: Bearer <jwt>` header **or** as
   the `access_token` query param. A browser `WebSocket` cannot set headers, so it uses the
   query param; service clients may use either.
 - A bad/expired token **aborts the upgrade** — the socket never opens. (Token expiry is
-  logged at `info`; the client must reconnect with a fresh bearer.)
+  logged at `info`.) The client refreshes the access token (`POST /auth/refresh`) and
+  reconnects; if the refresh itself fails it returns to the sign-in gate (`implementation.md` §5).
 
 ### 2.2 Embodiment (the `companion` param)
 
@@ -66,7 +73,7 @@ A connection that names `&companion=<id>` **embodies** that companion (`register
   the upgrade with HTTP `404` before the socket opens.
 - One companion lives in **one room at a time**. Opening a new embodying connection
   **force-claims** the companion ("newer wins"); the previously-embodying connection is
-  superseded (§2.4).
+  superseded (§2.5).
 - A connection with **no** `companion` param is **transport-only**: it can call per-user
   methods (`companions.*`, `auth.me`, `userFacts.*`, `food.get`, `ping`) but every
   companion-scoped method returns `not_embodied` (§5).
@@ -74,14 +81,29 @@ A connection that names `&companion=<id>` **embodies** that companion (`register
   live claim before acting, so a superseded zombie connection cannot inject an action
   after a handoff (`fencing.ts`).
 
-### 2.3 Live delivery starts at connect
+### 2.3 The embodiment lease is granted explicitly (`embodiment.ready`)
+
+The upgrade completing (`onopen`) means the socket is up — **not** that it embodies the
+companion. The claim is asynchronous (`register.ts` calls `embodiment.claim` after the
+upgrade), so for a brief window the connection is open but unbound. The server signals the
+end of that window by pushing an unsolicited **`{"event":"embodiment.ready","data":{"companionId":"…"}}`**
+once the claim is held and live delivery is armed.
+
+A client that named a `companion` **must wait for `embodiment.ready` before sending any
+companion-scoped method** — sending earlier races the claim and is rejected `not_embodied`
+(§5). Transport-only connections (no `companion` param) need no grant and may call per-user
+methods as soon as the socket opens. If the claim is lost during connect, the client gets
+`embodiment.superseded` (§2.5) or a socket close instead of `ready` — both mean *lease
+denied*, so the wait always terminates.
+
+### 2.4 Live delivery starts at connect
 
 On a successful embodiment claim the server begins pushing the companion's durable event
 log down the socket (§6). The initial cursor is the **settled horizon at connect time**,
 not "everything" — load history once via `messages.list` (a snapshot) and **merge live
 events by message id**. See `implementation.md` §2.4 for the visibility-horizon rationale.
 
-### 2.4 Supersession (handoff)
+### 2.5 Supersession (handoff)
 
 When a newer connection claims the companion, the older connection receives:
 
@@ -91,12 +113,12 @@ When a newer connection claims the companion, the older connection receives:
 The superseded client **must not auto-reconnect** (the two ends would fight over the room
 forever). Surface a "use here" affordance that reconnects on explicit user intent.
 
-### 2.5 Close codes
+### 2.6 Close codes
 
 | Code | Meaning |
 |------|---------|
 | `4001` | Unauthenticated (defensive; the handshake normally aborts the upgrade first). |
-| `4002` | Superseded — your companion moved to another room (§2.4). |
+| `4002` | Superseded — your companion moved to another room (§2.5). |
 | `1009` | Inbound frame exceeded `WS_MAX_PAYLOAD_BYTES` (rejected by the transport before parse). |
 | `1011` | Server could not initialize the room (embodiment claim or live-cursor init failed) — reconnect. |
 
@@ -174,7 +196,7 @@ Conventions for the tables below:
 | `messages.list` | companion | — | `{ messages: MessageDto[] }` (latest 200, reactions hydrated) | `not_embodied` |
 | `messages.send` | companion · **stream** | `sendMessageSchema` `{ content }` | `{ done: true }` | `bad_params`, `not_embodied`, `not_found`, `over_cap` |
 
-`messages.list` doubles as the transcript snapshot for live-merge (§2.3) and nudges the
+`messages.list` doubles as the transcript snapshot for live-merge (§2.4) and nudges the
 motivation engine (opening the room is a "return"). `messages.send` streams the turn (§7);
 if the companion is force-claimed mid-turn the stream ends, the server pushes
 `embodiment.superseded` + closes `4002`, and the terminal result is still `{ done: true }`.
@@ -252,6 +274,7 @@ confirm and reject advance the originating lead's lifecycle (best-effort).
 | Method | Scope | Params | Result | Errors |
 |--------|-------|--------|--------|--------|
 | `leads.list` | companion | — | `{ leads: LeadDto[] }` (status `new`/`read`) | `not_embodied` |
+| `leads.clear` | companion | — | `{ cleared: number }` (deletes every lead — a full reading-list reset) | `not_embodied` |
 | `explore` | companion | — | `{ proposals: ProposalDto[] }` | `not_embodied` |
 | `procedures.list` | companion | — | `{ procedures: ProcedureDto[] }` (latest 50) | `not_embodied` |
 
@@ -325,7 +348,8 @@ from the settled cursor; the client **dedupes/merges by message id**
 | `event` | `data` | Meaning |
 |---------|--------|---------|
 | `companion` | `CompanionStreamEvent` | One change in the embodied companion's transcript (see below). |
-| `embodiment.superseded` | `{ companionId: string }` | This connection was force-claimed by a newer one; a `4002` close follows (§2.4). |
+| `embodiment.ready` | `{ companionId: string }` | The embodiment lease is granted; companion-scoped methods and live delivery are now safe. Wait for this before sending any companion-scoped method (§2.3). |
+| `embodiment.superseded` | `{ companionId: string }` | This connection was force-claimed by a newer one; a `4002` close follows (§2.5). |
 
 `CompanionStreamEvent` (a discriminated union on `type`, `contracts.ts`):
 
@@ -388,24 +412,33 @@ Tunable via env (`packages/api/src/config.ts`); defaults shown.
 ## 9. A minimal client session
 
 ```jsonc
-// 1. Open: wss://host/ws?access_token=<jwt>&companion=<companionId>
-//    (handshake authenticates + ownership-checks + claims the room)
+// 0. Establish a session (HTTP): exchange the Google ID token for an app access token.
+//    POST /auth/session  (Authorization: Bearer <googleIdToken>, credentials: include)
+//    → 200 { "access_token": "<jwt>", "expires_in": 900 }  + Set-Cookie: cobble.refresh
+//    On reload, POST /auth/refresh (the cookie) re-mints <jwt> with no sign-in prompt.
 
-// 2. Snapshot the transcript for live-merge
+// 1. Open: wss://host/ws?access_token=<jwt>&companion=<companionId>
+//    (<jwt> is the app access token from step 0; the handshake authenticates +
+//     ownership-checks + claims the room)
+
+// 2. Wait for the lease grant before any companion-scoped call (§2.3)
+← { "event": "embodiment.ready", "data": { "companionId": "…" } }
+
+// 3. Snapshot the transcript for live-merge
 → { "id": "1", "method": "messages.list" }
 ← { "id": "1", "result": { "messages": [ /* MessageDto[] */ ] } }
 
-// 3. Send a turn (streaming)
+// 4. Send a turn (streaming)
 → { "id": "2", "method": "messages.send", "params": { "content": "hi" } }
 ← { "id": "2", "stream": { "type": "token", "value": "He" } }
 ← { "id": "2", "stream": { "type": "token", "value": "llo" } }
 ← { "id": "2", "stream": { "type": "done", "message": { /* MessageDto */ } } }
 ← { "id": "2", "result": { "done": true } }
 
-// 4. Meanwhile, unsolicited live pushes (no id) may arrive at any time
+// 5. Meanwhile, unsolicited live pushes (no id) may arrive at any time
 ← { "event": "companion", "data": { "type": "message", "message": { /* … */ } } }
 
-// 5. If another device claims this companion
+// 6. If another device claims this companion
 ← { "event": "embodiment.superseded", "data": { "companionId": "…" } }
 // …followed by socket close 4002. Do NOT auto-reconnect.
 ```

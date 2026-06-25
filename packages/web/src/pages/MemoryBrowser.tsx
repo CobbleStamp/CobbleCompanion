@@ -10,6 +10,7 @@ import type {
 } from '@cobble/shared';
 import { useEffect, useState } from 'react';
 import {
+  clearLeads,
   fetchMessages,
   getCompanionMemory,
   listEpisodes,
@@ -330,6 +331,7 @@ function ProceduralList({ companionId }: { readonly companionId: string }): JSX.
 function ReadingListSection({ companionId }: { readonly companionId: string }): JSX.Element {
   const [leads, setLeads] = useState<readonly LeadDto[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [clearing, setClearing] = useState(false);
   useEffect(() => {
     let mounted = true;
     void listLeads(companionId)
@@ -345,9 +347,34 @@ function ReadingListSection({ companionId }: { readonly companionId: string }): 
       mounted = false;
     };
   }, [companionId]);
+  async function handleClear(): Promise<void> {
+    setClearing(true);
+    setLoadError(null);
+    try {
+      await clearLeads(companionId);
+      setLeads([]);
+    } catch (err: unknown) {
+      console.error('failed to clear reading list', { companionId, error: err });
+      setLoadError(err instanceof Error ? err.message : 'Failed to clear reading list');
+    } finally {
+      setClearing(false);
+    }
+  }
   return (
     <section className="memory-section">
-      <h2>Reading list — discovered, not yet read</h2>
+      <div className="memory-section-head">
+        <h2>Reading list — discovered, not yet read</h2>
+        {leads.length > 0 && (
+          <button
+            type="button"
+            className="link-button"
+            onClick={() => void handleClear()}
+            disabled={clearing}
+          >
+            {clearing ? 'Clearing…' : 'Clear'}
+          </button>
+        )}
+      </div>
       {loadError ? (
         <p className="error">{loadError}</p>
       ) : leads.length === 0 ? (

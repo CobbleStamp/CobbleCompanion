@@ -654,16 +654,16 @@ lever, so the model _reads everything_ but _emits almost nothing_ (~1% of input 
 ~10% in Pass 2).
 
 ```mermaid
-flowchart LR
-    UP["upload (file · note · link)<br/>202 + queued job · 429 only if queue full"] --> RUN["Ingestion Runner<br/>(off request path)"]
-    RUN --> PARSE["parse → atomic paragraphs<br/>(never split mid-paragraph)"]
-    PARSE --> GATE{"companion's<br/>stamina empty?"}
-    GATE -->|yes| DEFER["status: deferred<br/>(hold parse; sweeper resumes once fed)"]
-    GATE -->|no| P1["Pass 1 — segment:<br/>LLM emits ONLY boundaries + topics"]
-    P1 --> SECT["sections = verbatim paragraph slices<br/>(the model never rewrites text)"]
-    SECT --> P2["Pass 2 — enrich:<br/>one context line + typed facts (ontology.md)"]
-    P2 --> EMB["embed: [context header +] verbatim text<br/>→ pgvector · FTS"]
-    EMB --> DONE["job done — recallable with citations"]
+flowchart TB
+    UP["upload (file · note · link)<br/>202 + queued job · 429 only if queue full<br/><i>ws/methods/sources.ts · finishEnqueue → ingest.request</i>"] --> RUN["Ingestion Runner (off request path)<br/><i>ingest-job.ts · makeIngestJobHandler<br/>→ pipeline.ts · IngestionPipeline.run</i>"]
+    RUN --> PARSE["parse → atomic paragraphs (never split mid-paragraph)<br/><i>source-parser.ts · SourceParser.parse<br/>(link only: → link-resolver.ts · resolve → detectContentType)<br/>→ content-parser.ts · parseContent (parser.ts)</i>"]
+    PARSE --> GATE{"companion's stamina empty?<br/><i>pipeline.ts · IngestionPipeline.isEmpty</i>"}
+    GATE -->|yes| DEFER["status: deferred (hold parse; sweeper resumes once fed)<br/><i>pipeline.ts · updateJob('deferred', parsedDoc)</i>"]
+    GATE -->|no| P1["Pass 1 — segment: LLM emits ONLY boundaries + topics<br/><i>pipeline.ts · segmentIntoSections<br/>→ segmenter.ts · segmentParagraphs</i>"]
+    P1 --> SECT["sections = verbatim paragraph slices (the model never rewrites text)<br/><i>segmenter.ts · parseBoundaries</i>"]
+    SECT --> P2["Pass 2 — enrich: one context line + typed facts (ontology.md)<br/><i>pipeline.ts · enrichSections<br/>→ enricher.ts · enrichSection</i>"]
+    P2 --> EMB["embed: [context header +] verbatim text → pgvector · FTS<br/><i>pipeline.ts · embedSections<br/>→ embedder.ts · buildEmbeddingInput</i>"]
+    EMB --> DONE["job done — recallable with citations<br/><i>pipeline.ts · updateJob('done')</i>"]
 ```
 
 Design rules (the "improved staged hybrid"; memory guide → `companion-memory.md`):
@@ -815,7 +815,7 @@ Resolves the items flagged in `development-plan.md` §5. (Field-level config/env
 | Data access        | Type-safe query layer (Drizzle)                                                                   | Explicit types end-to-end; no raw SQL by default                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | LLM access         | **Provider-agnostic gateway, default OpenRouter**                                                 | Swap models/providers without touching the harness                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | Embeddings         | **Provider-agnostic gateway, OpenRouter `/embeddings`** — default `perplexity/pplx-embed-v1-0.6b` | Single vendor with the LLM gateway; dimensions pinned to the vector column (`implementation.md` §3)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| Auth               | **Google Sign-In (OIDC)**                                                                         | No auth service to run, no tenant, no extra Pulumi stack — the SPA gets a Google ID token and the API verifies it then JIT-provisions users by email. The token's unverified `name` claim **seeds a Tier-1 `name` `user_fact`** (`source = auth_seed`, modest confidence — `implementation.md` §1), so first contact has a name; a name the user states or edits later supersedes it. There is no `display_name` column — the name lives in `user_facts` like every other identity fact. Token verification, client persistence, and expiry handling → `implementation.md` §5. Auth is **per-request, not a server-wide mode**: schemes coexist and a request is routed by the credentials it carries. Alongside Google, **`service_token`** lets a trusted backend consumer (e.g. Sprout) call server-to-server on behalf of its own anonymous-UUID users: a `(client_id, secret)` pair — validated against the `service_registry` table, which holds **multiple secrets per consumer** for overlap rotation/revocation — authenticates the caller (routed by its `X-Service-Client-Id` header), and a trusted `X-User-Id` header names the user (provisioned by `(service_client_id, external_id)` instead of `email`). Same downstream tenancy scoping — `implementation.md` §3, §5 |
+| Auth               | **Google Sign-In (OIDC), exchanged for an app-managed session**                                   | No auth service to run, no tenant, no extra Pulumi stack — the SPA gets a Google ID token and exchanges it **once** at `POST /auth/session`, where the API verifies it, JIT-provisions the user by email, and mints its **own** short-lived access token + a refresh-token `HttpOnly` cookie (HS256, `JWT_SIGNING_SECRET`). The access token is the per-request bearer; the SPA refreshes it at `POST /auth/refresh` (no Google round-trip), so session lifetime is decoupled from Google's ~1h ID token. The token's unverified `name` claim **seeds a Tier-1 `name` `user_fact`** (`source = auth_seed`, modest confidence — `implementation.md` §1), so first contact has a name; a name the user states or edits later supersedes it. There is no `display_name` column — the name lives in `user_facts` like every other identity fact. Session tokens, cookie posture, client persistence, and refresh/expiry handling → `implementation.md` §5. Auth is **per-request, not a server-wide mode**: schemes coexist and a request is routed by the credentials it carries. Alongside the browser session, **`service_token`** lets a trusted backend consumer (e.g. Sprout) call server-to-server on behalf of its own anonymous-UUID users: a `(client_id, secret)` pair — validated against the `service_registry` table, which holds **multiple secrets per consumer** for overlap rotation/revocation — authenticates the caller (routed by its `X-Service-Client-Id` header), and a trusted `X-User-Id` header names the user (provisioned by `(service_client_id, external_id)` instead of `email`). Same downstream tenancy scoping — `implementation.md` §3, §5 |
 
 ## 6. Interactions, Boundary & State
 
@@ -853,6 +853,9 @@ flowchart TB
   envelope `id`, a turn's tokens stream as `{ id, stream }` chunks terminated by the result, and
   unsolicited events arrive as `{ event, data }` pushes. This one socket **replaced the former REST
   routes and the two SSE channels**. The only HTTP left is the public `/auth/config`, the
+  **app-session routes** (`POST /auth/session` to exchange a Google ID token for the app access token
+  + refresh cookie, `POST /auth/refresh` to renew it, `POST /auth/logout` to clear the cookie —
+  `implementation.md` §5; the `?access_token=` the handshake carries is that app access token), the
   **filesystem upload sink** (`PUT /uploads/local/:uploadId` — mounted only for the local `file`
   staging backend, the local stand-in for a presigned S3 PUT; staging-object-storage.md), `/health`,
   the admin-only **`/admin/queue`** observability read, and the SPA static serve. The socket is
@@ -872,8 +875,13 @@ flowchart TB
   re-reads the lease at the top of every iteration and again before persisting the reply, standing
   down without writing the assistant message (and skipping the non-idempotent post-turn affect
   nudge) when the room has moved. The streaming method then pushes `embodiment.superseded` and
-  closes immediately rather than waiting for the next heartbeat. Full handoff design + the in-turn
-  fence: `deliver-scalability.md` §5.2 + `docs/plans/embodiment-handoff-fencing.md`.
+  closes immediately rather than waiting for the next heartbeat. Because the claim is **asynchronous**
+  (the upgrade completes before the DB claim resolves), the server pushes a positive
+  **`embodiment.ready`** once the claim is held and the live cursor is armed; the client **gates its
+  companion-scoped sends on that grant** so an early frame can't race the claim. The fence stays
+  fail-closed regardless — a premature companion-scoped frame is rejected `not_embodied` — so the
+  grant is a client-side optimization on top of the invariant, not a trust dependency. Full handoff
+  design + the in-turn fence: `deliver-scalability.md` §5.2 + `docs/plans/embodiment-handoff-fencing.md`.
 - **Live delivery is a cursor read from a durable log — no fan-out.** Every publish point (a
   transcript append via the publish-on-append MemoryStore decorator; a reaction add/remove; the
   `react` tool) appends a row to the durable **`companion_events`** log. The one embodiment

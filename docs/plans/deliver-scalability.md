@@ -849,6 +849,10 @@ Backpressure is a fleet-wide pending-`ingest` count; deferred jobs resume via
   newer connection takes the room, `renew` returns false → the prior connection
   **self-fences** (pushes `embodiment.superseded`, closes 4002). TTL
   (`config.wsClaimTtlMs`) is the crash backstop; `release` on clean close.
+  Since the claim is **async** (the upgrade completes first), the server pushes a
+  positive **`embodiment.ready`** once the claim is held + live cursor armed, and the
+  client **gates companion-scoped sends on it** so an early frame can't race the claim
+  and be rejected `not_embodied` (the fence stays fail-closed regardless).
 - **Fencing:** `requireEmbodiment` (used by D3's mutating methods) rejects a
   connection that doesn't hold the live claim (`not_embodied`) — a superseded zombie
   can't act. Proven now via the `embodiment.whoami` method.

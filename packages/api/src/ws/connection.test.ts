@@ -58,7 +58,14 @@ function controllableSocket(): {
 
 describe('WsConnection in-flight cap', () => {
   it('admits up to maxInFlight requests, then sheds', () => {
-    const connection = new WsConnection(noopSocket, 'user-1', silentLogger, 2, HIGH_WATER);
+    const connection = new WsConnection(
+      noopSocket,
+      'user-1',
+      'conn-1',
+      silentLogger,
+      2,
+      HIGH_WATER,
+    );
 
     expect(connection.beginRequest()).toBe(true);
     expect(connection.beginRequest()).toBe(true);
@@ -67,7 +74,14 @@ describe('WsConnection in-flight cap', () => {
   });
 
   it('frees a slot on endRequest so a later frame is admitted', () => {
-    const connection = new WsConnection(noopSocket, 'user-1', silentLogger, 1, HIGH_WATER);
+    const connection = new WsConnection(
+      noopSocket,
+      'user-1',
+      'conn-1',
+      silentLogger,
+      1,
+      HIGH_WATER,
+    );
 
     expect(connection.beginRequest()).toBe(true);
     expect(connection.beginRequest()).toBe(false);
@@ -79,7 +93,7 @@ describe('WsConnection in-flight cap', () => {
 describe('WsConnection outbound backpressure', () => {
   it('delivers normally while the buffer is below the ceiling', () => {
     const harness = controllableSocket();
-    const connection = new WsConnection(harness.socket, 'user-1', silentLogger, 32, 1000);
+    const connection = new WsConnection(harness.socket, 'user-1', 'conn-1', silentLogger, 32, 1000);
 
     harness.bufferedAmount = 999;
     connection.pushEvent('companion', { n: 1 });
@@ -92,7 +106,7 @@ describe('WsConnection outbound backpressure', () => {
     const harness = controllableSocket();
     const warn = vi.fn();
     const logger: Logger = { error: () => {}, warn, info: () => {} };
-    const connection = new WsConnection(harness.socket, 'user-1', logger, 32, 1000);
+    const connection = new WsConnection(harness.socket, 'user-1', 'conn-1', logger, 32, 1000);
 
     // A non-draining consumer: the buffer is already past the ceiling.
     harness.bufferedAmount = 1001;
@@ -103,13 +117,18 @@ describe('WsConnection outbound backpressure', () => {
     // ...and the connection is closed with the slow-consumer code.
     expect(harness.closes).toEqual([{ code: SLOW_CONSUMER_CLOSE, reason: 'slow consumer' }]);
     expect(warn).toHaveBeenCalledTimes(1);
+    // The warning is attributable to this connection (connectionId rides every line).
+    expect(warn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ connectionId: 'conn-1', userId: 'user-1' }),
+    );
   });
 
   it('logs + closes exactly once even if more sends race in', () => {
     const harness = controllableSocket();
     const warn = vi.fn();
     const logger: Logger = { error: () => {}, warn, info: () => {} };
-    const connection = new WsConnection(harness.socket, 'user-1', logger, 32, 1000);
+    const connection = new WsConnection(harness.socket, 'user-1', 'conn-1', logger, 32, 1000);
 
     harness.bufferedAmount = 5000;
     connection.pushEvent('companion', { n: 1 });

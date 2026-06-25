@@ -28,6 +28,7 @@ import {
   DrizzleEpisodicMemoryStore,
   DrizzleGrowthStore,
   DrizzleIdentityStore,
+  DrizzleServiceRegistry,
   DrizzleLeadStore,
   DrizzleProceduralStore,
   DrizzleProposalStore,
@@ -77,10 +78,13 @@ import { buildApp, type AppDeps } from '../app.js';
 import { buildToolAcquisitionWiring } from '../acquisition/wiring.js';
 import {
   bearerToken,
+  CompositeVerifier,
+  ServiceTokenVerifier,
   type AuthClaims,
   type AuthRequest,
   type TokenVerifier,
 } from '../auth/jwt-verifier.js';
+import { AppSessionVerifier, mintAccessToken } from '../auth/session-tokens.js';
 import type { AppConfig } from '../config.js';
 import { InMemoryUploadStagingStore } from './fake-upload-staging.js';
 
@@ -147,6 +151,9 @@ export const testConfig: AppConfig = {
   cliScratchDir: '',
   appUrl: 'http://localhost:3001',
   googleClientId: 'test-google-client-id',
+  jwtSigningSecret: 'test-jwt-signing-secret-at-least-32-bytes!!',
+  accessTokenTtlSec: 15 * 60,
+  refreshTokenTtlSec: 24 * 60 * 60,
   port: 0,
   isProduction: false,
   tracingProvider: 'none',
@@ -160,7 +167,9 @@ export const testConfig: AppConfig = {
 export interface TestApp {
   readonly app: FastifyInstance;
   readonly deps: AppDeps;
-  readonly tokenVerifier: FakeTokenVerifier;
+  /** The fake Google verifier behind `POST /auth/session`: a test registers an ID
+   *  token → claim with `.set(...)` to drive the session-exchange route. */
+  readonly googleVerifier: FakeTokenVerifier;
   /** The shared fake LLM gateway — `gateway.calls` lets a test assert what context a
    *  turn was given (e.g. that a learned belief reached a later turn's prompt). */
   readonly gateway: FakeLlmGateway;
@@ -263,7 +272,17 @@ export async function makeTestApp(
   // substitute its own gateway for wiring via `options.llmGateway`.
   const fakeGateway = new FakeLlmGateway(chunks);
   const llmGateway: LlmGateway = options.llmGateway ?? fakeGateway;
-  const tokenVerifier = new FakeTokenVerifier();
+  // The per-request verifier mirrors production: a real CompositeVerifier whose
+  // browser-bearer branch is the real AppSessionVerifier (so `bearerFor` mints real
+  // app tokens and the auth boundary is exercised end-to-end), and whose service
+  // branch is the real ServiceTokenVerifier over the test registry. The Google
+  // verifier — used only by POST /auth/session — is faked so tests register an ID
+  // token → claim without signing RS256 or touching JWKS.
+  const googleVerifier = new FakeTokenVerifier();
+  const tokenVerifier = new CompositeVerifier(
+    new AppSessionVerifier(config.jwtSigningSecret),
+    new ServiceTokenVerifier(new DrizzleServiceRegistry(db)),
+  );
   // Queue cap comes from config, mirroring production wiring (index.ts).
   const ingestionPipeline = new IngestionPipeline({
     semantic,
@@ -564,22 +583,29 @@ export async function makeTestApp(
     quota,
     affect: affectStore,
     tokenVerifier,
+    googleVerifier,
     config,
     logger,
   };
   const app = await buildApp(deps);
   await app.ready();
 
+  // A real app access token (signed with testConfig's secret), so the real
+  // AppSessionVerifier on the browser-bearer path authenticates it — the same token
+  // the SPA would carry after /auth/session.
   const bearerFor = (address: string): { authorization: string } => {
-    const token = `test-${address}`;
-    tokenVerifier.set(token, { ok: true, identity: { authSource: 'google', email: address } });
+    const token = mintAccessToken(
+      { authSource: 'google', email: address },
+      config.jwtSigningSecret,
+      config.accessTokenTtlSec,
+    );
     return { authorization: `Bearer ${token}` };
   };
 
   return {
     app,
     deps,
-    tokenVerifier,
+    googleVerifier,
     gateway: fakeGateway,
     bearerFor,
     close: async () => {

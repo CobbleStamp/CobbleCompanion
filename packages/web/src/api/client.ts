@@ -352,6 +352,16 @@ export async function listLeads(companionId: string): Promise<LeadDto[]> {
   return leads;
 }
 
+/** Reset the reading list — delete every discovered lead. Returns how many were cleared. */
+export async function clearLeads(companionId: string): Promise<number> {
+  const { cleared } = await wsClient.call<{ cleared: number }>(
+    'leads.clear',
+    undefined,
+    companionId,
+  );
+  return cleared;
+}
+
 /** The companion's learned, reusable workflows (procedural memory, P3). */
 export async function listProcedures(companionId: string): Promise<ProcedureDto[]> {
   const { procedures } = await wsClient.call<{ procedures: ProcedureDto[] }>(

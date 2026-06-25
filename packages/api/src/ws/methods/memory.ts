@@ -61,7 +61,13 @@ export function memoryMethods(deps: AppDeps): WsMethods {
         'a search query is required',
       );
       const companionId = await companionOf(embodiment, ctx);
-      const queryEmbedding = await embedSearchQuery(deps, companionId, query, 'memory.search');
+      const queryEmbedding = await embedSearchQuery(
+        deps,
+        companionId,
+        query,
+        'memory.search',
+        ctx.logger,
+      );
       const hits = await semantic.search(companionId, { queryEmbedding, queryText: query, topK });
       const results: SemanticSearchResultDto[] = hits.map((hit) => ({
         citation: {

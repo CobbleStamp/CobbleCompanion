@@ -40,7 +40,6 @@ export function streamingMethods(deps: AppDeps): WsMethods {
     motivation,
     presence,
     embodiment,
-    logger,
   } = deps;
 
   /** Resolve the embodied companion as a DTO (for harness calls) — fenced. Carries the
@@ -138,7 +137,7 @@ export function streamingMethods(deps: AppDeps): WsMethods {
             }),
             growth,
             companionId,
-            logger,
+            ctx.logger,
           ),
         ),
       );
@@ -157,7 +156,7 @@ export function streamingMethods(deps: AppDeps): WsMethods {
     'greeting.stream': async (ctx) => {
       const companionId = await companionOf(embodiment, ctx);
       await ctx.connection.runSerial(() =>
-        emitAll(ctx, greetingEvents(greeting, companionId, ctx.userId, logger)),
+        emitAll(ctx, greetingEvents(greeting, companionId, ctx.userId, ctx.logger)),
       );
       return { done: true };
     },
@@ -184,13 +183,13 @@ export function streamingMethods(deps: AppDeps): WsMethods {
         proposal.toolName,
         proposal.toolArgs,
         { companionId, ownerId: ctx.userId },
-        logger,
+        ctx.logger,
         proposal.toolCallId ?? undefined,
       );
       try {
         await toolCallLog.record(companionId, proposal.toolName, proposal.toolArgs, result.content);
       } catch (error) {
-        logger.error('failed to log approved tool call', {
+        ctx.logger.error('failed to log approved tool call', {
           operation: 'proposals.confirm.log',
           companionId,
           proposalId,
@@ -201,14 +200,14 @@ export function streamingMethods(deps: AppDeps): WsMethods {
         try {
           await procedural.record(companionId, proposal.summary, [proposal.toolName]);
         } catch (error) {
-          logger.error('failed to record procedural memory', {
+          ctx.logger.error('failed to record procedural memory', {
             operation: 'proposals.confirm.procedural',
             companionId,
             proposalId,
             error,
           });
         }
-        await advanceIngested(leads, companionId, proposal.leadId, proposalId, logger);
+        await advanceIngested(leads, companionId, proposal.leadId, proposalId, ctx.logger);
       }
       let outcomeRow: MessageDto | null = null;
       try {
@@ -217,7 +216,7 @@ export function streamingMethods(deps: AppDeps): WsMethods {
           metadata: { toolName: proposal.toolName },
         });
       } catch (error) {
-        logger.error('failed to record approved action row', {
+        ctx.logger.error('failed to record approved action row', {
           operation: 'proposals.confirm.row',
           companionId,
           proposalId,

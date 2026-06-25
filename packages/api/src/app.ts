@@ -31,6 +31,7 @@ import type {
   UserModelStore,
   VitalityStore,
 } from '@cobble/core';
+import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import { existsSync } from 'node:fs';
@@ -126,7 +127,14 @@ export interface AppDeps {
   readonly growth: GrowthService;
   /** The growth high-water mark — used to fire reflections once (P5). */
   readonly growthStore: GrowthStore;
+  /** Authenticates every request that carries a credential: the composite routes a
+   *  service caller (by its header) to the service verifier, else verifies the API's
+   *  own session **access** token (auth/session-tokens.ts). */
   readonly tokenVerifier: TokenVerifier;
+  /** Verifies a Google ID token — used **only** by `POST /auth/session` to bootstrap
+   *  a session (the browser's normal requests carry an app access token, not a Google
+   *  token, so the Google verifier is no longer on the per-request path). */
+  readonly googleVerifier: TokenVerifier;
   readonly config: AppConfig;
   readonly logger: Logger;
 }
@@ -190,13 +198,15 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     trustProxy: true,
   });
 
-  // Bearer-token auth (Google ID token): no cookies, so CORS credentials are
-  // unneeded.
-  // Origin still matters for local dev where Vite calls the API cross-origin.
+  // The refresh token rides an HttpOnly cookie (auth.routes.ts), so the browser must
+  // send credentials cross-origin in dev (Vite on :3001 → API on :3000). `credentials:
+  // true` requires a non-wildcard origin — which we already pin to appUrl.
   await app.register(cors, {
     origin: deps.config.appUrl,
+    credentials: true,
     allowedHeaders: ['Content-Type', 'Authorization'],
   });
+  await app.register(cookie);
 
   // Tolerate an empty body on application/json requests. Fastify's default JSON
   // parser rejects an empty body with 400 FST_ERR_CTP_EMPTY_JSON_BODY — and that

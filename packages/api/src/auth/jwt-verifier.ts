@@ -169,11 +169,12 @@ export class ServiceTokenVerifier implements TokenVerifier {
  * unambiguously to the service verifier, and we do **not** fall through to the browser
  * scheme on failure (the caller declared intent; falling through would mask a bad service
  * credential as a missing user token). Otherwise the request is a browser bearer, verified
- * as a Google ID token.
+ * by the `browser` verifier — the API's own session access token (session-tokens.ts), which
+ * the SPA obtains from `POST /auth/session` after a one-time Google ID-token exchange.
  */
 export class CompositeVerifier implements TokenVerifier {
   constructor(
-    private readonly google: TokenVerifier,
+    private readonly browser: TokenVerifier,
     private readonly service: TokenVerifier,
   ) {}
 
@@ -181,6 +182,6 @@ export class CompositeVerifier implements TokenVerifier {
     if (request.header('x-service-client-id') !== undefined) {
       return this.service.verify(request);
     }
-    return this.google.verify(request);
+    return this.browser.verify(request);
   }
 }

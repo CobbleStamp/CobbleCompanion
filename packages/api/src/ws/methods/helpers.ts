@@ -1,4 +1,4 @@
-import type { EmbodimentStore } from '@cobble/core';
+import type { EmbodimentStore, Logger } from '@cobble/core';
 import type { z } from 'zod';
 import type { AppDeps } from '../../app.js';
 import { overCapGuard } from '../../quota-guard.js';
@@ -68,6 +68,7 @@ export async function embedSearchQuery(
   companionId: string,
   query: string,
   operation: string,
+  logger: Logger,
 ): Promise<readonly number[]> {
   const overCap = await overCapGuard(deps.quota, companionId);
   if (overCap) {
@@ -84,7 +85,7 @@ export async function embedSearchQuery(
     queryEmbedding = vectors[0] ?? [];
     searchTokens = usage.totalTokens;
   } catch (error) {
-    deps.logger.error('search embedding failed; degrading to lexical-only', {
+    logger.error('search embedding failed; degrading to lexical-only', {
       operation,
       companionId,
       error,
@@ -93,7 +94,7 @@ export async function embedSearchQuery(
   try {
     await deps.quota.spend(companionId, searchTokens);
   } catch (error) {
-    deps.logger.error('failed to record search token usage', { operation, companionId, error });
+    logger.error('failed to record search token usage', { operation, companionId, error });
   }
   return queryEmbedding;
 }

@@ -31,6 +31,22 @@ function recordingLogger(errors: { message: string; meta: unknown }[]): Logger {
   };
 }
 
+/** A logger that records calls at every level, for asserting the chosen severity. */
+function leveledLogger(): {
+  logger: Logger;
+  calls: { level: 'error' | 'info'; message: string; meta: unknown }[];
+} {
+  const calls: { level: 'error' | 'info'; message: string; meta: unknown }[] = [];
+  return {
+    calls,
+    logger: {
+      error: (message: string, meta?: unknown) => calls.push({ level: 'error', message, meta }),
+      warn: () => {},
+      info: (message: string, meta?: unknown) => calls.push({ level: 'info', message, meta }),
+    },
+  };
+}
+
 /** Drive one request through the dispatcher and return the single reply frame. */
 async function dispatch(
   methods: WsMethods,
@@ -38,7 +54,14 @@ async function dispatch(
   logger: Logger,
 ): Promise<WsServerMessage> {
   const sent: WsServerMessage[] = [];
-  const connection = new WsConnection(fakeSocket(sent), 'user-1', logger, 32, 8 * 1024 * 1024);
+  const connection = new WsConnection(
+    fakeSocket(sent),
+    'user-1',
+    'conn-1',
+    logger,
+    32,
+    8 * 1024 * 1024,
+  );
   await dispatchMessage(methods, connection, JSON.stringify(request), logger);
   const [reply] = sent;
   if (reply === undefined) {
@@ -84,6 +107,29 @@ describe('ws dispatch error allowlisting', () => {
         code: 'not_embodied',
       },
     });
+  });
+
+  it('logs an expected WsClientError gracefully at info (no error-level stack)', async () => {
+    // A superseded connection getting `not_embodied` is routine — it must not flood
+    // the logs with error-level stack traces during a normal room handoff.
+    class NotEmbodiedError extends WsClientError {
+      readonly code = 'not_embodied';
+    }
+    const { logger, calls } = leveledLogger();
+    const methods: WsMethods = {
+      act: async () => {
+        throw new NotEmbodiedError('this connection was superseded');
+      },
+    };
+    const sent: WsServerMessage[] = [];
+    const connection = new WsConnection(fakeSocket(sent), 'user-1', 'conn-1', logger, 32, 1 << 20);
+
+    await dispatchMessage(methods, connection, JSON.stringify({ id: 'r', method: 'act' }), logger);
+
+    // Logged once, at info — never at error — carrying the method + code for triage.
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.level).toBe('info');
+    expect(calls[0]?.meta).toMatchObject({ method: 'act', code: 'not_embodied' });
   });
 
   it('reports a DB-driver error generically even though it carries a string code', async () => {

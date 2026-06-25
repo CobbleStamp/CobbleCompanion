@@ -11,12 +11,14 @@ import { makeWsAuth } from './handshake.js';
 const EVENT_BATCH = 200;
 
 /**
- * Monotonic ULID connection-id tokens: within this process every token is strictly
- * greater than the last, so a later connection always force-claims over an earlier one
- * even within the same millisecond (the "newer wins" handoff rule). Across
- * nodes/restarts a ULID could in principle recur; the fence (`holds`) matches
- * `connectionId` AND the DB-stamped `claimSeq`, so a recurred token can't revive a
- * superseded claim (deliver-scalability.md §5.2).
+ * Monotonic ULID connection-id tokens, minted once per connection at the handshake:
+ * within this process every token is strictly greater than the last, so a later
+ * connection always force-claims over an earlier one even within the same millisecond
+ * (the "newer wins" handoff rule). It serves double duty as the log-correlation id
+ * (stamped on every line via the connection's bound logger) and the token the
+ * embodiment claim is fenced on. Across nodes/restarts a ULID could in principle
+ * recur; the fence (`holds`) matches `connectionId` AND the DB-stamped `claimSeq`, so a
+ * recurred token can't revive a superseded claim (deliver-scalability.md §5.2).
  */
 const nextConnectionId = monotonicFactory();
 
@@ -48,13 +50,31 @@ export async function registerWebSocket(
       socket.close(4001, 'unauthenticated'); // preValidation guarantees a userId; defensive.
       return;
     }
+    // Mint the connection's stable id at the handshake (not at claim time): it tags
+    // every log line for this connection AND, if it embodies, is the token the claim
+    // is fenced on. `WsConnection` derives its `connectionId`/`userId`-bound logger
+    // from it, so every line below is attributable to one connection.
+    const connectionId = nextConnectionId();
     const connection = new WsConnection(
       socket,
       userId,
+      connectionId,
       deps.logger,
       deps.config.wsMaxInFlight,
       deps.config.wsMaxBufferedBytes,
     );
+    const companionId = request.companionId;
+    // One opened/closed pair per connection, bridging Fastify's `reqId` (on the
+    // "incoming request" line) to our `connectionId`, so a connection's whole log
+    // trail — including a later supersession — is traceable to one socket.
+    connection.logger.info('ws connection opened', {
+      operation: 'ws.connect',
+      reqId: request.id,
+      companionId: companionId ?? null,
+    });
+    socket.on('close', (code: number) => {
+      connection.logger.info('ws connection closed', { operation: 'ws.connect', code });
+    });
 
     // Dispatch frames immediately (don't await the claim below) so none are lost;
     // methods that mutate fence on the DB claim, so they're correct regardless of
@@ -67,15 +87,14 @@ export async function registerWebSocket(
         connection.fail('', 'too many concurrent requests; retry shortly', 'rate_limited');
         return;
       }
-      void dispatchMessage(methods, connection, data.toString(), deps.logger).finally(() => {
+      void dispatchMessage(methods, connection, data.toString(), connection.logger).finally(() => {
         connection.endRequest();
       });
     });
     socket.on('error', (error: Error) => {
-      deps.logger.error('ws socket error', { operation: 'ws.socket', userId, error });
+      connection.logger.error('ws socket error', { operation: 'ws.socket', error });
     });
 
-    const companionId = request.companionId;
     if (companionId) {
       void embody(deps, connection, socket, companionId, node);
     }
@@ -91,13 +110,15 @@ async function embody(
   companionId: string,
   node: string,
 ): Promise<void> {
-  const connectionId = nextConnectionId();
+  // The connection's id is the claim token (see `nextConnectionId`). All logs here go
+  // through the connection's bound logger, so they carry `connectionId` automatically.
+  const { connectionId, logger } = connection;
   const ttlMs = deps.config.wsClaimTtlMs;
   let claim;
   try {
     claim = await deps.embodiment.claim({ companionId, connectionId, node, ttlMs });
   } catch (error) {
-    deps.logger.error('ws embodiment claim failed', { operation: 'ws.embody', companionId, error });
+    logger.error('ws embodiment claim failed', { operation: 'ws.embody', companionId, error });
     socket.close(1011, 'claim failed');
     return;
   }
@@ -125,7 +146,7 @@ async function embody(
   try {
     cursor = await deps.eventLog.latestSettledSeq(companionId);
   } catch (error) {
-    deps.logger.error('ws live-cursor init failed', {
+    logger.error('ws live-cursor init failed', {
       operation: 'ws.embody',
       companionId,
       error,
@@ -134,13 +155,22 @@ async function embody(
     return;
   }
 
+  // Grant the embodiment lease to the client (deliver-scalability.md §5.2): the claim
+  // is held and the live cursor is set, so companion-scoped calls and live delivery
+  // are now safe on this connection. The client gates its embodied requests on this
+  // signal so they can't race the asynchronous claim and be rejected `not_embodied`
+  // — the connect-time failure window. `embodiment.superseded` is the negative
+  // counterpart (lease lost). Pushed after the cursor init so a failed init closes
+  // the socket without ever granting (the client treats the close as lease-denied).
+  connection.pushEvent('embodiment.ready', { companionId });
+
   const heartbeat = setInterval(() => {
     void (async () => {
       let held: boolean;
       try {
         held = await deps.embodiment.renew(companionId, connectionId, claimSeq);
       } catch (error) {
-        deps.logger.error('ws heartbeat renew failed', {
+        logger.error('ws heartbeat renew failed', {
           operation: 'ws.embody',
           companionId,
           error,
@@ -162,7 +192,7 @@ async function embody(
           cursor = seq;
         }
       } catch (error) {
-        deps.logger.error('ws event delivery failed', {
+        logger.error('ws event delivery failed', {
           operation: 'ws.embody',
           companionId,
           error,
@@ -175,7 +205,7 @@ async function embody(
   socket.on('close', () => {
     clearInterval(heartbeat);
     void deps.embodiment.release(companionId, connectionId, claimSeq).catch((error: unknown) => {
-      deps.logger.error('ws embodiment release failed', {
+      logger.error('ws embodiment release failed', {
         operation: 'ws.embody',
         companionId,
         error,

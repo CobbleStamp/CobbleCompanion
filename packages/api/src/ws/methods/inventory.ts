@@ -13,6 +13,16 @@ export function inventoryMethods(deps: AppDeps): WsMethods {
       const found = await leads.listByStatus(companionId, ['new', 'read']);
       return { leads: found.map(toLeadDto) };
     },
+    'leads.clear': async (ctx) => {
+      const companionId = await companionOf(embodiment, ctx);
+      const cleared = await leads.clear(companionId);
+      ctx.logger.info('reading list cleared', {
+        operation: 'ws.leads.clear',
+        companionId,
+        cleared,
+      });
+      return { cleared };
+    },
     explore: async (ctx) => {
       const companionId = await companionOf(embodiment, ctx);
       const created = await runExploreBurst(

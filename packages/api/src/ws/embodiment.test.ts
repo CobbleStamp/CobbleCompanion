@@ -75,11 +75,26 @@ describe('ws embodiment', () => {
 
   function open(query: string): Promise<WebSocket> {
     const client = new WebSocket(`ws://${host}/ws?${query}`);
+    const embodying = query.includes('companion=');
     return new Promise((resolve, reject) => {
-      client.addEventListener('open', () => resolve(client), { once: true });
       client.addEventListener('error', () => reject(new Error('connection failed')), {
         once: true,
       });
+      if (!embodying) {
+        client.addEventListener('open', () => resolve(client), { once: true });
+        return;
+      }
+      // An embodying connection is usable only once the server grants the lease
+      // (`embodiment.ready`) — wait for and consume that frame, mirroring the real
+      // client, so the next request's reply isn't shadowed by the grant.
+      const onReady = (event: MessageEvent): void => {
+        const msg = JSON.parse(String(event.data)) as Envelope;
+        if (msg.event === 'embodiment.ready') {
+          client.removeEventListener('message', onReady);
+          resolve(client);
+        }
+      };
+      client.addEventListener('message', onReady);
     });
   }
 

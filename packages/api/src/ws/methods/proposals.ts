@@ -1,4 +1,4 @@
-import { toProposalDto } from '@cobble/core';
+import { type Logger, toProposalDto } from '@cobble/core';
 import { z } from 'zod';
 import type { AppDeps } from '../../app.js';
 import type { WsMethods } from '../dispatch.js';
@@ -12,14 +12,16 @@ const rejectParams = z.object({ proposalId: z.string().uuid() });
  * its originating lead.
  */
 export function proposalMethods(deps: AppDeps): WsMethods {
-  const { proposals, leads, embodiment, logger } = deps;
+  const { proposals, leads, embodiment } = deps;
 
-  /** Close an explore-origin lead when its proposal resolves (best-effort). */
+  /** Close an explore-origin lead when its proposal resolves (best-effort). Takes the
+   *  connection-bound logger so the failure log is attributable to one connection. */
   async function advanceLead(
     companionId: string,
     leadId: string | null,
     status: 'ingested' | 'discarded',
     proposalId: string,
+    logger: Logger,
   ): Promise<void> {
     if (!leadId) return;
     try {
@@ -49,7 +51,7 @@ export function proposalMethods(deps: AppDeps): WsMethods {
       if (!proposal) {
         throw new ConflictError('proposal is no longer pending');
       }
-      await advanceLead(companionId, proposal.leadId, 'discarded', proposalId);
+      await advanceLead(companionId, proposal.leadId, 'discarded', proposalId, ctx.logger);
       return { ok: true };
     },
   };
