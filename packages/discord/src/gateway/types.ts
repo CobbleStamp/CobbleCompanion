@@ -64,6 +64,8 @@ export interface DiscordGateway {
   onSlashCommand(handler: (command: InboundSlashCommand) => void): void;
   /** Send a message to a DM channel (a reply, a proactive note, a chat turn). */
   sendDirectMessage(channelId: string, content: string): Promise<void>;
+  /** Show the "typing…" indicator in a DM channel (the composing cue). */
+  sendTyping(channelId: string): Promise<void>;
   /** Register (idempotently) the global slash commands, with DM context enabled. */
   registerCommands(commands: readonly SlashCommandSpec[]): Promise<void>;
 }

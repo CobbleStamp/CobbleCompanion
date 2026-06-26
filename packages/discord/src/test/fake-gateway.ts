@@ -23,6 +23,7 @@ export class FakeGateway implements DiscordGateway {
   stopped = false;
   registeredCommands: readonly SlashCommandSpec[] = [];
   readonly sent: SentMessage[] = [];
+  readonly typingChannels: string[] = [];
   private dmHandler: ((message: InboundDirectMessage) => void) | null = null;
   private commandHandler: ((command: InboundSlashCommand) => void) | null = null;
 
@@ -46,6 +47,10 @@ export class FakeGateway implements DiscordGateway {
 
   async sendDirectMessage(channelId: string, content: string): Promise<void> {
     this.sent.push({ channelId, content });
+  }
+
+  async sendTyping(channelId: string): Promise<void> {
+    this.typingChannels.push(channelId);
   }
 
   async registerCommands(commands: readonly SlashCommandSpec[]): Promise<void> {

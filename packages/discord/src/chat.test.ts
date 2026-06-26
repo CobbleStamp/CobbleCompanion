@@ -1,0 +1,119 @@
+import type { ChatStreamEvent, MessageDto } from '@cobble/shared';
+import { describe, expect, it } from 'vitest';
+import type { CompanionConnection } from './bridge.js';
+import { handleChat } from './chat.js';
+import type { DirectMessageContext } from './gateway/manager.js';
+import type { Logger } from './gateway/types.js';
+import { WsCallError } from './ws-client.js';
+
+const silent: Logger = { error: () => {}, warn: () => {}, info: () => {} };
+
+/** A done event carrying an assistant message with the given content. */
+function done(content: string): ChatStreamEvent {
+  const message = { role: 'assistant', content } as unknown as MessageDto;
+  return { type: 'done', message };
+}
+
+/** A connection whose chat() replays a scripted stream (or throws). */
+function connectionFrom(events: ChatStreamEvent[], throwError?: unknown): CompanionConnection {
+  return {
+    connect: async () => {},
+    onSuperseded: () => {},
+    close: () => {},
+    async *chat(): AsyncIterable<ChatStreamEvent> {
+      for (const event of events) yield event;
+      if (throwError) throw throwError;
+    },
+  };
+}
+
+function ctxFor(content: string): {
+  ctx: DirectMessageContext;
+  replies: string[];
+  typingCount: () => number;
+} {
+  const replies: string[] = [];
+  let typing = 0;
+  return {
+    replies,
+    typingCount: () => typing,
+    ctx: {
+      userId: 'u1',
+      config: {
+        userId: 'u1',
+        encryptedBotToken: 'x',
+        boundCompanionId: 'c1',
+        ownerDiscordUserId: 'owner-1',
+        linkCode: null,
+        linkCodeIssuedAt: null,
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+      },
+      message: { authorId: 'owner-1', channelId: 'dm-1', content },
+      reply: async (c) => {
+        replies.push(c);
+      },
+      typing: async () => {
+        typing += 1;
+      },
+    },
+  };
+}
+
+describe('handleChat', () => {
+  it('posts the done message as a single reply', async () => {
+    const { ctx, replies } = ctxFor('hello');
+    await handleChat(ctx, connectionFrom([{ type: 'composing' }, done('Hi there!')]), silent);
+    expect(replies).toEqual(['Hi there!']);
+  });
+
+  it('shows the typing cue on composing', async () => {
+    const { ctx, typingCount } = ctxFor('hello');
+    await handleChat(ctx, connectionFrom([{ type: 'composing' }, done('ok')]), silent);
+    expect(typingCount()).toBe(1);
+  });
+
+  it('ignores token/tool_step chunks and uses the done content', async () => {
+    const { ctx, replies } = ctxFor('hello');
+    await handleChat(
+      ctx,
+      connectionFrom([
+        { type: 'composing' },
+        { type: 'token', value: 'He' },
+        { type: 'token', value: 'llo' },
+        done('Hello, fully formed.'),
+      ]),
+      silent,
+    );
+    expect(replies).toEqual(['Hello, fully formed.']);
+  });
+
+  it('nudges to feed on an over_cap rejection', async () => {
+    const { ctx, replies } = ctxFor('hello');
+    await handleChat(ctx, connectionFrom([], new WsCallError('over cap', 'over_cap')), silent);
+    expect(replies[0]).toContain('/feed');
+  });
+
+  it('posts a generic error on an unexpected throw', async () => {
+    const { ctx, replies } = ctxFor('hello');
+    await handleChat(ctx, connectionFrom([], new Error('boom')), silent);
+    expect(replies[0]).toContain('went wrong');
+  });
+
+  it('relays a mid-turn error event as the reply', async () => {
+    const { ctx, replies } = ctxFor('hello');
+    await handleChat(
+      ctx,
+      connectionFrom([{ type: 'composing' }, { type: 'error', message: 'I had trouble there.' }]),
+      silent,
+    );
+    expect(replies).toEqual(['I had trouble there.']);
+  });
+
+  it('falls back when the stream ends with no content', async () => {
+    const { ctx, replies } = ctxFor('hello');
+    await handleChat(ctx, connectionFrom([{ type: 'composing' }]), silent);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toBeTruthy();
+  });
+});

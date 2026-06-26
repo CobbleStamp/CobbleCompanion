@@ -10,6 +10,7 @@
  * `@cobble/core`. Chat (T9) and read-only commands (T10) are injected hooks.
  */
 
+import type { ChatStreamEvent } from '@cobble/shared';
 import type { DirectMessageContext, SlashCommandContext } from './gateway/manager.js';
 import type { Logger } from './gateway/types.js';
 
@@ -19,6 +20,8 @@ export interface CompanionConnection {
   connect(): Promise<void>;
   /** Register the takeover handler: fired if the room is claimed elsewhere post-ready. */
   onSuperseded(handler: () => void): void;
+  /** Run a chat turn (`messages.send`), yielding the stream until it ends/throws. */
+  chat(content: string): AsyncIterable<ChatStreamEvent>;
   /** Close the connection (deliberate teardown). */
   close(): void;
 }

@@ -9,6 +9,7 @@
  * (token → URL → claim → supersede).
  */
 
+import type { ChatStreamEvent } from '@cobble/shared';
 import type { CompanionConnection, CompanionConnectionFactory } from './bridge.js';
 import type { Logger } from './gateway/types.js';
 import { WsTransport, type WsSocketFactory } from './ws-client.js';
@@ -43,6 +44,11 @@ export function createCompanionConnectionFactory(
       },
       onSuperseded(handler: () => void): void {
         supersededHandler = handler;
+      },
+      async *chat(content: string): AsyncIterable<ChatStreamEvent> {
+        for await (const chunk of transport.callStream('messages.send', { content })) {
+          yield chunk as ChatStreamEvent;
+        }
       },
       close(): void {
         transport.close();

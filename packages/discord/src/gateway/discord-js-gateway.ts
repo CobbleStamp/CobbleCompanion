@@ -107,6 +107,13 @@ class DiscordJsGateway implements DiscordGateway {
     }
   }
 
+  async sendTyping(channelId: string): Promise<void> {
+    const channel = await this.client.channels.fetch(channelId);
+    if (channel?.isTextBased() && 'sendTyping' in channel) {
+      await channel.sendTyping();
+    }
+  }
+
   /**
    * Register the global command set (DM context enabled), diffing first so an
    * unchanged set is not re-pushed. Requires the application id, available once ready.

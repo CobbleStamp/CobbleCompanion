@@ -26,6 +26,8 @@ export interface DirectMessageContext {
   readonly message: InboundDirectMessage;
   /** Reply in the same DM channel. */
   reply(content: string): Promise<void>;
+  /** Show the "typing…" cue in the same DM channel. */
+  typing(): Promise<void>;
 }
 
 /** An inbound slash command, tagged with the owning user and that bot's config. */
@@ -166,6 +168,7 @@ export class GatewayManager {
         config: configNow(),
         message,
         reply: (content) => gateway.sendDirectMessage(message.channelId, content),
+        typing: () => gateway.sendTyping(message.channelId),
       });
     });
     gateway.onSlashCommand((command) => {

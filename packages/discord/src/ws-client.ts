@@ -47,6 +47,21 @@ export class ConnectionClosedError extends Error {
 }
 
 /**
+ * A server error frame for a call/stream — carries the optional machine `code` (e.g.
+ * `over_cap`, `not_embodied`) alongside the message, so callers can branch on it (the
+ * chat handler turns `over_cap` into a feed nudge).
+ */
+export class WsCallError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string,
+  ) {
+    super(message);
+    this.name = 'WsCallError';
+  }
+}
+
+/**
  * The minimal socket surface this transport needs — satisfied by the `ws`
  * `WebSocket` (via {@link defaultSocketFactory}) and by a fake in tests, so the
  * envelope/lifecycle logic is exercised without a real network (fakes over mocks).
@@ -302,7 +317,7 @@ export class WsTransport {
       return;
     }
     if ('error' in message) {
-      const error = new Error(message.error.message);
+      const error = new WsCallError(message.error.message, message.error.code);
       const stream = this.streams.get(message.id);
       if (stream) stream.fail(error);
       this.pending.get(message.id)?.reject(error);

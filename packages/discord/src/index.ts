@@ -12,6 +12,7 @@ export {
   WsTransport,
   SupersededError,
   ConnectionClosedError,
+  WsCallError,
   defaultSocketFactory,
 } from './ws-client.js';
 export type { WsSocket, WsSocketFactory, ConnectOptions, EventListener } from './ws-client.js';
@@ -36,6 +37,7 @@ export type {
 } from './bridge.js';
 export { createCompanionConnectionFactory } from './connection.js';
 export type { CompanionConnectionDeps } from './connection.js';
+export { handleChat } from './chat.js';
 export { createDiscordJsGatewayFactory } from './gateway/discord-js-gateway.js';
 export type {
   DiscordGateway,

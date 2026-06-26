@@ -25,6 +25,9 @@ class FakeConnection implements CompanionConnection {
   onSuperseded(handler: () => void): void {
     this.supersededHandler = handler;
   }
+  async *chat(): AsyncIterable<never> {
+    // Not exercised here; the chat renderer is tested in chat.test.ts.
+  }
   close(): void {
     this.closed = true;
   }
@@ -74,6 +77,7 @@ function dmCtx(content: string): { ctx: DirectMessageContext; replies: string[] 
       reply: async (c) => {
         replies.push(c);
       },
+      typing: async () => {},
     },
   };
 }
