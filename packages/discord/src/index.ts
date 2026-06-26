@@ -27,6 +27,15 @@ export type {
 } from './gateway/manager.js';
 export { BotRouter, LINK_CODE_TTL_MS, LINK_COMMAND } from './router.js';
 export type { RouterOptions } from './router.js';
+
+export { CompanionBridge, SUMMON_COMMAND, STATUS_COMMAND } from './bridge.js';
+export type {
+  CompanionBridgeOptions,
+  CompanionConnection,
+  CompanionConnectionFactory,
+} from './bridge.js';
+export { createCompanionConnectionFactory } from './connection.js';
+export type { CompanionConnectionDeps } from './connection.js';
 export { createDiscordJsGatewayFactory } from './gateway/discord-js-gateway.js';
 export type {
   DiscordGateway,

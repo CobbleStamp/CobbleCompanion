@@ -90,6 +90,22 @@ export class GatewayManager {
   }
 
   /**
+   * Send a DM through a user's bot (async notices like the supersession notice). A
+   * no-op (logged) if that user's bot isn't running.
+   */
+  async sendDirectMessage(userId: string, channelId: string, content: string): Promise<void> {
+    const bot = this.bots.get(userId);
+    if (!bot) {
+      this.opts.logger.error('discord sendDirectMessage: no running bot for user', {
+        operation: 'discord.gateway.send',
+        userId,
+      });
+      return;
+    }
+    await bot.gateway.sendDirectMessage(channelId, content);
+  }
+
+  /**
    * Reconcile the live bots against the current `discord_config` rows: start newly
    * configured bots, restart any whose token changed, refresh config on the rest, and
    * stop bots whose config was removed.

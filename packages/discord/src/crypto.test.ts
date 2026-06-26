@@ -35,10 +35,11 @@ describe('encryptSecret / decryptSecret', () => {
   it('fails with bad_key when the ciphertext is tampered', () => {
     const payload = encryptSecret(BOT_TOKEN, KEY);
     const parts = payload.split('.');
-    // Flip the last char of the ciphertext segment.
-    const data = parts[3] as string;
-    const flipped = data.slice(0, -1) + (data.endsWith('A') ? 'B' : 'A');
-    const tampered = [parts[0], parts[1], parts[2], flipped].join('.');
+    // Flip a whole byte of the ciphertext (decode → mutate → re-encode), so the bytes
+    // genuinely change — flipping a base64url char can hit only unused padding bits.
+    const bytes = Buffer.from(parts[3] as string, 'base64url');
+    bytes[0] = (bytes[0] ?? 0) ^ 0xff;
+    const tampered = [parts[0], parts[1], parts[2], bytes.toString('base64url')].join('.');
     expect(decryptSecret(tampered, KEY)).toEqual({ ok: false, reason: 'bad_key' });
   });
 
