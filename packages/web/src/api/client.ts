@@ -5,6 +5,7 @@ import type {
   CreateCompanionBody,
   CreateLinkSourceBody,
   CreateNoteSourceBody,
+  DiscordConfigViewDto,
   EpisodeDto,
   EpisodeSearchResultDto,
   FeedResultDto,
@@ -426,4 +427,44 @@ async function* asChatStream(stream: AsyncGenerator<unknown>): AsyncGenerator<Ch
   for await (const chunk of stream) {
     yield chunk as ChatStreamEvent;
   }
+}
+
+// --- Discord settings (companion-discord.md §9, T13) — all user-scoped (companion: null) ---
+
+/** The current Discord bot config for this user (never carries the token). */
+export async function getDiscordConfig(): Promise<DiscordConfigViewDto> {
+  const { discord } = await wsClient.call<{ discord: DiscordConfigViewDto }>(
+    'discord.config.get',
+    undefined,
+    null,
+  );
+  return discord;
+}
+
+/** Save the bot token + bound companion; the API encrypts the token and mints a /link code. */
+export async function saveDiscordConfig(
+  botToken: string,
+  boundCompanionId: string,
+): Promise<DiscordConfigViewDto> {
+  const { discord } = await wsClient.call<{ discord: DiscordConfigViewDto }>(
+    'discord.config.set',
+    { botToken, boundCompanionId },
+    null,
+  );
+  return discord;
+}
+
+/** Re-issue the single-use /link code (without changing the token/binding). */
+export async function regenerateDiscordLink(): Promise<DiscordConfigViewDto> {
+  const { discord } = await wsClient.call<{ discord: DiscordConfigViewDto }>(
+    'discord.config.regenerateLink',
+    undefined,
+    null,
+  );
+  return discord;
+}
+
+/** Remove the bot config entirely (the worker stops that bot on its next poll). */
+export async function deleteDiscordConfig(): Promise<void> {
+  await wsClient.call('discord.config.delete', undefined, null);
 }

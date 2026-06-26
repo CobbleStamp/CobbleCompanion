@@ -53,6 +53,7 @@ interface ChatProps {
   readonly onOpenSources: () => void;
   readonly onOpenGrowth: () => void;
   readonly onOpenActivity: () => void;
+  readonly onOpenDiscord: () => void;
 }
 
 interface ChatLine {
@@ -277,6 +278,7 @@ export function Chat({
   onOpenSources,
   onOpenGrowth,
   onOpenActivity,
+  onOpenDiscord,
 }: ChatProps): JSX.Element {
   const [lines, setLines] = useState<ChatLine[]>([]);
   const [input, setInput] = useState('');
@@ -776,6 +778,9 @@ export function Chat({
           </button>
           <button type="button" onClick={onOpenActivity}>
             Activity
+          </button>
+          <button type="button" onClick={onOpenDiscord}>
+            Discord
           </button>
           <button type="button" onClick={onSignOut}>
             Sign out

@@ -109,6 +109,7 @@ function renderChat(): void {
       onOpenSources={() => {}}
       onOpenGrowth={() => {}}
       onOpenActivity={() => {}}
+      onOpenDiscord={() => {}}
     />,
   );
 }

@@ -6,6 +6,7 @@ import { sessionManager } from './auth/session-manager.js';
 import { Activity } from './pages/Activity.js';
 import { Chat } from './pages/Chat.js';
 import { CreateCompanion } from './pages/CreateCompanion.js';
+import { Discord } from './pages/Discord.js';
 import { Growth } from './pages/Growth.js';
 import { MemoryBrowser } from './pages/MemoryBrowser.js';
 import { SignIn } from './pages/SignIn.js';
@@ -72,7 +73,7 @@ interface CompanionFlowProps {
   readonly onSignOut: () => void;
 }
 
-type View = 'chat' | 'memory' | 'sources' | 'growth' | 'activity';
+type View = 'chat' | 'memory' | 'sources' | 'growth' | 'activity' | 'discord';
 
 /** The authenticated flow: load companion, then chat, feed sources, or browse memory. */
 function CompanionFlow({ onSignOut }: CompanionFlowProps): JSX.Element {
@@ -141,6 +142,15 @@ function CompanionFlow({ onSignOut }: CompanionFlowProps): JSX.Element {
         />
       );
     }
+    if (view === 'discord') {
+      return (
+        <Discord
+          companionName={companion.name}
+          companionId={companion.id}
+          onBack={() => setView('chat')}
+        />
+      );
+    }
     return (
       <Chat
         companion={companion}
@@ -149,6 +159,7 @@ function CompanionFlow({ onSignOut }: CompanionFlowProps): JSX.Element {
         onOpenSources={() => setView('sources')}
         onOpenGrowth={() => setView('growth')}
         onOpenActivity={() => setView('activity')}
+        onOpenDiscord={() => setView('discord')}
       />
     );
   }
