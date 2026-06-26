@@ -50,6 +50,11 @@ export function createCompanionConnectionFactory(
           yield chunk as ChatStreamEvent;
         }
       },
+      async *callStream(method: string, params?: unknown): AsyncIterable<ChatStreamEvent> {
+        for await (const chunk of transport.callStream(method, params)) {
+          yield chunk as ChatStreamEvent;
+        }
+      },
       call<T>(method: string, params?: unknown): Promise<T> {
         return transport.call<T>(method, params);
       },

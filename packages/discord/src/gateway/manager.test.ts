@@ -5,6 +5,7 @@ import {
   GatewayManager,
   type DirectMessageContext,
   type GatewayManagerOptions,
+  type ProposalActionContext,
   type SlashCommandContext,
 } from './manager.js';
 import type { Logger } from './types.js';
@@ -69,18 +70,20 @@ function makeManager(store: InMemoryConfigStore, overrides: Partial<GatewayManag
   const gateways = fakeGatewayFactory();
   const received: DirectMessageContext[] = [];
   const commands: SlashCommandContext[] = [];
+  const proposalActions: ProposalActionContext[] = [];
   const manager = new GatewayManager({
     configStore: store,
     gatewayFactory: gateways.factory,
     decryptToken,
     onDirectMessage: (ctx) => received.push(ctx),
     onSlashCommand: (ctx) => commands.push(ctx),
+    onProposalAction: (ctx) => proposalActions.push(ctx),
     commands: [{ name: 'summon', description: 'Bring the companion here' }],
     pollIntervalMs: 60_000,
     logger: silent,
     ...overrides,
   });
-  return { manager, gateways, received, commands };
+  return { manager, gateways, received, commands, proposalActions };
 }
 
 describe('GatewayManager', () => {

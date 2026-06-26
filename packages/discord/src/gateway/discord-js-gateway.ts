@@ -12,22 +12,32 @@
  */
 
 import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   Client,
+  EmbedBuilder,
   Events,
   GatewayIntentBits,
   Partials,
   REST,
   Routes,
+  type ButtonInteraction,
   type Message,
 } from 'discord.js';
 import type {
   DiscordGateway,
   DiscordGatewayFactory,
   InboundDirectMessage,
+  InboundProposalAction,
   InboundSlashCommand,
   Logger,
+  ProposalCard,
   SlashCommandSpec,
 } from './types.js';
+
+/** customId prefix for proposal buttons; `proposal:<action>:<proposalId>`. */
+const PROPOSAL_PREFIX = 'proposal';
 
 export function createDiscordJsGatewayFactory(logger: Logger): DiscordGatewayFactory {
   return (botToken: string): DiscordGateway => new DiscordJsGateway(botToken, logger);
@@ -37,6 +47,7 @@ class DiscordJsGateway implements DiscordGateway {
   private readonly client: Client;
   private dmHandler: ((message: InboundDirectMessage) => void) | null = null;
   private commandHandler: ((command: InboundSlashCommand) => void) | null = null;
+  private proposalHandler: ((action: InboundProposalAction) => void) | null = null;
 
   constructor(
     private readonly botToken: string,
@@ -56,6 +67,10 @@ class DiscordJsGateway implements DiscordGateway {
       });
     });
     this.client.on(Events.InteractionCreate, (interaction) => {
+      if (interaction.isButton()) {
+        this.handleButton(interaction);
+        return;
+      }
       if (!interaction.isChatInputCommand()) return;
       const options: Record<string, string> = {};
       for (const option of interaction.options.data) {
@@ -95,6 +110,33 @@ class DiscordJsGateway implements DiscordGateway {
     this.commandHandler = handler;
   }
 
+  onProposalAction(handler: (action: InboundProposalAction) => void): void {
+    this.proposalHandler = handler;
+  }
+
+  /** Translate a proposal button click into an {@link InboundProposalAction}. */
+  private handleButton(interaction: ButtonInteraction): void {
+    const parts = interaction.customId.split(':');
+    if (parts.length !== 3 || parts[0] !== PROPOSAL_PREFIX) return;
+    const action = parts[1] === 'confirm' ? 'confirm' : parts[1] === 'reject' ? 'reject' : null;
+    if (action === null) return;
+    const proposalId = parts[2] as string;
+    this.proposalHandler?.({
+      userId: interaction.user.id,
+      channelId: interaction.channelId,
+      proposalId,
+      action,
+      // Edit the original message (drop the buttons) — also acknowledges the interaction.
+      update: async (content) => {
+        await interaction.update({ content, embeds: [], components: [] });
+      },
+      // The interaction is acknowledged by `update`, so further posts are follow-ups.
+      reply: async (content) => {
+        await interaction.followUp({ content });
+      },
+    });
+  }
+
   async sendDirectMessage(channelId: string, content: string): Promise<void> {
     const channel = await this.client.channels.fetch(channelId);
     if (channel?.isSendable()) {
@@ -112,6 +154,32 @@ class DiscordJsGateway implements DiscordGateway {
     if (channel?.isTextBased() && 'sendTyping' in channel) {
       await channel.sendTyping();
     }
+  }
+
+  async sendProposal(channelId: string, card: ProposalCard): Promise<void> {
+    const channel = await this.client.channels.fetch(channelId);
+    if (!channel?.isSendable()) {
+      this.logger.error('discord sendProposal: channel not sendable', {
+        operation: 'discord.proposal',
+        channelId,
+      });
+      return;
+    }
+    const embed = new EmbedBuilder()
+      .setTitle('Approval needed')
+      .setDescription(card.summary)
+      .setFooter({ text: card.toolName });
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`${PROPOSAL_PREFIX}:confirm:${card.proposalId}`)
+        .setLabel('Confirm')
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(`${PROPOSAL_PREFIX}:reject:${card.proposalId}`)
+        .setLabel('Reject')
+        .setStyle(ButtonStyle.Danger),
+    );
+    await channel.send({ embeds: [embed], components: [row] });
   }
 
   /**

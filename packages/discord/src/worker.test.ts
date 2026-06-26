@@ -37,6 +37,9 @@ function fakeConnectionFactory(reply: string): CompanionConnectionFactory {
         message: { role: 'assistant', content: reply } as unknown as MessageDto,
       };
     },
+    async *callStream(): AsyncIterable<ChatStreamEvent> {
+      // Not used in this test (chat() is the streaming path).
+    },
   });
 }
 

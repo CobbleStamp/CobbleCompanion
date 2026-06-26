@@ -1,9 +1,9 @@
-import type { ChatStreamEvent, MessageDto } from '@cobble/shared';
+import type { ChatStreamEvent, MessageDto, ProposalDto } from '@cobble/shared';
 import { describe, expect, it } from 'vitest';
 import type { CompanionConnection } from './bridge.js';
 import { handleChat } from './chat.js';
 import type { DirectMessageContext } from './gateway/manager.js';
-import type { Logger } from './gateway/types.js';
+import type { Logger, ProposalCard } from './gateway/types.js';
 import { WsCallError } from './ws-client.js';
 
 const silent: Logger = { error: () => {}, warn: () => {}, info: () => {} };
@@ -25,18 +25,24 @@ function connectionFrom(events: ChatStreamEvent[], throwError?: unknown): Compan
       for (const event of events) yield event;
       if (throwError) throw throwError;
     },
+    async *callStream(): AsyncIterable<ChatStreamEvent> {
+      // Not used in chat tests (chat() is the streaming path here).
+    },
   };
 }
 
 function ctxFor(content: string): {
   ctx: DirectMessageContext;
   replies: string[];
+  proposals: ProposalCard[];
   typingCount: () => number;
 } {
   const replies: string[] = [];
+  const proposals: ProposalCard[] = [];
   let typing = 0;
   return {
     replies,
+    proposals,
     typingCount: () => typing,
     ctx: {
       userId: 'u1',
@@ -56,6 +62,9 @@ function ctxFor(content: string): {
       },
       typing: async () => {
         typing += 1;
+      },
+      sendProposal: async (card) => {
+        proposals.push(card);
       },
     },
   };
@@ -116,5 +125,52 @@ describe('handleChat', () => {
     await handleChat(ctx, connectionFrom([{ type: 'composing' }]), silent);
     expect(replies).toHaveLength(1);
     expect(replies[0]).toBeTruthy();
+  });
+
+  it('cards a proposal and does not also post a redundant done line', async () => {
+    const { ctx, replies, proposals } = ctxFor('book me a table');
+    const proposal = {
+      id: 'p1',
+      toolName: 'book_table',
+      summary: 'Book a table for two at 7pm.',
+      status: 'pending',
+      createdAt: '2026-06-26T00:00:00Z',
+    } satisfies ProposalDto;
+    await handleChat(
+      ctx,
+      // The harness terminates a held turn with a done carrying the proposal summary.
+      connectionFrom([
+        { type: 'composing' },
+        { type: 'proposal', proposal },
+        done(proposal.summary),
+      ]),
+      silent,
+    );
+    expect(proposals).toEqual([
+      { proposalId: 'p1', toolName: 'book_table', summary: 'Book a table for two at 7pm.' },
+    ]);
+    expect(replies).toHaveLength(0); // the card IS the message
+  });
+
+  it('cards a proposal AND posts the spoken preamble when the companion also spoke', async () => {
+    const { ctx, replies, proposals } = ctxFor('book me a table');
+    const proposal = {
+      id: 'p2',
+      toolName: 'book_table',
+      summary: 'Book a table for two at 7pm.',
+      status: 'pending',
+      createdAt: '2026-06-26T00:00:00Z',
+    } satisfies ProposalDto;
+    await handleChat(
+      ctx,
+      connectionFrom([
+        { type: 'composing' },
+        { type: 'proposal', proposal },
+        done('Sure — here’s what I’d do, okay?'),
+      ]),
+      silent,
+    );
+    expect(proposals).toHaveLength(1);
+    expect(replies).toEqual(['Sure — here’s what I’d do, okay?']);
   });
 });

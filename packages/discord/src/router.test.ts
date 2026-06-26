@@ -59,6 +59,7 @@ function dmCtx(
         replies.push(c);
       },
       typing: async () => {},
+      sendProposal: async () => {},
     },
   };
 }

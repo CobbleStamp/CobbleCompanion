@@ -11,7 +11,11 @@
  */
 
 import type { ChatStreamEvent } from '@cobble/shared';
-import type { DirectMessageContext, SlashCommandContext } from './gateway/manager.js';
+import type {
+  DirectMessageContext,
+  ProposalActionContext,
+  SlashCommandContext,
+} from './gateway/manager.js';
 import type { Logger } from './gateway/types.js';
 
 /** One companion connection (the bridge's view of an embodying `/ws` session). */
@@ -22,6 +26,8 @@ export interface CompanionConnection {
   onSuperseded(handler: () => void): void;
   /** Run a chat turn (`messages.send`), yielding the stream until it ends/throws. */
   chat(content: string): AsyncIterable<ChatStreamEvent>;
+  /** Invoke a streaming WS method (the post-approval turn — `proposals.confirm`). */
+  callStream(method: string, params?: unknown): AsyncIterable<ChatStreamEvent>;
   /** Invoke a non-streaming WS method over this connection (the read-only views — T10). */
   call<T>(method: string, params?: unknown): Promise<T>;
   /** Close the connection (deliberate teardown). */
@@ -49,6 +55,15 @@ export interface CompanionBridgeOptions {
    */
   readonly onReadOnlyCommand: (
     ctx: SlashCommandContext,
+    connection: CompanionConnection,
+  ) => void | Promise<void>;
+  /**
+   * Handle a proposal Confirm/Reject click (approvals — T11). Only invoked while
+   * embodied: `proposals.confirm`/`reject` are companion-scoped, so the bridge passes
+   * the active connection.
+   */
+  readonly onProposalAction: (
+    ctx: ProposalActionContext,
     connection: CompanionConnection,
   ) => void | Promise<void>;
   readonly logger: Logger;
@@ -96,6 +111,26 @@ export class CompanionBridge {
       return;
     }
     return this.opts.onReadOnlyCommand(ctx, embodiment.connection);
+  }
+
+  /**
+   * Manager hook (proposal button click): owner-locked upstream and DM-only, so this is
+   * defensive — a click while dormant is refused with "summon first", else it runs over
+   * the live connection (the proposal methods need the claim).
+   */
+  async handleProposalAction(ctx: ProposalActionContext): Promise<void> {
+    if (
+      ctx.config.ownerDiscordUserId !== null &&
+      ctx.discordUserId !== ctx.config.ownerDiscordUserId
+    ) {
+      return; // not the owner — ignore (proposals live in the owner's DM anyway).
+    }
+    const embodiment = this.active.get(ctx.userId);
+    if (!embodiment) {
+      await ctx.reply(DORMANT_NOTICE);
+      return;
+    }
+    await this.opts.onProposalAction(ctx, embodiment.connection);
   }
 
   isSummoned(userId: string): boolean {

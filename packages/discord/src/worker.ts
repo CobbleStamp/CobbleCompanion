@@ -22,6 +22,7 @@ import { createDiscordJsGatewayFactory } from './gateway/discord-js-gateway.js';
 import { GatewayManager } from './gateway/manager.js';
 import type { DiscordGatewayFactory, Logger } from './gateway/types.js';
 import { consoleLogger } from './logger.js';
+import { handleProposalAction } from './proposals.js';
 import { handleReadOnlyCommand } from './read-commands.js';
 import { BotRouter } from './router.js';
 import { createMintTokenSource } from './token-source.js';
@@ -73,6 +74,15 @@ export function assembleWorker(parts: AssembleWorkerParts): AssembledWorker {
         });
       });
     },
+    onProposalAction: (ctx) => {
+      bridge.handleProposalAction(ctx).catch((error) => {
+        logger.error('discord worker: proposal action failed', {
+          operation: 'discord.worker.proposal',
+          userId: ctx.userId,
+          error,
+        });
+      });
+    },
     commands: COMMAND_SPECS,
     pollIntervalMs: parts.pollIntervalMs,
     logger,
@@ -83,6 +93,7 @@ export function assembleWorker(parts: AssembleWorkerParts): AssembledWorker {
     notify: (userId, channelId, content) => manager.sendDirectMessage(userId, channelId, content),
     onChat: (ctx, connection) => handleChat(ctx, connection, logger),
     onReadOnlyCommand: (ctx, connection) => handleReadOnlyCommand(ctx, connection, logger),
+    onProposalAction: (ctx, connection) => handleProposalAction(ctx, connection, logger),
     logger,
   });
 

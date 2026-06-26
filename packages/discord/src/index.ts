@@ -25,6 +25,7 @@ export type {
   GatewayManagerOptions,
   DirectMessageContext,
   SlashCommandContext,
+  ProposalActionContext,
 } from './gateway/manager.js';
 export { BotRouter, LINK_CODE_TTL_MS, LINK_COMMAND } from './router.js';
 export type { RouterOptions } from './router.js';
@@ -38,6 +39,9 @@ export type {
 export { createCompanionConnectionFactory } from './connection.js';
 export type { CompanionConnectionDeps } from './connection.js';
 export { handleChat } from './chat.js';
+export { handleProposalAction } from './proposals.js';
+export { renderTurnStream } from './turn-render.js';
+export type { TurnSurface } from './turn-render.js';
 export { COMMAND_SPECS } from './commands.js';
 export { consoleLogger } from './logger.js';
 export { createMintTokenSource } from './token-source.js';
@@ -49,6 +53,8 @@ export type {
   DiscordGateway,
   DiscordGatewayFactory,
   InboundDirectMessage,
+  InboundProposalAction,
+  ProposalCard,
   SlashCommandSpec,
   Logger,
 } from './gateway/types.js';

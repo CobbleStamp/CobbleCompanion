@@ -14,8 +14,10 @@ import type {
   DiscordGateway,
   DiscordGatewayFactory,
   InboundDirectMessage,
+  InboundProposalAction,
   InboundSlashCommand,
   Logger,
+  ProposalCard,
   SlashCommandSpec,
 } from './types.js';
 
@@ -28,6 +30,26 @@ export interface DirectMessageContext {
   reply(content: string): Promise<void>;
   /** Show the "typing…" cue in the same DM channel. */
   typing(): Promise<void>;
+  /** Post a proposal embed + Confirm/Reject buttons in the same DM channel. */
+  sendProposal(card: ProposalCard): Promise<void>;
+}
+
+/** An inbound proposal button click, tagged with the owning user and that bot's config. */
+export interface ProposalActionContext {
+  readonly userId: string;
+  readonly config: DiscordConfigRecord;
+  readonly proposalId: string;
+  readonly action: 'confirm' | 'reject';
+  /** The clicker's Discord user id (checked against the owner lock). */
+  readonly discordUserId: string;
+  /** Post a message (the resolution / streamed turn) in the DM channel. */
+  reply(content: string): Promise<void>;
+  /** Edit the original proposal message (disable buttons / mark resolved). */
+  update(content: string): Promise<void>;
+  /** Show the "typing…" cue in the DM channel. */
+  typing(): Promise<void>;
+  /** Post a further proposal embed (a post-approval turn can hold another action). */
+  sendProposal(card: ProposalCard): Promise<void>;
 }
 
 /** An inbound slash command, tagged with the owning user and that bot's config. */
@@ -48,6 +70,8 @@ export interface GatewayManagerOptions {
   readonly onDirectMessage: (ctx: DirectMessageContext) => void;
   /** Inbound slash-command sink — the router owns lock + `/link`/summon/commands. */
   readonly onSlashCommand: (ctx: SlashCommandContext) => void;
+  /** Inbound proposal-button sink — the bridge owns the owner lock + confirm/reject. */
+  readonly onProposalAction: (ctx: ProposalActionContext) => void;
   /** Global slash commands (re)registered per bot on connect (DM-context enabled). */
   readonly commands: readonly SlashCommandSpec[];
   readonly pollIntervalMs: number;
@@ -169,6 +193,7 @@ export class GatewayManager {
         message,
         reply: (content) => gateway.sendDirectMessage(message.channelId, content),
         typing: () => gateway.sendTyping(message.channelId),
+        sendProposal: (card) => gateway.sendProposal(message.channelId, card),
       });
     });
     gateway.onSlashCommand((command) => {
@@ -177,6 +202,19 @@ export class GatewayManager {
         config: configNow(),
         command,
         reply: (content) => command.reply(content),
+      });
+    });
+    gateway.onProposalAction((action: InboundProposalAction) => {
+      this.opts.onProposalAction({
+        userId: config.userId,
+        config: configNow(),
+        proposalId: action.proposalId,
+        action: action.action,
+        discordUserId: action.userId,
+        reply: (content) => action.reply(content),
+        update: (content) => action.update(content),
+        typing: () => gateway.sendTyping(action.channelId),
+        sendProposal: (card) => gateway.sendProposal(action.channelId, card),
       });
     });
     // Record before start so a fast inbound event finds the entry.

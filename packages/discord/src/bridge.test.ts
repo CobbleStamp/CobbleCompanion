@@ -5,7 +5,11 @@ import {
   type CompanionBridgeOptions,
   type CompanionConnection,
 } from './bridge.js';
-import type { DirectMessageContext, SlashCommandContext } from './gateway/manager.js';
+import type {
+  DirectMessageContext,
+  ProposalActionContext,
+  SlashCommandContext,
+} from './gateway/manager.js';
 import type { Logger } from './gateway/types.js';
 import { SupersededError } from './ws-client.js';
 
@@ -27,6 +31,9 @@ class FakeConnection implements CompanionConnection {
   }
   async *chat(): AsyncIterable<never> {
     // Not exercised here; the chat renderer is tested in chat.test.ts.
+  }
+  async *callStream(): AsyncIterable<never> {
+    // Not exercised here; the proposal renderer is tested in proposals.test.ts.
   }
   call<T>(): Promise<T> {
     // Not exercised here; the read-only views are tested in read-commands.test.ts.
@@ -82,6 +89,34 @@ function dmCtx(content: string): { ctx: DirectMessageContext; replies: string[] 
         replies.push(c);
       },
       typing: async () => {},
+      sendProposal: async () => {},
+    },
+  };
+}
+
+function proposalCtx(
+  action: 'confirm' | 'reject',
+  discordUserId = 'owner-123',
+): { ctx: ProposalActionContext; replies: string[]; updates: string[] } {
+  const replies: string[] = [];
+  const updates: string[] = [];
+  return {
+    replies,
+    updates,
+    ctx: {
+      userId: 'u1',
+      config: record(),
+      proposalId: 'p1',
+      action,
+      discordUserId,
+      reply: async (c) => {
+        replies.push(c);
+      },
+      update: async (c) => {
+        updates.push(c);
+      },
+      typing: async () => {},
+      sendProposal: async () => {},
     },
   };
 }
@@ -92,6 +127,7 @@ interface Harness {
   notices: Array<{ userId: string; channelId: string; content: string }>;
   chats: DirectMessageContext[];
   readOnly: Array<{ ctx: SlashCommandContext; connection: CompanionConnection }>;
+  proposalActions: Array<{ ctx: ProposalActionContext; connection: CompanionConnection }>;
 }
 
 function makeBridge(
@@ -102,6 +138,7 @@ function makeBridge(
   const notices: Harness['notices'] = [];
   const chats: DirectMessageContext[] = [];
   const readOnly: Harness['readOnly'] = [];
+  const proposalActions: Harness['proposalActions'] = [];
   const bridge = new CompanionBridge({
     connectionFactory: () => {
       const connection = new FakeConnection();
@@ -118,10 +155,13 @@ function makeBridge(
     onReadOnlyCommand: (ctx, connection) => {
       readOnly.push({ ctx, connection });
     },
+    onProposalAction: (ctx, connection) => {
+      proposalActions.push({ ctx, connection });
+    },
     logger: silent,
     ...opts.overrides,
   });
-  return { bridge, connections, notices, chats, readOnly };
+  return { bridge, connections, notices, chats, readOnly, proposalActions };
 }
 
 describe('CompanionBridge — summon', () => {
@@ -209,6 +249,40 @@ describe('CompanionBridge — owner DM gating', () => {
 
     expect(h.chats).toHaveLength(1);
     expect(h.chats[0]?.message.content).toBe('what is up');
+  });
+});
+
+describe('CompanionBridge — proposal actions', () => {
+  it('asks to summon when a proposal button is clicked while dormant', async () => {
+    const h = makeBridge();
+    const { ctx, replies } = proposalCtx('confirm');
+
+    await h.bridge.handleProposalAction(ctx);
+
+    expect(h.proposalActions).toHaveLength(0);
+    expect(replies[0]).toContain('/summon');
+  });
+
+  it('delegates to the handler with the live connection when summoned', async () => {
+    const h = makeBridge();
+    await h.bridge.handleOwnerCommand(cmdCtx('summon').ctx);
+    const { ctx } = proposalCtx('confirm');
+
+    await h.bridge.handleProposalAction(ctx);
+
+    expect(h.proposalActions).toHaveLength(1);
+    expect(h.proposalActions[0]?.connection).toBe(h.connections[0]);
+  });
+
+  it('ignores a click from a non-owner Discord id', async () => {
+    const h = makeBridge();
+    await h.bridge.handleOwnerCommand(cmdCtx('summon').ctx);
+    const { ctx, replies } = proposalCtx('confirm', 'intruder-999');
+
+    await h.bridge.handleProposalAction(ctx);
+
+    expect(h.proposalActions).toHaveLength(0);
+    expect(replies).toHaveLength(0); // silently ignored
   });
 });
 

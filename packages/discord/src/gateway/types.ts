@@ -49,6 +49,31 @@ export interface InboundSlashCommand {
 }
 
 /**
+ * A proposal card to render in a DM (companion-discord.md §7): an embed describing the
+ * held effectful action, with Confirm and Reject buttons whose ids encode the proposal.
+ */
+export interface ProposalCard {
+  readonly proposalId: string;
+  /** The effectful tool the companion wants to run (e.g. `ingest_source`). */
+  readonly toolName: string;
+  /** Human-readable description of what will happen if confirmed. */
+  readonly summary: string;
+}
+
+/** An inbound proposal button click (a Discord component interaction). */
+export interface InboundProposalAction {
+  /** Discord user id of the clicker (checked against the owner lock downstream). */
+  readonly userId: string;
+  readonly channelId: string;
+  readonly proposalId: string;
+  readonly action: 'confirm' | 'reject';
+  /** Post a message in the DM channel (the resolution / streamed turn). */
+  reply(content: string): Promise<void>;
+  /** Edit the original proposal message (disable the buttons / mark resolved). */
+  update(content: string): Promise<void>;
+}
+
+/**
  * One bot's connection to Discord's gateway. Created per configured user from its bot
  * token. The manager owns its lifecycle; later tasks add reply/typing/interaction
  * surfaces.
@@ -62,10 +87,14 @@ export interface DiscordGateway {
   onDirectMessage(handler: (message: InboundDirectMessage) => void): void;
   /** Register the inbound slash-command handler. Set before {@link start}. */
   onSlashCommand(handler: (command: InboundSlashCommand) => void): void;
+  /** Register the inbound proposal-button handler. Set before {@link start}. */
+  onProposalAction(handler: (action: InboundProposalAction) => void): void;
   /** Send a message to a DM channel (a reply, a proactive note, a chat turn). */
   sendDirectMessage(channelId: string, content: string): Promise<void>;
   /** Show the "typing…" indicator in a DM channel (the composing cue). */
   sendTyping(channelId: string): Promise<void>;
+  /** Post a proposal embed with Confirm/Reject buttons to a DM channel. */
+  sendProposal(channelId: string, card: ProposalCard): Promise<void>;
   /** Register (idempotently) the global slash commands, with DM context enabled. */
   registerCommands(commands: readonly SlashCommandSpec[]): Promise<void>;
 }
