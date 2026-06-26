@@ -30,6 +30,8 @@ function connectionFrom(opts: {
       if (opts.streamThrows) throw opts.streamThrows;
       for (const event of opts.stream ?? []) yield event;
     },
+    async *greeting(): AsyncIterable<ChatStreamEvent> {},
+    async *events(): AsyncIterable<never> {},
     call<T>(method: string, params?: unknown): Promise<T> {
       calls.push({ method, params });
       if (opts.rejectThrows) return Promise.reject(opts.rejectThrows);

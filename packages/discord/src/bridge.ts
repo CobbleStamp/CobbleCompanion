@@ -10,13 +10,14 @@
  * `@cobble/core`. Chat (T9) and read-only commands (T10) are injected hooks.
  */
 
-import type { ChatStreamEvent } from '@cobble/shared';
+import type { ChatStreamEvent, CompanionStreamEvent } from '@cobble/shared';
 import type {
   DirectMessageContext,
   ProposalActionContext,
   SlashCommandContext,
 } from './gateway/manager.js';
 import type { Logger } from './gateway/types.js';
+import { runProactiveLoop, streamGreeting } from './proactive.js';
 
 /** One companion connection (the bridge's view of an embodying `/ws` session). */
 export interface CompanionConnection {
@@ -28,6 +29,10 @@ export interface CompanionConnection {
   chat(content: string): AsyncIterable<ChatStreamEvent>;
   /** Invoke a streaming WS method (the post-approval turn — `proposals.confirm`). */
   callStream(method: string, params?: unknown): AsyncIterable<ChatStreamEvent>;
+  /** Stream the arrival greeting (`greeting.stream`) on summon (T12). */
+  greeting(): AsyncIterable<ChatStreamEvent>;
+  /** The live companion event stream (autonomous messages — T12), until `signal` aborts. */
+  events(signal: AbortSignal): AsyncIterable<CompanionStreamEvent>;
   /** Invoke a non-streaming WS method over this connection (the read-only views — T10). */
   call<T>(method: string, params?: unknown): Promise<T>;
   /** Close the connection (deliberate teardown). */
@@ -74,6 +79,8 @@ interface ActiveEmbodiment {
   readonly connection: CompanionConnection;
   /** The DM channel to send async notices to (captured at summon). */
   readonly channelId: string;
+  /** Aborts the proactive event loop on teardown (supersession / stop). */
+  readonly abort: AbortController;
 }
 
 export const SUMMON_COMMAND = 'summon';
@@ -140,6 +147,7 @@ export class CompanionBridge {
   /** Tear down every embodiment (worker shutdown). */
   stop(): void {
     for (const embodiment of this.active.values()) {
+      embodiment.abort.abort();
       this.safeClose(embodiment);
     }
     this.active.clear();
@@ -169,9 +177,33 @@ export class CompanionBridge {
       );
       return;
     }
-    this.active.set(ctx.userId, { companionId, connection, channelId: ctx.command.channelId });
-    // The arrival greeting (greeting.stream) lands in T12; for now a simple presence cue.
+    const embodiment: ActiveEmbodiment = {
+      companionId,
+      connection,
+      channelId: ctx.command.channelId,
+      abort: new AbortController(),
+    };
+    this.active.set(ctx.userId, embodiment);
     await ctx.reply('I’m here. ✨');
+    // Stream the arrival greeting, then forward autonomous messages until torn down.
+    void this.runBackground(ctx.userId, embodiment);
+  }
+
+  /** Greet on arrival, then run the proactive forward loop (companion-discord.md §8). */
+  private async runBackground(userId: string, embodiment: ActiveEmbodiment): Promise<void> {
+    const post = (content: string): Promise<void> =>
+      this.opts.notify(userId, embodiment.channelId, content);
+    await streamGreeting(embodiment.connection, post, this.opts.logger, {
+      operation: 'discord.greeting',
+      userId,
+    });
+    await runProactiveLoop(
+      embodiment.connection,
+      post,
+      this.opts.logger,
+      { operation: 'discord.proactive', userId },
+      embodiment.abort.signal,
+    );
   }
 
   private async status(ctx: SlashCommandContext): Promise<void> {
@@ -186,6 +218,7 @@ export class CompanionBridge {
     const embodiment = this.active.get(userId);
     if (!embodiment) return;
     this.active.delete(userId);
+    embodiment.abort.abort();
     this.safeClose(embodiment);
     try {
       await this.opts.notify(

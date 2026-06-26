@@ -35,6 +35,12 @@ class FakeConnection implements CompanionConnection {
   async *callStream(): AsyncIterable<never> {
     // Not exercised here; the proposal renderer is tested in proposals.test.ts.
   }
+  async *greeting(): AsyncIterable<never> {
+    // Not exercised here; greeting/proactive are tested in proactive.test.ts.
+  }
+  async *events(): AsyncIterable<never> {
+    // Empty + returns immediately: the proactive loop ends at once in bridge tests.
+  }
   call<T>(): Promise<T> {
     // Not exercised here; the read-only views are tested in read-commands.test.ts.
     return Promise.reject(new Error('call() not used in bridge tests'));

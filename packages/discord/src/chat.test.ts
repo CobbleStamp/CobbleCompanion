@@ -28,6 +28,8 @@ function connectionFrom(events: ChatStreamEvent[], throwError?: unknown): Compan
     async *callStream(): AsyncIterable<ChatStreamEvent> {
       // Not used in chat tests (chat() is the streaming path here).
     },
+    async *greeting(): AsyncIterable<ChatStreamEvent> {},
+    async *events(): AsyncIterable<never> {},
   };
 }
 

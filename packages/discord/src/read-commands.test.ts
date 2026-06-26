@@ -19,6 +19,8 @@ class RecordingConnection implements CompanionConnection {
   onSuperseded(): void {}
   async *chat(): AsyncIterable<never> {}
   async *callStream(): AsyncIterable<never> {}
+  async *greeting(): AsyncIterable<never> {}
+  async *events(): AsyncIterable<never> {}
   close(): void {}
   async call<T>(method: string, params?: unknown): Promise<T> {
     this.calls.push({ method, params });

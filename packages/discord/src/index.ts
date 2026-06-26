@@ -42,6 +42,8 @@ export { handleChat } from './chat.js';
 export { handleProposalAction } from './proposals.js';
 export { renderTurnStream } from './turn-render.js';
 export type { TurnSurface } from './turn-render.js';
+export { runProactiveLoop, streamGreeting } from './proactive.js';
+export type { PostMessage } from './proactive.js';
 export { COMMAND_SPECS } from './commands.js';
 export { consoleLogger } from './logger.js';
 export { createMintTokenSource } from './token-source.js';

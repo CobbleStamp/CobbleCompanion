@@ -40,6 +40,8 @@ function fakeConnectionFactory(reply: string): CompanionConnectionFactory {
     async *callStream(): AsyncIterable<ChatStreamEvent> {
       // Not used in this test (chat() is the streaming path).
     },
+    async *greeting(): AsyncIterable<ChatStreamEvent> {},
+    async *events(): AsyncIterable<never> {},
   });
 }
 

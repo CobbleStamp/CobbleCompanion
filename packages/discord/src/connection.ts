@@ -9,10 +9,13 @@
  * (token → URL → claim → supersede).
  */
 
-import type { ChatStreamEvent } from '@cobble/shared';
+import type { ChatStreamEvent, CompanionStreamEvent } from '@cobble/shared';
 import type { CompanionConnection, CompanionConnectionFactory } from './bridge.js';
 import type { Logger } from './gateway/types.js';
 import { WsTransport, type WsSocketFactory } from './ws-client.js';
+
+/** Cap on remembered turn-reply ids (for proactive dedup); oldest are trimmed. */
+const PRODUCED_ID_CAP = 500;
 
 export interface CompanionConnectionDeps {
   /** Base `/ws` origin, e.g. `wss://home.cobble.example` (no trailing `/ws`). */
@@ -33,6 +36,41 @@ export function createCompanionConnectionFactory(
     transport.onEvent((event) => {
       if (event === 'embodiment.superseded') supersededHandler();
     });
+
+    // Proactive dedup (companion-discord.md §8, plans/discord-surface.md D5): a turn
+    // reply lands BOTH on the request stream (rendered inline) AND on the live
+    // `companion` event log. Remember the ids we render inline (`producedIds`) and
+    // suppress any companion message that arrives mid-turn (`turnDepth`), so the
+    // proactive loop forwards only genuinely autonomous messages.
+    const producedIds = new Set<string>();
+    let turnDepth = 0;
+    const recordProduced = (chunk: ChatStreamEvent): void => {
+      if (chunk.type !== 'done') return;
+      const id = chunk.message.id;
+      if (typeof id !== 'string') return;
+      producedIds.add(id);
+      if (producedIds.size > PRODUCED_ID_CAP) {
+        const oldest = producedIds.values().next().value;
+        if (oldest !== undefined) producedIds.delete(oldest);
+      }
+    };
+
+    async function* recordingStream(
+      method: string,
+      params?: unknown,
+    ): AsyncIterable<ChatStreamEvent> {
+      turnDepth += 1;
+      try {
+        for await (const chunk of transport.callStream(method, params)) {
+          const event = chunk as ChatStreamEvent;
+          recordProduced(event);
+          yield event;
+        }
+      } finally {
+        turnDepth -= 1;
+      }
+    }
+
     return {
       async connect(): Promise<void> {
         const token = await deps.acquireToken(userId);
@@ -45,14 +83,48 @@ export function createCompanionConnectionFactory(
       onSuperseded(handler: () => void): void {
         supersededHandler = handler;
       },
-      async *chat(content: string): AsyncIterable<ChatStreamEvent> {
-        for await (const chunk of transport.callStream('messages.send', { content })) {
-          yield chunk as ChatStreamEvent;
-        }
+      chat(content: string): AsyncIterable<ChatStreamEvent> {
+        return recordingStream('messages.send', { content });
       },
-      async *callStream(method: string, params?: unknown): AsyncIterable<ChatStreamEvent> {
-        for await (const chunk of transport.callStream(method, params)) {
-          yield chunk as ChatStreamEvent;
+      callStream(method: string, params?: unknown): AsyncIterable<ChatStreamEvent> {
+        return recordingStream(method, params);
+      },
+      greeting(): AsyncIterable<ChatStreamEvent> {
+        return recordingStream('greeting.stream');
+      },
+      async *events(signal: AbortSignal): AsyncIterable<CompanionStreamEvent> {
+        const queue: CompanionStreamEvent[] = [];
+        let waiter: (() => void) | null = null;
+        const wake = (): void => {
+          const w = waiter;
+          waiter = null;
+          w?.();
+        };
+        const unsubscribe = transport.onEvent((name, data) => {
+          if (name !== 'companion') return;
+          queue.push(data as CompanionStreamEvent);
+          wake();
+        });
+        signal.addEventListener('abort', wake);
+        try {
+          for (;;) {
+            if (signal.aborted) return;
+            const event = queue.shift();
+            if (event === undefined) {
+              await new Promise<void>((resolve) => {
+                waiter = resolve;
+              });
+              continue;
+            }
+            // Dedup: drop a reply we rendered inline, or any message mid-turn.
+            if (event.type === 'message') {
+              if (turnDepth > 0 || producedIds.has(event.message.id)) continue;
+            }
+            yield event;
+          }
+        } finally {
+          unsubscribe();
+          signal.removeEventListener('abort', wake);
         }
       },
       call<T>(method: string, params?: unknown): Promise<T> {

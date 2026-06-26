@@ -93,4 +93,70 @@ describe('createCompanionConnectionFactory', () => {
     socket().emit({ event: 'embodiment.superseded', data: {} });
     expect(superseded).toBe(true);
   });
+
+  it('dedups turn replies and mid-turn messages from the proactive event stream', async () => {
+    const { factory, socket } = captureFactory();
+    const make = createCompanionConnectionFactory({
+      wsBaseUrl: 'wss://home.example',
+      acquireToken: async () => 'tok',
+      socketFactory: factory,
+      logger: silent,
+    });
+    const connection = make({ userId: 'u1', companionId: 'c-9' });
+    const connecting = connection.connect();
+    await tick();
+    socket().fire('open');
+    socket().emit({ event: 'embodiment.ready', data: {} });
+    await connecting;
+
+    const ac = new AbortController();
+    const received: string[] = [];
+    const consume = (async () => {
+      for await (const event of connection.events(ac.signal)) {
+        if (event.type === 'message') received.push(event.message.id);
+      }
+    })();
+    await tick(); // let events() subscribe
+
+    const companionMessage = (id: string): void =>
+      socket().emit({
+        event: 'companion',
+        data: { type: 'message', message: { id, role: 'assistant', content: 'x' } },
+      });
+
+    // An autonomous message before any turn → forwarded.
+    companionMessage('auto-1');
+    await tick();
+
+    // A chat turn is in flight (turnDepth > 0).
+    const turn = (async () => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      for await (const _ of connection.chat('yo')) {
+        /* drain */
+      }
+    })();
+    await tick(); // the messages.send request (r1) is sent; turnDepth is now 1
+
+    // A message arriving mid-turn is suppressed (it's the turn's own reply).
+    companionMessage('mid-1');
+    await tick();
+
+    // The turn yields its reply (recorded) and ends.
+    socket().emit({
+      id: 'r1',
+      stream: { type: 'done', message: { id: 'reply-1', role: 'assistant', content: 'reply' } },
+    });
+    socket().emit({ id: 'r1', result: { done: true } });
+    await turn;
+
+    // The same reply now arrives on the live log → deduped by id.
+    companionMessage('reply-1');
+    // A later autonomous message → forwarded.
+    companionMessage('auto-2');
+    await tick();
+
+    ac.abort();
+    await consume;
+    expect(received).toEqual(['auto-1', 'auto-2']);
+  });
 });
