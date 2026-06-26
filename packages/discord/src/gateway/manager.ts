@@ -14,6 +14,7 @@ import type {
   DiscordGateway,
   DiscordGatewayFactory,
   InboundDirectMessage,
+  InboundSlashCommand,
   Logger,
   SlashCommandSpec,
 } from './types.js';
@@ -23,6 +24,17 @@ export interface DirectMessageContext {
   readonly userId: string;
   readonly config: DiscordConfigRecord;
   readonly message: InboundDirectMessage;
+  /** Reply in the same DM channel. */
+  reply(content: string): Promise<void>;
+}
+
+/** An inbound slash command, tagged with the owning user and that bot's config. */
+export interface SlashCommandContext {
+  readonly userId: string;
+  readonly config: DiscordConfigRecord;
+  readonly command: InboundSlashCommand;
+  /** Reply to the interaction (ephemeral). */
+  reply(content: string): Promise<void>;
 }
 
 export interface GatewayManagerOptions {
@@ -30,8 +42,10 @@ export interface GatewayManagerOptions {
   readonly gatewayFactory: DiscordGatewayFactory;
   /** Decrypt a stored bot token; null when it can't be (logged, the bot is skipped). */
   readonly decryptToken: (encryptedBotToken: string) => string | null;
-  /** Inbound-DM sink — the bridge/router (T7+) owns lock/summon/chat handling. */
+  /** Inbound-DM sink — the bridge/router owns lock/summon/chat handling. */
   readonly onDirectMessage: (ctx: DirectMessageContext) => void;
+  /** Inbound slash-command sink — the router owns lock + `/link`/summon/commands. */
+  readonly onSlashCommand: (ctx: SlashCommandContext) => void;
   /** Global slash commands (re)registered per bot on connect (DM-context enabled). */
   readonly commands: readonly SlashCommandSpec[];
   readonly pollIntervalMs: number;
@@ -128,13 +142,22 @@ export class GatewayManager {
       return;
     }
     const gateway = this.opts.gatewayFactory(token);
+    // Resolve the freshest config at dispatch time (a poll may have refreshed it).
+    const configNow = (): DiscordConfigRecord => this.bots.get(config.userId)?.config ?? config;
     gateway.onDirectMessage((message) => {
-      // Resolve the freshest config at dispatch time (a poll may have refreshed it).
-      const current = this.bots.get(config.userId);
       this.opts.onDirectMessage({
         userId: config.userId,
-        config: current?.config ?? config,
+        config: configNow(),
         message,
+        reply: (content) => gateway.sendDirectMessage(message.channelId, content),
+      });
+    });
+    gateway.onSlashCommand((command) => {
+      this.opts.onSlashCommand({
+        userId: config.userId,
+        config: configNow(),
+        command,
+        reply: (content) => command.reply(content),
       });
     });
     // Record before start so a fast inbound event finds the entry.

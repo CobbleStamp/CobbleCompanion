@@ -26,6 +26,26 @@ export interface InboundDirectMessage {
 export interface SlashCommandSpec {
   readonly name: string;
   readonly description: string;
+  /** String options the command accepts (e.g. `code` for `/link`). */
+  readonly options?: readonly SlashCommandOptionSpec[];
+}
+
+export interface SlashCommandOptionSpec {
+  readonly name: string;
+  readonly description: string;
+  readonly required: boolean;
+}
+
+/** An inbound slash-command invocation (a Discord interaction). */
+export interface InboundSlashCommand {
+  readonly name: string;
+  /** Discord user id of the invoker (checked against the owner lock downstream). */
+  readonly userId: string;
+  readonly channelId: string;
+  /** Option name → string value. */
+  readonly options: Readonly<Record<string, string>>;
+  /** Reply to the interaction (ephemeral — only the invoker sees it). */
+  reply(content: string): Promise<void>;
 }
 
 /**
@@ -40,6 +60,10 @@ export interface DiscordGateway {
   stop(): Promise<void>;
   /** Register the inbound-DM handler. Set before {@link start}. */
   onDirectMessage(handler: (message: InboundDirectMessage) => void): void;
+  /** Register the inbound slash-command handler. Set before {@link start}. */
+  onSlashCommand(handler: (command: InboundSlashCommand) => void): void;
+  /** Send a message to a DM channel (a reply, a proactive note, a chat turn). */
+  sendDirectMessage(channelId: string, content: string): Promise<void>;
   /** Register (idempotently) the global slash commands, with DM context enabled. */
   registerCommands(commands: readonly SlashCommandSpec[]): Promise<void>;
 }

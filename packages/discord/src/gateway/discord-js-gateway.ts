@@ -18,13 +18,13 @@ import {
   Partials,
   REST,
   Routes,
-  type Interaction,
   type Message,
 } from 'discord.js';
 import type {
   DiscordGateway,
   DiscordGatewayFactory,
   InboundDirectMessage,
+  InboundSlashCommand,
   Logger,
   SlashCommandSpec,
 } from './types.js';
@@ -36,6 +36,7 @@ export function createDiscordJsGatewayFactory(logger: Logger): DiscordGatewayFac
 class DiscordJsGateway implements DiscordGateway {
   private readonly client: Client;
   private dmHandler: ((message: InboundDirectMessage) => void) | null = null;
+  private commandHandler: ((command: InboundSlashCommand) => void) | null = null;
 
   constructor(
     private readonly botToken: string,
@@ -52,6 +53,22 @@ class DiscordJsGateway implements DiscordGateway {
         authorId: message.author.id,
         channelId: message.channelId,
         content: message.content,
+      });
+    });
+    this.client.on(Events.InteractionCreate, (interaction) => {
+      if (!interaction.isChatInputCommand()) return;
+      const options: Record<string, string> = {};
+      for (const option of interaction.options.data) {
+        if (typeof option.value === 'string') options[option.name] = option.value;
+      }
+      this.commandHandler?.({
+        name: interaction.commandName,
+        userId: interaction.user.id,
+        channelId: interaction.channelId,
+        options,
+        reply: async (content) => {
+          await interaction.reply({ content, ephemeral: true });
+        },
       });
     });
     this.client.on(Events.Error, (error) => {
@@ -74,6 +91,22 @@ class DiscordJsGateway implements DiscordGateway {
     this.dmHandler = handler;
   }
 
+  onSlashCommand(handler: (command: InboundSlashCommand) => void): void {
+    this.commandHandler = handler;
+  }
+
+  async sendDirectMessage(channelId: string, content: string): Promise<void> {
+    const channel = await this.client.channels.fetch(channelId);
+    if (channel?.isSendable()) {
+      await channel.send(content);
+    } else {
+      this.logger.error('discord sendDirectMessage: channel not sendable', {
+        operation: 'discord.send',
+        channelId,
+      });
+    }
+  }
+
   /**
    * Register the global command set (DM context enabled), diffing first so an
    * unchanged set is not re-pushed. Requires the application id, available once ready.
@@ -89,8 +122,15 @@ class DiscordJsGateway implements DiscordGateway {
     const desired = commands.map((command) => ({
       name: command.name,
       description: command.description,
-      // contexts [1] = BOT_DM, [2] = PRIVATE_CHANNEL; integration_types [1] = user
-      // install. Together these surface the command in a DM with the bot.
+      // Option type 3 = STRING.
+      options: (command.options ?? []).map((option) => ({
+        type: 3,
+        name: option.name,
+        description: option.description,
+        required: option.required,
+      })),
+      // contexts [1] = BOT_DM, [2] = PRIVATE_CHANNEL; integration_types [0] = guild
+      // install, [1] = user install. Together these surface the command in a DM.
       contexts: [1, 2],
       integration_types: [0, 1],
     }));
@@ -98,7 +138,3 @@ class DiscordJsGateway implements DiscordGateway {
     await rest.put(Routes.applicationCommands(applicationId), { body: desired });
   }
 }
-
-// `Interaction` is imported for the (T7+) interaction handler; referenced here so the
-// import is retained under `verbatimModuleSyntax` until then.
-export type DiscordInteraction = Interaction;

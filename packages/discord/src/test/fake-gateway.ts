@@ -8,14 +8,23 @@ import type {
   DiscordGateway,
   DiscordGatewayFactory,
   InboundDirectMessage,
+  InboundSlashCommand,
   SlashCommandSpec,
 } from '../gateway/types.js';
+
+/** A message the fake "sent" to a DM channel, captured for assertions. */
+export interface SentMessage {
+  readonly channelId: string;
+  readonly content: string;
+}
 
 export class FakeGateway implements DiscordGateway {
   started = false;
   stopped = false;
   registeredCommands: readonly SlashCommandSpec[] = [];
-  private handler: ((message: InboundDirectMessage) => void) | null = null;
+  readonly sent: SentMessage[] = [];
+  private dmHandler: ((message: InboundDirectMessage) => void) | null = null;
+  private commandHandler: ((command: InboundSlashCommand) => void) | null = null;
 
   constructor(readonly token: string) {}
 
@@ -28,7 +37,15 @@ export class FakeGateway implements DiscordGateway {
   }
 
   onDirectMessage(handler: (message: InboundDirectMessage) => void): void {
-    this.handler = handler;
+    this.dmHandler = handler;
+  }
+
+  onSlashCommand(handler: (command: InboundSlashCommand) => void): void {
+    this.commandHandler = handler;
+  }
+
+  async sendDirectMessage(channelId: string, content: string): Promise<void> {
+    this.sent.push({ channelId, content });
   }
 
   async registerCommands(commands: readonly SlashCommandSpec[]): Promise<void> {
@@ -39,7 +56,30 @@ export class FakeGateway implements DiscordGateway {
 
   /** Simulate Discord delivering a DM to this bot. */
   receiveDirectMessage(message: InboundDirectMessage): void {
-    this.handler?.(message);
+    this.dmHandler?.(message);
+  }
+
+  /**
+   * Simulate a slash-command invocation. Returns the captured interaction replies
+   * (the command's `reply` pushes into it), so a test can assert what the user saw.
+   */
+  receiveSlashCommand(input: {
+    name: string;
+    userId: string;
+    channelId?: string;
+    options?: Record<string, string>;
+  }): string[] {
+    const replies: string[] = [];
+    this.commandHandler?.({
+      name: input.name,
+      userId: input.userId,
+      channelId: input.channelId ?? 'dm-channel',
+      options: input.options ?? {},
+      reply: async (content) => {
+        replies.push(content);
+      },
+    });
+    return replies;
   }
 }
 

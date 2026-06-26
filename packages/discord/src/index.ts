@@ -20,7 +20,13 @@ export { encryptSecret, decryptSecret, keyFromBase64, secretsEqual, KEY_BYTES } 
 export type { DecryptResult } from './crypto.js';
 
 export { GatewayManager } from './gateway/manager.js';
-export type { GatewayManagerOptions, DirectMessageContext } from './gateway/manager.js';
+export type {
+  GatewayManagerOptions,
+  DirectMessageContext,
+  SlashCommandContext,
+} from './gateway/manager.js';
+export { BotRouter, LINK_CODE_TTL_MS, LINK_COMMAND } from './router.js';
+export type { RouterOptions } from './router.js';
 export { createDiscordJsGatewayFactory } from './gateway/discord-js-gateway.js';
 export type {
   DiscordGateway,

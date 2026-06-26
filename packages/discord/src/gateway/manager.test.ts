@@ -5,6 +5,7 @@ import {
   GatewayManager,
   type DirectMessageContext,
   type GatewayManagerOptions,
+  type SlashCommandContext,
 } from './manager.js';
 import type { Logger } from './types.js';
 
@@ -67,17 +68,19 @@ const decryptToken = (encrypted: string): string | null =>
 function makeManager(store: InMemoryConfigStore, overrides: Partial<GatewayManagerOptions> = {}) {
   const gateways = fakeGatewayFactory();
   const received: DirectMessageContext[] = [];
+  const commands: SlashCommandContext[] = [];
   const manager = new GatewayManager({
     configStore: store,
     gatewayFactory: gateways.factory,
     decryptToken,
     onDirectMessage: (ctx) => received.push(ctx),
+    onSlashCommand: (ctx) => commands.push(ctx),
     commands: [{ name: 'summon', description: 'Bring the companion here' }],
     pollIntervalMs: 60_000,
     logger: silent,
     ...overrides,
   });
-  return { manager, gateways, received };
+  return { manager, gateways, received, commands };
 }
 
 describe('GatewayManager', () => {
@@ -191,6 +194,42 @@ describe('GatewayManager', () => {
     await manager.stop();
     expect(manager.size).toBe(0);
     expect(gateways.created.every((g) => g.stopped)).toBe(true);
+  });
+
+  it('routes a slash command to onSlashCommand tagged with the owning user', async () => {
+    const store = new InMemoryConfigStore();
+    store.set(makeRecord('u1', 'enc:tokenA'));
+    const { manager, gateways, commands } = makeManager(store);
+    await manager.sync();
+
+    gateways.byToken('tokenA')!.receiveSlashCommand({
+      name: 'link',
+      userId: 'discord-user-1',
+      options: { code: 'ABCD1234' },
+    });
+
+    expect(commands).toHaveLength(1);
+    expect(commands[0]?.userId).toBe('u1');
+    expect(commands[0]?.command.name).toBe('link');
+    expect(commands[0]?.command.options.code).toBe('ABCD1234');
+  });
+
+  it('a DM context reply sends through the bot gateway', async () => {
+    const store = new InMemoryConfigStore();
+    store.set(makeRecord('u1', 'enc:tokenA'));
+    const { manager, gateways, received } = makeManager(store);
+    await manager.sync();
+
+    gateways.byToken('tokenA')!.receiveDirectMessage({
+      authorId: 'discord-user-1',
+      channelId: 'dm-channel-1',
+      content: 'hi',
+    });
+    await received[0]!.reply('summon me first');
+
+    expect(gateways.byToken('tokenA')?.sent).toEqual([
+      { channelId: 'dm-channel-1', content: 'summon me first' },
+    ]);
   });
 
   it('logs and survives a config-store list failure', async () => {
