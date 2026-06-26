@@ -363,14 +363,30 @@ T2 ─▶ T2b ─┘   T4 ─┘                       │      └─▶ T11
 
 ### Phase 5 — Read-only commands
 
-**T10 — The eight slash commands** *(needs: T9)*
+**T10 — The eight slash commands** *(needs: T9)* — **✓ built**
+- Done: `packages/discord/src/read-commands.ts` (`handleReadOnlyCommand`, the bridge's
+  `onReadOnlyCommand` hook) dispatches `/memory`, `/recall`, `/activity`, `/episodes`,
+  `/growth`, `/budget`, `/feed`, `/reading` to the matching `/ws` method and renders
+  each with the pure `command-render.ts` formatters. Because the companion-scoped read
+  methods require the live claim (`requireEmbodiment`/`companionOf`), the views run over
+  the **summoned** connection — so the bridge gates a view run while dormant with the
+  same "summon first" prompt as chat (a side connection would itself supersede). The
+  gateway seam sends string content only, so views render as **Discord Markdown**, not
+  embeds. `/recall` requires a query (and its `over_cap` embedding-spend rejection
+  becomes a feed nudge); `/episodes` takes an optional query (`episodes.search` vs
+  `.list`); `/feed` shows the pantry with no arg and applies a `ration`/`spark`/`treat`
+  with one (an empty-pantry `conflict` is explained). The eight specs were added to
+  `COMMAND_SPECS` (registered globally on `ready`, T6). 31 new tests (17 render
+  snapshots + 14 dispatch/error). Extended the `CompanionConnection` seam with a generic
+  `call<T>()`.
+- Original sketch follows:
 - Files: `packages/discord/src/commands/{memory,recall,activity,episodes,growth,budget,feed,reading}.ts`,
   `commands/render.ts` (embed formatting), command registration on ready.
 - AC: each command invokes the correct WS method (`memory.snapshot`,
   `memory.search`, `activity.list`, `episodes.list`/`search`, `growth.get`,
   `budget.get`, `food.get`→`feed`, `leads.list`) and renders an embed; formatting
   covered by snapshot tests against sample DTOs.
-- Verify: `pnpm --filter @cobble/discord test commands`.
+- Verify: `pnpm --filter @cobble/discord test`.
 
 ### Phase 6 — Approvals
 
@@ -416,9 +432,9 @@ and a non-owner DM is refused); `loadWorkerConfig(env)` reads the worker env
 `DISCORD_POLL_INTERVAL_MS`); `startWorker(config)` builds the real deps (the
 `discord.js` gateway factory, the `WsTransport` connection factory, and the HTTP
 `createMintTokenSource` client for T2b) and runs as the always-on sibling process
-(`pnpm --filter @cobble/discord {dev,serve,start}`). `onReadOnlyCommand` is a "not
-available yet" stub until T10. Read-only commands (T10), approvals (T11), proactive
-DMs + greeting (T12), and the web settings panel (T13) remain.
+(`pnpm --filter @cobble/discord {dev,serve,start}`). `onReadOnlyCommand` now wires the
+T10 read-only views. Approvals (T11), proactive DMs + greeting (T12), and the web
+settings panel (T13) remain.
 
 ### Cross-cutting verification (run at every checkpoint)
 

@@ -28,6 +28,10 @@ class FakeConnection implements CompanionConnection {
   async *chat(): AsyncIterable<never> {
     // Not exercised here; the chat renderer is tested in chat.test.ts.
   }
+  call<T>(): Promise<T> {
+    // Not exercised here; the read-only views are tested in read-commands.test.ts.
+    return Promise.reject(new Error('call() not used in bridge tests'));
+  }
   close(): void {
     this.closed = true;
   }
@@ -87,7 +91,7 @@ interface Harness {
   connections: FakeConnection[];
   notices: Array<{ userId: string; channelId: string; content: string }>;
   chats: DirectMessageContext[];
-  readOnly: SlashCommandContext[];
+  readOnly: Array<{ ctx: SlashCommandContext; connection: CompanionConnection }>;
 }
 
 function makeBridge(
@@ -97,7 +101,7 @@ function makeBridge(
   const connections: FakeConnection[] = [];
   const notices: Harness['notices'] = [];
   const chats: DirectMessageContext[] = [];
-  const readOnly: SlashCommandContext[] = [];
+  const readOnly: Harness['readOnly'] = [];
   const bridge = new CompanionBridge({
     connectionFactory: () => {
       const connection = new FakeConnection();
@@ -111,8 +115,8 @@ function makeBridge(
     onChat: (ctx) => {
       chats.push(ctx);
     },
-    onReadOnlyCommand: (ctx) => {
-      readOnly.push(ctx);
+    onReadOnlyCommand: (ctx, connection) => {
+      readOnly.push({ ctx, connection });
     },
     logger: silent,
     ...opts.overrides,
@@ -208,14 +212,27 @@ describe('CompanionBridge — owner DM gating', () => {
   });
 });
 
-describe('CompanionBridge — other commands', () => {
-  it('delegates non-summon/status commands to the read-only handler', async () => {
+describe('CompanionBridge — read-only views', () => {
+  it('asks to summon when a view is run while dormant', async () => {
     const h = makeBridge();
+    const { ctx, replies } = cmdCtx('memory');
+
+    await h.bridge.handleOwnerCommand(ctx);
+
+    expect(h.readOnly).toHaveLength(0); // gated: the view never ran
+    expect(replies[0]).toContain('/summon');
+  });
+
+  it('delegates to the read-only handler with the live connection when summoned', async () => {
+    const h = makeBridge();
+    await h.bridge.handleOwnerCommand(cmdCtx('summon').ctx);
     const { ctx } = cmdCtx('memory');
 
     await h.bridge.handleOwnerCommand(ctx);
 
     expect(h.readOnly).toHaveLength(1);
-    expect(h.readOnly[0]?.command.name).toBe('memory');
+    expect(h.readOnly[0]?.ctx.command.name).toBe('memory');
+    // The summoned connection is handed to the view (so it can call companion-scoped methods).
+    expect(h.readOnly[0]?.connection).toBe(h.connections[0]);
   });
 });

@@ -50,6 +50,9 @@ export function createCompanionConnectionFactory(
           yield chunk as ChatStreamEvent;
         }
       },
+      call<T>(method: string, params?: unknown): Promise<T> {
+        return transport.call<T>(method, params);
+      },
       close(): void {
         transport.close();
       },

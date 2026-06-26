@@ -17,6 +17,7 @@ import { createDiscordJsGatewayFactory } from './gateway/discord-js-gateway.js';
 import { GatewayManager } from './gateway/manager.js';
 import type { DiscordGatewayFactory, Logger } from './gateway/types.js';
 import { consoleLogger } from './logger.js';
+import { handleReadOnlyCommand } from './read-commands.js';
 import { BotRouter } from './router.js';
 import { createMintTokenSource } from './token-source.js';
 
@@ -76,8 +77,7 @@ export function assembleWorker(parts: AssembleWorkerParts): AssembledWorker {
     connectionFactory: parts.connectionFactory,
     notify: (userId, channelId, content) => manager.sendDirectMessage(userId, channelId, content),
     onChat: (ctx, connection) => handleChat(ctx, connection, logger),
-    // Read-only commands (/memory, /recall, …) land in T10.
-    onReadOnlyCommand: (ctx) => ctx.reply('That command isn’t available yet.'),
+    onReadOnlyCommand: (ctx, connection) => handleReadOnlyCommand(ctx, connection, logger),
     logger,
   });
 

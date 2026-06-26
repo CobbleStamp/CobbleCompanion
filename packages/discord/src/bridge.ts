@@ -22,6 +22,8 @@ export interface CompanionConnection {
   onSuperseded(handler: () => void): void;
   /** Run a chat turn (`messages.send`), yielding the stream until it ends/throws. */
   chat(content: string): AsyncIterable<ChatStreamEvent>;
+  /** Invoke a non-streaming WS method over this connection (the read-only views — T10). */
+  call<T>(method: string, params?: unknown): Promise<T>;
   /** Close the connection (deliberate teardown). */
   close(): void;
 }
@@ -40,8 +42,15 @@ export interface CompanionBridgeOptions {
     ctx: DirectMessageContext,
     connection: CompanionConnection,
   ) => void | Promise<void>;
-  /** Handle a non-summon/status owner command that passed the lock (read-only — T10). */
-  readonly onReadOnlyCommand: (ctx: SlashCommandContext) => void | Promise<void>;
+  /**
+   * Handle a non-summon/status owner command that passed the lock (the read-only
+   * views — T10). Only invoked while embodied: the views call companion-scoped WS
+   * methods, which require the live claim, so the bridge passes the active connection.
+   */
+  readonly onReadOnlyCommand: (
+    ctx: SlashCommandContext,
+    connection: CompanionConnection,
+  ) => void | Promise<void>;
   readonly logger: Logger;
 }
 
@@ -55,6 +64,9 @@ interface ActiveEmbodiment {
 export const SUMMON_COMMAND = 'summon';
 export const STATUS_COMMAND = 'status';
 
+/** Shown when the owner chats or runs a view while the companion is dormant. */
+const DORMANT_NOTICE = 'I’m not here right now — `/summon` to bring me into this chat.';
+
 export class CompanionBridge {
   private readonly active = new Map<string, ActiveEmbodiment>();
 
@@ -64,17 +76,26 @@ export class CompanionBridge {
   async handleOwnerMessage(ctx: DirectMessageContext): Promise<void> {
     const embodiment = this.active.get(ctx.userId);
     if (!embodiment) {
-      await ctx.reply('I’m not here right now — `/summon` to bring me into this chat.');
+      await ctx.reply(DORMANT_NOTICE);
       return;
     }
     await this.opts.onChat(ctx, embodiment.connection);
   }
 
-  /** Router hook (owner command): `/summon` + `/status` here; the rest are read-only. */
+  /**
+   * Router hook (owner command): `/summon` + `/status` here; the rest are read-only
+   * views. The views are companion-scoped (they need the live claim), so a read-only
+   * command while dormant is refused with the same "summon first" prompt as chat.
+   */
   async handleOwnerCommand(ctx: SlashCommandContext): Promise<void> {
     if (ctx.command.name === SUMMON_COMMAND) return this.summon(ctx);
     if (ctx.command.name === STATUS_COMMAND) return this.status(ctx);
-    return this.opts.onReadOnlyCommand(ctx);
+    const embodiment = this.active.get(ctx.userId);
+    if (!embodiment) {
+      await ctx.reply(DORMANT_NOTICE);
+      return;
+    }
+    return this.opts.onReadOnlyCommand(ctx, embodiment.connection);
   }
 
   isSummoned(userId: string): boolean {
