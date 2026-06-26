@@ -38,6 +38,12 @@ export type {
 export { createCompanionConnectionFactory } from './connection.js';
 export type { CompanionConnectionDeps } from './connection.js';
 export { handleChat } from './chat.js';
+export { COMMAND_SPECS } from './commands.js';
+export { consoleLogger } from './logger.js';
+export { createMintTokenSource } from './token-source.js';
+export type { MintTokenSourceDeps } from './token-source.js';
+export { assembleWorker, loadWorkerConfig, startWorker } from './worker.js';
+export type { AssembleWorkerParts, AssembledWorker, WorkerConfig } from './worker.js';
 export { createDiscordJsGatewayFactory } from './gateway/discord-js-gateway.js';
 export type {
   DiscordGateway,
