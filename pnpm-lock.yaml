@@ -103,6 +103,9 @@ importers:
         specifier: ^3.24.1
         version: 3.25.76
     devDependencies:
+      '@cobble/discord':
+        specifier: workspace:*
+        version: link:../discord
       tsx:
         specifier: ^4.19.2
         version: 4.22.4
