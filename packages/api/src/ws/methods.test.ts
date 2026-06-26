@@ -5,8 +5,9 @@
  */
 
 import type { AddressInfo } from 'node:net';
+import { decryptSecret, keyFromBase64 } from '@cobble/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { makeTestApp, type TestApp } from '../test/helpers.js';
+import { makeTestApp, testConfig, type TestApp } from '../test/helpers.js';
 
 interface Frame {
   id?: string;
@@ -174,5 +175,97 @@ describe('ws methods', () => {
     } finally {
       client.close();
     }
+  });
+
+  describe('discord.config.* (user-scoped, T13)', () => {
+    interface View {
+      configured: boolean;
+      boundCompanionId: string | null;
+      ownerLinked: boolean;
+      linkCode: string | null;
+    }
+
+    it('saves the bot token encrypted, then reads it back without the token', async () => {
+      const client = await open(false);
+      try {
+        const before = await call(client, { id: 'd1', method: 'discord.config.get' });
+        expect((before.frame.result as { discord: View }).discord.configured).toBe(false);
+
+        const saved = await call(client, {
+          id: 'd2',
+          method: 'discord.config.set',
+          params: { botToken: 'super-secret-bot-token', boundCompanionId: companionId },
+        });
+        const view = (saved.frame.result as { discord: View }).discord;
+        expect(view).toMatchObject({
+          configured: true,
+          boundCompanionId: companionId,
+          ownerLinked: false,
+        });
+        expect(view.linkCode).toMatch(/^[A-Z0-9]{8}$/);
+
+        // The stored token is encrypted at rest, and decrypts back to the plaintext.
+        const userId = (await ctx.deps.identity.ensureUserByEmail('owner@example.com')).id;
+        const record = await ctx.deps.discordConfig.findByUserId(userId);
+        expect(record?.encryptedBotToken).not.toContain('super-secret-bot-token');
+        const key = keyFromBase64(testConfig.discordTokenKey);
+        expect(decryptSecret(record!.encryptedBotToken, key)).toEqual({
+          ok: true,
+          plaintext: 'super-secret-bot-token',
+        });
+      } finally {
+        client.close();
+      }
+    });
+
+    it('rejects binding a companion the caller does not own (not_found)', async () => {
+      const client = await open(false);
+      try {
+        const { frame } = await call(client, {
+          id: 'd3',
+          method: 'discord.config.set',
+          params: { botToken: 't', boundCompanionId: '00000000-0000-0000-0000-000000000000' },
+        });
+        expect(frame.error?.code).toBe('not_found');
+      } finally {
+        client.close();
+      }
+    });
+
+    it('regenerates the link code without changing the binding', async () => {
+      const client = await open(false);
+      try {
+        const first = await call(client, {
+          id: 'd4',
+          method: 'discord.config.set',
+          params: { botToken: 't', boundCompanionId: companionId },
+        });
+        const firstCode = (first.frame.result as { discord: View }).discord.linkCode;
+        const regen = await call(client, { id: 'd5', method: 'discord.config.regenerateLink' });
+        const view = (regen.frame.result as { discord: View }).discord;
+        expect(view.boundCompanionId).toBe(companionId);
+        expect(view.linkCode).toMatch(/^[A-Z0-9]{8}$/);
+        expect(view.linkCode).not.toBe(firstCode);
+      } finally {
+        client.close();
+      }
+    });
+
+    it('deletes the config (back to unconfigured)', async () => {
+      const client = await open(false);
+      try {
+        await call(client, {
+          id: 'd6',
+          method: 'discord.config.set',
+          params: { botToken: 't', boundCompanionId: companionId },
+        });
+        const del = await call(client, { id: 'd7', method: 'discord.config.delete' });
+        expect(del.frame.result).toEqual({ ok: true });
+        const after = await call(client, { id: 'd8', method: 'discord.config.get' });
+        expect((after.frame.result as { discord: View }).discord.configured).toBe(false);
+      } finally {
+        client.close();
+      }
+    });
   });
 });

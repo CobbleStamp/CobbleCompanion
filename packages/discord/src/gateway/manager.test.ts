@@ -38,6 +38,10 @@ class InMemoryConfigStore implements DiscordConfigStore {
     return record;
   }
 
+  async reissueLinkCode(userId: string): Promise<DiscordConfigRecord | null> {
+    return this.rows.get(userId) ?? null;
+  }
+
   async bindOwner(): Promise<void> {}
   async delete(userId: string): Promise<void> {
     this.rows.delete(userId);

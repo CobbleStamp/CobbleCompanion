@@ -977,6 +977,29 @@ export const feedSchema = z.object({
 });
 export type FeedBody = z.infer<typeof feedSchema>;
 
+// --- Discord surface config (companion-discord.md §9, T13) ---
+
+/** Save the user's Discord bot config (the web settings panel → `discord.config.set`). */
+export const discordConfigSetSchema = z.object({
+  /** The Discord bot token (encrypted at rest by the API; never stored plaintext). */
+  botToken: z.string().min(1),
+  /** The companion the bot embodies — must be owned by the caller. */
+  boundCompanionId: z.string().min(1),
+});
+export type DiscordConfigSetBody = z.infer<typeof discordConfigSetSchema>;
+
+/**
+ * The Discord config as shown in settings (`discord.config.get`). Never carries the
+ * bot token. `linkCode` is present only while a code is outstanding (the owner hasn't
+ * linked yet); it's null once the owner is bound.
+ */
+export interface DiscordConfigViewDto {
+  readonly configured: boolean;
+  readonly boundCompanionId: string | null;
+  readonly ownerLinked: boolean;
+  readonly linkCode: string | null;
+}
+
 // --- Provenance (Phase 1 grounded recall, docs/companion-memory.md) ---
 
 /**

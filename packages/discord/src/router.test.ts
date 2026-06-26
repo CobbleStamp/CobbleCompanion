@@ -21,6 +21,9 @@ class OneUserStore implements DiscordConfigStore {
   async upsert(_input: DiscordConfigUpsert): Promise<DiscordConfigRecord> {
     return this.record;
   }
+  async reissueLinkCode(): Promise<DiscordConfigRecord | null> {
+    return this.record;
+  }
   async bindOwner(userId: string, ownerDiscordUserId: string): Promise<void> {
     if (userId !== this.record.userId) return;
     this.boundTo = ownerDiscordUserId;

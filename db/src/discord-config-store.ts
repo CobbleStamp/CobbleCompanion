@@ -83,6 +83,11 @@ export interface DiscordConfigStore {
   findByUserId(userId: string): Promise<DiscordConfigRecord | null>;
   list(): Promise<DiscordConfigRecord[]>;
   upsert(input: DiscordConfigUpsert): Promise<DiscordConfigRecord>;
+  reissueLinkCode(
+    userId: string,
+    linkCode: string,
+    issuedAt: Date,
+  ): Promise<DiscordConfigRecord | null>;
   bindOwner(userId: string, ownerDiscordUserId: string): Promise<void>;
   delete(userId: string): Promise<void>;
 }
@@ -136,6 +141,24 @@ export class DrizzleDiscordConfigStore implements DiscordConfigStore {
       .returning();
     // `returning()` always yields the affected row on insert-or-update.
     return toRecord(row as DiscordConfigRow);
+  }
+
+  /**
+   * Re-issue the single-use `/link` code WITHOUT touching the token or owner (the
+   * settings "regenerate" action — used when a code expired before linking). Returns
+   * null if there's no config row for the user.
+   */
+  async reissueLinkCode(
+    userId: string,
+    linkCode: string,
+    issuedAt: Date,
+  ): Promise<DiscordConfigRecord | null> {
+    const [row] = await this.db
+      .update(discordConfig)
+      .set({ linkCode, linkCodeIssuedAt: issuedAt, updatedAt: new Date() })
+      .where(eq(discordConfig.userId, userId))
+      .returning();
+    return row ? toRecord(row as DiscordConfigRow) : null;
   }
 
   /** Bind the owner's Discord id on a successful `/link`, clearing the consumed code. */

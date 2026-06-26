@@ -154,6 +154,8 @@ export const testConfig: AppConfig = {
   jwtSigningSecret: 'test-jwt-signing-secret-at-least-32-bytes!!',
   // Off by default; a route test enables it via options.config.
   discordServiceClientId: '',
+  // A valid 32-byte AES key (base64) so the discord.config.* methods are enabled in tests.
+  discordTokenKey: Buffer.alloc(32, 7).toString('base64'),
   accessTokenTtlSec: 15 * 60,
   refreshTokenTtlSec: 24 * 60 * 60,
   port: 0,
