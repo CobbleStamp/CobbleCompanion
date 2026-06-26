@@ -20,11 +20,15 @@ class FakeConnection implements CompanionConnection {
   connected = false;
   closed = false;
   outcome: 'ok' | 'superseded' = 'ok';
+  /** When true, fire the takeover the instant the lease is granted — before the
+   * bridge registers the embodiment (the connect→register race). */
+  supersedeOnConnect = false;
   private supersededHandler: () => void = () => {};
 
   async connect(): Promise<void> {
     if (this.outcome === 'superseded') throw new SupersededError();
     this.connected = true;
+    if (this.supersedeOnConnect) this.supersededHandler();
   }
   onSuperseded(handler: () => void): void {
     this.supersededHandler = handler;
@@ -137,7 +141,11 @@ interface Harness {
 }
 
 function makeBridge(
-  opts: { outcome?: 'ok' | 'superseded'; overrides?: Partial<CompanionBridgeOptions> } = {},
+  opts: {
+    outcome?: 'ok' | 'superseded';
+    supersedeOnConnect?: boolean;
+    overrides?: Partial<CompanionBridgeOptions>;
+  } = {},
 ): Harness {
   const outcome = opts.outcome ?? 'ok';
   const connections: FakeConnection[] = [];
@@ -149,6 +157,7 @@ function makeBridge(
     connectionFactory: () => {
       const connection = new FakeConnection();
       connection.outcome = outcome;
+      connection.supersedeOnConnect = opts.supersedeOnConnect ?? false;
       connections.push(connection);
       return connection;
     },
@@ -189,6 +198,19 @@ describe('CompanionBridge — summon', () => {
     await h.bridge.handleOwnerCommand(ctx);
 
     expect(h.bridge.isSummoned('u1')).toBe(false);
+    expect(replies[0]).toContain('somewhere else');
+  });
+
+  it('does not strand a phantom embodiment when superseded before registration', async () => {
+    // The takeover fires the instant the lease is granted — after connect() resolves
+    // but before the bridge registers the embodiment in `active`.
+    const h = makeBridge({ supersedeOnConnect: true });
+    const { ctx, replies } = cmdCtx('summon');
+
+    await h.bridge.handleOwnerCommand(ctx);
+
+    expect(h.bridge.isSummoned('u1')).toBe(false); // not registered
+    expect(h.connections[0]?.closed).toBe(true); // dead connection torn down, not leaked
     expect(replies[0]).toContain('somewhere else');
   });
 

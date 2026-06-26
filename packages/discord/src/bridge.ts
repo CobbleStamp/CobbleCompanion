@@ -148,7 +148,7 @@ export class CompanionBridge {
   stop(): void {
     for (const embodiment of this.active.values()) {
       embodiment.abort.abort();
-      this.safeClose(embodiment);
+      this.safeClose(embodiment.connection);
     }
     this.active.clear();
   }
@@ -160,8 +160,17 @@ export class CompanionBridge {
     }
     const companionId = ctx.config.boundCompanionId;
     const connection = this.opts.connectionFactory({ userId: ctx.userId, companionId });
+    // The takeover handler is armed before connect() resolves, but the embodiment is
+    // only registered in `active` afterwards. A supersession landing in that gap would
+    // find nothing in `active` and be silently dropped — so until we register, record
+    // it in a flag and reconcile below instead of routing through handleSuperseded.
+    let supersededDuringConnect = false;
     connection.onSuperseded(() => {
-      void this.handleSuperseded(ctx.userId);
+      if (this.active.has(ctx.userId)) {
+        void this.handleSuperseded(ctx.userId);
+      } else {
+        supersededDuringConnect = true;
+      }
     });
     try {
       await connection.connect();
@@ -172,6 +181,19 @@ export class CompanionBridge {
         userId: ctx.userId,
         error,
       });
+      await ctx.reply(
+        'I couldn’t come here — I seem to be active somewhere else. Try `/summon` again.',
+      );
+      return;
+    }
+    if (supersededDuringConnect) {
+      // Claimed elsewhere between connect() resolving and registration: tear down the
+      // now-dead connection rather than storing a phantom embodiment and lying "I’m here".
+      this.opts.logger.info('discord summon superseded before registration', {
+        operation: 'discord.bridge.summon',
+        userId: ctx.userId,
+      });
+      this.safeClose(connection);
       await ctx.reply(
         'I couldn’t come here — I seem to be active somewhere else. Try `/summon` again.',
       );
@@ -219,7 +241,7 @@ export class CompanionBridge {
     if (!embodiment) return;
     this.active.delete(userId);
     embodiment.abort.abort();
-    this.safeClose(embodiment);
+    this.safeClose(embodiment.connection);
     try {
       await this.opts.notify(
         userId,
@@ -235,9 +257,9 @@ export class CompanionBridge {
     }
   }
 
-  private safeClose(embodiment: ActiveEmbodiment): void {
+  private safeClose(connection: CompanionConnection): void {
     try {
-      embodiment.connection.close();
+      connection.close();
     } catch (error) {
       this.opts.logger.error('discord bridge failed to close connection', {
         operation: 'discord.bridge.close',
