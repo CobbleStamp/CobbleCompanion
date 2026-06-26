@@ -1,7 +1,7 @@
 # Implementation plan: Discord surface (bring-your-own-bot)
 
-> **Status: proposed.** Spec drafted from a discovery interview; not yet
-> implemented. This is the build plan for adding **Discord** as a new surface —
+> **Status: shipped.** All tasks T1–T16 are built (see §9 + §12). This is the build
+> history for adding **Discord** as a new surface —
 > a "living room" the companion can be summoned into (`docs/product-overview.md`
 > §2). It changes **no `@cobble/core` code**: the Discord adapter is a decoupled
 > module that talks to the companion only through the public WebSocket contract
@@ -33,17 +33,17 @@ embodiment mechanics (`docs/plans/embodiment-handoff-fencing.md`,
 
 ## 2. Decisions (from discovery interview)
 
-| Question | Decision |
-|---|---|
-| Audience | **One bot per user**, bring-your-own token. The token *is* the binding; no shared bot, no OAuth account-linking. |
-| Who the bot answers | **Owner only** — responses locked to the owner's Discord user ID (allowlist is a later extension). |
-| Embodiment coexistence | **Explicit summon, hold-until-superseded.** `/summon` claims; opening the companion elsewhere terminates the bot's claim; chatting without a claim returns "summon first." |
-| On supersede | **DM a notice** ("I've stepped over to the web — `/summon` to bring me back here"). |
-| Proactivity | **Yes, gated by the existing proactivity dial** (off/gentle/active). Proactive DMs only while summoned/embodied. |
-| Approvals | **In-Discord embed + Confirm/Reject buttons** (going to web would supersede the bot, so approvals must be self-contained). |
-| Reply style | **Typing cue + single final message** (Discord is rate-limited and not built for token streaming). |
-| Slash commands at launch | `/memory`, `/recall`, `/activity`, `/episodes`, `/growth`, `/budget`, `/feed`, `/reading` — all of them. |
-| Runtime | **In-backend host, encrypted token at rest**, but as a **decoupled module** that imports nothing from `@cobble/core` and speaks only the public WS contract. |
+| Question                 | Decision                                                                                                                                                                   |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Audience                 | **One bot per user**, bring-your-own token. The token _is_ the binding; no shared bot, no OAuth account-linking.                                                           |
+| Who the bot answers      | **Owner only** — responses locked to the owner's Discord user ID (allowlist is a later extension).                                                                         |
+| Embodiment coexistence   | **Explicit summon, hold-until-superseded.** `/summon` claims; opening the companion elsewhere terminates the bot's claim; chatting without a claim returns "summon first." |
+| On supersede             | **DM a notice** ("I've stepped over to the web — `/summon` to bring me back here").                                                                                        |
+| Proactivity              | **Yes, gated by the existing proactivity dial** (off/gentle/active). Proactive DMs only while summoned/embodied.                                                           |
+| Approvals                | **In-Discord embed + Confirm/Reject buttons** (going to web would supersede the bot, so approvals must be self-contained).                                                 |
+| Reply style              | **Typing cue + single final message** (Discord is rate-limited and not built for token streaming).                                                                         |
+| Slash commands at launch | `/memory`, `/recall`, `/activity`, `/episodes`, `/growth`, `/budget`, `/feed`, `/reading` — all of them.                                                                   |
+| Runtime                  | **In-backend host, encrypted token at rest**, but as a **decoupled module** that imports nothing from `@cobble/core` and speaks only the public WS contract.               |
 
 ## 3. Architecture & module boundary
 
@@ -60,30 +60,30 @@ Two responsibilities inside the module:
    config store. Routes inbound Discord events (DMs, slash commands, button
    clicks) to the right per-user bridge.
 2. **Bridge (per summoned user)** — a WebSocket client to `/ws?
-   access_token=<user_access_token>&companion=<id>`, connecting **as the real
+access_token=<user_access_token>&companion=<id>`, connecting **as the real
    companion-owning user** (auth below). Translates Discord ↔ WS:
 
-| Discord action | WS method / event |
-|---|---|
-| DM message (while summoned) | `messages.send` (streaming) |
-| `/summon` | open WS with `?companion=<id>` → await `embodiment.ready`; optionally `greeting.stream` |
-| `/status` | `embodiment.whoami` (is this connection the holder?) |
-| `/memory` | `memory.snapshot` |
-| `/recall <query>` | `memory.search` |
-| `/activity` | `activity.list` |
-| `/episodes [query]` | `episodes.list` / `episodes.search` |
-| `/growth` | `growth.get` |
-| `/budget` | `budget.get` |
-| `/feed` | `food.get` (list) → `feed` (apply) |
-| `/reading` | `leads.list` |
-| Proposal arrives (stream `proposal` / push) | render embed + buttons |
-| Confirm button | `proposals.confirm` (streaming) |
-| Reject button | `proposals.reject` |
-| Proactive companion `message` event | DM the user (gated by dial) |
-| `embodiment.superseded` (4002) | DM supersede notice; mark dormant |
+| Discord action                              | WS method / event                                                                       |
+| ------------------------------------------- | --------------------------------------------------------------------------------------- |
+| DM message (while summoned)                 | `messages.send` (streaming)                                                             |
+| `/summon`                                   | open WS with `?companion=<id>` → await `embodiment.ready`; optionally `greeting.stream` |
+| `/status`                                   | `embodiment.whoami` (is this connection the holder?)                                    |
+| `/memory`                                   | `memory.snapshot`                                                                       |
+| `/recall <query>`                           | `memory.search`                                                                         |
+| `/activity`                                 | `activity.list`                                                                         |
+| `/episodes [query]`                         | `episodes.list` / `episodes.search`                                                     |
+| `/growth`                                   | `growth.get`                                                                            |
+| `/budget`                                   | `budget.get`                                                                            |
+| `/feed`                                     | `food.get` (list) → `feed` (apply)                                                      |
+| `/reading`                                  | `leads.list`                                                                            |
+| Proposal arrives (stream `proposal` / push) | render embed + buttons                                                                  |
+| Confirm button                              | `proposals.confirm` (streaming)                                                         |
+| Reject button                               | `proposals.reject`                                                                      |
+| Proactive companion `message` event         | DM the user (gated by dial)                                                             |
+| `embodiment.superseded` (4002)              | DM supersede notice; mark dormant                                                       |
 
 **Auth — connect as the real user (§11).** Service-token auth would namespace the
-bridge as a *separate* `(service, client_id, external_id)` user that doesn't own
+bridge as a _separate_ `(service, client_id, external_id)` user that doesn't own
 the companion (`ensureUserByClaim`, `packages/core/src/identity/store.ts`) — the
 handshake would 404. Instead the bridge connects with a short-lived **app access
 token for the real user** (`?access_token=…`), verified by the existing
@@ -97,8 +97,8 @@ with a `discord_config` row, and `ACCESS_TOKEN_SECRET` never leaves the API.
 ## 4. Embodiment lifecycle (the heart of it)
 
 - **Dormant** — bot is online on Discord (gateway connected) but holds **no**
-  WS connection / no embodiment. DMs that aren't `/summon` get: *"I'm not here
-  right now — `/summon` to bring me into this chat."*
+  WS connection / no embodiment. DMs that aren't `/summon` get: _"I'm not here
+  right now — `/summon` to bring me into this chat."_
 - **`/summon`** — adapter opens the WS (as the real user, §11) with `?companion=<id>`,
   which force-claims embodiment (newer ULID wins). On `embodiment.ready` it
   replies (and may stream a greeting via `greeting.stream`). Claim is renewed by
@@ -117,12 +117,13 @@ heartbeat machinery already proven for the web client.
 
 On a DM, the bridge calls `messages.send` and consumes the `ChatStreamEvent`
 stream server-side:
+
 - `composing` → trigger Discord **typing indicator** in the DM channel.
 - `token` / `citations` / `tool_step` → buffer (not rendered live).
 - `done` → post **one** message with the full reply; fold citations and notable
   tool steps into an embed footer/fields.
 - `error` → post a friendly error; if it's `over_cap` (stamina exhausted), nudge
-  *"I'm tired — `/feed` me to continue."*
+  _"I'm tired — `/feed` me to continue."_
 - `reflection` → optional secondary line.
 
 ## 6. Proactive DMs
@@ -176,7 +177,8 @@ T2 ─▶ T2b ─┘   T4 ─┘                       │      └─▶ T11
 
 ### Phase 0 — Foundations
 
-**T1 — Scaffold `packages/discord/` + WS client** *(blocks all)* — **✓ built**
+**T1 — Scaffold `packages/discord/` + WS client** _(blocks all)_ — **✓ built**
+
 - Done: `packages/discord/{package.json,tsconfig.json,vitest.config.ts}` (deps
   `@cobble/shared`, `ws`; dev `@types/ws`, `typescript`, `vitest`), and an
   **auth-agnostic** `packages/discord/src/ws-client.ts` (`WsTransport` taking
@@ -193,7 +195,8 @@ T2 ─▶ T2b ─┘   T4 ─┘                       │      └─▶ T11
   `ACCESS_TOKEN_SECRET`) — it does **not** need T2b. Needs the api app + Postgres
   harness, so it's sequenced after more bridge exists.
 
-**T2 — Register the Discord service client** *(supports T2b)*
+**T2 — Register the Discord service client** _(supports T2b)_
+
 - Action: `pnpm --filter @cobble/db service add discord-adapter "discord"` →
   prints the secret once. Boot-seed via `seedCredentials` for dev. This credential
   authenticates the worker **to the internal mint endpoint (T2b)** — not to `/ws`
@@ -202,7 +205,8 @@ T2 ─▶ T2b ─┘   T4 ─┘                       │      └─▶ T11
   hardcoded.
 - Verify: `pnpm --filter @cobble/db service list` shows the row.
 
-**T2b — Internal token-mint endpoint** *(needs: T2, T3; api-side)* — §11 auth decision — **✓ built**
+**T2b — Internal token-mint endpoint** _(needs: T2, T3; api-side)_ — §11 auth decision — **✓ built**
+
 - Done: `packages/api/src/routes/discord.routes.ts` (`POST /internal/discord/token`),
   registered in `app.ts` (a no-op unless `DISCORD_SERVICE_CLIENT_ID` is set), with
   `discordServiceClientId` config + a `discordConfig: DiscordConfigStore` dep wired
@@ -233,10 +237,11 @@ T2 ─▶ T2b ─┘   T4 ─┘                       │      └─▶ T11
 
 ### Phase 1 — Config & identity
 
-**T3 — `discord_config` table + migration** *(needs: db)*
+**T3 — `discord_config` table + migration** _(needs: db)_
+
 - Files: `db/src/schema.ts` (add `discordConfig` pgTable: `id`, `userId`→users,
   `encryptedBotToken text`, `boundCompanionId`→companions, `ownerDiscordUserId text
-  nullable`, `proactivity text default 'gentle'`, `linkCode text nullable`,
+nullable`, `proactivity text default 'gentle'`, `linkCode text nullable`,
   timestamps; unique index on `userId`).
 - Action: `pnpm --filter @cobble/db run generate` → new SQL in `db/migrations/`.
 - AC: migration applies cleanly (`pnpm db:migrate`) on a fresh DB; re-running is a
@@ -248,7 +253,8 @@ T2 ─▶ T2b ─┘   T4 ─┘                       │      └─▶ T11
   are gated by the companion's existing `proactivity_dial` (§6/§8), so a separate
   field would contradict that; added `link_code` + `link_code_issued_at` for the TTL.
 
-**T4 — Token encryption util (AES-256-GCM)** *(parallel with T3)* — **✓ built**
+**T4 — Token encryption util (AES-256-GCM)** _(parallel with T3)_ — **✓ built**
+
 - Done: `packages/discord/src/crypto.ts` — `encryptSecret(plaintext, key)` /
   `decryptSecret(payload, key)` using `node:crypto` AES-256-GCM (random IV, auth tag,
   versioned `v1.iv.tag.cipher` envelope), `keyFromBase64`, and `secretsEqual`
@@ -257,7 +263,8 @@ T2 ─▶ T2b ─┘   T4 ─┘                       │      └─▶ T11
 - Note: the key is passed in (the worker derives it from `DISCORD_TOKEN_KEY`); the
   module is pure/key-source-agnostic.
 
-**T5 — Config store** *(needs: T3, T4)* — **✓ store built** (location changed)
+**T5 — Config store** _(needs: T3, T4)_ — **✓ store built** (location changed)
+
 - Done: the store lives in **`@cobble/db`** (`db/src/discord-config-store.ts`,
   `DrizzleDiscordConfigStore`), **not** `packages/discord` — both the api (write +
   the mint endpoint's authorize-read) and the worker (poll-read) use it without
@@ -272,7 +279,8 @@ T2 ─▶ T2b ─┘   T4 ─┘                       │      └─▶ T11
 
 ### Phase 2 — Discord I/O
 
-**T6 — Gateway manager** *(needs: T5)* — **✓ built**
+**T6 — Gateway manager** _(needs: T5)_ — **✓ built**
+
 - Done: `packages/discord/src/gateway/{types,manager,discord-js-gateway}.ts` +
   `test/fake-gateway.ts`. The manager reconciles live bots against `discord_config`
   (`sync()` + a poll loop), boots one bot per user behind the `DiscordGateway` seam,
@@ -280,7 +288,7 @@ T2 ─▶ T2b ─┘   T4 ─┘                       │      └─▶ T11
   removal/decrypt-failure, registers global commands per bot, and survives a list
   failure. 9 tests against the fake gateway. The real `discord.js` wrapper
   (`createDiscordJsGatewayFactory`) is the untested integration boundary — DM intents
-  + `Channel` partial, `ClientReady`-gated login, global commands with DM contexts.
+  - `Channel` partial, `ClientReady`-gated login, global commands with DM contexts.
 - Note: the inbound-DM sink (`onDirectMessage`) is a passthrough today; owner-lock /
   summon / chat handling land in T7+. Slash-command/interaction + reply/typing
   surfaces are added to the gateway seam by those tasks.
@@ -295,7 +303,8 @@ T2 ─▶ T2b ─┘   T4 ─┘                       │      └─▶ T11
   client; commands register once per bot (diffed, not re-pushed).
 - Verify: `pnpm --filter @cobble/discord test gateway`.
 
-**T7 — Owner lock + `/link <code>`** *(needs: T6)* — **✓ built**
+**T7 — Owner lock + `/link <code>`** _(needs: T6)_ — **✓ built**
+
 - Done: extended the `DiscordGateway` seam with slash-command/interaction +
   `reply`/`sendDirectMessage` (manager now tags DMs with a `reply` and routes
   `SlashCommandContext`). `packages/discord/src/router.ts` (`BotRouter`): the bot
@@ -317,7 +326,8 @@ T2 ─▶ T2b ─┘   T4 ─┘                       │      └─▶ T11
 
 ### Phase 3 — Embodiment lifecycle (the heart)
 
-**T8 — `/summon`, `/status`, supersede, dormant gating** *(needs: T7, T1)* — **✓ built**
+**T8 — `/summon`, `/status`, supersede, dormant gating** _(needs: T7, T1)_ — **✓ built**
+
 - Done: `packages/discord/src/bridge.ts` (`CompanionBridge`) runs the lifecycle behind
   the owner-locked router: `/summon` claims the companion via a `CompanionConnection`
   seam, `/status` reports presence, a post-ready `embodiment.superseded` tears the
@@ -345,7 +355,8 @@ T2 ─▶ T2b ─┘   T4 ─┘                       │      └─▶ T11
 
 ### Phase 4 — Chat
 
-**T9 — DM → `messages.send`** *(needs: T8)* — **✓ built**
+**T9 — DM → `messages.send`** _(needs: T8)_ — **✓ built**
+
 - Done: `packages/discord/src/chat.ts` (`handleChat`, the bridge's `onChat` hook):
   runs `messages.send` over the embodiment connection and renders the
   `ChatStreamEvent` stream into one Discord reply — `composing` → typing cue, `done`
@@ -363,7 +374,8 @@ T2 ─▶ T2b ─┘   T4 ─┘                       │      └─▶ T11
 
 ### Phase 5 — Read-only commands
 
-**T10 — The eight slash commands** *(needs: T9)* — **✓ built**
+**T10 — The eight slash commands** _(needs: T9)_ — **✓ built**
+
 - Done: `packages/discord/src/read-commands.ts` (`handleReadOnlyCommand`, the bridge's
   `onReadOnlyCommand` hook) dispatches `/memory`, `/recall`, `/activity`, `/episodes`,
   `/growth`, `/budget`, `/feed`, `/reading` to the matching `/ws` method and renders
@@ -390,7 +402,8 @@ T2 ─▶ T2b ─┘   T4 ─┘                       │      └─▶ T11
 
 ### Phase 6 — Approvals
 
-**T11 — Proposal embeds + buttons** *(needs: T10)*
+**T11 — Proposal embeds + buttons** _(needs: T10)_
+
 - Files: `packages/discord/src/bridge/proposals.ts` (render `proposals.list` /
   streamed `proposal` events as embeds with Confirm/Reject buttons; button
   interactions → `proposals.confirm` (stream reply like T9) / `proposals.reject`).
@@ -401,7 +414,8 @@ T2 ─▶ T2b ─┘   T4 ─┘                       │      └─▶ T11
 
 ### Phase 7 — Proactivity
 
-**T12 — Proactive DMs + greeting** *(needs: T8)*
+**T12 — Proactive DMs + greeting** _(needs: T8)_
+
 - Files: `packages/discord/src/bridge/proactive.ts` (subscribe to `companion`
   `message` events; DM gated by the dial; fire `greeting.stream` on summon).
 - AC: an autonomous companion message is DM'd when the dial ≠ `off` and suppressed
@@ -410,7 +424,8 @@ T2 ─▶ T2b ─┘   T4 ─┘                       │      └─▶ T11
 
 ### Phase 8 — Config surface
 
-**T13 — Web settings panel** *(needs: T5; parallelizable after Phase 1)*
+**T13 — Web settings panel** _(needs: T5; parallelizable after Phase 1)_
+
 - Files: `packages/web/src/pages/` settings panel + an **API**-side config method/REST
   (the API writes `discord_config` via `@cobble/db`, §11) — token (encrypted),
   bound companion via `companions.list`, dial; mints + returns the single-use
@@ -423,21 +438,25 @@ T2 ─▶ T2b ─┘   T4 ─┘                       │      └─▶ T11
 
 ### Phase 9 — Operability & merge
 
-**T2 — Register the Discord service client** *(ops; needs: T2b)*
+**T2 — Register the Discord service client** _(ops; needs: T2b)_
+
 - A `service_client` credential for the worker (the `DISCORD_SERVICE_CLIENT_ID` /
   `DISCORD_SERVICE_SECRET` the mint endpoint pins to, §11) and a key for
   `DISCORD_TOKEN_KEY`. Not code — a deployment/secrets step.
 
-**T14 — Live `/ws` integration test** *(needs: T8/T9)*
+**T14 — Live `/ws` integration test** _(needs: T8/T9)_
+
 - The one path the fakes can't prove: a real `WsTransport` against a running `/ws`
   claims embodiment, runs a chat turn, and observes a real `embodiment.superseded`
   takeover. (Tracked separately as the transport's live integration test.)
 
-**T15 — Always-on worker deployment** *(needs: worker assembly)*
+**T15 — Always-on worker deployment** _(needs: worker assembly)_
+
 - A min-instances=1 container (or an EC2 process) for `packages/discord` — documented
   in `docs/infra-setup.md` (and the AWS/GCP apply runbooks), per the §11 infra note.
 
-**T16 — Canonical-doc updates on merge to `main`** *(needs: everything above)*
+**T16 — Canonical-doc updates on merge to `main`** _(needs: everything above)_
+
 - The design doc (`companion-discord.md`) + this plan are the living docs while the
   surface is on the branch; the repo-wide canonical sources are updated **when the PR
   merges** (CLAUDE.md "When to Update Docs"): the new `packages/discord` component +
@@ -484,8 +503,8 @@ settings panel (T13) remain.
 Settled during design review (2026-06-26):
 
 - **Backend auth — connect as the real user via an internal mint endpoint.**
-  Service-token auth would namespace the bridge as a *separate* `(service,
-  client_id, external_id)` user that doesn't own the companion (`ensureUserByClaim`,
+  Service-token auth would namespace the bridge as a _separate_ `(service,
+client_id, external_id)` user that doesn't own the companion (`ensureUserByClaim`,
   `packages/core/src/identity/store.ts`) — the handshake would 404. Instead the
   bridge connects to `/ws` as the **real user** with a short-lived **app access
   token** (`?access_token=…`), verified by the existing app-access-token verifier
@@ -497,7 +516,7 @@ Settled during design review (2026-06-26):
   privilege; a Discord-bot-token verifier in core — pulls Discord into the hot auth
   path and couples core to Discord.)
 - **Config ownership** — the adapter **owns `discord_config`, schema in
-  `@cobble/db`**. The adapter *reads* it; the API *writes* it on behalf of the web
+  `@cobble/db`**. The adapter _reads_ it; the API _writes_ it on behalf of the web
   settings panel (the API already depends on `@cobble/db`). Neither imports the
   other; neither imports `@cobble/core`. The sibling worker (below) **polls
   `discord_config`** to pick up token/config changes — no cross-process event bus.
@@ -568,7 +587,7 @@ Settled during design review (2026-06-26):
 
 ---
 
-### T11 — Proposal embeds + Confirm/Reject buttons *(needs: T10 ✓)*
+### T11 — Proposal embeds + Confirm/Reject buttons _(needs: T10 ✓)_
 
 **Goal.** Effectful actions held as proposals surface in the DM as an embed with two
 buttons; tapping one drives `proposals.confirm` (streamed, rendered like a chat reply)
@@ -586,7 +605,7 @@ or `proposals.reject`.
   - `sendProposal(channelId, { title, summary, proposalId }): Promise<void>` — posts an
     embed + a Confirm and a Reject button (customId encodes the `proposalId`);
   - an inbound **button-interaction** sink (`onProposalAction(ctx: { userId, ownerId,
-    proposalId, action: 'confirm'|'reject', reply })`), routed by `GatewayManager` like
+proposalId, action: 'confirm'|'reject', reply })`), routed by `GatewayManager` like
     slash commands, owner-locked in `BotRouter`.
   - Implement in `discord-js-gateway.ts` with `EmbedBuilder` + `ButtonBuilder` /
     `ActionRowBuilder` and a `ButtonInteraction` handler; keep the fake gateway in lockstep.
@@ -601,9 +620,9 @@ or `proposals.reject`.
   `proposals.reject` and disables/updates the embed; a non-owner button click is ignored.
 - **Tests (fakes):** fake-gateway records `sendProposal` + emits button interactions;
   assert confirm/reject dispatch and rendering; owner-lock on interactions. `pnpm
-  --filter @cobble/discord test proposals`.
+--filter @cobble/discord test proposals`.
 
-### T12 — Proactive DMs + arrival greeting *(needs: T8 ✓; independent of T11)*
+### T12 — Proactive DMs + arrival greeting _(needs: T8 ✓; independent of T11)_
 
 **Goal.** While Active, autonomous companion messages are DM'd to the owner; the
 arrival greeting fires on `/summon`.
@@ -611,7 +630,7 @@ arrival greeting fires on `/summon`.
 - **Live stream.** Extend the `CompanionConnection` seam with
   `events(signal): AsyncIterable<CompanionStreamEvent>` (the bridge consumes the same
   `companion` event the web client reads — `register.ts` pushes `connection.pushEvent
-  ('companion', event)`). The real `connection.ts` exposes the transport's `onEvent`.
+('companion', event)`). The real `connection.ts` exposes the transport's `onEvent`.
 - **Forward + de-dupe (D5).** `packages/discord/src/proactive.ts`
   (`runProactiveLoop(ctx, connection)`): for each `StreamMessageEvent` with
   `role==='assistant'`, DM it **unless** its `message.id` was already rendered by the
@@ -630,7 +649,7 @@ arrival greeting fires on `/summon`.
   assert forward, dedupe (same id as a chat-rendered message → no DM), and greeting-on-
   summon. `pnpm --filter @cobble/discord test proactive`.
 
-### T13 — Web settings panel + `discord.config.*` WS methods *(needs: T5 ✓, D2)*
+### T13 — Web settings panel + `discord.config.*` WS methods _(needs: T5 ✓, D2)_
 
 **Goal.** A signed-in user attaches a bot token, picks the bound companion, and sees a
 single-use `/link` code (with regenerate) — no seed script. Replaces
@@ -648,12 +667,12 @@ single-use `/link` code (with regenerate) — no seed script. Replaces
   - `discord.config.get` → `{ configured, boundCompanionId, ownerLinked, linkCode|null }`
     (never the token);
   - `discord.config.set` `{ botToken, boundCompanionId }` → `encryptSecret(botToken,
-    discordTokenKey)` + `generateLinkCode()` + `discordConfig.upsert(...)` → `{ linkCode }`;
+discordTokenKey)` + `generateLinkCode()` + `discordConfig.upsert(...)` → `{ linkCode }`;
   - `discord.config.regenerateLink` → re-mint code + issued-at → `{ linkCode }`;
   - `discord.config.delete` → `discordConfig.delete(ctx.userId)`.
-  All return a `not_configured` error when `discordTokenKey` is empty. Add the DTOs to
-  `packages/shared/src/contracts.ts`. Validate params with the existing `parseParams`
-  + a Zod schema (bot-token shape, `boundCompanionId` UUID owned by `ctx.userId`).
+    All return a `not_configured` error when `discordTokenKey` is empty. Add the DTOs to
+    `packages/shared/src/contracts.ts`. Validate params with the existing `parseParams`
+  * a Zod schema (bot-token shape, `boundCompanionId` UUID owned by `ctx.userId`).
 - **T13.2 — Web panel.** `packages/web/src/pages/Discord.tsx` (token input,
   `companions.list` picker, `/link` code display + regenerate, save/delete); client
   wrappers in `packages/web/src/api/client.ts` (`getDiscordConfig`,
@@ -670,7 +689,7 @@ single-use `/link` code (with regenerate) — no seed script. Replaces
   rejection, `not_configured` when key absent); web component test for the panel.
   `pnpm --filter @cobble/api test` + `pnpm --filter @cobble/web test`.
 
-### T14 — Live `/ws` integration test *(needs: T8/T9 ✓)*
+### T14 — Live `/ws` integration test _(needs: T8/T9 ✓)_
 
 **Goal.** Prove the one path fakes can't: a real `WsTransport` against a running `/ws`.
 
@@ -683,7 +702,7 @@ single-use `/link` code (with regenerate) — no seed script. Replaces
 - **AC:** all three (claim, chat turn, supersede takeover) pass against a real `/ws`.
 - **Verify:** `make test-integration` (excluded from the default run; real Postgres).
 
-### T15 — Always-on worker deployment *(needs: worker assembly ✓, D6)*
+### T15 — Always-on worker deployment _(needs: worker assembly ✓, D6)_
 
 **Goal.** `make run-docker` runs the worker locally; AWS runs it on the same EC2 micro.
 
@@ -695,7 +714,7 @@ single-use `/link` code (with regenerate) — no seed script. Replaces
 - **T15.1 — Local compose.** Add a `discord` service to `docker-compose.yml` (build
   the same target, `command: pnpm --filter @cobble/discord serve`, `env_file: .env`,
   `DATABASE_URL` → the compose-internal `postgres` host, `DISCORD_WS_BASE_URL=
-  ws://api:3000`, `DISCORD_MINT_URL=http://api:3000/internal/discord/token`,
+ws://api:3000`, `DISCORD_MINT_URL=http://api:3000/internal/discord/token`,
   `depends_on: [postgres, api]`). After this, `make run-docker` brings up all four.
 - **T15.2 — AWS (single EC2).** `infra/aws/src/secrets.ts`: add SSM params for the two
   true secrets (`DISCORD_SERVICE_SECRET`, `DISCORD_TOKEN_KEY`) + grant them in
@@ -703,22 +722,22 @@ single-use `/link` code (with regenerate) — no seed script. Replaces
   (`DISCORD_SERVICE_CLIENT_ID`, `DISCORD_WS_BASE_URL=ws://127.0.0.1:3000`,
   `DISCORD_MINT_URL=http://127.0.0.1:3000/internal/discord/token`) into
   `/etc/cobble.env`, and add a second `docker run -d --restart=always --name
-  cobble-discord --env-file /etc/cobble.env "$IMAGE" pnpm --filter @cobble/discord
-  serve` after `cobble-app`. (Loopback reach; no Caddy/public exposure.)
+cobble-discord --env-file /etc/cobble.env "$IMAGE" pnpm --filter @cobble/discord
+serve` after `cobble-app`. (Loopback reach; no Caddy/public exposure.)
 - **AC:** local — `make run-docker` runs Postgres + API + web + worker, and a seeded
   bot comes online; AWS — `make deploy-dev` leaves `cobble-app` + `caddy` +
   `cobble-discord` all `--restart=always`, worker reaching the API on loopback.
 - **Verify:** local compose up; AWS preview/diff (`make pulumi-preview`) shows the
   added container + params.
 
-### T2 / ops — service credential + token key *(needs: T2b ✓; folded into T15.2)*
+### T2 / ops — service credential + token key _(needs: T2b ✓; folded into T15.2)_
 
 Not code: register the `DISCORD_SERVICE_CLIENT_ID`/`DISCORD_SERVICE_SECRET` pair (the
 mint route pins to it) and provision `DISCORD_TOKEN_KEY`. Locally this is already done
 via `SERVICE_REGISTRY_SEEDS` + `.env`; on AWS it is the SSM params added in T15.2.
 Documented in `docs/infra-setup.md` + `infra/aws/README.md`.
 
-### T16 — Canonical-doc updates on merge to `main` *(needs: all above)*
+### T16 — Canonical-doc updates on merge to `main` _(needs: all above)_
 
 On PR merge, update the repo-wide canonical sources (CLAUDE.md "When to Update Docs"):
 the `packages/discord` component + `/internal/discord/token` route + the

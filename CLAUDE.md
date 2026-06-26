@@ -16,32 +16,31 @@ read docs/product-overview.md
 
 > **Rule:** Each fact lives in exactly one place. Follow the links; do not infer from secondary sources.
 
-| Topic                          | Canonical Source                    |
-|-------------------------------|-------------------------------------|
-| Working rules for this repo   | `AGENTS.md`                         |
-| Documentation rules           | `docs/documentation-rules.md`       |
-| Product overview              | `docs/product-overview.md`          |
-| Priorities, requirements, roadmap | `docs/development-plan.md`       |
-| Technical architecture (incl. agent loop) | `docs/architecture.md`  |
-| Internal implementation       | `docs/implementation.md`            |
-| Memory: browsing & evaluation | `docs/companion-memory.md`           |
-| Threat model & deployment trust model | `docs/architecture.md` §1, §8 |
-| Ontology contract & governance | `docs/ontology.md`                 |
-| Proactivity & motivation mechanism | `docs/companion-motivation.md`  |
-| Greeting / arrival reaction   | `docs/companion-greeting.md`        |
-| Emoji reactions (reward + expression) | `docs/companion-reactions.md`  |
-| Feeding economy (food pantry & vitality) | `docs/companion-economy.md`        |
-| Tool acquisition & use (MCP/CLI) | `docs/companion-tools.md`          |
-| Realtime delivery (permanent WebSocket / embodiment + durable event log) | `docs/architecture.md` §6, `docs/implementation.md` §2.4 |
-| WebSocket endpoint contract (client integration: methods, envelopes, errors, events) | `docs/companion-endpoints.md` |
-| Discord surface (bring-your-own-bot, summon-to-embody) — *proposed* | `docs/companion-discord.md` (build plan: `docs/plans/discord-surface.md`) |
-| Background-job lease & abort (single-writer drain, heartbeat) | `docs/companion-background-job-lease.md` |
-| Prompt management & iteration | `docs/guide-prompts.md`             |
-| Running evals (offline harness) | `docs/howto-run-evals.md`         |
-| Online tracing / observability | `docs/runbook-tracing.md`          |
-| Local dev setup               | `README.md`                         |
+| Topic                                                                                                 | Canonical Source                                                                     |
+| ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Working rules for this repo                                                                           | `AGENTS.md`                                                                          |
+| Documentation rules                                                                                   | `docs/documentation-rules.md`                                                        |
+| Product overview                                                                                      | `docs/product-overview.md`                                                           |
+| Priorities, requirements, roadmap                                                                     | `docs/development-plan.md`                                                           |
+| Technical architecture (incl. agent loop)                                                             | `docs/architecture.md`                                                               |
+| Internal implementation                                                                               | `docs/implementation.md`                                                             |
+| Memory: browsing & evaluation                                                                         | `docs/companion-memory.md`                                                           |
+| Threat model & deployment trust model                                                                 | `docs/architecture.md` §1, §8                                                        |
+| Ontology contract & governance                                                                        | `docs/ontology.md`                                                                   |
+| Proactivity & motivation mechanism                                                                    | `docs/companion-motivation.md`                                                       |
+| Greeting / arrival reaction                                                                           | `docs/companion-greeting.md`                                                         |
+| Emoji reactions (reward + expression)                                                                 | `docs/companion-reactions.md`                                                        |
+| Feeding economy (food pantry & vitality)                                                              | `docs/companion-economy.md`                                                          |
+| Tool acquisition & use (MCP/CLI)                                                                      | `docs/companion-tools.md`                                                            |
+| Realtime delivery (permanent WebSocket / embodiment + durable event log)                              | `docs/architecture.md` §6, `docs/implementation.md` §2.4                             |
+| WebSocket endpoint contract (client integration: methods, envelopes, errors, events)                  | `docs/companion-endpoints.md`                                                        |
+| Discord surface (bring-your-own-bot, summon-to-embody)                                                | `docs/companion-discord.md` (build history: `docs/plans/discord-surface.md`)         |
+| Background-job lease & abort (single-writer drain, heartbeat)                                         | `docs/companion-background-job-lease.md`                                             |
+| Prompt management & iteration                                                                         | `docs/guide-prompts.md`                                                              |
+| Running evals (offline harness)                                                                       | `docs/howto-run-evals.md`                                                            |
+| Online tracing / observability                                                                        | `docs/runbook-tracing.md`                                                            |
+| Local dev setup                                                                                       | `README.md`                                                                          |
 | Infrastructure & deployment (two options — AWS EC2 micro or GCP Cloud Run; diagrams, resources, cost) | `docs/infra-setup.md` (apply runbooks: `infra/aws/README.md`, `infra/gcp/README.md`) |
-
 
 ## Development Environment
 
@@ -52,7 +51,7 @@ read docs/product-overview.md
 
 - **Surfaces (target platforms):** **mobile** (iOS + Android), **web**, and **desktop** (macOS/Windows/Linux). These are "living rooms" the one companion embodies in — **one at a time**, summoned by the user (see `docs/product-overview.md` §2). Web = portable/sandboxed; mobile = GPS/camera/health/notifications; desktop = files/local storage.
 - **The companion (intelligence):** model + harness + knowledge base. Knowledge base = three long-term memories — **semantic, episodic, procedural** (`docs/product-overview.md` §2.1).
-- **Data posture:** the companion's **canonical self lives in the cloud** (identity + long-term memory persist and sync there for continuity across rooms). **Raw on-device OS data can stay local** in the surface it came from and be reached via OS tools; *derived* knowledge syncs. Core data concerns: knowledge base, long-term memory, and the propose→approve **approval queue** (`docs/product-overview.md` §7).
+- **Data posture:** the companion's **canonical self lives in the cloud** (identity + long-term memory persist and sync there for continuity across rooms). **Raw on-device OS data can stay local** in the surface it came from and be reached via OS tools; _derived_ knowledge syncs. Core data concerns: knowledge base, long-term memory, and the propose→approve **approval queue** (`docs/product-overview.md` §7).
 - **OS as tools:** **mobile and desktop** surfaces wrap their OS access as functions/tools for the companion (permission-gated); the companion can also act as its own cross-room/cloud sync courier.
 - **LLM:** agentic, **tool / skill / MCP**-using model loop (web-crawling and OS access are tools among many); provider-agnostic gateway, default **OpenRouter** (`docs/architecture.md` §5). Embeddings also via OpenRouter (`/embeddings`, default `perplexity/pplx-embed-v1-0.6b`) behind a provider-agnostic gateway — **all models come from OpenRouter**.
 - **Stack:** **TypeScript end-to-end** — Node/**Fastify** API + **React/Vite** web client; **Postgres + `pgvector`** store (semantic memory: verbatim sections + vector/FTS hybrid retrieval + typed fact overlay per `docs/ontology.md`; ingestion flow `docs/architecture.md` §4.8). Canonical: `docs/architecture.md` §5.
@@ -68,4 +67,3 @@ read docs/product-overview.md
 - Infrastructure / deployment changed (AWS or GCP resources, Pulumi, deploy flow) → update `docs/infra-setup.md` (and `infra/aws/README.md` / `infra/gcp/README.md` for apply steps)
 - File structure changed → update `docs/architecture.md`
 - Tests added → update test files and this section
-

@@ -1,23 +1,24 @@
 # CobbleCompanion — The Discord Surface (bring-your-own-bot)
 
-> **Canonical source for the Discord surface's *design and decisions*** — what the Discord
+> **Canonical source for the Discord surface's _design and decisions_** — what the Discord
 > surface is, how a user attaches their own bot, how it embodies the companion via **summon**,
 > and the design choices that shape it. Discord is a **surface** (a "living room" the companion
 > embodies in, one at a time — `product-overview.md` §2), reached through a **decoupled adapter**
 > that speaks only the public WebSocket contract.
 >
-> **Status: proposed (not yet built).** This doc is the design of record; the sequenced,
-> file-level build plan lives in `plans/discord-surface.md`. Present tense below describes the
-> intended design, not shipped code.
+> **Status: shipped.** The surface is built on `packages/discord/` (the worker) + the
+> api's `discord.config.*` WS methods and `/internal/discord/token` route; the web
+> settings panel attaches a bot. The sequenced, file-level build history lives in
+> `plans/discord-surface.md`. Present tense below describes the live design.
 >
-> **Each fact lives in one place.** This doc owns the *Discord surface design*. It does **not**
+> **Each fact lives in one place.** This doc owns the _Discord surface design_. It does **not**
 > redefine the **wire contract** (methods, envelopes, streaming, events — `companion-endpoints.md`),
 > the **embodiment/fencing mechanism** (the ULID lease, "newer wins", supersede —
 > `architecture.md` §6, `plans/deliver-scalability.md` §5.2, `plans/embodiment-handoff-fencing.md`),
 > **service-token auth** (`implementation.md` §5, `architecture.md` §8), the **proactivity dial**
 > (`companion-motivation.md`), the **approval queue** (`product-overview.md` §7), or the **feeding
-> economy** (`companion-economy.md`). Where this doc names a method or payload it is a *reference*;
-> follow the link for the *mechanism*.
+> economy** (`companion-economy.md`). Where this doc names a method or payload it is a _reference_;
+> follow the link for the _mechanism_.
 >
 > **Where it will live.** A new decoupled package `packages/discord/` — a gateway manager plus a
 > per-user WebSocket bridge that connects to `/ws` **as the real user** (a short-lived app access
@@ -35,11 +36,11 @@ the user owns**.
 
 The binding is **bring-your-own-bot, one bot per user**: in account settings a user pastes a
 **Discord bot token**. The backend runs that bot's gateway connection, bound to one of the user's
-companions, and serves **only that user** (locked to the owner's Discord user ID). The token *is*
+companions, and serves **only that user** (locked to the owner's Discord user ID). The token _is_
 the binding — there is no shared bot and no OAuth account-linking dance.
 
 The companion is not "in" Discord until the user **summons** it (`product-overview.md` §2.2 defines
-*summon* = bringing the companion into the surface you're using). `/summon` makes the adapter claim
+_summon_ = bringing the companion into the surface you're using). `/summon` makes the adapter claim
 embodiment for that companion; the claim is held indefinitely (heartbeat-renewed) until the user
 opens the companion somewhere else, which supersedes the Discord claim. This is the same
 one-embodiment-at-a-time invariant every surface obeys — Discord adds **no** new embodiment logic.
@@ -81,7 +82,7 @@ Two responsibilities inside `packages/discord/`:
 - **Bridge (per summoned user)** — a WebSocket client to `/ws`
   (`?access_token=<user_access_token>&companion=<id>`, `companion-endpoints.md` §handshake) that
   connects **as the real, companion-owning user** (§9 explains why, and how the token is obtained).
-  It translates Discord ↔ WS and is the *only* path to the companion. The adapter never reaches into
+  It translates Discord ↔ WS and is the _only_ path to the companion. The adapter never reaches into
   the harness, memory, or embodiment store directly — preserving the core↔surface boundary
   (`architecture.md` §2).
 
@@ -92,19 +93,19 @@ contract types are infrastructure, not core intelligence.)
 
 ## 3. Design decisions
 
-| Decision | Choice | Rationale |
-|---|---|---|
-| **Audience** | One bot per user, bring-your-own token | The token is the binding; no shared bot, no multi-tenant identity problem, no account-linking flow. |
-| **Who the bot answers** | Owner only (locked to the owner's Discord user ID) | The bot speaks as the companion with the user's memory; anyone sharing a server with the bot can DM it, so responses must be locked. Allowlist deferred (§10). |
-| **Embodiment coexistence** | Explicit **summon**, hold-until-superseded | Matches the user's mental model and the existing claim/supersede mechanism exactly. Chatting without a claim is refused with "summon first," never silently misrouted. |
-| **On supersede** | DM a notice | Opening the companion on web silently kills the Discord claim; a notice explains the proactive silence and makes re-summoning obvious. |
-| **Proactivity** | Yes, gated by the existing proactivity dial | Proactive DMs are the single best reason to be on Discord; the dial (`off`/`gentle`/`active`, `companion-motivation.md`) governs them. Only fire while summoned/embodied. |
-| **Approvals** | In-Discord embed + Confirm/Reject buttons | Going to the web app to approve would supersede the bot; approvals must be self-contained in Discord. |
-| **Reply style** | Typing cue + single final message | Discord is rate-limited and not built for token-by-token streaming; the bridge consumes the stream server-side and posts once. |
-| **Runtime** | Single always-on **sibling worker process**, encrypted token at rest, decoupled module | Discord allows one gateway connection per bot, so the manager is singleton; it lives in its own package consuming only the public contract, surviving API multi-node / scale-to-zero. |
-| **Config ownership** | Adapter owns `discord_config` (schema in `@cobble/db`); adapter reads, API writes | Keeps the adapter free of `@cobble/core` while letting the web settings panel persist the token through the API; the worker polls for changes. |
-| **Command registration** | Global commands, auto-registered on `ready`, DM context enabled | Guild commands don't appear in DMs (our only surface); global auto-registration needs zero per-user setup. Bot must be DM-reachable (shares a server or user-installable). |
-| **Backend auth** | Bridge connects as the **real user** via a short-lived app access token, minted by an **internal API endpoint** (gated by a Discord service credential + a `discord_config` row) | Service-token auth would namespace the bridge as a *separate* user that doesn't own the companion (handshake 404). Connecting as the real user reuses the existing app-access-token verifier with **no `@cobble/core` change**; the `ACCESS_TOKEN_SECRET` stays in the API, never in the worker. |
+| Decision                   | Choice                                                                                                                                                                           | Rationale                                                                                                                                                                                                                                                                                        |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Audience**               | One bot per user, bring-your-own token                                                                                                                                           | The token is the binding; no shared bot, no multi-tenant identity problem, no account-linking flow.                                                                                                                                                                                              |
+| **Who the bot answers**    | Owner only (locked to the owner's Discord user ID)                                                                                                                               | The bot speaks as the companion with the user's memory; anyone sharing a server with the bot can DM it, so responses must be locked. Allowlist deferred (§10).                                                                                                                                   |
+| **Embodiment coexistence** | Explicit **summon**, hold-until-superseded                                                                                                                                       | Matches the user's mental model and the existing claim/supersede mechanism exactly. Chatting without a claim is refused with "summon first," never silently misrouted.                                                                                                                           |
+| **On supersede**           | DM a notice                                                                                                                                                                      | Opening the companion on web silently kills the Discord claim; a notice explains the proactive silence and makes re-summoning obvious.                                                                                                                                                           |
+| **Proactivity**            | Yes, gated by the existing proactivity dial                                                                                                                                      | Proactive DMs are the single best reason to be on Discord; the dial (`off`/`gentle`/`active`, `companion-motivation.md`) governs them. Only fire while summoned/embodied.                                                                                                                        |
+| **Approvals**              | In-Discord embed + Confirm/Reject buttons                                                                                                                                        | Going to the web app to approve would supersede the bot; approvals must be self-contained in Discord.                                                                                                                                                                                            |
+| **Reply style**            | Typing cue + single final message                                                                                                                                                | Discord is rate-limited and not built for token-by-token streaming; the bridge consumes the stream server-side and posts once.                                                                                                                                                                   |
+| **Runtime**                | Single always-on **sibling worker process**, encrypted token at rest, decoupled module                                                                                           | Discord allows one gateway connection per bot, so the manager is singleton; it lives in its own package consuming only the public contract, surviving API multi-node / scale-to-zero.                                                                                                            |
+| **Config ownership**       | Adapter owns `discord_config` (schema in `@cobble/db`); adapter reads, API writes                                                                                                | Keeps the adapter free of `@cobble/core` while letting the web settings panel persist the token through the API; the worker polls for changes.                                                                                                                                                   |
+| **Command registration**   | Global commands, auto-registered on `ready`, DM context enabled                                                                                                                  | Guild commands don't appear in DMs (our only surface); global auto-registration needs zero per-user setup. Bot must be DM-reachable (shares a server or user-installable).                                                                                                                       |
+| **Backend auth**           | Bridge connects as the **real user** via a short-lived app access token, minted by an **internal API endpoint** (gated by a Discord service credential + a `discord_config` row) | Service-token auth would namespace the bridge as a _separate_ user that doesn't own the companion (handshake 404). Connecting as the real user reuses the existing app-access-token verifier with **no `@cobble/core` change**; the `ACCESS_TOKEN_SECRET` stays in the API, never in the worker. |
 
 ## 4. Embodiment lifecycle
 
@@ -112,8 +113,8 @@ The room has two states. Transitions reuse the existing ULID-lease machinery
 (`packages/core/src/embodiment/store.ts`); the adapter adds no new claim logic.
 
 - **Dormant** — the bot is online on Discord (gateway connected) but holds **no** WS connection and
-  **no** embodiment. A DM that is not `/summon` is refused: *"I'm not here right now — `/summon` to
-  bring me into this chat."* The bot never calls `messages.send` while dormant (it would return
+  **no** embodiment. A DM that is not `/summon` is refused: _"I'm not here right now — `/summon` to
+  bring me into this chat."_ The bot never calls `messages.send` while dormant (it would return
   `not_embodied`).
 - **`/summon`** — the bridge opens the WS (as the real user, §9) with `?companion=<id>`, which
   force-claims embodiment (newer ULID wins). On the `embodiment.ready` event it confirms presence and may stream
@@ -136,30 +137,30 @@ server-side (`companion-endpoints.md` §streaming):
 - `done` → post **one** message with the full reply, as plain Discord Markdown. Folding citations
   and notable tool steps into a rich embed is a Beyond-the-PoC nicety (§6, §10).
 - `error` → post a friendly error. If the cause is stamina exhaustion (`over_cap`), nudge
-  *"I'm tired — `/feed` me to continue."*
+  _"I'm tired — `/feed` me to continue."_
 - `reflection` → optional secondary line (growth reflection).
 
 ## 6. Slash commands
 
 Read-only views map directly onto existing WS methods (no new endpoints):
 
-| Command | WS method | Renders |
-|---|---|---|
-| `/summon` | open WS `?companion=<id>` → `embodiment.ready` (+ `greeting.stream`) | presence confirmation / greeting |
-| `/status` | `embodiment.whoami` | Active vs Dormant |
-| `/memory` | `memory.snapshot` | identity + episodic/semantic/procedural counts |
-| `/recall <query>` | `memory.search` | semantic search results |
-| `/activity` | `activity.list` | proactive activity log |
-| `/episodes [query]` | `episodes.list` / `episodes.search` | consolidated episodes |
-| `/growth` | `growth.get` | the four-axis growth readout (knowledge, bond, initiative, character) |
-| `/budget` | `budget.get` | stamina/energy wallets |
-| `/feed` | `food.get` → `feed` | pantry, then apply a food |
-| `/reading` | `leads.list` | reading list (harvested leads) |
+| Command             | WS method                                                            | Renders                                                               |
+| ------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `/summon`           | open WS `?companion=<id>` → `embodiment.ready` (+ `greeting.stream`) | presence confirmation / greeting                                      |
+| `/status`           | `embodiment.whoami`                                                  | Active vs Dormant                                                     |
+| `/memory`           | `memory.snapshot`                                                    | identity + episodic/semantic/procedural counts                        |
+| `/recall <query>`   | `memory.search`                                                      | semantic search results                                               |
+| `/activity`         | `activity.list`                                                      | proactive activity log                                                |
+| `/episodes [query]` | `episodes.list` / `episodes.search`                                  | consolidated episodes                                                 |
+| `/growth`           | `growth.get`                                                         | the four-axis growth readout (knowledge, bond, initiative, character) |
+| `/budget`           | `budget.get`                                                         | stamina/energy wallets                                                |
+| `/feed`             | `food.get` → `feed`                                                  | pantry, then apply a food                                             |
+| `/reading`          | `leads.list`                                                         | reading list (harvested leads)                                        |
 
 The read-only views (`/memory`…`/reading`) call **companion-scoped** methods, which
 require the connection to hold the live embodiment claim (`requireEmbodiment`,
 `deliver-scalability.md` §5.2). They therefore run over the **summoned** connection —
-a view run while **Dormant** is refused with the same *"summon first"* prompt as chat
+a view run while **Dormant** is refused with the same _"summon first"_ prompt as chat
 (§4), since opening a side connection just to answer a view would itself claim the
 room and supersede the active surface. `/recall` and `/episodes <query>` spend on the
 search embedding, so an empty stamina wallet surfaces as the `/feed` nudge; `/feed`
@@ -186,15 +187,19 @@ companion and supersede the Discord bot (§4).
 
 While Active, the bridge subscribes to the `companion` live-event stream. Companion-initiated
 (autonomous) messages are DM'd to the owner, **gated by the proactivity dial** (`off` = none;
-`companion-motivation.md`). The arrival greeting fires on `/summon`. Because proactive push only flows
-while summoned, the supersede notice (§4) is what tells the user why the companion went quiet.
+`companion-motivation.md`). The gate is enforced **server-side** — the motivation engine only
+produces autonomous messages when the dial allows — so the bridge simply forwards what arrives;
+there is no client-side dial check. It de-dupes against the turn replies it already rendered
+inline, so a chat reply is never re-posted as a "proactive" DM. The arrival greeting fires on
+`/summon`. Because proactive push only flows while summoned, the supersede notice (§4) is what
+tells the user why the companion went quiet.
 
 ## 9. Auth, owner lock & token security
 
 - **Backend auth — connect as the real user via a minted access token.** The bridge must talk to
-  `/ws` *as the user who owns the companion*. Service-token auth is the wrong primitive here: a
+  `/ws` _as the user who owns the companion_. Service-token auth is the wrong primitive here: a
   service connection is namespaced as a **separate** `(auth_source='service', service_client_id,
-  external_id)` user (`packages/core/src/identity/store.ts`, `ensureUserByClaim`), which does **not**
+external_id)` user (`packages/core/src/identity/store.ts`, `ensureUserByClaim`), which does **not**
   own the user's Google-auth'd companion — so the handshake's ownership check would 404. Instead the
   bridge connects exactly like the web client: with a short-lived **app access token** for the real
   user (`?access_token=…`), verified by the existing app-access-token verifier
@@ -202,7 +207,7 @@ while summoned, the supersede notice (§4) is what tells the user why the compan
   change**.
   - **Where the token comes from.** A new **internal API endpoint** mints it via
     `mintAccessToken(userId, ACCESS_TOKEN_SECRET, ttl)` (`packages/api/src/auth/session-tokens.ts`).
-    The worker authenticates *to that endpoint* with a Discord **service credential** (registered in
+    The worker authenticates _to that endpoint_ with a Discord **service credential** (registered in
     `service_registry`, `pnpm --filter @cobble/db service add`); the endpoint mints **only** for a
     `userId` that has a `discord_config` row, and the bridge refreshes the short-lived token as
     needed. The signing key (`ACCESS_TOKEN_SECRET`) stays in the API and is **never** held by the
