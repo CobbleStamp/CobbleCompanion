@@ -1035,6 +1035,42 @@ export const messageReactions = pgTable(
   ],
 );
 
+/**
+ * Per-user Discord surface configuration (companion-discord.md §9). One row per user
+ * (bring-your-own-bot, one bot per user) — `user_id` is the PK, so a user has at most
+ * one bot. Owned by the decoupled `@cobble/discord` adapter: the adapter READS it (the
+ * sibling worker polls for token/config changes), the API WRITES it on behalf of the
+ * web settings panel. Nothing in `@cobble/core` touches it.
+ *
+ * The Discord proactivity intensity is NOT stored here — proactive DMs are gated by the
+ * companion's existing `companions.proactivity_dial` (companion-discord.md §8).
+ */
+export const discordConfig = pgTable('discord_config', {
+  // One bot per user → the user id is the natural primary key.
+  userId: uuid('user_id')
+    .primaryKey()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  // The Discord BOT token (secret #1), encrypted at rest (AES-256-GCM, never
+  // plaintext — packages/discord/src/crypto.ts). The worker decrypts it to open the
+  // bot's gateway connection.
+  encryptedBotToken: text('encrypted_bot_token').notNull(),
+  // Which of the user's companions this bot embodies on `/summon`. Ownership
+  // (companion.owner_id === user_id) is enforced by the API at write time; the FK only
+  // guarantees the companion exists.
+  boundCompanionId: uuid('bound_companion_id')
+    .notNull()
+    .references(() => companions.id, { onDelete: 'cascade' }),
+  // The Discord user id the bot answers (owner lock). Null until the one-time
+  // `/link <code>` handshake binds it; while null the bot answers no one.
+  ownerDiscordUserId: text('owner_discord_user_id'),
+  // The single-use `/link` code shown in web settings; null once consumed or never
+  // issued. Paired with `link_code_issued_at` for the ~15-min TTL.
+  linkCode: text('link_code'),
+  linkCodeIssuedAt: timestamp('link_code_issued_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const schema = {
   users,
   companions,
