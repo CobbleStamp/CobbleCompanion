@@ -295,7 +295,17 @@ T2 ─▶ T2b ─┘   T4 ─┘                       │      └─▶ T11
   client; commands register once per bot (diffed, not re-pushed).
 - Verify: `pnpm --filter @cobble/discord test gateway`.
 
-**T7 — Owner lock + `/link <code>`** *(needs: T6)*
+**T7 — Owner lock + `/link <code>`** *(needs: T6)* — **✓ built**
+- Done: extended the `DiscordGateway` seam with slash-command/interaction +
+  `reply`/`sendDirectMessage` (manager now tags DMs with a `reply` and routes
+  `SlashCommandContext`). `packages/discord/src/router.ts` (`BotRouter`): the bot
+  answers only its owner (pre-link → prompts `/link`; non-owner DM → silently
+  ignored; non-owner command → refused), and `/link <code>` binds the invoker as
+  owner iff the code matches the stored single-use code within the 15-min TTL
+  (`LINK_CODE_TTL_MS`, constant-time `secretsEqual`, `bindOwner` consumes it). Owner
+  DMs/commands delegate to injected `onOwnerMessage`/`onOwnerCommand` (summon/chat →
+  T8+). 10 router tests + 2 new manager tests.
+- Original sketch follows:
 - Files: `packages/discord/src/owner-lock.ts`, `commands/link.ts`.
 - AC: DM from a non-owner id is ignored; `/link <validCode>` binds
   `ownerDiscordUserId` and clears the code; subsequent owner DMs pass the lock;
@@ -307,7 +317,19 @@ T2 ─▶ T2b ─┘   T4 ─┘                       │      └─▶ T11
 
 ### Phase 3 — Embodiment lifecycle (the heart)
 
-**T8 — `/summon`, `/status`, supersede, dormant gating** *(needs: T7, T1)*
+**T8 — `/summon`, `/status`, supersede, dormant gating** *(needs: T7, T1)* — **✓ built**
+- Done: `packages/discord/src/bridge.ts` (`CompanionBridge`) runs the lifecycle behind
+  the owner-locked router: `/summon` claims the companion via a `CompanionConnection`
+  seam, `/status` reports presence, a post-ready `embodiment.superseded` tears the
+  connection down and DMs the "stepped over to the web" notice, and an owner DM while
+  dormant is refused with "summon first". The real `createCompanionConnectionFactory`
+  (`connection.ts`) wraps the T1 `WsTransport` (token → `/ws` URL → claim → supersede).
+  `GatewayManager.sendDirectMessage` carries async notices. Chat (T9) and read-only
+  commands (T10) are injected hooks. 8 bridge + 2 connection-glue tests.
+- **Checkpoint C reached and green** (logic-level): the summon/supersede model works
+  end-to-end against fakes. The remaining real-Discord/real-`/ws` demo is the live
+  integration test (task #4) + the worker assembly (below).
+- Original sketch follows:
 - Files: `packages/discord/src/bridge/embodiment.ts` (open WS `?companion=`, await
   `embodiment.ready`; handle `embodiment.superseded` + close `4002` → Dormant +
   notice DM), `commands/summon.ts`, `commands/status.ts`, dormant guard in the DM
@@ -323,7 +345,15 @@ T2 ─▶ T2b ─┘   T4 ─┘                       │      └─▶ T11
 
 ### Phase 4 — Chat
 
-**T9 — DM → `messages.send`** *(needs: T8)*
+**T9 — DM → `messages.send`** *(needs: T8)* — **✓ built**
+- Done: `packages/discord/src/chat.ts` (`handleChat`, the bridge's `onChat` hook):
+  runs `messages.send` over the embodiment connection and renders the
+  `ChatStreamEvent` stream into one Discord reply — `composing` → typing cue, `done`
+  → single final message, a mid-turn `error` event → its (user-facing) text, an
+  `over_cap` rejection → the `/feed` nudge. Extended the `CompanionConnection` seam
+  with `chat()`, the gateway seam with `sendTyping`, and the transport to preserve the
+  server error `code` (`WsCallError`) so `over_cap` is detectable. 7 tests.
+- Original sketch follows:
 - Files: `packages/discord/src/bridge/chat.ts` (consume `ChatStreamEvent`:
   `composing`→typing, buffer tokens, `done`→single message + citations embed,
   `error`/`over_cap`→`/feed` nudge).
@@ -374,6 +404,21 @@ T2 ─▶ T2b ─┘   T4 ─┘                       │      └─▶ T11
   regenerate), sets the dial; saving persists (token encrypted) and the worker
   (re)starts that bot's gateway connection within one poll interval.
 - Verify: `pnpm --filter @cobble/web test` + manual flow against local stack.
+
+### Worker assembly — **✓ built** (the runnable composition root)
+
+`packages/discord/src/worker.ts` wires manager → router → bridge → chat.
+`assembleWorker(parts)` is the injectable wiring (so the full path is
+integration-tested with a fake gateway: a linked owner's `/summon` → DM → chat reply,
+and a non-owner DM is refused); `loadWorkerConfig(env)` reads the worker env
+(`DATABASE_URL`, `DISCORD_WS_BASE_URL`, `DISCORD_MINT_URL`,
+`DISCORD_SERVICE_CLIENT_ID`, `DISCORD_SERVICE_SECRET`, `DISCORD_TOKEN_KEY`,
+`DISCORD_POLL_INTERVAL_MS`); `startWorker(config)` builds the real deps (the
+`discord.js` gateway factory, the `WsTransport` connection factory, and the HTTP
+`createMintTokenSource` client for T2b) and runs as the always-on sibling process
+(`pnpm --filter @cobble/discord {dev,serve,start}`). `onReadOnlyCommand` is a "not
+available yet" stub until T10. Read-only commands (T10), approvals (T11), proactive
+DMs + greeting (T12), and the web settings panel (T13) remain.
 
 ### Cross-cutting verification (run at every checkpoint)
 
