@@ -421,6 +421,32 @@ T2 ─▶ T2b ─┘   T4 ─┘                       │      └─▶ T11
   (re)starts that bot's gateway connection within one poll interval.
 - Verify: `pnpm --filter @cobble/web test` + manual flow against local stack.
 
+### Phase 9 — Operability & merge
+
+**T2 — Register the Discord service client** *(ops; needs: T2b)*
+- A `service_client` credential for the worker (the `DISCORD_SERVICE_CLIENT_ID` /
+  `DISCORD_SERVICE_SECRET` the mint endpoint pins to, §11) and a key for
+  `DISCORD_TOKEN_KEY`. Not code — a deployment/secrets step.
+
+**T14 — Live `/ws` integration test** *(needs: T8/T9)*
+- The one path the fakes can't prove: a real `WsTransport` against a running `/ws`
+  claims embodiment, runs a chat turn, and observes a real `embodiment.superseded`
+  takeover. (Tracked separately as the transport's live integration test.)
+
+**T15 — Always-on worker deployment** *(needs: worker assembly)*
+- A min-instances=1 container (or an EC2 process) for `packages/discord` — documented
+  in `docs/infra-setup.md` (and the AWS/GCP apply runbooks), per the §11 infra note.
+
+**T16 — Canonical-doc updates on merge to `main`** *(needs: everything above)*
+- The design doc (`companion-discord.md`) + this plan are the living docs while the
+  surface is on the branch; the repo-wide canonical sources are updated **when the PR
+  merges** (CLAUDE.md "When to Update Docs"): the new `packages/discord` component +
+  the `/internal/discord/token` route + the worker process in `docs/architecture.md`
+  §3 (Component Map) and §4.1 (folder tree); Discord as a surface in
+  `docs/product-overview.md`; the `discord_config` data model + worker config in
+  `docs/implementation.md`; the worker run/env in `README.md`; and flipping this doc's
+  and `companion-discord.md`'s **"proposed"** banners to shipped.
+
 ### Worker assembly — **✓ built** (the runnable composition root)
 
 `packages/discord/src/worker.ts` wires manager → router → bridge → chat.

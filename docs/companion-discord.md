@@ -133,8 +133,8 @@ server-side (`companion-endpoints.md` §streaming):
 
 - `composing` → trigger the Discord **typing indicator** in the DM channel.
 - `token` / `citations` / `tool_step` → buffered, not rendered live.
-- `done` → post **one** message with the full reply; fold citations and notable tool steps into an
-  embed.
+- `done` → post **one** message with the full reply, as plain Discord Markdown. Folding citations
+  and notable tool steps into a rich embed is a Beyond-the-PoC nicety (§6, §10).
 - `error` → post a friendly error. If the cause is stamina exhaustion (`over_cap`), nudge
   *"I'm tired — `/feed` me to continue."*
 - `reflection` → optional secondary line (growth reflection).
@@ -155,6 +155,20 @@ Read-only views map directly onto existing WS methods (no new endpoints):
 | `/budget` | `budget.get` | stamina/energy wallets |
 | `/feed` | `food.get` → `feed` | pantry, then apply a food |
 | `/reading` | `leads.list` | reading list (harvested leads) |
+
+The read-only views (`/memory`…`/reading`) call **companion-scoped** methods, which
+require the connection to hold the live embodiment claim (`requireEmbodiment`,
+`deliver-scalability.md` §5.2). They therefore run over the **summoned** connection —
+a view run while **Dormant** is refused with the same *"summon first"* prompt as chat
+(§4), since opening a side connection just to answer a view would itself claim the
+room and supersede the active surface. `/recall` and `/episodes <query>` spend on the
+search embedding, so an empty stamina wallet surfaces as the `/feed` nudge; `/feed`
+with no argument shows the pantry and with `ration`/`spark`/`treat` applies a food.
+
+Views render as **Discord Markdown** (headings, bullets, code spans), not embeds: the
+adapter's gateway seam sends string content, which keeps it decoupled from
+`discord.js` types and the renderers pure. Richer embeds (for views, chat citations,
+and proposal cards) are a Beyond-the-PoC nicety (§10).
 
 ## 7. Approvals
 
@@ -217,3 +231,5 @@ while summoned, the supersede notice (§4) is what tells the user why the compan
 - **File-attachment ingestion** via DM (`sources.file`) — deferred.
 - **Multiple bound companions / `/summon <companion>`** selection — one bound companion for now.
 - **Quiet hours** for proactive DMs.
+- **Rich embeds** for the read-only views, chat-reply citations, and proposal cards — the PoC
+  renders plain Discord Markdown over the string-only gateway seam (§5, §6).
