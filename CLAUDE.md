@@ -34,6 +34,7 @@ read docs/product-overview.md
 | Tool acquisition & use (MCP/CLI) | `docs/companion-tools.md`          |
 | Realtime delivery (permanent WebSocket / embodiment + durable event log) | `docs/architecture.md` §6, `docs/implementation.md` §2.4 |
 | WebSocket endpoint contract (client integration: methods, envelopes, errors, events) | `docs/companion-endpoints.md` |
+| Discord surface (bring-your-own-bot, summon-to-embody) — *proposed* | `docs/companion-discord.md` (build plan: `docs/plans/discord-surface.md`) |
 | Background-job lease & abort (single-writer drain, heartbeat) | `docs/companion-background-job-lease.md` |
 | Prompt management & iteration | `docs/guide-prompts.md`             |
 | Running evals (offline harness) | `docs/howto-run-evals.md`         |
