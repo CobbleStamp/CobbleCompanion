@@ -5,7 +5,13 @@
  */
 
 import { hostname } from 'node:os';
-import { createPgDatabase, EMBEDDING_DIMENSIONS, seedCredentials, type Database } from '@cobble/db';
+import {
+  createPgDatabase,
+  DrizzleDiscordConfigStore,
+  EMBEDDING_DIMENSIONS,
+  seedCredentials,
+  type Database,
+} from '@cobble/db';
 import {
   composeRetrieveContext,
   ConsolidationService,
@@ -559,6 +565,7 @@ async function main(): Promise<void> {
     affect: affectStore,
     growth,
     growthStore,
+    discordConfig: new DrizzleDiscordConfigStore(db),
     tokenVerifier: createTokenVerifier(config, db),
     googleVerifier: new GoogleIdTokenVerifier(config.googleClientId),
     config,

@@ -4,7 +4,7 @@
  * verifier, so route tests exercise the true auth → route → core → db path.
  */
 
-import { EMBEDDING_DIMENSIONS } from '@cobble/db';
+import { DrizzleDiscordConfigStore, EMBEDDING_DIMENSIONS } from '@cobble/db';
 import { createTestDatabase } from '@cobble/db/testing';
 import {
   composeRetrieveContext,
@@ -152,6 +152,8 @@ export const testConfig: AppConfig = {
   appUrl: 'http://localhost:3001',
   googleClientId: 'test-google-client-id',
   jwtSigningSecret: 'test-jwt-signing-secret-at-least-32-bytes!!',
+  // Off by default; a route test enables it via options.config.
+  discordServiceClientId: '',
   accessTokenTtlSec: 15 * 60,
   refreshTokenTtlSec: 24 * 60 * 60,
   port: 0,
@@ -511,6 +513,7 @@ export async function makeTestApp(
     reactionLearn,
     growth,
     growthStore,
+    discordConfig: new DrizzleDiscordConfigStore(db),
     harness: new Harness({
       gateway: llmGateway,
       memory,

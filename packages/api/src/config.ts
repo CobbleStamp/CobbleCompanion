@@ -151,6 +151,13 @@ export interface AppConfig {
   /** HS256 secret the API signs its own session access/refresh tokens with
    *  (auth/session-tokens.ts). Never shipped to the browser; deployment-managed. */
   readonly jwtSigningSecret: string;
+  /**
+   * The `service_registry.client_id` of the Discord adapter (companion-discord.md §9).
+   * Gates the internal token-mint endpoint (`POST /internal/discord/token`): only this
+   * service client may mint user access tokens for Discord, and the route is disabled
+   * (404) when this is empty. Empty (default) leaves the Discord surface off.
+   */
+  readonly discordServiceClientId: string;
   /** Lifetime (seconds) of an app access token — short, since it rides the WS
    *  handshake URL and is refreshed on demand against /auth/refresh. */
   readonly accessTokenTtlSec: number;
@@ -272,6 +279,10 @@ const envSchema = z
     // Required (validated below); >=32 bytes so the HMAC key has adequate entropy.
     // Never committed — supply via the deployment environment.
     JWT_SIGNING_SECRET: z.string().default(''),
+    // The Discord adapter's service-registry client id (companion-discord.md §9).
+    // Empty (default) disables the internal token-mint endpoint — the Discord surface
+    // stays off until an operator both registers the service client and sets this.
+    DISCORD_SERVICE_CLIENT_ID: z.string().default(''),
     // App access-token lifetime (seconds); default 15 min. Short — it's refreshed
     // on demand and travels the WS handshake URL.
     ACCESS_TOKEN_TTL_SEC: z.coerce
@@ -528,6 +539,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     appUrl: parsed.APP_URL,
     googleClientId: parsed.GOOGLE_CLIENT_ID,
     jwtSigningSecret: parsed.JWT_SIGNING_SECRET,
+    discordServiceClientId: parsed.DISCORD_SERVICE_CLIENT_ID,
     accessTokenTtlSec: parsed.ACCESS_TOKEN_TTL_SEC,
     refreshTokenTtlSec: parsed.REFRESH_TOKEN_TTL_SEC,
     port: parsed.PORT,
