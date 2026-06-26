@@ -17,8 +17,8 @@ export {
 } from './ws-client.js';
 export type { WsSocket, WsSocketFactory, ConnectOptions, EventListener } from './ws-client.js';
 
-export { encryptSecret, decryptSecret, keyFromBase64, secretsEqual, KEY_BYTES } from './crypto.js';
-export type { DecryptResult } from './crypto.js';
+// Token-at-rest crypto + the `/link` code generator now live in `@cobble/db` (the
+// shared data layer) so the api can encrypt on write; import them from there.
 
 export { GatewayManager } from './gateway/manager.js';
 export type {

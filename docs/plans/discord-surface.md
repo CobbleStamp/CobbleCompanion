@@ -518,3 +518,228 @@ Settled during design review (2026-06-26):
   settings re-mints. The adapter verifies the code on `/link`, sets
   `ownerDiscordUserId`, and clears it; mismatched/expired/used codes fail without
   changing the owner.
+
+## 12. Remaining-work plan (detailed, dependency-ordered)
+
+> **Status: planned (2026-06-26).** This section supersedes the §9 sketches for the
+> tasks still open (T11, T12, T13, T14, T15, T16) with concrete, file-level steps
+> that fold in the decisions taken during this planning pass. Built tasks (T1–T10,
+> worker assembly, T2b) are unchanged. Each task stays **independently green**
+> (`pnpm -r run typecheck` + its own tests) and follows **fakes over mocks**.
+
+### Decisions taken this pass (the ones that reshape the sketches)
+
+- **D1 — Config save is a WS method, not REST.** The web panel saves over the
+  existing authenticated WS connection (a new `discord.config.*` method group),
+  matching the `proactivity.set` / `companions.list` pattern. The methods are
+  **user-scoped** (read `ctx.userId`, **no** `companionOf`/`requireEmbodiment`
+  guard) — saving config must not claim embodiment.
+- **D2 — The crypto util moves to `@cobble/db`.** Encrypt-on-write means the **API**
+  needs `encryptSecret`. `packages/api` must not import `packages/discord`, and both
+  already import `@cobble/db` (which has no `@cobble/*` deps) — so the AES-256-GCM
+  util (`encryptSecret`/`decryptSecret`/`keyFromBase64`/`secretsEqual`) moves from
+  `packages/discord/src/crypto.ts` to `db/src/crypto.ts`, re-exported from
+  `db/src/index.ts`. The worker and router import it from `@cobble/db`. This is the
+  first step of T13 (nothing else depends on it).
+- **D3 — `DISCORD_TOKEN_KEY` becomes SHARED (API + worker).** The API encrypts on
+  write; the worker decrypts on read — same key. It moves to the SHARED segment of
+  `.env`/`.env.example` and is added to the API config schema
+  (`packages/api/src/config.ts`, `discordTokenKey: z.string().default('')`). When it
+  is empty the `discord.config.*` methods are disabled (return an
+  `unsupported`/`not_configured` error), mirroring how the mint route is a no-op
+  without `DISCORD_SERVICE_CLIENT_ID`.
+- **D4 — Proactivity is not a Discord field.** DMs are gated by the companion's
+  existing `proactivity_dial`, enforced **server-side** by the motivation engine —
+  the dial already decides whether autonomous messages are produced at all. The
+  Discord panel does **not** set a separate dial; T12 forwards whatever autonomous
+  messages arrive (see D5). (Confirms the T3 note that dropped the per-Discord field.)
+- **D5 — Proactive forwarding must de-dupe against chat replies.** Autonomous
+  messages and the reply to a just-sent DM both land on the live `companion` event
+  stream (`StreamMessageEvent`, `{type:'message', message}`). T12 must DM only
+  messages it did **not** already render through the chat stream (T9) — track
+  rendered message ids (and suppress events that arrive while a chat turn is
+  in-flight on that connection).
+- **D6 — AWS runs the worker on the same single EC2 micro.** No GCP. The worker runs
+  as a **second `docker run` (`cobble-discord`) from the same image**, alongside
+  `cobble-app` + `caddy`, reaching the API over **loopback** (`ws://127.0.0.1:3000`,
+  `http://127.0.0.1:3000/internal/discord/token`). The prod image must first be
+  taught to include `packages/discord` (today the `deps` layer copies only
+  shared/core/api/web). docker-compose gains a `discord` service for local only.
+
+---
+
+### T11 — Proposal embeds + Confirm/Reject buttons *(needs: T10 ✓)*
+
+**Goal.** Effectful actions held as proposals surface in the DM as an embed with two
+buttons; tapping one drives `proposals.confirm` (streamed, rendered like a chat reply)
+or `proposals.reject`.
+
+- **Where proposals come from.** A proposal is pushed mid-turn as a
+  `StreamProposalEvent` (`{type:'proposal', proposal: ProposalDto}`) inside the
+  `messages.send` / `proposals.confirm` stream (`packages/shared/src/contracts.ts`,
+  `StreamProposalEvent`); pending ones are also listable via `proposals.list`. So the
+  bridge detects proposals **while consuming the chat stream** (T9's `handleChat`),
+  not from the live `companion` event stream.
+- **Seam extension (the real new surface).** T10 made the gateway seam send **string
+  content only**; buttons need Discord message components. Extend `DiscordGateway`
+  (`packages/discord/src/gateway/types.ts`) with:
+  - `sendProposal(channelId, { title, summary, proposalId }): Promise<void>` — posts an
+    embed + a Confirm and a Reject button (customId encodes the `proposalId`);
+  - an inbound **button-interaction** sink (`onProposalAction(ctx: { userId, ownerId,
+    proposalId, action: 'confirm'|'reject', reply })`), routed by `GatewayManager` like
+    slash commands, owner-locked in `BotRouter`.
+  - Implement in `discord-js-gateway.ts` with `EmbedBuilder` + `ButtonBuilder` /
+    `ActionRowBuilder` and a `ButtonInteraction` handler; keep the fake gateway in lockstep.
+- **Files:** `packages/discord/src/proposals.ts` (`handleProposalAction(ctx, connection)`:
+  Confirm → `connection.confirmProposal(id)` streamed + rendered via the T9 renderer;
+  Reject → `connection.rejectProposal(id)` + update the message); render helper in
+  `command-render.ts` (or a new `proposal-render.ts`). Extend the `CompanionConnection`
+  seam with `confirmProposal`/`rejectProposal`. Wire `onProposalAction` in `bridge.ts`
+  and `worker.ts`. Detect the `proposal` stream event in `chat.ts` → `gateway.sendProposal`.
+- **AC:** a turn that yields a proposal posts an embed + two buttons; Confirm calls
+  `proposals.confirm`, streams, and posts the resulting turn; Reject calls
+  `proposals.reject` and disables/updates the embed; a non-owner button click is ignored.
+- **Tests (fakes):** fake-gateway records `sendProposal` + emits button interactions;
+  assert confirm/reject dispatch and rendering; owner-lock on interactions. `pnpm
+  --filter @cobble/discord test proposals`.
+
+### T12 — Proactive DMs + arrival greeting *(needs: T8 ✓; independent of T11)*
+
+**Goal.** While Active, autonomous companion messages are DM'd to the owner; the
+arrival greeting fires on `/summon`.
+
+- **Live stream.** Extend the `CompanionConnection` seam with
+  `events(signal): AsyncIterable<CompanionStreamEvent>` (the bridge consumes the same
+  `companion` event the web client reads — `register.ts` pushes `connection.pushEvent
+  ('companion', event)`). The real `connection.ts` exposes the transport's `onEvent`.
+- **Forward + de-dupe (D5).** `packages/discord/src/proactive.ts`
+  (`runProactiveLoop(ctx, connection)`): for each `StreamMessageEvent` with
+  `role==='assistant'`, DM it **unless** its `message.id` was already rendered by the
+  chat path or a chat turn is currently in-flight (share a small per-bridge
+  `Set<renderedMessageId>` / in-flight flag with `handleChat`). Reaction events are
+  ignored for the PoC.
+- **Greeting.** On `/summon`, after `embodiment.ready`, call `connection.greeting()`
+  (a `greeting.stream` consumer reusing the T9 renderer) and post the greeting once.
+- **Dial.** No client-side dial check — the motivation engine already respects
+  `proactivity_dial` server-side (D4); the bridge forwards what it receives. (Note in
+  the design doc so the "gated by the dial" line isn't read as a client gate.)
+- **AC:** an autonomous assistant message is DM'd; a chat reply already posted by T9 is
+  **not** double-posted; the greeting fires once on `/summon`; nothing is forwarded
+  while Dormant.
+- **Tests (fakes):** drive fake `CompanionStreamEvent`s through a fake connection;
+  assert forward, dedupe (same id as a chat-rendered message → no DM), and greeting-on-
+  summon. `pnpm --filter @cobble/discord test proactive`.
+
+### T13 — Web settings panel + `discord.config.*` WS methods *(needs: T5 ✓, D2)*
+
+**Goal.** A signed-in user attaches a bot token, picks the bound companion, and sees a
+single-use `/link` code (with regenerate) — no seed script. Replaces
+`scripts/seed-discord-config.ts`.
+
+- **T13.0 — Crypto move (D2).** Move `packages/discord/src/crypto.ts` →
+  `db/src/crypto.ts`; export from `db/src/index.ts`; update imports in
+  `packages/discord` (`worker.ts`, `router.ts`, gateway) to `@cobble/db`; move its unit
+  tests. Add a `generateLinkCode()` helper (8-char, no-look-alike alphabet) next to the
+  config store so the API method and any tooling share one implementation. Green:
+  `pnpm -r run typecheck` + existing crypto tests pass from the new location.
+- **T13.1 — API config + methods.** Add `DISCORD_TOKEN_KEY` → `discordTokenKey` to
+  `packages/api/src/config.ts` (D3). New `packages/api/src/ws/methods/discord-config.ts`,
+  registered in `ws/methods.ts`, **user-scoped**:
+  - `discord.config.get` → `{ configured, boundCompanionId, ownerLinked, linkCode|null }`
+    (never the token);
+  - `discord.config.set` `{ botToken, boundCompanionId }` → `encryptSecret(botToken,
+    discordTokenKey)` + `generateLinkCode()` + `discordConfig.upsert(...)` → `{ linkCode }`;
+  - `discord.config.regenerateLink` → re-mint code + issued-at → `{ linkCode }`;
+  - `discord.config.delete` → `discordConfig.delete(ctx.userId)`.
+  All return a `not_configured` error when `discordTokenKey` is empty. Add the DTOs to
+  `packages/shared/src/contracts.ts`. Validate params with the existing `parseParams`
+  + a Zod schema (bot-token shape, `boundCompanionId` UUID owned by `ctx.userId`).
+- **T13.2 — Web panel.** `packages/web/src/pages/Discord.tsx` (token input,
+  `companions.list` picker, `/link` code display + regenerate, save/delete); client
+  wrappers in `packages/web/src/api/client.ts` (`getDiscordConfig`,
+  `saveDiscordConfig`, `regenerateDiscordLink`, `deleteDiscordConfig` over
+  `wsClient.call(..., null)`); add `'discord'` to the `View` union and the conditional
+  in `App.tsx`; a "Discord" header button in `pages/Chat.tsx`. Follow the
+  `ProactivityDial` optimistic-update pattern.
+- **AC:** save persists with the token **encrypted** (assert the stored blob ≠
+  plaintext and decrypts back); `get` never returns the token; the worker picks up the
+  new row within one poll interval and the bot comes online; regenerate replaces the
+  code; delete unconfigures. `.env`/`.env.example` updated (D3) and the seed script
+  removed.
+- **Tests:** api route/method tests (set→get round-trip, encryption, ownership
+  rejection, `not_configured` when key absent); web component test for the panel.
+  `pnpm --filter @cobble/api test` + `pnpm --filter @cobble/web test`.
+
+### T14 — Live `/ws` integration test *(needs: T8/T9 ✓)*
+
+**Goal.** Prove the one path fakes can't: a real `WsTransport` against a running `/ws`.
+
+- **Files:** `packages/discord/test/ws-client.integration.test.ts` (the deferred T1
+  task #4). Boot the api app + Postgres harness (mirror `packages/api/test/helpers.ts`);
+  **self-mint** a user access token (`mintAccessToken` + the test `JWT_SIGNING_SECRET`)
+  — does not need T2b. Open the transport with `?access_token=…&companion=<id>`, await
+  `embodiment.ready`, run a `messages.send` turn, then open a second claim and assert
+  the first receives `embodiment.superseded` + close `4002`.
+- **AC:** all three (claim, chat turn, supersede takeover) pass against a real `/ws`.
+- **Verify:** `make test-integration` (excluded from the default run; real Postgres).
+
+### T15 — Always-on worker deployment *(needs: worker assembly ✓, D6)*
+
+**Goal.** `make run-docker` runs the worker locally; AWS runs it on the same EC2 micro.
+
+- **T15.0 — Image includes `packages/discord`.** `Dockerfile`: add
+  `packages/discord/package.json` to the `deps` layer copy list, and ensure the
+  `server`/`source` stage carries its source (the full-repo `source` stage already
+  copies everything; the lockfile/deps snapshot is the gap). Verify the worker can
+  start from the built image: `docker run … <image> pnpm --filter @cobble/discord serve`.
+- **T15.1 — Local compose.** Add a `discord` service to `docker-compose.yml` (build
+  the same target, `command: pnpm --filter @cobble/discord serve`, `env_file: .env`,
+  `DATABASE_URL` → the compose-internal `postgres` host, `DISCORD_WS_BASE_URL=
+  ws://api:3000`, `DISCORD_MINT_URL=http://api:3000/internal/discord/token`,
+  `depends_on: [postgres, api]`). After this, `make run-docker` brings up all four.
+- **T15.2 — AWS (single EC2).** `infra/aws/src/secrets.ts`: add SSM params for the two
+  true secrets (`DISCORD_SERVICE_SECRET`, `DISCORD_TOKEN_KEY`) + grant them in
+  `iam.ts`. `infra/aws/src/compute.ts`: write the non-secret Discord vars
+  (`DISCORD_SERVICE_CLIENT_ID`, `DISCORD_WS_BASE_URL=ws://127.0.0.1:3000`,
+  `DISCORD_MINT_URL=http://127.0.0.1:3000/internal/discord/token`) into
+  `/etc/cobble.env`, and add a second `docker run -d --restart=always --name
+  cobble-discord --env-file /etc/cobble.env "$IMAGE" pnpm --filter @cobble/discord
+  serve` after `cobble-app`. (Loopback reach; no Caddy/public exposure.)
+- **AC:** local — `make run-docker` runs Postgres + API + web + worker, and a seeded
+  bot comes online; AWS — `make deploy-dev` leaves `cobble-app` + `caddy` +
+  `cobble-discord` all `--restart=always`, worker reaching the API on loopback.
+- **Verify:** local compose up; AWS preview/diff (`make pulumi-preview`) shows the
+  added container + params.
+
+### T2 / ops — service credential + token key *(needs: T2b ✓; folded into T15.2)*
+
+Not code: register the `DISCORD_SERVICE_CLIENT_ID`/`DISCORD_SERVICE_SECRET` pair (the
+mint route pins to it) and provision `DISCORD_TOKEN_KEY`. Locally this is already done
+via `SERVICE_REGISTRY_SEEDS` + `.env`; on AWS it is the SSM params added in T15.2.
+Documented in `docs/infra-setup.md` + `infra/aws/README.md`.
+
+### T16 — Canonical-doc updates on merge to `main` *(needs: all above)*
+
+On PR merge, update the repo-wide canonical sources (CLAUDE.md "When to Update Docs"):
+the `packages/discord` component + `/internal/discord/token` route + the
+`discord.config.*` methods + the worker process in `docs/architecture.md` §3/§4.1;
+Discord as a surface in `docs/product-overview.md`; the `discord_config` data model +
+worker/`DISCORD_*` config in `docs/implementation.md`; the worker run/env + the
+single-EC2 deployment in `README.md`, `docs/infra-setup.md`, `infra/aws/README.md`;
+and flip the **"proposed"** banners in this plan and `companion-discord.md` to shipped.
+
+### Build order (dependency-respecting)
+
+```
+T11 ─┐                          (T11, T12, T14 are mutually independent)
+T12 ─┤
+T14 ─┤
+T13.0 (crypto move) ─▶ T13.1 (API methods) ─▶ T13.2 (web panel)
+T15.0 (image) ─▶ T15.1 (compose) ─▶ T15.2 (AWS)   [+ T2 ops folded in]
+T16 (docs, on merge) ◀── everything
+```
+
+Each task lands as its own commit, independently green. Suggested execution order:
+**T13.0 → T11 → T12 → T13.1 → T13.2 → T14 → T15.0 → T15.1 → T15.2 → T16** (T13.0 first
+because the crypto move is a trivial, broad-touch refactor best done before other edits
+pile on `packages/discord`).

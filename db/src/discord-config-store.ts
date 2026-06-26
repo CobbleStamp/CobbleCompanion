@@ -1,6 +1,29 @@
+import { randomBytes } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import type { Database } from './client.js';
 import { discordConfig } from './schema.js';
+
+/**
+ * No-look-alike alphabet for the single-use `/link` code (no 0/O/1/I/L). Its length
+ * (32) divides 256 evenly, so `randomBytes` mod 32 is unbiased.
+ */
+const LINK_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+/** `/link` code length. */
+export const LINK_CODE_LENGTH = 8;
+
+/**
+ * Generate a fresh single-use `/link` code (companion-discord.md §9). Minted by the
+ * API when a user saves their bot token; the worker verifies it on `/link`. Shared
+ * here so the API and any tooling produce the same shape.
+ */
+export function generateLinkCode(): string {
+  const bytes = randomBytes(LINK_CODE_LENGTH);
+  let code = '';
+  for (let i = 0; i < LINK_CODE_LENGTH; i += 1) {
+    code += LINK_CODE_ALPHABET[(bytes[i] as number) % LINK_CODE_ALPHABET.length];
+  }
+  return code;
+}
 
 /**
  * Data access for `discord_config` (companion-discord.md §9). Lives in `@cobble/db`

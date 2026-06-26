@@ -7,12 +7,17 @@
  * builds the real dependencies from config.
  */
 
-import { DrizzleDiscordConfigStore, createPgDatabase, type DiscordConfigStore } from '@cobble/db';
+import {
+  DrizzleDiscordConfigStore,
+  createPgDatabase,
+  decryptSecret,
+  keyFromBase64,
+  type DiscordConfigStore,
+} from '@cobble/db';
 import { CompanionBridge, type CompanionConnectionFactory } from './bridge.js';
 import { handleChat } from './chat.js';
 import { COMMAND_SPECS } from './commands.js';
 import { createCompanionConnectionFactory } from './connection.js';
-import { decryptSecret, keyFromBase64 } from './crypto.js';
 import { createDiscordJsGatewayFactory } from './gateway/discord-js-gateway.js';
 import { GatewayManager } from './gateway/manager.js';
 import type { DiscordGatewayFactory, Logger } from './gateway/types.js';

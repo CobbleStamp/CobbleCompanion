@@ -10,8 +10,7 @@
  * nothing from `@cobble/core`.
  */
 
-import type { DiscordConfigStore } from '@cobble/db';
-import { secretsEqual } from './crypto.js';
+import { secretsEqual, type DiscordConfigStore } from '@cobble/db';
 import type { DirectMessageContext, SlashCommandContext } from './gateway/manager.js';
 import type { Logger } from './gateway/types.js';
 

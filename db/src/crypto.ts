@@ -1,12 +1,17 @@
 /**
  * At-rest encryption for the Discord **bot token** (secret #1 — the credential the
- * bot presents to Discord). The adapter stores it in `discord_config`
+ * bot presents to Discord). It is stored in `discord_config`
  * (`docs/companion-discord.md` §9), and per the security rules a secret is never
  * persisted in plaintext.
  *
+ * Lives in `@cobble/db` (the shared, `@cobble/*`-free data layer) so BOTH the api
+ * (encrypts on write, via the `discord.config.*` WS methods) and the decoupled
+ * `@cobble/discord` worker (decrypts on read) can use it without importing each
+ * other or `@cobble/core`.
+ *
  * AES-256-GCM via `node:crypto`: authenticated encryption, so a tampered or
  * wrong-key payload fails closed rather than returning garbage. The 256-bit key is
- * supplied by the worker from its environment / KMS (see {@link keyFromBase64}); this
+ * supplied by the caller from its environment / KMS (see {@link keyFromBase64}); this
  * module is key-source-agnostic and pure, so it is fully unit-testable without env.
  *
  * Payload format (one opaque string, safe to store in a text column):
@@ -26,7 +31,7 @@ export const KEY_BYTES = 32;
 const TAG_BYTES = 16;
 
 /**
- * Decode a base64-encoded 256-bit key (how the worker passes `DISCORD_TOKEN_KEY`).
+ * Decode a base64-encoded 256-bit key (how a caller passes `DISCORD_TOKEN_KEY`).
  * Throws on a wrong-length key — a misconfiguration the operator must fix at boot,
  * not a runtime-recoverable condition.
  */

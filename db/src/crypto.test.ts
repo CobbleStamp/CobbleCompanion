@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { KEY_BYTES, decryptSecret, encryptSecret, keyFromBase64, secretsEqual } from './crypto.js';
+import { generateLinkCode, LINK_CODE_LENGTH } from './discord-config-store.js';
 
 const KEY = randomBytes(KEY_BYTES);
 const OTHER_KEY = randomBytes(KEY_BYTES);
@@ -85,5 +86,20 @@ describe('secretsEqual', () => {
     expect(secretsEqual('abc123', 'abc123')).toBe(true);
     expect(secretsEqual('abc123', 'abc124')).toBe(false);
     expect(secretsEqual('abc', 'abcd')).toBe(false);
+  });
+});
+
+describe('generateLinkCode', () => {
+  it('produces an 8-char code from the no-look-alike alphabet', () => {
+    for (let i = 0; i < 50; i += 1) {
+      const code = generateLinkCode();
+      expect(code).toHaveLength(LINK_CODE_LENGTH);
+      expect(code).toMatch(/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/);
+    }
+  });
+
+  it('is effectively unique across calls', () => {
+    const codes = new Set(Array.from({ length: 100 }, () => generateLinkCode()));
+    expect(codes.size).toBeGreaterThan(95);
   });
 });
