@@ -86,6 +86,29 @@ aws ssm put-parameter --type SecureString --overwrite \
 Point a DNS **A record** for `companion.<domain>` at `instancePublicIp` (the
 Elastic IP) so Caddy can obtain a Let's Encrypt cert.
 
+### Optional — enable the Discord surface
+
+The Discord surface (`docs/companion-discord.md`) ships **off**. The same EC2 box
+runs the always-on `cobble-discord` worker as a second container from the same
+image; it's only started when configured. To turn it on:
+
+```bash
+# 1. Register the worker's service credential (prints the secret once):
+pnpm --filter @cobble/db service add discord-adapter discord
+# 2. Tell the stack the (public) client id — this also enables the api's mint route:
+pulumi config set cobblecompanion-aws:discordServiceClientId discord-adapter
+# 3. Populate the two Discord SSM secrets (REPLACE_ME placeholders until set):
+aws ssm put-parameter --type SecureString --overwrite \
+  --name /cobblecompanion/DISCORD_SERVICE_SECRET --value '<secret from step 1>'
+aws ssm put-parameter --type SecureString --overwrite \
+  --name /cobblecompanion/DISCORD_TOKEN_KEY --value "$(openssl rand -base64 32)"
+```
+
+Then redeploy (Phase D). `DISCORD_TOKEN_KEY` must stay stable — it decrypts the bot
+tokens stored in `discord_config`; rotating it strands already-saved tokens. Leaving
+`discordServiceClientId` unset keeps the worker off and the api's Discord methods
+disabled.
+
 ---
 
 ## Phase D — Push the image + roll the instance

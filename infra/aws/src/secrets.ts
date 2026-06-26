@@ -36,6 +36,18 @@ const specs: readonly ParamSpec[] = [
     description:
       'Supabase pooled (PgBouncer) DSN, port 6543 transaction mode. Consumed by the api.',
   },
+  {
+    name: '/cobblecompanion/DISCORD_SERVICE_SECRET',
+    envVar: 'DISCORD_SERVICE_SECRET',
+    description:
+      "The Discord worker's service-credential secret (companion-discord.md §9). Consumed by the cobble-discord worker. Leave the REPLACE_ME placeholder to keep Discord off.",
+  },
+  {
+    name: '/cobblecompanion/DISCORD_TOKEN_KEY',
+    envVar: 'DISCORD_TOKEN_KEY',
+    description:
+      'Base64 AES-256 key for Discord bot-token encryption (companion-discord.md §9). Consumed by BOTH the api (encrypt on write) and the worker (decrypt). Leave REPLACE_ME to keep Discord off.',
+  },
 ];
 
 export interface ManagedParameter {

@@ -51,3 +51,25 @@ services:
       - '3001:80'
     depends_on:
       - api
+
+  # The always-on Discord worker (companion-discord.md). Reads DISCORD_SERVICE_*,
+  # DISCORD_TOKEN_KEY from .env; reaches the api over the compose network. A no-op
+  # until a user saves a bot token in the web Discord settings panel (T13).
+  discord:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: discord
+    env_file:
+      - .env
+    environment:
+      # Container-specific overrides: Postgres + the api are reached on the compose
+      # network, not localhost.
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/cobble
+      DISCORD_WS_BASE_URL: ws://api:3000
+      DISCORD_MINT_URL: http://api:3000/internal/discord/token
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started

@@ -27,6 +27,12 @@ const imageTag = cfg.get('imageTag') ?? 'latest';
 const googleClientId = cfg.require('googleClientId');
 const llmModel = cfg.get('llmModel') ?? 'anthropic/claude-3.5-sonnet';
 const domain = cfg.require('domain');
+// The Discord adapter's service-client id (companion-discord.md §9). Empty (default)
+// leaves the surface OFF: the api's mint route + discord.config.* methods stay
+// disabled and the cobble-discord worker is not started. Set it (and populate the
+// DISCORD_* SSM secrets) to turn the surface on. Not a secret — it's the public id
+// half of the credential whose secret lives in SSM.
+const discordServiceClientId = cfg.get('discordServiceClientId') ?? '';
 // Optional ACME contact email. Caddy issues certs fine without one, but setting
 // it opts into Let's Encrypt expiry/issue notifications. Emitted as a global
 // Caddy options block only when configured.
@@ -73,6 +79,19 @@ const secretFetchScript = pulumi
       .join('\n'),
   );
 
+// The Discord worker runs as a SECOND container from the SAME image, with the run
+// command overridden to the worker entrypoint (companion-discord.md §2,
+// plans/discord-surface.md D6). Host network so it reaches the api on the host's
+// loopback :3000 (like Caddy). Only emitted when the surface is configured, so an
+// unconfigured stack doesn't spin a crash-looping worker (its env would be missing).
+const discordWorkerBlock =
+  discordServiceClientId.length > 0
+    ? `docker rm -f cobble-discord 2>/dev/null || true
+docker run -d --restart=always --name cobble-discord --network host \\
+  --env-file /etc/cobble.env "$IMAGE" \\
+  pnpm --filter @cobble/discord run serve`
+    : '# Discord surface off (set discordServiceClientId in Pulumi config to enable).';
+
 const userData = pulumi.interpolate`#!/bin/bash
 exec > >(tee /var/log/cobble-bootstrap.log) 2>&1
 set -x
@@ -107,6 +126,9 @@ UPLOAD_STAGING_BACKEND=s3
 UPLOAD_STAGING_S3_BUCKET=${uploadsBucket.bucket}
 UPLOAD_STAGING_S3_REGION=${region}
 UPLOAD_STAGING_PREFIX=${UPLOAD_PREFIX}
+DISCORD_SERVICE_CLIENT_ID=${discordServiceClientId}
+DISCORD_WS_BASE_URL=ws://127.0.0.1:3000
+DISCORD_MINT_URL=http://127.0.0.1:3000/internal/discord/token
 EOF
 ${secretFetchScript}
 
@@ -126,6 +148,9 @@ done
 docker rm -f cobble-app 2>/dev/null || true
 docker run -d --restart=always --name cobble-app \\
   -p 127.0.0.1:3000:3000 --env-file /etc/cobble.env "$IMAGE"
+
+# 4b. The Discord worker (same image, worker command), if the surface is configured.
+${discordWorkerBlock}
 
 # 5. Persistent Caddy data volume. The instance is replaced on every redeploy
 #    (userDataReplaceOnChange), so Let's Encrypt certs + the ACME account must
