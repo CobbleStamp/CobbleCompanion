@@ -22,7 +22,9 @@ class OneUserStore implements DiscordConfigStore {
   async reissueLinkCode(): Promise<DiscordConfigRecord | null> {
     return this.recordValue;
   }
-  async bindOwner(): Promise<void> {}
+  async bindOwner(): Promise<boolean> {
+    return true;
+  }
   async delete(): Promise<void> {}
 }
 

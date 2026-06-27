@@ -65,7 +65,7 @@ describe('DrizzleDiscordConfigStore (PGlite)', () => {
       linkCode: 'OLD',
       linkCodeIssuedAt: new Date('2026-06-26T12:00:00Z'),
     });
-    await store.bindOwner(userId, 'discord-user-123');
+    await store.bindOwner(userId, 'discord-user-123', 'OLD');
     expect((await store.findByUserId(userId))?.ownerDiscordUserId).toBe('discord-user-123');
 
     await store.upsert({
@@ -92,12 +92,50 @@ describe('DrizzleDiscordConfigStore (PGlite)', () => {
       linkCodeIssuedAt: new Date('2026-06-26T12:00:00Z'),
     });
 
-    await store.bindOwner(userId, 'discord-user-999');
+    const consumed = await store.bindOwner(userId, 'discord-user-999', 'CODE');
+    expect(consumed).toBe(true);
 
     const record = await store.findByUserId(userId);
     expect(record?.ownerDiscordUserId).toBe('discord-user-999');
     expect(record?.linkCode).toBeNull();
     expect(record?.linkCodeIssuedAt).toBeNull();
+  });
+
+  it('bindOwner is single-use: a second bind with the consumed code is rejected', async () => {
+    const { userId, companionId } = await seedUserAndCompanion('c2@example.com');
+    await store.upsert({
+      userId,
+      encryptedBotToken: 'v1.a.b.c',
+      boundCompanionId: companionId,
+      linkCode: 'CODE',
+      linkCodeIssuedAt: new Date('2026-06-26T12:00:00Z'),
+    });
+
+    const first = await store.bindOwner(userId, 'discord-first', 'CODE');
+    const second = await store.bindOwner(userId, 'discord-second', 'CODE');
+
+    expect(first).toBe(true);
+    expect(second).toBe(false);
+    // The first binder stays the owner — a racing second call can't overwrite it.
+    expect((await store.findByUserId(userId))?.ownerDiscordUserId).toBe('discord-first');
+  });
+
+  it('bindOwner rejects a stale/wrong code without binding', async () => {
+    const { userId, companionId } = await seedUserAndCompanion('c3@example.com');
+    await store.upsert({
+      userId,
+      encryptedBotToken: 'v1.a.b.c',
+      boundCompanionId: companionId,
+      linkCode: 'CODE',
+      linkCodeIssuedAt: new Date('2026-06-26T12:00:00Z'),
+    });
+
+    const consumed = await store.bindOwner(userId, 'discord-user-999', 'WRONG');
+
+    expect(consumed).toBe(false);
+    const record = await store.findByUserId(userId);
+    expect(record?.ownerDiscordUserId).toBeNull();
+    expect(record?.linkCode).toBe('CODE');
   });
 
   it('lists all configured bots', async () => {

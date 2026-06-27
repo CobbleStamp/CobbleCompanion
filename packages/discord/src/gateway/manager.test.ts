@@ -42,7 +42,9 @@ class InMemoryConfigStore implements DiscordConfigStore {
     return this.rows.get(userId) ?? null;
   }
 
-  async bindOwner(): Promise<void> {}
+  async bindOwner(): Promise<boolean> {
+    return true;
+  }
   async delete(userId: string): Promise<void> {
     this.rows.delete(userId);
   }

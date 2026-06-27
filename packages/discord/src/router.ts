@@ -97,7 +97,16 @@ export class BotRouter {
       await ctx.reply('That code didn’t match. Check your settings and try again.');
       return;
     }
-    await this.opts.configStore.bindOwner(ctx.userId, ctx.command.userId);
+    const consumed = await this.opts.configStore.bindOwner(
+      ctx.userId,
+      ctx.command.userId,
+      config.linkCode,
+    );
+    if (!consumed) {
+      // Another `/link` won the race and consumed the single-use code first.
+      await ctx.reply('That code was just used. Generate a new one in your settings to re-link.');
+      return;
+    }
     this.opts.logger.info('discord: owner linked', {
       operation: 'discord.router.link',
       userId: ctx.userId,

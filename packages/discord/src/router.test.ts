@@ -24,10 +24,19 @@ class OneUserStore implements DiscordConfigStore {
   async reissueLinkCode(): Promise<DiscordConfigRecord | null> {
     return this.record;
   }
-  async bindOwner(userId: string, ownerDiscordUserId: string): Promise<void> {
-    if (userId !== this.record.userId) return;
+  async bindOwner(
+    userId: string,
+    ownerDiscordUserId: string,
+    expectedLinkCode: string,
+  ): Promise<boolean> {
+    // Mirror the store's atomic guard: bind only if the code is unconsumed and matches.
+    if (userId !== this.record.userId) return false;
+    if (this.record.linkCode === null || this.record.linkCode !== expectedLinkCode) {
+      return false;
+    }
     this.boundTo = ownerDiscordUserId;
     this.record = { ...this.record, ownerDiscordUserId, linkCode: null, linkCodeIssuedAt: null };
+    return true;
   }
   async delete(): Promise<void> {}
 }
@@ -191,6 +200,21 @@ describe('BotRouter — /link handshake', () => {
     await router.handleSlashCommand(ctx);
 
     expect(replies[0]).toContain('No pending link');
+  });
+
+  it('tells the loser of a concurrent /link race the code was just used', async () => {
+    // The race: this caller reads a still-valid code and passes the router's checks,
+    // but a concurrent /link already consumed it, so the atomic bindOwner returns false.
+    const config = record({ linkCode: 'GOODCODE', linkCodeIssuedAt: new Date(NOW - 60_000) });
+    const store = new OneUserStore(config);
+    store.bindOwner = async () => false;
+    const { router } = makeRouter(store);
+    const { ctx, replies } = cmdCtx(config, 'link', 'attacker-999', { code: 'GOODCODE' });
+
+    await router.handleSlashCommand(ctx);
+
+    expect(store.boundTo).toBeNull();
+    expect(replies[0]).toContain('just used');
   });
 });
 

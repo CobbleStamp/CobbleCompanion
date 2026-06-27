@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import type { Database } from './client.js';
 import { discordConfig } from './schema.js';
 
@@ -88,7 +88,7 @@ export interface DiscordConfigStore {
     linkCode: string,
     issuedAt: Date,
   ): Promise<DiscordConfigRecord | null>;
-  bindOwner(userId: string, ownerDiscordUserId: string): Promise<void>;
+  bindOwner(userId: string, ownerDiscordUserId: string, expectedLinkCode: string): Promise<boolean>;
   delete(userId: string): Promise<void>;
 }
 
@@ -161,9 +161,20 @@ export class DrizzleDiscordConfigStore implements DiscordConfigStore {
     return row ? toRecord(row as DiscordConfigRow) : null;
   }
 
-  /** Bind the owner's Discord id on a successful `/link`, clearing the consumed code. */
-  async bindOwner(userId: string, ownerDiscordUserId: string): Promise<void> {
-    await this.db
+  /**
+   * Atomically bind the owner's Discord id on a successful `/link`, clearing the
+   * consumed code. The `WHERE` guards `link_code = expected AND owner IS NULL` so the
+   * code is single-use under concurrency: two racing `/link` calls both pass the
+   * router's check-then-act, but only the first matches this predicate — the second
+   * sees the now-cleared code (0 rows) and is rejected. Returns whether this call
+   * consumed the code.
+   */
+  async bindOwner(
+    userId: string,
+    ownerDiscordUserId: string,
+    expectedLinkCode: string,
+  ): Promise<boolean> {
+    const rows = await this.db
       .update(discordConfig)
       .set({
         ownerDiscordUserId,
@@ -171,7 +182,15 @@ export class DrizzleDiscordConfigStore implements DiscordConfigStore {
         linkCodeIssuedAt: null,
         updatedAt: new Date(),
       })
-      .where(eq(discordConfig.userId, userId));
+      .where(
+        and(
+          eq(discordConfig.userId, userId),
+          eq(discordConfig.linkCode, expectedLinkCode),
+          isNull(discordConfig.ownerDiscordUserId),
+        ),
+      )
+      .returning();
+    return rows.length > 0;
   }
 
   async delete(userId: string): Promise<void> {
