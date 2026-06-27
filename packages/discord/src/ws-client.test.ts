@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { Logger } from './gateway/types.js';
 import {
   ConnectionClosedError,
   SupersededError,
@@ -6,6 +7,27 @@ import {
   type WsSocket,
   type WsSocketFactory,
 } from './ws-client.js';
+
+const silent: Logger = { error: () => {}, warn: () => {}, info: () => {} };
+
+/** A logger that records every call, for asserting that drops/throws are logged. */
+function recordingLogger(): {
+  logger: Logger;
+  warns: Array<{ message: string; meta: Record<string, unknown> | undefined }>;
+  errors: Array<{ message: string; meta: Record<string, unknown> | undefined }>;
+} {
+  const warns: Array<{ message: string; meta: Record<string, unknown> | undefined }> = [];
+  const errors: Array<{ message: string; meta: Record<string, unknown> | undefined }> = [];
+  return {
+    logger: {
+      error: (message, meta) => errors.push({ message, meta }),
+      warn: (message, meta) => warns.push({ message, meta }),
+      info: () => {},
+    },
+    warns,
+    errors,
+  };
+}
 
 /**
  * A scriptable fake `/ws` socket: the test drives the server side by hand
@@ -52,7 +74,11 @@ class FakeSocket implements WsSocket {
 
   /** Push a server frame to the transport. */
   emit(message: unknown): void {
-    const raw = JSON.stringify(message);
+    this.emitRaw(JSON.stringify(message));
+  }
+
+  /** Push a raw (possibly malformed) wire string straight to the transport. */
+  emitRaw(raw: string): void {
     for (const l of this.listeners.message) l(raw);
   }
 
@@ -84,7 +110,7 @@ function fakeFactory(): { factory: WsSocketFactory; socket: () => FakeSocket } {
 describe('WsTransport', () => {
   it('passes the url and auth headers through to the socket', async () => {
     const { factory, socket } = fakeFactory();
-    const transport = new WsTransport(factory);
+    const transport = new WsTransport({ factory, logger: silent });
     const connecting = transport.connect({
       url: 'wss://api.test/ws?access_token=tok',
       headers: { 'x-user-id': 'u1' },
@@ -98,7 +124,7 @@ describe('WsTransport', () => {
 
   it('resolves a transport-only connect on socket open', async () => {
     const { factory, socket } = fakeFactory();
-    const transport = new WsTransport(factory);
+    const transport = new WsTransport({ factory, logger: silent });
     let opened = false;
     const connecting = transport
       .connect({ url: 'wss://x/ws', headers: {}, embodying: false })
@@ -113,7 +139,7 @@ describe('WsTransport', () => {
 
   it('round-trips ping → pong', async () => {
     const { factory, socket } = fakeFactory();
-    const transport = new WsTransport(factory);
+    const transport = new WsTransport({ factory, logger: silent });
     const connecting = transport.connect({ url: 'wss://x/ws', headers: {}, embodying: false });
     socket().open();
     await connecting;
@@ -126,7 +152,7 @@ describe('WsTransport', () => {
 
   it('round-trips auth.me', async () => {
     const { factory, socket } = fakeFactory();
-    const transport = new WsTransport(factory);
+    const transport = new WsTransport({ factory, logger: silent });
     const connecting = transport.connect({ url: 'wss://x/ws', headers: {}, embodying: false });
     socket().open();
     await connecting;
@@ -138,7 +164,7 @@ describe('WsTransport', () => {
 
   it('rejects a call when the server returns an error frame', async () => {
     const { factory, socket } = fakeFactory();
-    const transport = new WsTransport(factory);
+    const transport = new WsTransport({ factory, logger: silent });
     const connecting = transport.connect({ url: 'wss://x/ws', headers: {}, embodying: false });
     socket().open();
     await connecting;
@@ -153,7 +179,7 @@ describe('WsTransport', () => {
 
   it('waits for embodiment.ready before resolving an embodying connect', async () => {
     const { factory, socket } = fakeFactory();
-    const transport = new WsTransport(factory);
+    const transport = new WsTransport({ factory, logger: silent });
     let ready = false;
     const connecting = transport
       .connect({ url: 'wss://x/ws?companion=c1', headers: {}, embodying: true })
@@ -170,7 +196,7 @@ describe('WsTransport', () => {
 
   it('rejects an embodying connect with SupersededError if the room is lost first', async () => {
     const { factory, socket } = fakeFactory();
-    const transport = new WsTransport(factory);
+    const transport = new WsTransport({ factory, logger: silent });
     const connecting = transport.connect({
       url: 'wss://x/ws?companion=c1',
       headers: {},
@@ -184,7 +210,7 @@ describe('WsTransport', () => {
 
   it('streams chunks and ends on the terminal result', async () => {
     const { factory, socket } = fakeFactory();
-    const transport = new WsTransport(factory);
+    const transport = new WsTransport({ factory, logger: silent });
     const connecting = transport.connect({ url: 'wss://x/ws', headers: {}, embodying: false });
     socket().open();
     await connecting;
@@ -210,7 +236,7 @@ describe('WsTransport', () => {
 
   it('fans out unsolicited events to subscribers', async () => {
     const { factory, socket } = fakeFactory();
-    const transport = new WsTransport(factory);
+    const transport = new WsTransport({ factory, logger: silent });
     const connecting = transport.connect({
       url: 'wss://x/ws?companion=c1',
       headers: {},
@@ -230,7 +256,7 @@ describe('WsTransport', () => {
 
   it('fails in-flight calls when the socket closes', async () => {
     const { factory, socket } = fakeFactory();
-    const transport = new WsTransport(factory);
+    const transport = new WsTransport({ factory, logger: silent });
     const connecting = transport.connect({ url: 'wss://x/ws', headers: {}, embodying: false });
     socket().open();
     await connecting;
@@ -238,5 +264,42 @@ describe('WsTransport', () => {
     const call = transport.call('memory.snapshot');
     socket().closeRemote(1006);
     await expect(call).rejects.toBeInstanceOf(ConnectionClosedError);
+  });
+
+  it('warns and drops an unparseable server frame instead of swallowing it', async () => {
+    const { factory, socket } = fakeFactory();
+    const { logger, warns } = recordingLogger();
+    const transport = new WsTransport({ factory, logger });
+    const connecting = transport.connect({ url: 'wss://x/ws', headers: {}, embodying: false });
+    socket().open();
+    await connecting;
+
+    // A malformed frame must not throw out of the message pump (which would crash the
+    // socket handler) and must be logged, not silently dropped.
+    expect(() => socket().emitRaw('{not json')).not.toThrow();
+    expect(warns).toHaveLength(1);
+    expect(warns[0]?.message).toContain('unparseable');
+    expect(warns[0]?.meta?.bytes).toBe('{not json'.length);
+  });
+
+  it('isolates a throwing event listener: others still run and the throw is logged', async () => {
+    const { factory, socket } = fakeFactory();
+    const { logger, errors } = recordingLogger();
+    const transport = new WsTransport({ factory, logger });
+    const connecting = transport.connect({ url: 'wss://x/ws', headers: {}, embodying: false });
+    socket().open();
+    await connecting;
+
+    const reached: string[] = [];
+    transport.onEvent(() => {
+      throw new Error('listener boom');
+    });
+    transport.onEvent((event) => reached.push(event));
+
+    // The first listener throwing must not abort the second nor propagate into the pump.
+    expect(() => socket().emit({ event: 'companion', data: {} })).not.toThrow();
+    expect(reached).toEqual(['companion']);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.meta?.event).toBe('companion');
   });
 });

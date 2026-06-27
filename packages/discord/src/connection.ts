@@ -37,7 +37,7 @@ export function createCompanionConnectionFactory(
   deps: CompanionConnectionDeps,
 ): CompanionConnectionFactory {
   return ({ userId, companionId, encryptedBotToken }): CompanionConnection => {
-    const transport = deps.socketFactory ? new WsTransport(deps.socketFactory) : new WsTransport();
+    const transport = new WsTransport({ factory: deps.socketFactory, logger: deps.logger });
     let supersededHandler: () => void = () => {};
     transport.onEvent((event) => {
       if (event === 'embodiment.superseded') supersededHandler();

@@ -214,7 +214,15 @@ export class CompanionBridge {
     this.active.set(ctx.userId, embodiment);
     await ctx.reply('I’m here. ✨');
     // Stream the arrival greeting, then forward autonomous messages until torn down.
-    void this.runBackground(ctx.userId, embodiment);
+    // Fire-and-forget: a rejection here would otherwise become an unhandled promise
+    // rejection, so funnel it into the structured logger for debugging and audit.
+    void this.runBackground(ctx.userId, embodiment).catch((error: unknown) => {
+      this.opts.logger.error('discord background embodiment loop failed', {
+        operation: 'discord.bridge.runBackground',
+        userId: ctx.userId,
+        error,
+      });
+    });
   }
 
   /** Greet on arrival, then run the proactive forward loop (companion-discord.md §8). */

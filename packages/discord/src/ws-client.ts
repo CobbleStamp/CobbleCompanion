@@ -21,6 +21,7 @@
 
 import { WebSocket as NodeWebSocket } from 'ws';
 import type { WsServerMessage } from '@cobble/shared';
+import type { Logger } from './gateway/types.js';
 
 /** Standard WebSocket `readyState` for an open socket (`ws` mirrors the browser). */
 const SOCKET_OPEN = 1;
@@ -77,6 +78,13 @@ export interface WsSocket {
 }
 
 export type WsSocketFactory = (url: string, headers: Record<string, string>) => WsSocket;
+
+export interface WsTransportOptions {
+  /** Socket factory override (tests inject a fake); defaults to the real `ws`. */
+  readonly factory?: WsSocketFactory | undefined;
+  /** Structured logger for dropped frames and misbehaving event listeners. */
+  readonly logger: Logger;
+}
 
 /** The production factory: a real `ws` socket, normalising inbound frames to string. */
 export const defaultSocketFactory: WsSocketFactory = (url, headers) => {
@@ -198,8 +206,13 @@ export class WsTransport {
   private readonly streams = new Map<string, StreamQueue>();
   private readonly eventListeners = new Set<EventListener>();
   private pendingOpen: { resolve: () => void; reject: (error: Error) => void } | null = null;
+  private readonly factory: WsSocketFactory;
+  private readonly logger: Logger;
 
-  constructor(private readonly factory: WsSocketFactory = defaultSocketFactory) {}
+  constructor(opts: WsTransportOptions) {
+    this.factory = opts.factory ?? defaultSocketFactory;
+    this.logger = opts.logger;
+  }
 
   /**
    * Open the connection, resolving once it is usable: for a transport-only socket the
@@ -303,8 +316,15 @@ export class WsTransport {
     let message: WsServerMessage;
     try {
       message = JSON.parse(raw) as WsServerMessage;
-    } catch {
-      return; // a malformed frame has no id to correlate; drop it
+    } catch (error) {
+      // A malformed frame has no id to correlate, so the call/stream maps can't be
+      // touched; drop it — but never silently (no unlogged catch). Log the byte length
+      // rather than the raw payload to avoid spilling unparsed wire data into logs.
+      this.logger.warn('discord ws: dropped unparseable server frame', {
+        error,
+        bytes: raw.length,
+      });
+      return;
     }
     if ('stream' in message) {
       this.streams.get(message.id)?.push(message.stream);
@@ -334,8 +354,17 @@ export class WsTransport {
       // caller sees SupersededError rather than hanging on a grant that won't come.
       this.settleOpen(new SupersededError());
     }
+    // Isolate each listener: one that throws must not abort the rest or propagate back
+    // into the socket message pump (which would tear the connection down). Log and move on.
     for (const listener of this.eventListeners) {
-      listener(message.event, message.data);
+      try {
+        listener(message.event, message.data);
+      } catch (error) {
+        this.logger.error('discord ws: event listener threw', {
+          error,
+          event: message.event,
+        });
+      }
     }
   }
 
