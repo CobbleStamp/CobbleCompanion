@@ -211,7 +211,17 @@ external_id)` user (`packages/core/src/identity/store.ts`, `ensureUserByClaim`),
     `service_registry`, `pnpm --filter @cobble/db service add`); the endpoint mints **only** for a
     `userId` that has a `discord_config` row, and the bridge refreshes the short-lived token as
     needed. The signing key (`ACCESS_TOKEN_SECRET`) stays in the API and is **never** held by the
-    worker — so the worker cannot mint tokens for arbitrary users.
+    worker.
+  - **Per-user proof (`X-Discord-Bot-Token`).** The service credential is **shared across all
+    Discord users**, so `X-User-Id` on its own is an unauthenticated claim — without more, any holder
+    of the service secret could mint a full session for any Discord-enabled user. The mint therefore
+    requires the caller to also present that user's **plaintext bot token**; the endpoint decrypts the
+    stored `encryptedBotToken` for `userId` and rejects (opaque `403`) on any mismatch, absent header,
+    or undecryptable record (constant-time compare, `discord-token-mint.ts` gate 4). The bot token is
+    the one secret that actually identifies the user, so a leaked service credential **alone** cannot
+    mint for a user whose bot token it does not also hold. The worker already holds the decrypted
+    token (it ran the gateway connection), so it sends it on the mint call; no user input chooses
+    `userId` (it is bound to the bot connection that received the event, `gateway/manager.ts`).
 - **Owner lock.** Every inbound Discord event is checked against the stored `ownerDiscordUserId`;
   anything else is ignored. The owner ID is captured once via a **`/link <code>`** handshake so the
   bot never trusts "first DM wins": the **API mints** an **8-char, single-use** code (no-look-alike

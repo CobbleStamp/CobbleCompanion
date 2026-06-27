@@ -38,7 +38,7 @@ describe('createMintTokenSource', () => {
       fetchFn: fetch.fn,
     });
 
-    const token = await acquire('user-1');
+    const token = await acquire('user-1', 'user-1-bot-token');
 
     expect(token).toBe('minted');
     expect(fetch.calls[0]?.url).toBe('https://home.example/internal/discord/token');
@@ -46,6 +46,8 @@ describe('createMintTokenSource', () => {
       'x-service-client-id': 'discord-adapter',
       authorization: 'Bearer svc-secret',
       'x-user-id': 'user-1',
+      // The per-user proof: the user's plaintext bot token.
+      'x-discord-bot-token': 'user-1-bot-token',
     });
   });
 
@@ -59,7 +61,7 @@ describe('createMintTokenSource', () => {
       fetchFn: fetch.fn,
     });
 
-    await expect(acquire('user-1')).rejects.toThrow('status 403');
+    await expect(acquire('user-1', 'tok')).rejects.toThrow('status 403');
   });
 
   it('throws when the response has no access_token', async () => {
@@ -72,6 +74,6 @@ describe('createMintTokenSource', () => {
       fetchFn: fetch.fn,
     });
 
-    await expect(acquire('user-1')).rejects.toThrow('access_token');
+    await expect(acquire('user-1', 'tok')).rejects.toThrow('access_token');
   });
 });

@@ -23,18 +23,25 @@ export interface MintTokenSourceDeps {
   readonly fetchFn?: FetchFn;
 }
 
-/** Returns `acquireToken(userId)` — mints a real-user access token, or throws. */
+/**
+ * Returns `acquireToken(userId, botToken)` — mints a real-user access token, or throws.
+ * `botToken` is the user's plaintext Discord bot token: the endpoint requires it as
+ * proof that this caller is authorized for `userId` (the service credential alone is
+ * shared across all users, so X-User-Id is not self-authenticating — see
+ * discord-token-mint.ts gate 4).
+ */
 export function createMintTokenSource(
   deps: MintTokenSourceDeps,
-): (userId: string) => Promise<string> {
+): (userId: string, botToken: string) => Promise<string> {
   const doFetch: FetchFn = deps.fetchFn ?? (globalThis.fetch as unknown as FetchFn);
-  return async (userId: string): Promise<string> => {
+  return async (userId: string, botToken: string): Promise<string> => {
     const response = await doFetch(deps.mintUrl, {
       method: 'POST',
       headers: {
         'x-service-client-id': deps.serviceClientId,
         authorization: `Bearer ${deps.serviceSecret}`,
         'x-user-id': userId,
+        'x-discord-bot-token': botToken,
       },
     });
     if (!response.ok) {

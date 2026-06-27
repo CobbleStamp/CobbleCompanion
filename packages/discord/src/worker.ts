@@ -178,6 +178,7 @@ export async function startWorker(
     connectionFactory: createCompanionConnectionFactory({
       wsBaseUrl: config.wsBaseUrl,
       acquireToken,
+      decryptToken,
       logger,
     }),
     decryptToken,

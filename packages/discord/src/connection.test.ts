@@ -51,15 +51,21 @@ function captureFactory(): { factory: WsSocketFactory; socket: () => FakeSocket 
 }
 
 describe('createCompanionConnectionFactory', () => {
-  it('mints a token, builds the /ws URL, and claims embodiment', async () => {
+  it('decrypts the bot token, mints with it as proof, builds the /ws URL', async () => {
     const { factory, socket } = captureFactory();
+    const mintArgs: Array<{ userId: string; botToken: string }> = [];
     const make = createCompanionConnectionFactory({
       wsBaseUrl: 'wss://home.example/',
-      acquireToken: async () => 'minted-token',
+      acquireToken: async (userId, botToken) => {
+        mintArgs.push({ userId, botToken });
+        return 'minted-token';
+      },
+      // The stored blob decrypts to the plaintext bot token the endpoint will verify.
+      decryptToken: (enc) => (enc === 'enc-blob' ? 'plain-bot-token' : null),
       socketFactory: factory,
       logger: silent,
     });
-    const connection = make({ userId: 'u1', companionId: 'c-9' });
+    const connection = make({ userId: 'u1', companionId: 'c-9', encryptedBotToken: 'enc-blob' });
 
     const connecting = connection.connect();
     await tick(); // let acquireToken resolve + the socket build
@@ -67,7 +73,22 @@ describe('createCompanionConnectionFactory', () => {
     socket().emit({ event: 'embodiment.ready', data: { companionId: 'c-9' } });
     await connecting;
 
+    // The mint received the decrypted bot token as the per-user proof.
+    expect(mintArgs).toEqual([{ userId: 'u1', botToken: 'plain-bot-token' }]);
     expect(socket().url).toBe('wss://home.example/ws?access_token=minted-token&companion=c-9');
+  });
+
+  it('refuses to connect when the bot token cannot be decrypted', async () => {
+    const { factory } = captureFactory();
+    const make = createCompanionConnectionFactory({
+      wsBaseUrl: 'wss://home.example',
+      acquireToken: async () => 'tok',
+      decryptToken: () => null, // undecryptable → no proof → must not mint/connect
+      socketFactory: factory,
+      logger: silent,
+    });
+    const connection = make({ userId: 'u1', companionId: 'c-9', encryptedBotToken: 'bad' });
+    await expect(connection.connect()).rejects.toThrow(/decrypt bot token/);
   });
 
   it('surfaces a post-ready supersession to the handler', async () => {
@@ -75,10 +96,11 @@ describe('createCompanionConnectionFactory', () => {
     const make = createCompanionConnectionFactory({
       wsBaseUrl: 'wss://home.example',
       acquireToken: async () => 'tok',
+      decryptToken: () => 'tok',
       socketFactory: factory,
       logger: silent,
     });
-    const connection = make({ userId: 'u1', companionId: 'c-9' });
+    const connection = make({ userId: 'u1', companionId: 'c-9', encryptedBotToken: 'enc' });
     let superseded = false;
     connection.onSuperseded(() => {
       superseded = true;
@@ -99,10 +121,11 @@ describe('createCompanionConnectionFactory', () => {
     const make = createCompanionConnectionFactory({
       wsBaseUrl: 'wss://home.example',
       acquireToken: async () => 'tok',
+      decryptToken: () => 'tok',
       socketFactory: factory,
       logger: silent,
     });
-    const connection = make({ userId: 'u1', companionId: 'c-9' });
+    const connection = make({ userId: 'u1', companionId: 'c-9', encryptedBotToken: 'enc' });
     const connecting = connection.connect();
     await tick();
     socket().fire('open');

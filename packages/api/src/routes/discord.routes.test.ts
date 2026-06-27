@@ -1,4 +1,11 @@
-import { companions, DrizzleDiscordConfigStore, serviceRegistry, users } from '@cobble/db';
+import {
+  companions,
+  DrizzleDiscordConfigStore,
+  encryptSecret,
+  keyFromBase64,
+  serviceRegistry,
+  users,
+} from '@cobble/db';
 import { createTestDatabase } from '@cobble/db/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AppSessionVerifier } from '../auth/session-tokens.js';
@@ -6,6 +13,9 @@ import { makeTestApp, silentLogger, testConfig, type TestApp } from '../test/hel
 
 const CLIENT_ID = 'discord-adapter';
 const SECRET = 'discord-service-secret';
+// The owner's real Discord bot token — the per-user secret the worker proves it holds.
+const BOT_TOKEN = 'bot-token-aaa';
+const tokenKey = keyFromBase64(testConfig.discordTokenKey);
 
 /**
  * Exercises the internal token-mint endpoint end-to-end over a real Fastify app +
@@ -33,7 +43,7 @@ describe('POST /internal/discord/token', () => {
       .returning();
     await new DrizzleDiscordConfigStore(db).upsert({
       userId,
-      encryptedBotToken: 'v1.a.b.c',
+      encryptedBotToken: encryptSecret(BOT_TOKEN, tokenKey),
       boundCompanionId: companion!.id,
       linkCode: 'CODE1234',
       linkCodeIssuedAt: new Date('2026-06-26T12:00:00Z'),
@@ -49,11 +59,15 @@ describe('POST /internal/discord/token', () => {
     await closeDb();
   });
 
-  function serviceHeaders(userIdHeader: string): Record<string, string> {
+  function serviceHeaders(
+    userIdHeader: string,
+    botToken: string = BOT_TOKEN,
+  ): Record<string, string> {
     return {
       'x-service-client-id': CLIENT_ID,
       authorization: `Bearer ${SECRET}`,
       'x-user-id': userIdHeader,
+      'x-discord-bot-token': botToken,
     };
   }
 
@@ -79,6 +93,74 @@ describe('POST /internal/discord/token', () => {
     expect(claims.ok && claims.identity).toEqual({
       authSource: 'google',
       email: 'owner@example.com',
+    });
+  });
+
+  // SECURITY: the endpoint authenticates the *service* (one secret shared across all
+  // users), so X-User-Id alone is an unauthenticated claim. These tests pin the per-user
+  // binding: the caller must PROVE possession of the named user's bot token. A holder of
+  // the service secret therefore cannot impersonate a user whose bot token it lacks.
+  describe('per-user bot-token proof', () => {
+    const BOT_TOKEN_B = 'bot-token-bbb';
+    let userBId: string;
+
+    beforeEach(async () => {
+      // A second Discord user B, with their OWN distinct bot token.
+      const [userB] = await db.insert(users).values({ email: 'victim-b@example.com' }).returning();
+      userBId = userB!.id;
+      const [companionB] = await db
+        .insert(companions)
+        .values({ ownerId: userBId, name: 'Mossy', form: 'cat', temperament: 'aloof' })
+        .returning();
+      await new DrizzleDiscordConfigStore(db).upsert({
+        userId: userBId,
+        encryptedBotToken: encryptSecret(BOT_TOKEN_B, tokenKey),
+        boundCompanionId: companionB!.id,
+        linkCode: 'CODEB000',
+        linkCodeIssuedAt: new Date('2026-06-26T12:00:00Z'),
+      });
+    });
+
+    it('rejects minting for another user with the wrong bot token (403)', async () => {
+      // The service credential names B but presents the owner's token, not B's.
+      const res = await test.app.inject({
+        method: 'POST',
+        url: '/internal/discord/token',
+        headers: serviceHeaders(userBId, BOT_TOKEN),
+      });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it('rejects minting when no bot-token proof is presented (403)', async () => {
+      const res = await test.app.inject({
+        method: 'POST',
+        url: '/internal/discord/token',
+        headers: {
+          'x-service-client-id': CLIENT_ID,
+          authorization: `Bearer ${SECRET}`,
+          'x-user-id': userBId,
+        },
+      });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it('mints for the user whose bot token is proven', async () => {
+      // Presenting B's actual token authorizes minting for B — the intended semantics.
+      const res = await test.app.inject({
+        method: 'POST',
+        url: '/internal/discord/token',
+        headers: serviceHeaders(userBId, BOT_TOKEN_B),
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json() as { access_token: string };
+      const claims = await new AppSessionVerifier(testConfig.jwtSigningSecret).verify({
+        authorization: `Bearer ${body.access_token}`,
+        header: () => undefined,
+      });
+      expect(claims.ok && claims.identity).toEqual({
+        authSource: 'google',
+        email: 'victim-b@example.com',
+      });
     });
   });
 

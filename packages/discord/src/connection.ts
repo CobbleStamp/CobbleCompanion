@@ -20,8 +20,14 @@ const PRODUCED_ID_CAP = 500;
 export interface CompanionConnectionDeps {
   /** Base `/ws` origin, e.g. `wss://home.cobble.example` (no trailing `/ws`). */
   readonly wsBaseUrl: string;
-  /** Mint a short-lived access token for the user (the T2b endpoint client). */
-  readonly acquireToken: (userId: string) => Promise<string>;
+  /**
+   * Mint a short-lived access token for the user (the T2b endpoint client). `botToken`
+   * is the user's plaintext bot token — the per-user proof the mint endpoint requires
+   * (it is shared across no other user, unlike the service credential).
+   */
+  readonly acquireToken: (userId: string, botToken: string) => Promise<string>;
+  /** Decrypt a stored bot token to its plaintext; null if it can't be decrypted. */
+  readonly decryptToken: (encryptedBotToken: string) => string | null;
   /** Socket factory override (tests inject a fake); defaults to the real `ws`. */
   readonly socketFactory?: WsSocketFactory;
   readonly logger: Logger;
@@ -30,7 +36,7 @@ export interface CompanionConnectionDeps {
 export function createCompanionConnectionFactory(
   deps: CompanionConnectionDeps,
 ): CompanionConnectionFactory {
-  return ({ userId, companionId }): CompanionConnection => {
+  return ({ userId, companionId, encryptedBotToken }): CompanionConnection => {
     const transport = deps.socketFactory ? new WsTransport(deps.socketFactory) : new WsTransport();
     let supersededHandler: () => void = () => {};
     transport.onEvent((event) => {
@@ -73,7 +79,14 @@ export function createCompanionConnectionFactory(
 
     return {
       async connect(): Promise<void> {
-        const token = await deps.acquireToken(userId);
+        // Decrypt the user's bot token here (not in the event context) so plaintext
+        // stays local to the mint call. A token we can't decrypt can't prove authority,
+        // so refuse rather than connect.
+        const botToken = deps.decryptToken(encryptedBotToken);
+        if (botToken === null) {
+          throw new Error('cannot decrypt bot token for mint proof');
+        }
+        const token = await deps.acquireToken(userId, botToken);
         const base = deps.wsBaseUrl.replace(/\/+$/, '');
         const url =
           `${base}/ws?access_token=${encodeURIComponent(token)}` +

@@ -42,6 +42,8 @@ export interface CompanionConnection {
 export type CompanionConnectionFactory = (input: {
   userId: string;
   companionId: string;
+  /** The user's stored (encrypted) bot token — decrypted at connect for the mint proof. */
+  encryptedBotToken: string;
 }) => CompanionConnection;
 
 export interface CompanionBridgeOptions {
@@ -159,7 +161,11 @@ export class CompanionBridge {
       return;
     }
     const companionId = ctx.config.boundCompanionId;
-    const connection = this.opts.connectionFactory({ userId: ctx.userId, companionId });
+    const connection = this.opts.connectionFactory({
+      userId: ctx.userId,
+      companionId,
+      encryptedBotToken: ctx.config.encryptedBotToken,
+    });
     // The takeover handler is armed before connect() resolves, but the embodiment is
     // only registered in `active` afterwards. A supersession landing in that gap would
     // find nothing in `active` and be silently dropped — so until we register, record

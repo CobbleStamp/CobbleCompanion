@@ -1,5 +1,5 @@
 import type { IdentityStore, Logger } from '@cobble/core';
-import type { DiscordConfigStore } from '@cobble/db';
+import { decryptSecret, keyFromBase64, secretsEqual, type DiscordConfigStore } from '@cobble/db';
 import type { AppConfig } from '../config.js';
 import type { AuthRequest, TokenVerifier } from './jwt-verifier.js';
 import { mintAccessToken } from './session-tokens.js';
@@ -7,9 +7,10 @@ import { mintAccessToken } from './session-tokens.js';
 /**
  * The collaborators the Discord token-mint needs, narrowed to exactly what it uses
  * (Interface Segregation): the service-credential verifier, the two stores it reads,
- * the three config fields it signs with, and a logger. `AppDeps` structurally
- * satisfies this, so the route passes its own `deps` straight through; tests can pass
- * a hand-built object with fakes.
+ * the config fields it signs/verifies with (`discordTokenKey` decrypts the stored bot
+ * token for the per-user proof check), and a logger. `AppDeps` structurally satisfies
+ * this, so the route passes its own `deps` straight through; tests can pass a
+ * hand-built object with fakes.
  */
 export interface DiscordTokenMintDeps {
   readonly tokenVerifier: TokenVerifier;
@@ -17,7 +18,7 @@ export interface DiscordTokenMintDeps {
   readonly identity: Pick<IdentityStore, 'getUserById'>;
   readonly config: Pick<
     AppConfig,
-    'discordServiceClientId' | 'jwtSigningSecret' | 'accessTokenTtlSec'
+    'discordServiceClientId' | 'jwtSigningSecret' | 'accessTokenTtlSec' | 'discordTokenKey'
   >;
   readonly logger: Logger;
 }
@@ -42,11 +43,17 @@ const OPERATION = 'discord.mint';
  * DiscordTokenMintResult}, so the HTTP route stays a thin transport adapter and this
  * orchestration is unit-testable with a plain request object.
  *
- * The four gates, in order:
+ * The gates, in order:
  *  1. Authenticate the caller via the service-credential verifier.
  *  2. Pin to the configured Discord service client — not any service consumer.
  *  3. Authorize: only a user who has opted into Discord (has a `discord_config` row).
- *  4. Require an email — the app access token is email-keyed (the session identity).
+ *  4. Prove possession of THAT user's bot token (`X-Discord-Bot-Token`). The service
+ *     credential is shared across all users, so `X-User-Id` alone is an unauthenticated
+ *     assertion; requiring the user's own bot token — the one secret that identifies
+ *     them — means a leaked service credential cannot mint for a user whose bot token it
+ *     does not also hold. Without this, any holder of the service secret could mint a
+ *     full session for any Discord-enabled user by naming their id.
+ *  5. Require an email — the app access token is email-keyed (the session identity).
  */
 export async function mintDiscordToken(
   deps: DiscordTokenMintDeps,
@@ -88,7 +95,47 @@ export async function mintDiscordToken(
     return { ok: false, status: 403, error: 'user has no discord config' };
   }
 
-  // 4. The app access token is email-keyed (the session identity); a companion-owning
+  // 4. Prove the caller actually holds THIS user's bot token. X-User-Id is just a
+  //    claim the (shared) service credential asserts; the bot token is the per-user
+  //    secret that backs it. Mismatch, absence, or an unverifiable stored token all
+  //    fail closed with an identical opaque 403 (no oracle distinguishing the cases).
+  const presentedBotToken = request.header('x-discord-bot-token');
+  if (!presentedBotToken || presentedBotToken.length === 0) {
+    logger.error('discord token mint rejected: missing bot-token proof', {
+      operation: OPERATION,
+      userId,
+    });
+    return { ok: false, status: 403, error: 'forbidden' };
+  }
+  let tokenKey: Buffer;
+  try {
+    tokenKey = keyFromBase64(config.discordTokenKey);
+  } catch {
+    // Missing/malformed key → the endpoint cannot verify the proof, so it must not mint.
+    logger.error('discord token mint rejected: token key missing or malformed', {
+      operation: OPERATION,
+      userId,
+    });
+    return { ok: false, status: 403, error: 'forbidden' };
+  }
+  const decryptedBotToken = decryptSecret(discordConfig.encryptedBotToken, tokenKey);
+  if (!decryptedBotToken.ok) {
+    logger.error('discord token mint rejected: stored bot token unverifiable', {
+      operation: OPERATION,
+      userId,
+      reason: decryptedBotToken.reason,
+    });
+    return { ok: false, status: 403, error: 'forbidden' };
+  }
+  if (!secretsEqual(presentedBotToken, decryptedBotToken.plaintext)) {
+    logger.error('discord token mint rejected: bot-token proof did not match', {
+      operation: OPERATION,
+      userId,
+    });
+    return { ok: false, status: 403, error: 'forbidden' };
+  }
+
+  // 5. The app access token is email-keyed (the session identity); a companion-owning
   //    user is a Google user with an email.
   const user = await deps.identity.getUserById(userId);
   if (!user?.email) {
