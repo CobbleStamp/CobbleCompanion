@@ -94,6 +94,8 @@ describe('POST /internal/discord/token', () => {
       authSource: 'google',
       email: 'owner@example.com',
     });
+    // The minted token is scoped to the Discord surface (HTTP-guard rejected; /ws only).
+    expect(claims.ok && claims.surface).toBe('discord');
   });
 
   // SECURITY: the endpoint authenticates the *service* (one secret shared across all

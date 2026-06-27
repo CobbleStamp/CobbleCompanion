@@ -28,13 +28,28 @@ export interface AuthFailure {
 }
 
 /**
+ * The surface an app session token is scoped to. Absent = a full web/SPA session (the
+ * default). `discord` marks a token minted for the decoupled Discord bridge: it is
+ * accepted at the `/ws` embodiment handshake but **rejected by the HTTP auth guard**, so
+ * a leaked Discord token cannot act as a full web session (settings, approval queue,
+ * token refresh). See `discord-token-mint.ts` and `auth-guard.ts`.
+ */
+export type AuthSurface = 'discord';
+
+/**
  * The result of authenticating a request: either a resolved identity (the
  * {@link UserClaim} the identity store provisions by, plus an optional display-name
- * seed) or a typed {@link AuthFailure}. **Total** — `verify` never throws, so the
- * guard has a single `if (!claims.ok)` branch (auth-guard.ts).
+ * seed and an optional {@link AuthSurface} scope) or a typed {@link AuthFailure}.
+ * **Total** — `verify` never throws, so the guard has a single `if (!claims.ok)` branch
+ * (auth-guard.ts).
  */
 export type AuthClaims =
-  | { readonly ok: true; readonly identity: UserClaim; readonly seedName?: string }
+  | {
+      readonly ok: true;
+      readonly identity: UserClaim;
+      readonly seedName?: string;
+      readonly surface?: AuthSurface;
+    }
   | { readonly ok: false; readonly failure: AuthFailure };
 
 /**

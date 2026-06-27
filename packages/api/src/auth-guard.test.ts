@@ -170,6 +170,24 @@ describe('makeRequireAuth success path', () => {
     expect(seeded).toEqual([{ userId: 'user-1', name: 'Ada' }]);
   });
 
+  it('rejects a discord-surface token (403) and does not provision', async () => {
+    // A token scoped to the Discord surface must never authenticate an HTTP route — it
+    // embodies only over /ws. The guard refuses it before provisioning.
+    const identity: UserClaim = { authSource: 'google', email: 'owner@example.com' };
+    const { deps, resolvedClaims } = successDeps({ ok: true, identity, surface: 'discord' });
+
+    const request = {
+      headers: { authorization: 'Bearer discord-token' },
+      url: '/companions',
+    } as FastifyRequest;
+    const { reply, codes } = captureReply();
+    await makeRequireAuth(deps)(request, reply);
+
+    expect(codes).toEqual([403]);
+    expect(request.userId).toBeUndefined();
+    expect(resolvedClaims).toHaveLength(0); // never reached ensureUserByClaim
+  });
+
   it('does not seed a name when the claim carries no seedName', async () => {
     const identity: UserClaim = {
       authSource: 'service',

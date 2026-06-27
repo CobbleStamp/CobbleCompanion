@@ -4,6 +4,7 @@ import {
   AppSessionVerifier,
   mintAccessToken,
   mintRefreshToken,
+  mintSurfaceAccessToken,
   type SessionIdentity,
   verifyRefreshToken,
 } from './session-tokens.js';
@@ -26,7 +27,34 @@ describe('session-tokens access verification', () => {
 
     const claims = await verifier.verify(bearer(token));
 
+    // No `surface` key on a web token — the HTTP guard treats it as a full session.
     expect(claims).toEqual({ ok: true, identity: ALICE });
+  });
+
+  it('round-trips a surface-scoped token, carrying surface:discord in the claims', async () => {
+    const token = mintSurfaceAccessToken(ALICE, 'discord', SECRET, 900);
+    const verifier = new AppSessionVerifier(SECRET);
+
+    const claims = await verifier.verify(bearer(token));
+
+    expect(claims).toEqual({ ok: true, identity: ALICE, surface: 'discord' });
+  });
+
+  it('still verifies a surface-scoped token as the same identity (signature intact)', async () => {
+    // The surface claim is signed in, so tampering it would break the signature.
+    const token = mintSurfaceAccessToken(ALICE, 'discord', SECRET, 900);
+    const [head, body, sig] = token.split('.');
+    const stripped = Buffer.from(
+      JSON.stringify({ sub: ALICE.email, typ: 'access', iat: 1, exp: 9_999_999_999 }),
+    ).toString('base64url');
+    const verifier = new AppSessionVerifier(SECRET);
+
+    // Dropping the surface claim (re-encoding the body) invalidates the signature.
+    const forged = await verifier.verify(bearer(`${head}.${stripped}.${sig}`));
+    expect(forged.ok).toBe(false);
+    // The untouched token verifies fine (sanity).
+    const intact = await verifier.verify(bearer(`${head}.${body}.${sig}`));
+    expect(intact.ok).toBe(true);
   });
 
   it('classifies an expired access token as kind:expired', async () => {

@@ -2,7 +2,7 @@ import type { IdentityStore, Logger } from '@cobble/core';
 import { decryptSecret, keyFromBase64, secretsEqual, type DiscordConfigStore } from '@cobble/db';
 import type { AppConfig } from '../config.js';
 import type { AuthRequest, TokenVerifier } from './jwt-verifier.js';
-import { mintAccessToken } from './session-tokens.js';
+import { mintSurfaceAccessToken } from './session-tokens.js';
 
 /**
  * The collaborators the Discord token-mint needs, narrowed to exactly what it uses
@@ -146,8 +146,11 @@ export async function mintDiscordToken(
     return { ok: false, status: 409, error: 'user not eligible' };
   }
 
-  const accessToken = mintAccessToken(
+  // Scope the token to the Discord surface: it embodies via `/ws` but the HTTP auth
+  // guard rejects it, so a leaked Discord token can't act as a full web session.
+  const accessToken = mintSurfaceAccessToken(
     { authSource: 'google', email: user.email },
+    'discord',
     config.jwtSigningSecret,
     config.accessTokenTtlSec,
   );

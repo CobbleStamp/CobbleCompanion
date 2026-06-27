@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { UserClaim } from '@cobble/core';
-import type { AuthClaims, AuthRequest, TokenVerifier } from './jwt-verifier.js';
+import type { AuthClaims, AuthRequest, AuthSurface, TokenVerifier } from './jwt-verifier.js';
 import { bearerToken } from './jwt-verifier.js';
 
 /**
@@ -39,6 +39,9 @@ interface SessionTokenPayload {
   readonly typ: SessionTokenType;
   readonly iat: number;
   readonly exp: number;
+  /** Absent = full web session. `discord` = scoped to the Discord bridge (HTTP-guard
+   *  rejected). Signed into the token, so it can't be added/removed after minting. */
+  readonly surface?: AuthSurface;
 }
 
 const HEADER = { alg: 'HS256', typ: 'JWT' } as const;
@@ -63,12 +66,14 @@ function mint(
   secret: string,
   ttlSec: number,
   issuedAtSec: number = nowSeconds(),
+  surface?: AuthSurface,
 ): string {
   const payload: SessionTokenPayload = {
     sub: identity.email,
     typ: type,
     iat: issuedAtSec,
     exp: issuedAtSec + ttlSec,
+    ...(surface ? { surface } : {}),
   };
   const head = base64url(JSON.stringify(HEADER));
   const body = base64url(JSON.stringify(payload));
@@ -84,6 +89,22 @@ export function mintAccessToken(
   issuedAtSec?: number,
 ): string {
   return mint('access', identity, secret, ttlSec, issuedAtSec);
+}
+
+/**
+ * Mint a short-lived access token **scoped to a non-web surface** (currently only
+ * `discord`). Identical to {@link mintAccessToken} but the `surface` claim is signed in,
+ * so the HTTP auth guard can reject it (a Discord token must only reach `/ws`). Used by
+ * the Discord token-mint; the web session path uses the unscoped {@link mintAccessToken}.
+ */
+export function mintSurfaceAccessToken(
+  identity: SessionIdentity,
+  surface: AuthSurface,
+  secret: string,
+  ttlSec: number,
+  issuedAtSec?: number,
+): string {
+  return mint('access', identity, secret, ttlSec, issuedAtSec, surface);
 }
 
 /** Mint a longer-lived refresh token (stored in the HttpOnly cookie). */
@@ -167,7 +188,13 @@ export class AppSessionVerifier implements TokenVerifier {
         },
       };
     }
-    return { ok: true, identity: { authSource: 'google', email: result.payload.sub } };
+    return {
+      ok: true,
+      identity: { authSource: 'google', email: result.payload.sub },
+      // Propagate the surface scope (only `discord` is valid) so the HTTP guard can
+      // refuse a non-web token. Trusted because it is HMAC-signed into the token.
+      ...(result.payload.surface === 'discord' ? { surface: 'discord' as const } : {}),
+    };
   }
 }
 

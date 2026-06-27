@@ -222,6 +222,13 @@ external_id)` user (`packages/core/src/identity/store.ts`, `ensureUserByClaim`),
     mint for a user whose bot token it does not also hold. The worker already holds the decrypted
     token (it ran the gateway connection), so it sends it on the mint call; no user input chooses
     `userId` (it is bound to the bot connection that received the event, `gateway/manager.ts`).
+  - **Surface scoping (`surface: 'discord'`).** The minted token carries a signed
+    `surface: 'discord'` claim (`mintSurfaceAccessToken`, `session-tokens.ts`). It is accepted at
+    the `/ws` embodiment handshake (where the bridge connects) but **rejected (403) by the HTTP auth
+    guard** (`auth-guard.ts`), which is the only thing a web session token reaches for settings, the
+    approval queue, and token refresh. So even if a _minted token_ leaks, it cannot act as a full
+    web session — it can only embody over `/ws`, the same thing the bridge already does. The web
+    session path keeps using the unscoped `mintAccessToken`, so it is unaffected.
 - **Owner lock.** Every inbound Discord event is checked against the stored `ownerDiscordUserId`;
   anything else is ignored. The owner ID is captured once via a **`/link <code>`** handshake so the
   bot never trusts "first DM wins": the **API mints** an **8-char, single-use** code (no-look-alike
