@@ -14,6 +14,9 @@ importers:
       '@pulumi/pulumi':
         specifier: 3.246.0
         version: 3.246.0(typescript@5.5.3)
+      '@pulumi/random':
+        specifier: 4.18.3
+        version: 4.18.3(typescript@5.5.3)
     devDependencies:
       '@types/node':
         specifier: 20.14.10
@@ -258,6 +261,9 @@ packages:
         optional: true
       typescript:
         optional: true
+
+  '@pulumi/random@4.18.3':
+    resolution: {integrity: sha512-2OKJPNTZu0YyxOMvxnHiUzh3qGm5EowIffAx9dKNUQRQLHOqm3TM2HQ0jYMQUrydrRbXopaiRavFFPD0QKyJEg==}
 
   '@sigstore/bundle@4.0.0':
     resolution: {integrity: sha512-NwCl5Y0V6Di0NexvkTqdoVfmjTaQwoLM236r89KEojGmq/jMls8S+zb7yOwAPdXvbwfKDlP+lmXgAL4vKSQT+A==}
@@ -1255,6 +1261,14 @@ snapshots:
       typescript: 5.5.3
     transitivePeerDependencies:
       - supports-color
+
+  '@pulumi/random@4.18.3(typescript@5.5.3)':
+    dependencies:
+      '@pulumi/pulumi': 3.246.0(typescript@5.5.3)
+    transitivePeerDependencies:
+      - supports-color
+      - ts-node
+      - typescript
 
   '@sigstore/bundle@4.0.0':
     dependencies:

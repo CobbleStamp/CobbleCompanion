@@ -207,8 +207,11 @@ external_id)` user (`packages/core/src/identity/store.ts`, `ensureUserByClaim`),
   change**.
   - **Where the token comes from.** A new **internal API endpoint** mints it via
     `mintAccessToken(userId, ACCESS_TOKEN_SECRET, ttl)` (`packages/api/src/auth/session-tokens.ts`).
-    The worker authenticates _to that endpoint_ with a Discord **service credential** (registered in
-    `service_registry`, `pnpm --filter @cobble/db service add`); the endpoint mints **only** for a
+    The worker authenticates _to that endpoint_ with a Discord **service credential** (a
+    `service_registry` row). The surface is **always-on**: rather than a manual
+    `pnpm --filter @cobble/db service add`, that row is seeded at API boot from
+    `SERVICE_REGISTRY_SEEDS` (idempotent on the `(client_id, secret)` unique index), so a fresh
+    stack comes up with the worker already authenticated. The endpoint mints **only** for a
     `userId` that has a `discord_config` row, and the bridge refreshes the short-lived token as
     needed. The signing key (`ACCESS_TOKEN_SECRET`) stays in the API and is **never** held by the
     worker.

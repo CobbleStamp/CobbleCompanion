@@ -53,13 +53,16 @@ services:
       - api
 
   # The always-on Discord worker (companion-discord.md). Reads DISCORD_SERVICE_*,
-  # DISCORD_TOKEN_KEY from .env; reaches the api over the compose network. A no-op
-  # until a user saves a bot token in the web Discord settings panel (T13).
+  # DISCORD_TOKEN_KEY from .env; reaches the api over the compose network. The
+  # service credential it authenticates with is seeded into the DB by the api at
+  # boot from SERVICE_REGISTRY_SEEDS (.env), so the worker comes up green on a
+  # fresh stack and idles until a user saves a bot token in the web settings panel.
   discord:
     build:
       context: .
       dockerfile: Dockerfile
       target: discord
+    restart: unless-stopped
     env_file:
       - .env
     environment:

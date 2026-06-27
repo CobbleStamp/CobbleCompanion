@@ -86,28 +86,29 @@ aws ssm put-parameter --type SecureString --overwrite \
 Point a DNS **A record** for `companion.<domain>` at `instancePublicIp` (the
 Elastic IP) so Caddy can obtain a Let's Encrypt cert.
 
-### Optional — enable the Discord surface
+### The Discord surface (always-on)
 
-The Discord surface (`docs/companion-discord.md`) ships **off**. The same EC2 box
-runs the always-on `cobble-discord` worker as a second container from the same
-image; it's only started when configured. To turn it on:
+The Discord surface (`docs/companion-discord.md`) is **always-on**. The same EC2 box
+runs the `cobble-discord` worker as a second container from the same image, started
+on every deploy. It's **zero-touch**: the worker's service credential is generated
+once and kept stable in Pulumi state, injected inline into `/etc/cobble.env` (this
+is single-tenant, so — unlike the OpenRouter key and DB DSN — the Discord secret and
+bot-token key are **not** in SSM; they live in user-data + Pulumi state), and the API
+seeds the matching `service_registry` row at boot from an inline `SERVICE_REGISTRY_SEEDS`.
+
+No setup is required to turn it on. Optional overrides:
 
 ```bash
-# 1. Register the worker's service credential (prints the secret once):
-pnpm --filter @cobble/db service add discord-adapter discord
-# 2. Tell the stack the (public) client id — this also enables the api's mint route:
-pulumi config set cobblecompanion-aws:discordServiceClientId discord-adapter
-# 3. Populate the two Discord SSM secrets (REPLACE_ME placeholders until set):
-aws ssm put-parameter --type SecureString --overwrite \
-  --name /cobblecompanion/DISCORD_SERVICE_SECRET --value '<secret from step 1>'
-aws ssm put-parameter --type SecureString --overwrite \
-  --name /cobblecompanion/DISCORD_TOKEN_KEY --value "$(openssl rand -base64 32)"
+# Override the (public) client id default ("discord-adapter"):
+pulumi config set cobblecompanion-aws:discordServiceClientId <id>
+# Supply your own secret / bot-token key instead of the generated ones:
+pulumi config set --secret cobblecompanion-aws:discordServiceSecret <secret>
+pulumi config set --secret cobblecompanion-aws:discordTokenKey "$(openssl rand -base64 32)"
 ```
 
-Then redeploy (Phase D). `DISCORD_TOKEN_KEY` must stay stable — it decrypts the bot
-tokens stored in `discord_config`; rotating it strands already-saved tokens. Leaving
-`discordServiceClientId` unset keeps the worker off and the api's Discord methods
-disabled.
+`DISCORD_TOKEN_KEY` must stay stable — it decrypts the bot tokens stored in
+`discord_config`; rotating it strands already-saved tokens. The generated value is
+stable across `pulumi up`, so leave it alone unless you deliberately rotate.
 
 ---
 
