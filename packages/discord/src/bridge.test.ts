@@ -24,6 +24,7 @@ class FakeConnection implements CompanionConnection {
    * bridge registers the embodiment (the connect→register race). */
   supersedeOnConnect = false;
   private supersededHandler: () => void = () => {};
+  private closedHandler: () => void = () => {};
 
   async connect(): Promise<void> {
     if (this.outcome === 'superseded') throw new SupersededError();
@@ -32,6 +33,9 @@ class FakeConnection implements CompanionConnection {
   }
   onSuperseded(handler: () => void): void {
     this.supersededHandler = handler;
+  }
+  onClosed(handler: () => void): void {
+    this.closedHandler = handler;
   }
   async *chat(): AsyncIterable<never> {
     // Not exercised here; the chat renderer is tested in chat.test.ts.
@@ -55,6 +59,10 @@ class FakeConnection implements CompanionConnection {
   /** Fire a post-ready takeover. */
   triggerSuperseded(): void {
     this.supersededHandler();
+  }
+  /** Fire an unexpected socket drop (not a supersession, not a deliberate close). */
+  triggerClosed(): void {
+    this.closedHandler();
   }
 }
 
@@ -254,6 +262,38 @@ describe('CompanionBridge — supersession', () => {
     expect(h.notices).toHaveLength(1);
     expect(h.notices[0]).toMatchObject({ userId: 'u1', channelId: 'dm-1' });
     expect(h.notices[0]?.content).toContain('/summon');
+  });
+});
+
+describe('CompanionBridge — unexpected close', () => {
+  it('clears the embodiment and DMs when the socket drops', async () => {
+    const h = makeBridge();
+    await h.bridge.handleOwnerCommand(cmdCtx('summon').ctx);
+    expect(h.bridge.isSummoned('u1')).toBe(true);
+
+    h.connections[0]!.triggerClosed();
+    await Promise.resolve(); // let the async teardown settle
+
+    // No phantom: the next /summon must reconnect, not be refused as "already here".
+    expect(h.bridge.isSummoned('u1')).toBe(false);
+    expect(h.connections[0]?.closed).toBe(true);
+    expect(h.notices).toHaveLength(1);
+    expect(h.notices[0]).toMatchObject({ userId: 'u1', channelId: 'dm-1' });
+    expect(h.notices[0]?.content).toContain('/summon');
+  });
+
+  it('lets the owner re-summon after an unexpected drop', async () => {
+    const h = makeBridge();
+    await h.bridge.handleOwnerCommand(cmdCtx('summon').ctx);
+    h.connections[0]!.triggerClosed();
+    await Promise.resolve();
+
+    const { ctx, replies } = cmdCtx('summon');
+    await h.bridge.handleOwnerCommand(ctx);
+
+    expect(h.connections).toHaveLength(2); // a fresh connection, not a no-op
+    expect(h.bridge.isSummoned('u1')).toBe(true);
+    expect(replies[0]).toContain('here');
   });
 });
 

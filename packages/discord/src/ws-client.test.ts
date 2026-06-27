@@ -266,6 +266,91 @@ describe('WsTransport', () => {
     await expect(call).rejects.toBeInstanceOf(ConnectionClosedError);
   });
 
+  it('notifies onClose subscribers when the socket drops, with the close code', async () => {
+    const { factory, socket } = fakeFactory();
+    const transport = new WsTransport({ factory, logger: silent });
+    const connecting = transport.connect({ url: 'wss://x/ws', headers: {}, embodying: false });
+    socket().open();
+    await connecting;
+
+    // The proactive events() loop subscribes here — it has no in-flight call to fail,
+    // so without this notice a drop leaves it parked forever.
+    const closes: Array<{ code: number; superseded: boolean; deliberate: boolean }> = [];
+    transport.onClose((info) => closes.push(info));
+    socket().closeRemote(1006);
+
+    expect(closes).toEqual([{ code: 1006, superseded: false, deliberate: false }]);
+  });
+
+  it('marks a caller-initiated close as deliberate so subscribers can skip teardown', async () => {
+    const { factory, socket } = fakeFactory();
+    const transport = new WsTransport({ factory, logger: silent });
+    const connecting = transport.connect({ url: 'wss://x/ws', headers: {}, embodying: false });
+    socket().open();
+    await connecting;
+
+    const closes: Array<{ deliberate: boolean }> = [];
+    transport.onClose((info) => closes.push({ deliberate: info.deliberate }));
+    transport.close();
+
+    expect(closes).toEqual([{ deliberate: true }]);
+  });
+
+  it('marks a post-supersession close as superseded to onClose subscribers', async () => {
+    const { factory, socket } = fakeFactory();
+    const transport = new WsTransport({ factory, logger: silent });
+    const connecting = transport.connect({
+      url: 'wss://x/ws?companion=c1',
+      headers: {},
+      embodying: true,
+    });
+    socket().open();
+    socket().emit({ event: 'embodiment.ready', data: { companionId: 'c1' } });
+    await connecting;
+
+    const closes: Array<{ superseded: boolean }> = [];
+    transport.onClose((info) => closes.push({ superseded: info.superseded }));
+    socket().emit({ event: 'embodiment.superseded', data: { companionId: 'c1' } });
+    socket().closeRemote(1000);
+
+    expect(closes).toEqual([{ superseded: true }]);
+  });
+
+  it('an unsubscribed onClose listener is not called', async () => {
+    const { factory, socket } = fakeFactory();
+    const transport = new WsTransport({ factory, logger: silent });
+    const connecting = transport.connect({ url: 'wss://x/ws', headers: {}, embodying: false });
+    socket().open();
+    await connecting;
+
+    let calls = 0;
+    const unsubscribe = transport.onClose(() => (calls += 1));
+    unsubscribe();
+    socket().closeRemote(1006);
+
+    expect(calls).toBe(0);
+  });
+
+  it('isolates a throwing onClose listener: it is logged, not propagated', async () => {
+    const { factory, socket } = fakeFactory();
+    const { logger, errors } = recordingLogger();
+    const transport = new WsTransport({ factory, logger });
+    const connecting = transport.connect({ url: 'wss://x/ws', headers: {}, embodying: false });
+    socket().open();
+    await connecting;
+
+    transport.onClose(() => {
+      throw new Error('close listener boom');
+    });
+    const reached: number[] = [];
+    transport.onClose((info) => reached.push(info.code));
+
+    expect(() => socket().closeRemote(1006)).not.toThrow();
+    expect(reached).toEqual([1006]); // the second listener still ran
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.meta?.code).toBe(1006);
+  });
+
   it('warns and drops an unparseable server frame instead of swallowing it', async () => {
     const { factory, socket } = fakeFactory();
     const { logger, warns } = recordingLogger();

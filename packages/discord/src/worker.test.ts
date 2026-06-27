@@ -33,6 +33,7 @@ function fakeConnectionFactory(reply: string): CompanionConnectionFactory {
   return (): CompanionConnection => ({
     connect: async () => {},
     onSuperseded: () => {},
+    onClosed: () => {},
     close: () => {},
     call: <T>(): Promise<T> => Promise.reject(new Error('call() not used in this test')),
     async *chat(): AsyncIterable<ChatStreamEvent> {

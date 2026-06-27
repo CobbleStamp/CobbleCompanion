@@ -126,6 +126,12 @@ The room has two states. Transitions reuse the existing ULID-lease machinery
 - **Superseded** — the user opens the companion elsewhere (e.g. web); that surface force-claims; the
   bridge receives `embodiment.superseded` followed by socket close `4002`. The adapter DMs the notice
   and returns to **Dormant**. It does **not** auto-reconnect — re-entry is an explicit `/summon`.
+- **Disconnected** — the WS drops for any reason that is **not** a supersession and **not** a
+  deliberate teardown (server bounce, idle timeout, `1006`). The transport surfaces the close to the
+  bridge (`onClose` → `onClosed`), which tears the embodiment down exactly like Superseded — clears
+  `active`, aborts the proactive loop, and DMs _"I lost the connection — `/summon` to bring me back
+  here."_ — and returns to **Dormant**. Like Superseded, it does **not** auto-reconnect; clearing
+  `active` is what lets the next `/summon` reconnect instead of being refused _"already here."_
 
 ## 5. Chat reply rendering
 

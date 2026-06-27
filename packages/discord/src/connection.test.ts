@@ -182,4 +182,90 @@ describe('createCompanionConnectionFactory', () => {
     await consume;
     expect(received).toEqual(['auto-1', 'auto-2']);
   });
+
+  it('ends the events() loop when the socket drops (no abort needed)', async () => {
+    const { factory, socket } = captureFactory();
+    const make = createCompanionConnectionFactory({
+      wsBaseUrl: 'wss://home.example',
+      acquireToken: async () => 'tok',
+      decryptToken: () => 'tok',
+      socketFactory: factory,
+      logger: silent,
+    });
+    const connection = make({ userId: 'u1', companionId: 'c-9', encryptedBotToken: 'enc' });
+    const connecting = connection.connect();
+    await tick();
+    socket().fire('open');
+    socket().emit({ event: 'embodiment.ready', data: {} });
+    await connecting;
+
+    // The proactive loop is parked waiting on a companion event. A plain socket drop
+    // (not a supersession, not a deliberate close) must end the generator — otherwise
+    // it waits forever and the bridge never reconciles the dead embodiment.
+    let ended = false;
+    const ac = new AbortController();
+    const consume = (async () => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      for await (const _ of connection.events(ac.signal)) {
+        /* drain */
+      }
+      ended = true;
+    })();
+    await tick(); // let events() subscribe and park
+
+    socket().fire('close', 1006);
+    await consume;
+    expect(ended).toBe(true);
+  });
+
+  it('reports an unexpected drop to the onClosed handler, but not a supersession', async () => {
+    const { factory, socket } = captureFactory();
+    const make = createCompanionConnectionFactory({
+      wsBaseUrl: 'wss://home.example',
+      acquireToken: async () => 'tok',
+      decryptToken: () => 'tok',
+      socketFactory: factory,
+      logger: silent,
+    });
+
+    // An unexpected drop fires onClosed.
+    const dropped = make({ userId: 'u1', companionId: 'c-9', encryptedBotToken: 'enc' });
+    let closedCalls = 0;
+    dropped.onClosed(() => (closedCalls += 1));
+    const connecting = dropped.connect();
+    await tick();
+    socket().fire('open');
+    socket().emit({ event: 'embodiment.ready', data: {} });
+    await connecting;
+    socket().fire('close', 1006);
+    expect(closedCalls).toBe(1);
+  });
+
+  it('does not fire onClosed when the close follows a supersession', async () => {
+    const { factory, socket } = captureFactory();
+    const make = createCompanionConnectionFactory({
+      wsBaseUrl: 'wss://home.example',
+      acquireToken: async () => 'tok',
+      decryptToken: () => 'tok',
+      socketFactory: factory,
+      logger: silent,
+    });
+    const connection = make({ userId: 'u1', companionId: 'c-9', encryptedBotToken: 'enc' });
+    let supersededCalls = 0;
+    let closedCalls = 0;
+    connection.onSuperseded(() => (supersededCalls += 1));
+    connection.onClosed(() => (closedCalls += 1));
+    const connecting = connection.connect();
+    await tick();
+    socket().fire('open');
+    socket().emit({ event: 'embodiment.ready', data: {} });
+    await connecting;
+
+    // Supersession then the socket closes: the supersededHandler owns teardown, so
+    // onClosed must stay silent (no double teardown).
+    socket().emit({ event: 'embodiment.superseded', data: {} });
+    socket().fire('close', 1000);
+    expect(supersededCalls).toBe(1);
+    expect(closedCalls).toBe(0);
+  });
 });

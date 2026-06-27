@@ -197,14 +197,33 @@ type LifecycleState = 'idle' | 'opening' | 'open' | 'closed';
 /** A live-event listener: receives every server-pushed `{ event, data }` frame. */
 export type EventListener = (event: string, data: unknown) => void;
 
+/**
+ * How a socket ended, handed to {@link WsTransport.onClose} subscribers:
+ * - `superseded`: the close followed an `embodiment.superseded` (the room was claimed
+ *   elsewhere); the supersession path already drives teardown, so subscribers ignore it.
+ * - `deliberate`: the caller invoked {@link WsTransport.close} (our own teardown), as
+ *   opposed to an unexpected drop (server bounce, idle timeout, 1006) the bridge must
+ *   reconcile.
+ */
+export interface CloseInfo {
+  readonly code: number;
+  readonly superseded: boolean;
+  readonly deliberate: boolean;
+}
+
+/** A connection-close listener: fired once when the socket ends, for any reason. */
+export type CloseListener = (info: CloseInfo) => void;
+
 export class WsTransport {
   private socket: WsSocket | null = null;
   private state: LifecycleState = 'idle';
   private seq = 0;
   private superseded = false;
+  private closedByCaller = false;
   private readonly pending = new Map<string, Pending>();
   private readonly streams = new Map<string, StreamQueue>();
   private readonly eventListeners = new Set<EventListener>();
+  private readonly closeListeners = new Set<CloseListener>();
   private pendingOpen: { resolve: () => void; reject: (error: Error) => void } | null = null;
   private readonly factory: WsSocketFactory;
   private readonly logger: Logger;
@@ -234,7 +253,7 @@ export class WsTransport {
     socket.on('error', (error) => {
       if (this.state === 'opening') this.settleOpen(error);
     });
-    socket.on('close', (code) => this.onClose(code));
+    socket.on('close', (code) => this.handleClose(code));
     await new Promise<void>((resolve, reject) => {
       this.pendingOpen = { resolve, reject };
     });
@@ -244,6 +263,16 @@ export class WsTransport {
   onEvent(listener: EventListener): () => void {
     this.eventListeners.add(listener);
     return () => this.eventListeners.delete(listener);
+  }
+
+  /**
+   * Subscribe to the socket closing (any reason). Returns an unsubscribe. Unlike a
+   * pending call or stream, an event-channel consumer (the proactive `events()` loop)
+   * has no in-flight request to fail on close, so it must be told here or it hangs.
+   */
+  onClose(listener: CloseListener): () => void {
+    this.closeListeners.add(listener);
+    return () => this.closeListeners.delete(listener);
   }
 
   /** A non-streaming call: send the request, resolve with its result (or reject). */
@@ -271,6 +300,9 @@ export class WsTransport {
 
   /** Close the connection deliberately; in-flight work is failed via the close path. */
   close(code?: number): void {
+    // Mark this as caller-initiated so onClose subscribers can tell our own teardown
+    // apart from an unexpected drop (and not double-reconcile a close we asked for).
+    this.closedByCaller = true;
     const socket = this.socket;
     if (socket) {
       try {
@@ -306,7 +338,7 @@ export class WsTransport {
     const socket = this.socket;
     if (!socket || socket.readyState !== SOCKET_OPEN) {
       // The socket closed between the caller's await and this send; the pending/stream
-      // entry is failed by onClose, so dropping the write here is safe.
+      // entry is failed by handleClose, so dropping the write here is safe.
       return;
     }
     socket.send(JSON.stringify(message));
@@ -369,7 +401,7 @@ export class WsTransport {
   }
 
   /** The socket dropped: fail every in-flight call/stream so nothing hangs. */
-  private onClose(code: number): void {
+  private handleClose(code: number): void {
     if (this.state === 'closed') return;
     const wasOpening = this.state === 'opening';
     this.state = 'closed';
@@ -383,5 +415,20 @@ export class WsTransport {
       stream.fail(error);
     }
     this.streams.clear();
+    // Wake the event-channel consumers (the proactive `events()` generator). They are
+    // parked waiting on a server push, not on a pending call, so the failures above
+    // never reach them; without this notice they wait forever on a dead socket.
+    const info: CloseInfo = {
+      code,
+      superseded: this.superseded,
+      deliberate: this.closedByCaller,
+    };
+    for (const listener of this.closeListeners) {
+      try {
+        listener(info);
+      } catch (error) {
+        this.logger.error('discord ws: close listener threw', { error, code });
+      }
+    }
   }
 }

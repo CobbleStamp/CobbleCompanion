@@ -17,6 +17,7 @@ class RecordingConnection implements CompanionConnection {
   ) {}
   async connect(): Promise<void> {}
   onSuperseded(): void {}
+  onClosed(): void {}
   async *chat(): AsyncIterable<never> {}
   async *callStream(): AsyncIterable<never> {}
   async *greeting(): AsyncIterable<never> {}

@@ -19,6 +19,7 @@ function connectionFrom(events: ChatStreamEvent[], throwError?: unknown): Compan
   return {
     connect: async () => {},
     onSuperseded: () => {},
+    onClosed: () => {},
     close: () => {},
     call: <T>(): Promise<T> => Promise.reject(new Error('call() not used in chat tests')),
     async *chat(): AsyncIterable<ChatStreamEvent> {

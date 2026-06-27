@@ -15,7 +15,14 @@ export {
   WsCallError,
   defaultSocketFactory,
 } from './ws-client.js';
-export type { WsSocket, WsSocketFactory, ConnectOptions, EventListener } from './ws-client.js';
+export type {
+  WsSocket,
+  WsSocketFactory,
+  ConnectOptions,
+  EventListener,
+  CloseInfo,
+  CloseListener,
+} from './ws-client.js';
 
 // Token-at-rest crypto + the `/link` code generator now live in `@cobble/db` (the
 // shared data layer) so the api can encrypt on write; import them from there.

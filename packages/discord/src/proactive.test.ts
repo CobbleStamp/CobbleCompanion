@@ -18,6 +18,7 @@ function connectionFrom(opts: {
   return {
     connect: async () => {},
     onSuperseded: () => {},
+    onClosed: () => {},
     close: () => {},
     async *chat(): AsyncIterable<ChatStreamEvent> {},
     async *callStream(): AsyncIterable<ChatStreamEvent> {},

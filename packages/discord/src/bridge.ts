@@ -25,6 +25,12 @@ export interface CompanionConnection {
   connect(): Promise<void>;
   /** Register the takeover handler: fired if the room is claimed elsewhere post-ready. */
   onSuperseded(handler: () => void): void;
+  /**
+   * Register the unexpected-close handler: fired if the socket drops for any reason
+   * that is neither a supersession nor a deliberate {@link close} (server bounce, idle
+   * timeout, 1006). The bridge uses it to clear the now-dead embodiment.
+   */
+  onClosed(handler: () => void): void;
   /** Run a chat turn (`messages.send`), yielding the stream until it ends/throws. */
   chat(content: string): AsyncIterable<ChatStreamEvent>;
   /** Invoke a streaming WS method (the post-approval turn — `proposals.confirm`). */
@@ -178,6 +184,14 @@ export class CompanionBridge {
         supersededDuringConnect = true;
       }
     });
+    // An unexpected drop before registration surfaces as a connect() rejection (handled
+    // below), so this only needs to reconcile a drop on an already-registered embodiment
+    // — the guard makes a pre-registration fire a no-op.
+    connection.onClosed(() => {
+      if (this.active.has(ctx.userId)) {
+        void this.handleClosed(ctx.userId);
+      }
+    });
     try {
       await connection.connect();
     } catch (error) {
@@ -250,21 +264,41 @@ export class CompanionBridge {
     );
   }
 
-  private async handleSuperseded(userId: string): Promise<void> {
+  /** The room was claimed elsewhere (newer wins): tear down and point the owner back. */
+  private handleSuperseded(userId: string): Promise<void> {
+    return this.teardown(
+      userId,
+      'I’ve stepped over to the web — `/summon` to bring me back here.',
+      'discord.bridge.supersede',
+    );
+  }
+
+  /** The socket dropped unexpectedly (bounce / timeout / 1006): tear down so the next
+   * `/summon` reconnects instead of finding a phantom embodiment over a dead socket. */
+  private handleClosed(userId: string): Promise<void> {
+    return this.teardown(
+      userId,
+      'I lost the connection — `/summon` to bring me back here.',
+      'discord.bridge.closed',
+    );
+  }
+
+  /**
+   * Common embodiment teardown: drop it from `active`, abort the proactive loop, close
+   * the connection, and DM the owner the given notice. Idempotent — a second call for
+   * the same user (e.g. supersession and close racing) finds nothing and no-ops.
+   */
+  private async teardown(userId: string, notice: string, operation: string): Promise<void> {
     const embodiment = this.active.get(userId);
     if (!embodiment) return;
     this.active.delete(userId);
     embodiment.abort.abort();
     this.safeClose(embodiment.connection);
     try {
-      await this.opts.notify(
-        userId,
-        embodiment.channelId,
-        'I’ve stepped over to the web — `/summon` to bring me back here.',
-      );
+      await this.opts.notify(userId, embodiment.channelId, notice);
     } catch (error) {
-      this.opts.logger.error('discord supersede notice failed to send', {
-        operation: 'discord.bridge.supersede',
+      this.opts.logger.error('discord teardown notice failed to send', {
+        operation,
         userId,
         error,
       });

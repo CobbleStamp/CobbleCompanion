@@ -42,6 +42,14 @@ export function createCompanionConnectionFactory(
     transport.onEvent((event) => {
       if (event === 'embodiment.superseded') supersededHandler();
     });
+    // An unexpected socket drop (not a supersession, not our own teardown) must reach
+    // the bridge so it can clear the embodiment — otherwise it lingers as a phantom
+    // over a dead socket. A supersession is already handled above; a deliberate close
+    // is the bridge tearing down on purpose, so neither needs reconciling here.
+    let closedHandler: () => void = () => {};
+    transport.onClose((info) => {
+      if (!info.superseded && !info.deliberate) closedHandler();
+    });
 
     // Proactive dedup (companion-discord.md §8, plans/discord-surface.md D5): a turn
     // reply lands BOTH on the request stream (rendered inline) AND on the live
@@ -96,6 +104,9 @@ export function createCompanionConnectionFactory(
       onSuperseded(handler: () => void): void {
         supersededHandler = handler;
       },
+      onClosed(handler: () => void): void {
+        closedHandler = handler;
+      },
       chat(content: string): AsyncIterable<ChatStreamEvent> {
         return recordingStream('messages.send', { content });
       },
@@ -108,6 +119,7 @@ export function createCompanionConnectionFactory(
       async *events(signal: AbortSignal): AsyncIterable<CompanionStreamEvent> {
         const queue: CompanionStreamEvent[] = [];
         let waiter: (() => void) | null = null;
+        let closed = false;
         const wake = (): void => {
           const w = waiter;
           waiter = null;
@@ -118,10 +130,17 @@ export function createCompanionConnectionFactory(
           queue.push(data as CompanionStreamEvent);
           wake();
         });
+        // End the loop when the socket drops: otherwise it parks forever waiting on a
+        // push that can never arrive, never running the finally below and never letting
+        // the bridge's proactive loop exit.
+        const unsubscribeClose = transport.onClose(() => {
+          closed = true;
+          wake();
+        });
         signal.addEventListener('abort', wake);
         try {
           for (;;) {
-            if (signal.aborted) return;
+            if (signal.aborted || closed) return;
             const event = queue.shift();
             if (event === undefined) {
               await new Promise<void>((resolve) => {
@@ -137,6 +156,7 @@ export function createCompanionConnectionFactory(
           }
         } finally {
           unsubscribe();
+          unsubscribeClose();
           signal.removeEventListener('abort', wake);
         }
       },
