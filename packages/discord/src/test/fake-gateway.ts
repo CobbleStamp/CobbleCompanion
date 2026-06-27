@@ -37,9 +37,13 @@ export class FakeGateway implements DiscordGateway {
   private commandHandler: ((command: InboundSlashCommand) => void) | null = null;
   private proposalHandler: ((action: InboundProposalAction) => void) | null = null;
 
+  /** When set, start() awaits this before completing — lets a test hang a bot's start. */
+  private startGate: Promise<void> | null = null;
+
   constructor(readonly token: string) {}
 
   async start(): Promise<void> {
+    await this.startGate;
     this.started = true;
   }
 
@@ -76,6 +80,15 @@ export class FakeGateway implements DiscordGateway {
   }
 
   // --- test controls ---
+
+  /** Make this bot's start() hang until the returned release() is called. */
+  blockStart(): () => void {
+    let release: () => void = () => {};
+    this.startGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return release;
+  }
 
   /** Simulate Discord delivering a DM to this bot. */
   receiveDirectMessage(message: InboundDirectMessage): void {
@@ -133,8 +146,12 @@ export class FakeGateway implements DiscordGateway {
   }
 }
 
-/** A factory that captures every {@link FakeGateway} it builds, for assertions. */
-export function fakeGatewayFactory(): {
+/**
+ * A factory that captures every {@link FakeGateway} it builds, for assertions. The
+ * optional `onCreate` hook fires as each gateway is constructed, so a test can script it
+ * (e.g. {@link FakeGateway.blockStart}) before the manager starts it.
+ */
+export function fakeGatewayFactory(onCreate?: (gateway: FakeGateway) => void): {
   factory: DiscordGatewayFactory;
   created: FakeGateway[];
   byToken: (token: string) => FakeGateway | undefined;
@@ -144,6 +161,7 @@ export function fakeGatewayFactory(): {
     factory: (token) => {
       const gateway = new FakeGateway(token);
       created.push(gateway);
+      onCreate?.(gateway);
       return gateway;
     },
     created,

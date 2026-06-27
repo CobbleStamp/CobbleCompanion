@@ -1,6 +1,6 @@
 import type { DiscordConfigRecord, DiscordConfigStore, DiscordConfigUpsert } from '@cobble/db';
 import { describe, expect, it, vi } from 'vitest';
-import { fakeGatewayFactory } from '../test/fake-gateway.js';
+import { fakeGatewayFactory, type FakeGateway } from '../test/fake-gateway.js';
 import {
   GatewayManager,
   type DirectMessageContext,
@@ -72,8 +72,12 @@ function makeRecord(
 const decryptToken = (encrypted: string): string | null =>
   encrypted.startsWith('bad:') ? null : encrypted.replace(/^enc:/, '');
 
-function makeManager(store: InMemoryConfigStore, overrides: Partial<GatewayManagerOptions> = {}) {
-  const gateways = fakeGatewayFactory();
+function makeManager(
+  store: InMemoryConfigStore,
+  overrides: Partial<GatewayManagerOptions> = {},
+  onCreate?: (gateway: FakeGateway) => void,
+) {
+  const gateways = fakeGatewayFactory(onCreate);
   const received: DirectMessageContext[] = [];
   const commands: SlashCommandContext[] = [];
   const proposalActions: ProposalActionContext[] = [];
@@ -239,6 +243,30 @@ describe('GatewayManager', () => {
     expect(gateways.byToken('tokenA')?.sent).toEqual([
       { channelId: 'dm-channel-1', content: 'summon me first' },
     ]);
+  });
+
+  it('a hung bot start does not block starting the others', async () => {
+    const store = new InMemoryConfigStore();
+    store.set(makeRecord('u1', 'enc:tokenA'));
+    store.set(makeRecord('u2', 'enc:tokenB'));
+    // tokenA's start hangs (e.g. a client that connects but never reaches ready).
+    let releaseA: () => void = () => {};
+    const { manager, gateways } = makeManager(store, {}, (gateway) => {
+      if (gateway.token === 'tokenA') releaseA = gateway.blockStart();
+    });
+
+    const syncing = manager.sync();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // tokenB started even though tokenA is still hung — the reconcile didn't serialize
+    // behind the stuck bot. (Serial awaits would leave tokenB unstarted here.)
+    expect(gateways.byToken('tokenB')?.started).toBe(true);
+    expect(gateways.byToken('tokenA')?.started).toBe(false);
+
+    releaseA();
+    await syncing;
+    expect(gateways.byToken('tokenA')?.started).toBe(true);
+    expect(manager.size).toBe(2);
   });
 
   it('logs and survives a config-store list failure', async () => {

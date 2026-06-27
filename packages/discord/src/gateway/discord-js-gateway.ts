@@ -39,6 +39,9 @@ import type {
 /** customId prefix for proposal buttons; `proposal:<action>:<proposalId>`. */
 const PROPOSAL_PREFIX = 'proposal';
 
+/** Max wait for a client to reach ClientReady before start() gives up and tears down. */
+const START_TIMEOUT_MS = 30_000;
+
 export function createDiscordJsGatewayFactory(logger: Logger): DiscordGatewayFactory {
   return (botToken: string): DiscordGateway => new DiscordJsGateway(botToken, logger);
 }
@@ -92,9 +95,25 @@ class DiscordJsGateway implements DiscordGateway {
   }
 
   async start(): Promise<void> {
+    // `login()` rejects only if the HTTP login throws; it can otherwise resolve while
+    // the client never reaches ClientReady (Discord outage mid-handshake, a disabled
+    // privileged intent stalling identify). Bound the wait so start() always settles —
+    // a hung bot must not park the manager's serial reconcile or its poll loop.
     await new Promise<void>((resolve, reject) => {
-      this.client.once(Events.ClientReady, () => resolve());
-      this.client.login(this.botToken).catch(reject);
+      const onReady = (): void => {
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        this.client.off(Events.ClientReady, onReady);
+        void this.client.destroy();
+        reject(new Error(`discord client did not become ready within ${START_TIMEOUT_MS}ms`));
+      }, START_TIMEOUT_MS);
+      this.client.once(Events.ClientReady, onReady);
+      this.client.login(this.botToken).catch((error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
     });
   }
 

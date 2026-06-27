@@ -149,22 +149,28 @@ export class GatewayManager {
     }
 
     const seen = new Set<string>();
+    // Fan the bot starts out rather than awaiting each in turn: a slow start (a bot
+    // that takes the full ready-timeout to fail) must not block reconciling the others
+    // or stall the poll loop that runs in sync()'s .finally. startBot never rejects (it
+    // catches internally), so allSettled is belt-and-braces against a future change.
+    const starts: Promise<void>[] = [];
     for (const config of configs) {
       seen.add(config.userId);
       const existing = this.bots.get(config.userId);
       if (!existing) {
-        await this.startBot(config);
+        starts.push(this.startBot(config));
       } else if (existing.encryptedBotToken !== config.encryptedBotToken) {
         // The stored token blob only changes when the row is rewritten (a settings
         // save) → the credential changed, so restart with it.
         await this.safeStop(existing);
         this.bots.delete(config.userId);
-        await this.startBot(config);
+        starts.push(this.startBot(config));
       } else {
         // Same token; refresh the cached config so handlers see the latest fields.
         existing.config = config;
       }
     }
+    await Promise.allSettled(starts);
 
     for (const [userId, bot] of [...this.bots]) {
       if (!seen.has(userId)) {
