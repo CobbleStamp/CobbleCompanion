@@ -98,6 +98,7 @@ Before claiming any work is done, verify:
 | `docs/howto-run-evals.md`      | How to run the offline eval harness (tiers, datasets, the prompt A/B knob)                                                                                                                     | What memory eval measures & why (`companion-memory.md` §5)                                                                                          |
 | `docs/runbook-tracing.md`      | Operating & enabling online tracing (Langfuse) + privacy posture                                                                                                                               | Tracing seam/data model (`architecture.md` §3, `implementation.md` §3), env vars (`.env.example`)                                                   |
 | `docs/documentation-rules.md`  | Doc taxonomy rules (types, scopes, naming)                                                                                                                                                     | Actual doc content                                                                                                                                  |
+| `docs/architecture-rules.md`   | Enforceable, measurable structural rules (numbered `R<n>`) to score code against — e.g. R1 thin transport adapters                                                                              | Component map / data flows (`architecture.md`), prose conventions (this file §Code Quality)                                                         |
 | `README.md`                    | Orientation, quick start, setup steps                                                                                                                                                          | Architecture, cross-component concepts                                                                                                              |
 
 **Doc naming convention** (under `docs/`):
@@ -140,6 +141,7 @@ Before claiming any work is done, verify:
 - Remove unused imports before committing.
 - DRY: if logic appears twice, extract it. Near-duplicates differing only in a parameter must be parameterized.
 - Separate orchestration (sequencing, coordination) from computation (pure functions, data transforms).
+- **Transport handlers are thin adapters** (decode → delegate → encode); domain logic lives in framework-free modules returning a typed `Result`. This is rule **R1** — see `docs/architecture-rules.md` for the full rule, checklist, and known violations to migrate.
 - **Never signal failure or error with `null`/`undefined`.** A function that can fail in a way the caller must handle returns a discriminated `Result` (`{ ok: true; … } | { ok: false; reason: … }`, matching the repo's existing `ok`-tagged shape, e.g. `FeedResult`). `null`/`undefined` is reserved for a genuine _absence_ of a value (e.g. `findById` → `T | null`); throwing is for truly exceptional, unrecoverable conditions. See `~/.claude/rules/typescript/coding-style.md` §Error Handling for the rationale and pattern.
 - Iron Laws 4-6 (no dead code, no tautological tests, explicit types) also apply here — see §Iron Laws above.
 - Docstrings on files and exported units are mandatory — see Iron Law 9.
@@ -168,4 +170,5 @@ Before claiming any work is done, verify:
 | Running evals (offline harness)           | `docs/howto-run-evals.md`      |
 | Online tracing / observability            | `docs/runbook-tracing.md`      |
 | Documentation rules                       | `docs/documentation-rules.md`  |
+| Architecture rules (enforceable, R<n>)    | `docs/architecture-rules.md`   |
 | Local dev setup                           | `README.md`                    |

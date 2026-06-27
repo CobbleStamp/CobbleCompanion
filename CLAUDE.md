@@ -20,6 +20,7 @@ read docs/product-overview.md
 | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
 | Working rules for this repo                                                                           | `AGENTS.md`                                                                          |
 | Documentation rules                                                                                   | `docs/documentation-rules.md`                                                        |
+| Architecture rules (enforceable, measurable — score code against `R<n>`)                              | `docs/architecture-rules.md`                                                         |
 | Product overview                                                                                      | `docs/product-overview.md`                                                           |
 | Priorities, requirements, roadmap                                                                     | `docs/development-plan.md`                                                           |
 | Technical architecture (incl. agent loop)                                                             | `docs/architecture.md`                                                               |
