@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { AppDeps } from '../app.js';
 import type { AuthRequest } from '../auth/jwt-verifier.js';
-import { mintAccessToken } from '../auth/session-tokens.js';
+import { mintDiscordToken } from '../auth/discord-token-mint.js';
 
 /**
  * The internal token-mint endpoint for the Discord adapter (companion-discord.md §9,
@@ -40,62 +40,20 @@ export function registerDiscordRoutes(app: FastifyInstance, deps: AppDeps): void
     return;
   }
 
+  // Thin transport adapter: adapt the request to the framework-free `AuthRequest`
+  // seam, delegate the authorize-and-mint decision to `mintDiscordToken`, then map
+  // its typed result to an HTTP reply. All the gating logic + logging lives in the
+  // module (auth/discord-token-mint.ts).
   app.post('/internal/discord/token', async (request, reply) => {
-    // 1. Authenticate the caller. The ServiceTokenVerifier requires a valid
-    //    `X-Service-Client-Id` + `Authorization: Bearer <secret>` + a UUID `X-User-Id`.
-    const claims = await deps.tokenVerifier.verify(toAuthRequest(request));
-    if (!claims.ok) {
-      deps.logger.info('discord token mint rejected: authentication failed', {
-        operation: 'discord.mint',
-        kind: claims.failure.kind,
-      });
-      return reply.code(claims.failure.status).send({ error: claims.failure.message });
+    const result = await mintDiscordToken(deps, toAuthRequest(request));
+    if (!result.ok) {
+      return reply.code(result.status).send({ error: result.error });
     }
-    // 2. Pin to the Discord service client specifically — not any service consumer.
-    if (
-      claims.identity.authSource !== 'service' ||
-      claims.identity.clientId !== config.discordServiceClientId
-    ) {
-      deps.logger.error('discord token mint rejected: not the discord service client', {
-        operation: 'discord.mint',
-      });
-      return reply.code(403).send({ error: 'forbidden' });
-    }
-    // The target user is carried in X-User-Id (the verifier validated it as a UUID).
-    const userId = claims.identity.externalId;
-
-    // 3. Authorize: only mint for a user who has opted into Discord.
-    const discordConfig = await deps.discordConfig.findByUserId(userId);
-    if (!discordConfig) {
-      deps.logger.error('discord token mint rejected: user has no discord config', {
-        operation: 'discord.mint',
-        userId,
-      });
-      return reply.code(403).send({ error: 'user has no discord config' });
-    }
-
-    // 4. The app access token is email-keyed (the session identity); a companion-owning
-    //    user is a Google user with an email.
-    const user = await deps.identity.getUserById(userId);
-    if (!user?.email) {
-      deps.logger.error('discord token mint failed: user not eligible (no email)', {
-        operation: 'discord.mint',
-        userId,
-      });
-      return reply.code(409).send({ error: 'user not eligible' });
-    }
-
-    const accessToken = mintAccessToken(
-      { authSource: 'google', email: user.email },
-      config.jwtSigningSecret,
-      config.accessTokenTtlSec,
-    );
-    deps.logger.info('discord token minted', { operation: 'discord.mint', userId });
     // snake_case envelope, matching /auth/session.
     return {
-      access_token: accessToken,
+      access_token: result.accessToken,
       token_type: 'Bearer',
-      expires_in: config.accessTokenTtlSec,
+      expires_in: result.expiresInSec,
     };
   });
 }
