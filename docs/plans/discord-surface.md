@@ -538,13 +538,14 @@ client_id, external_id)` user that doesn't own the companion (`ensureUserByClaim
   `ownerDiscordUserId`, and clears it; mismatched/expired/used codes fail without
   changing the owner.
 
-## 12. Remaining-work plan (detailed, dependency-ordered)
+## 12. Final-pass build plan (detailed, dependency-ordered)
 
-> **Status: planned (2026-06-26).** This section supersedes the §9 sketches for the
-> tasks still open (T11, T12, T13, T14, T15, T16) with concrete, file-level steps
-> that fold in the decisions taken during this planning pass. Built tasks (T1–T10,
-> worker assembly, T2b) are unchanged. Each task stays **independently green**
-> (`pnpm -r run typecheck` + its own tests) and follows **fakes over mocks**.
+> **Status: shipped.** All tasks below (T11, T12, T13, T14, T15, T16) are built —
+> this section is the historical record of the final pass, kept for the concrete,
+> file-level steps and the decisions that reshaped the §9 sketches. Earlier tasks
+> (T1–T10, worker assembly, T2b) were already built. Each task stayed
+> **independently green** (`pnpm -r run typecheck` + its own tests) and followed
+> **fakes over mocks**.
 
 ### Decisions taken this pass (the ones that reshape the sketches)
 
