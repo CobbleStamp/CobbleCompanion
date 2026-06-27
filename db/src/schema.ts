@@ -1092,4 +1092,5 @@ export const schema = {
   companionGrowth,
   toolCatalog,
   equippedTools,
+  discordConfig,
 };
