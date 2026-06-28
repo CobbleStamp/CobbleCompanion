@@ -39,8 +39,9 @@ interface SessionTokenPayload {
   readonly typ: SessionTokenType;
   readonly iat: number;
   readonly exp: number;
-  /** Absent = full web session. `discord` = scoped to the Discord bridge (HTTP-guard
-   *  rejected). Signed into the token, so it can't be added/removed after minting. */
+  /** Absent = full web session. `discord` = a token for the Discord bridge: the HTTP auth
+   *  guard rejects it, but over `/ws` it is a normal real-user connection (full access).
+   *  Signed into the token, so it can't be added/removed after minting. */
   readonly surface?: AuthSurface;
 }
 
@@ -92,10 +93,11 @@ export function mintAccessToken(
 }
 
 /**
- * Mint a short-lived access token **scoped to a non-web surface** (currently only
- * `discord`). Identical to {@link mintAccessToken} but the `surface` claim is signed in,
- * so the HTTP auth guard can reject it (a Discord token must only reach `/ws`). Used by
- * the Discord token-mint; the web session path uses the unscoped {@link mintAccessToken}.
+ * Mint a short-lived access token carrying a non-web **surface** claim (currently only
+ * `discord`). Identical to {@link mintAccessToken} but the `surface` claim is signed in, so
+ * the HTTP auth guard rejects the token (`auth-guard.ts`) — it works over `/ws` as a normal
+ * real-user connection but is refused on the access-token-guarded HTTP routes. Used by the
+ * Discord token-mint; the web session path uses the unscoped {@link mintAccessToken}.
  */
 export function mintSurfaceAccessToken(
   identity: SessionIdentity,
@@ -191,8 +193,9 @@ export class AppSessionVerifier implements TokenVerifier {
     return {
       ok: true,
       identity: { authSource: 'google', email: result.payload.sub },
-      // Propagate the surface scope (only `discord` is valid) so the HTTP guard can
-      // refuse a non-web token. Trusted because it is HMAC-signed into the token.
+      // Propagate the surface scope (only `discord` is valid) so the HTTP guard can refuse
+      // the token on HTTP routes (it still works over `/ws`). Trusted because it is
+      // HMAC-signed into the token.
       ...(result.payload.surface === 'discord' ? { surface: 'discord' as const } : {}),
     };
   }

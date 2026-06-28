@@ -29,10 +29,12 @@ export interface AuthFailure {
 
 /**
  * The surface an app session token is scoped to. Absent = a full web/SPA session (the
- * default). `discord` marks a token minted for the decoupled Discord bridge: it is
- * accepted at the `/ws` embodiment handshake but **rejected by the HTTP auth guard**, so
- * a leaked Discord token cannot act as a full web session (settings, approval queue,
- * token refresh). See `discord-token-mint.ts` and `auth-guard.ts`.
+ * default). `discord` marks a token minted for the decoupled Discord bridge, which connects
+ * to `/ws` **as the real user** — so over `/ws` a Discord token is a normal user connection
+ * with the same access as a web session (no per-surface filtering). The claim's only effect
+ * is on **HTTP**: the auth guard rejects it (`auth-guard.ts`), keeping a Discord token off
+ * the access-token-guarded HTTP routes (the upload sink, admin). It is **not** confined on
+ * `/ws`. See `discord-token-mint.ts` and `auth-guard.ts`.
  */
 export type AuthSurface = 'discord';
 

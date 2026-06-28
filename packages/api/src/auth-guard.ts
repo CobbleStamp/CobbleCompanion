@@ -76,9 +76,10 @@ export function makeRequireAuth(deps: AppDeps): RequireAuth {
       return;
     }
 
-    // A Discord-surface token embodies only over `/ws`; it must never act as a full web
-    // session (settings, approval queue, token refresh). Reject it on every HTTP route
-    // guarded here. `/ws` has its own handshake (handshake.ts) and stays permissive.
+    // The Discord bridge connects to `/ws` as the real user, so over `/ws` a discord token
+    // is a normal user connection (full access — not confined). The `surface` claim only
+    // gates HTTP: reject it here on every access-token-guarded route, keeping a Discord token
+    // off the HTTP API. `/ws` has its own handshake (handshake.ts) and is unaffected.
     if (claims.surface === 'discord') {
       deps.logger.error('http request rejected: discord-surface token not valid here', {
         operation: 'auth.verify',

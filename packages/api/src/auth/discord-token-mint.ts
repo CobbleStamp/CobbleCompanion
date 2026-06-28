@@ -146,8 +146,9 @@ export async function mintDiscordToken(
     return { ok: false, status: 409, error: 'user not eligible' };
   }
 
-  // Scope the token to the Discord surface: it embodies via `/ws` but the HTTP auth
-  // guard rejects it, so a leaked Discord token can't act as a full web session.
+  // Mint with the `surface: 'discord'` claim: the token connects to `/ws` as the real user
+  // (full access there, like a web session), but the HTTP auth guard rejects it on the
+  // access-token-guarded HTTP routes (the upload sink, admin).
   const accessToken = mintSurfaceAccessToken(
     { authSource: 'google', email: user.email },
     'discord',

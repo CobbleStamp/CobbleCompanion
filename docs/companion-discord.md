@@ -232,12 +232,15 @@ external_id)` user (`packages/core/src/identity/store.ts`, `ensureUserByClaim`),
     token (it ran the gateway connection), so it sends it on the mint call; no user input chooses
     `userId` (it is bound to the bot connection that received the event, `gateway/manager.ts`).
   - **Surface scoping (`surface: 'discord'`).** The minted token carries a signed
-    `surface: 'discord'` claim (`mintSurfaceAccessToken`, `session-tokens.ts`). It is accepted at
-    the `/ws` embodiment handshake (where the bridge connects) but **rejected (403) by the HTTP auth
-    guard** (`auth-guard.ts`), which is the only thing a web session token reaches for settings, the
-    approval queue, and token refresh. So even if a _minted token_ leaks, it cannot act as a full
-    web session — it can only embody over `/ws`, the same thing the bridge already does. The web
-    session path keeps using the unscoped `mintAccessToken`, so it is unaffected.
+    `surface: 'discord'` claim (`mintSurfaceAccessToken`, `session-tokens.ts`). The bridge
+    connects to `/ws` **as the real user**, so over `/ws` the token is a normal user connection
+    with the **same access as a web session** — every WS method, by design (the bridge needs
+    chat, the read-only views, the approval buttons, `/feed`, and so on; settings and the
+    approval queue are themselves WS methods). It is **not** confined on `/ws`. The `surface`
+    claim's **only** effect is on **HTTP**: the auth guard (`auth-guard.ts`) rejects it with
+    `403`, keeping a Discord token off the access-token-guarded HTTP routes (the local upload
+    sink, the admin queue). The web session path uses the unscoped `mintAccessToken` (no
+    `surface` claim), so it is unaffected.
 - **Owner lock.** Every inbound Discord event is checked against the stored `ownerDiscordUserId`;
   anything else is ignored. The owner ID is captured once via a **`/link <code>`** handshake so the
   bot never trusts "first DM wins": the **API mints** an **8-char, single-use** code (no-look-alike
