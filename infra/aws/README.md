@@ -89,12 +89,17 @@ Elastic IP) so Caddy can obtain a Let's Encrypt cert.
 ### The Discord surface (always-on)
 
 The Discord surface (`docs/companion-discord.md`) is **always-on**. The same EC2 box
-runs the `cobble-discord` worker as a second container from the same image, started
-on every deploy. It's **zero-touch**: the worker's service credential is generated
+runs the `cobble-discord` service as a second container from the same image, started
+on every deploy. It's **zero-touch**: the service's service-token credential is generated
 once and kept stable in Pulumi state, injected inline into `/etc/cobble.env` (this
-is single-tenant, so — unlike the OpenRouter key and DB DSN — the Discord secret and
-bot-token key are **not** in SSM; they live in user-data + Pulumi state), and the API
-seeds the matching `service_registry` row at boot from an inline `SERVICE_REGISTRY_SEEDS`.
+is single-tenant, so — unlike the OpenRouter key and DB DSN — the Discord service
+secret and bot-token key are **not** in SSM; they live in user-data + Pulumi state), and
+the API seeds the matching `service_registry` row at boot from an inline
+`SERVICE_REGISTRY_SEEDS`. Both containers run `--network host`, so the API reaches the
+service's internal reconcile endpoint on loopback (`DISCORD_RECONCILE_URL` →
+`127.0.0.1:$DISCORD_SERVICE_PORT`) to (re)start a bot the instant its token is saved — no
+poll. That endpoint carries no auth; the closed security group (no rule for the port) is
+its only guard (`docs/companion-discord.md` §2.1).
 
 No setup is required to turn it on. Optional overrides:
 

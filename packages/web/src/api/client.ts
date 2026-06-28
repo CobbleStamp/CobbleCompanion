@@ -464,7 +464,7 @@ export async function regenerateDiscordLink(): Promise<DiscordConfigViewDto> {
   return discord;
 }
 
-/** Remove the bot config entirely (the worker stops that bot on its next poll). */
+/** Remove the bot config entirely (the service stops that bot on the reconcile trigger). */
 export async function deleteDiscordConfig(): Promise<void> {
   await wsClient.call('discord.config.delete', undefined, null);
 }

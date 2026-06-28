@@ -1,4 +1,3 @@
-import type { DiscordConfigRecord } from '@cobble/db';
 import { describe, expect, it, vi } from 'vitest';
 import type { CompanionConnection } from './bridge.js';
 import type { SlashCommandContext } from './gateway/manager.js';
@@ -31,19 +30,6 @@ class RecordingConnection implements CompanionConnection {
   }
 }
 
-function record(): DiscordConfigRecord {
-  return {
-    userId: 'u1',
-    encryptedBotToken: 'x',
-    boundCompanionId: 'c1',
-    ownerDiscordUserId: 'owner-1',
-    linkCode: null,
-    linkCodeIssuedAt: null,
-    createdAt: new Date(0),
-    updatedAt: new Date(0),
-  };
-}
-
 function cmdCtx(
   name: string,
   options: Record<string, string> = {},
@@ -56,7 +42,6 @@ function cmdCtx(
     replies,
     ctx: {
       userId: 'u1',
-      config: record(),
       command: { name, userId: 'owner-1', channelId: 'dm-1', options, reply },
       reply,
     },

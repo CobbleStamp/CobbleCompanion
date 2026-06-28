@@ -12,9 +12,9 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc",
     "test": "vitest run",
-    "dev": "tsx watch src/worker.ts",
-    "serve": "tsx src/worker.ts",
-    "start": "node dist/worker.js"
+    "dev": "tsx watch src/service.ts",
+    "serve": "tsx src/service.ts",
+    "start": "node dist/service.js"
   },
   "dependencies": {
     "@cobble/db": "workspace:*",

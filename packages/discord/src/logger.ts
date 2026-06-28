@@ -1,7 +1,7 @@
 import type { Logger } from './gateway/types.js';
 
 /**
- * A minimal structured logger for the worker process: JSON lines to stdout (info) /
+ * A minimal structured logger for the service process: JSON lines to stdout (info) /
  * stderr (warn/error). Not `console.log` — this is the logging boundary. `Error` values
  * in metadata are serialized to `{ name, message, stack }` so stacks aren't lost.
  */

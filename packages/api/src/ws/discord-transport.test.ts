@@ -13,7 +13,7 @@
 import type { AddressInfo } from 'node:net';
 import { WsTransport } from '@cobble/discord';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { makeTestApp, type TestApp } from '../test/helpers.js';
+import { makeTestApp, silentLogger, type TestApp } from '../test/helpers.js';
 
 describe('discord WsTransport against a real /ws', () => {
   let ctx: TestApp;
@@ -44,7 +44,7 @@ describe('discord WsTransport against a real /ws', () => {
     `ws://${host}/ws?companion=${companionId}&access_token=${encodeURIComponent(token)}`;
 
   it('claims embodiment, runs a chat turn, and is superseded by a second claim', async () => {
-    const first = new WsTransport();
+    const first = new WsTransport({ logger: silentLogger });
     await first.connect({ url: wsUrl(), headers: {}, embodying: true });
 
     // The connection holds the live claim for the bound companion.
@@ -63,7 +63,7 @@ describe('discord WsTransport against a real /ws', () => {
     first.onEvent((name) => {
       if (name === 'embodiment.superseded') superseded = true;
     });
-    const second = new WsTransport();
+    const second = new WsTransport({ logger: silentLogger });
     await second.connect({ url: wsUrl(), headers: {}, embodying: true });
 
     // The first connection receives the real takeover notice (newer wins).
@@ -79,7 +79,7 @@ describe('discord WsTransport against a real /ws', () => {
   });
 
   it('rejects a chat turn on a transport-only connection (no companion claimed)', async () => {
-    const transport = new WsTransport();
+    const transport = new WsTransport({ logger: silentLogger });
     await transport.connect({
       url: `ws://${host}/ws?access_token=${encodeURIComponent(token)}`,
       headers: {},

@@ -32,7 +32,7 @@ const googleClientId = cfg.require('googleClientId');
 const llmModel = cfg.get('llmModel') ?? 'anthropic/claude-3.5-sonnet';
 const domain = cfg.require('domain');
 // The Discord surface is always-on (companion-discord.md §9). The client id is the
-// public half of the worker's service credential; it defaults to a fixed value and
+// public half of the Discord service's service-token credential; it defaults to a fixed value and
 // the api auto-seeds the matching service_registry row at boot from
 // SERVICE_REGISTRY_SEEDS (built below). The secret + bot-token key are single-tenant
 // and supplied inline (like local docker's .env), not via SSM: each is taken from
@@ -46,7 +46,7 @@ const discordServiceSecret =
 const discordTokenKey =
   cfg.getSecret('discordTokenKey') ??
   new random.RandomBytes('discord-token-key', { length: 32 }).base64;
-// The seed the api consumes at boot to insert the worker's credential row (idempotent
+// The seed the api consumes at boot to insert the Discord service's credential row (idempotent
 // on the (client_id, secret) unique index). pulumi.jsonStringify resolves the secret
 // Output into the JSON.
 const discordServiceRegistrySeeds = pulumi.jsonStringify([
@@ -98,12 +98,12 @@ const secretFetchScript = pulumi
       .join('\n'),
   );
 
-// The Discord worker runs as a SECOND container from the SAME image, with the run
-// command overridden to the worker entrypoint (companion-discord.md §2,
+// The Discord service runs as a SECOND container from the SAME image, with the run
+// command overridden to the service entrypoint (companion-discord.md §2,
 // plans/discord-surface.md D6). Host network so it reaches the api on the host's
 // loopback :3000 (like Caddy). Always emitted — the surface is always-on and its
 // env (DISCORD_*) is always present in /etc/cobble.env.
-const discordWorkerBlock = `docker rm -f cobble-discord 2>/dev/null || true
+const discordServiceBlock = `docker rm -f cobble-discord 2>/dev/null || true
 docker run -d --restart=always --name cobble-discord --network host \\
   --env-file /etc/cobble.env "$IMAGE" \\
   pnpm --filter @cobble/discord run serve`;
@@ -168,8 +168,8 @@ docker rm -f cobble-app 2>/dev/null || true
 docker run -d --restart=always --name cobble-app \\
   -p 127.0.0.1:3000:3000 --env-file /etc/cobble.env "$IMAGE"
 
-# 4b. The Discord worker (same image, worker command), if the surface is configured.
-${discordWorkerBlock}
+# 4b. The Discord service (same image, service command), if the surface is configured.
+${discordServiceBlock}
 
 # 5. Persistent Caddy data volume. The instance is replaced on every redeploy
 #    (userDataReplaceOnChange), so Let's Encrypt certs + the ACME account must

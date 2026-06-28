@@ -49,16 +49,6 @@ function ctxFor(content: string): {
     typingCount: () => typing,
     ctx: {
       userId: 'u1',
-      config: {
-        userId: 'u1',
-        encryptedBotToken: 'x',
-        boundCompanionId: 'c1',
-        ownerDiscordUserId: 'owner-1',
-        linkCode: null,
-        linkCodeIssuedAt: null,
-        createdAt: new Date(0),
-        updatedAt: new Date(0),
-      },
       message: { authorId: 'owner-1', channelId: 'dm-1', content },
       reply: async (c) => {
         replies.push(c);

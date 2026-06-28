@@ -39,7 +39,8 @@ export class BotRouter {
 
   /** Route an inbound DM through the owner lock. */
   async handleDirectMessage(ctx: DirectMessageContext): Promise<void> {
-    const owner = ctx.config.ownerDiscordUserId;
+    const config = await this.opts.configStore.findByUserId(ctx.userId);
+    const owner = config?.ownerDiscordUserId ?? null;
     if (owner === null) {
       // Not linked yet — anyone DMing gets the same prompt (no companion data leaks).
       await ctx.reply(
@@ -65,7 +66,8 @@ export class BotRouter {
       await this.handleLink(ctx);
       return;
     }
-    const owner = ctx.config.ownerDiscordUserId;
+    const config = await this.opts.configStore.findByUserId(ctx.userId);
+    const owner = config?.ownerDiscordUserId ?? null;
     if (owner === null) {
       await ctx.reply('Link this companion first: `/link <code>` (code in your settings).');
       return;

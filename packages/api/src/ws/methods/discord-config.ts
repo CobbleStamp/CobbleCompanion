@@ -12,12 +12,12 @@ import { ConflictError, NotFoundError, parseParams } from './helpers.js';
 /**
  * The Discord settings methods (companion-discord.md §9, T13): the web panel saves the
  * user's bot token + bound companion, and the API encrypts the token before storing it
- * in `discord_config` (which the decoupled worker polls). USER-scoped — they act on
+ * in `discord_config` (which the decoupled service reads). USER-scoped — they act on
  * `ctx.userId`, never on an embodied companion, so they carry no `requireEmbodiment`
  * guard.
  *
  * Disabled (every method returns a `conflict` "not configured") unless
- * `DISCORD_TOKEN_KEY` is set — the encryption key the worker shares.
+ * `DISCORD_TOKEN_KEY` is set — the encryption key the service shares.
  */
 
 const NOT_CONFIGURED = 'Discord is not available on this server.';
@@ -38,7 +38,7 @@ function toView(record: DiscordConfigRecord | null): DiscordConfigViewDto {
 }
 
 export function discordConfigMethods(deps: AppDeps): WsMethods {
-  const { discordConfig, identity, config } = deps;
+  const { discordConfig, identity, config, discordReconcile } = deps;
   const keyBase64 = config.discordTokenKey;
 
   /** The AES key, or null when Discord isn't configured / the key is malformed. */
@@ -74,6 +74,9 @@ export function discordConfigMethods(deps: AppDeps): WsMethods {
         linkCode: generateLinkCode(),
         linkCodeIssuedAt: new Date(),
       });
+      // The token may have changed → tell the adapter to (re)start this bot at once
+      // (companion-discord.md §2.1). Fire-and-forget: the notifier retries + logs.
+      void discordReconcile?.(ctx.userId);
       return { discord: toView(record) };
     },
 
@@ -90,6 +93,8 @@ export function discordConfigMethods(deps: AppDeps): WsMethods {
 
     'discord.config.delete': async (ctx) => {
       await discordConfig.delete(ctx.userId);
+      // The row is gone → tell the adapter to stop this bot (companion-discord.md §2.1).
+      void discordReconcile?.(ctx.userId);
       return { ok: true };
     },
   };

@@ -6,7 +6,7 @@
  *
  * Lives in `@cobble/db` (the shared, `@cobble/*`-free data layer) so BOTH the api
  * (encrypts on write, via the `discord.config.*` WS methods) and the decoupled
- * `@cobble/discord` worker (decrypts on read) can use it without importing each
+ * `@cobble/discord` service (decrypts on read) can use it without importing each
  * other or `@cobble/core`.
  *
  * AES-256-GCM via `node:crypto`: authenticated encryption, so a tampered or

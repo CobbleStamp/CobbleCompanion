@@ -1,5 +1,5 @@
 /**
- * The mint-endpoint client (companion-discord.md §9): exchanges the worker's Discord
+ * The mint-endpoint client (companion-discord.md §9): exchanges the service's Discord
  * **service credential** for a short-lived **real-user** access token by calling the
  * internal `POST /internal/discord/token` route (T2b). The token then authenticates
  * that user's `/ws` connection (the bridge connects as the real user).

@@ -1039,7 +1039,7 @@ export const messageReactions = pgTable(
  * Per-user Discord surface configuration (companion-discord.md §9). One row per user
  * (bring-your-own-bot, one bot per user) — `user_id` is the PK, so a user has at most
  * one bot. Owned by the decoupled `@cobble/discord` adapter: the adapter READS it (the
- * sibling worker polls for token/config changes), the API WRITES it on behalf of the
+ * sibling service reconciles on token/config changes), the API WRITES it on behalf of the
  * web settings panel. Nothing in `@cobble/core` touches it.
  *
  * The Discord proactivity intensity is NOT stored here — proactive DMs are gated by the
@@ -1051,7 +1051,7 @@ export const discordConfig = pgTable('discord_config', {
     .primaryKey()
     .references(() => users.id, { onDelete: 'cascade' }),
   // The Discord BOT token (secret #1), encrypted at rest (AES-256-GCM, never
-  // plaintext — packages/discord/src/crypto.ts). The worker decrypts it to open the
+  // plaintext — packages/discord/src/crypto.ts). The service decrypts it to open the
   // bot's gateway connection.
   encryptedBotToken: text('encrypted_bot_token').notNull(),
   // Which of the user's companions this bot embodies on `/summon`. Ownership

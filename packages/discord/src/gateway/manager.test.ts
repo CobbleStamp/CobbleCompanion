@@ -89,7 +89,6 @@ function makeManager(
     onSlashCommand: (ctx) => commands.push(ctx),
     onProposalAction: (ctx) => proposalActions.push(ctx),
     commands: [{ name: 'summon', description: 'Bring the companion here' }],
-    pollIntervalMs: 60_000,
     logger: silent,
     ...overrides,
   });
@@ -137,7 +136,6 @@ describe('GatewayManager', () => {
     expect(received).toHaveLength(1);
     expect(received[0]?.userId).toBe('u1');
     expect(received[0]?.message.content).toBe('hello cobble');
-    expect(received[0]?.config.boundCompanionId).toBe('companion-u1');
   });
 
   it('restarts a bot when its token changes', async () => {
@@ -281,5 +279,64 @@ describe('GatewayManager', () => {
     await expect(manager.sync()).resolves.toBeUndefined();
     expect(manager.size).toBe(0);
     expect(errors.some((m) => m.includes('list config'))).toBe(true);
+  });
+
+  describe('reconcileUser (targeted, trigger-driven — no poll)', () => {
+    it('starts a newly configured bot', async () => {
+      const store = new InMemoryConfigStore();
+      const { manager, gateways } = makeManager(store);
+      await manager.start(); // empty startup reconcile
+
+      store.set(makeRecord('u1', 'enc:tokenA')); // the API just wrote the row
+      await manager.reconcileUser('u1'); // ...and triggered a reconcile
+
+      expect(manager.size).toBe(1);
+      expect(gateways.byToken('tokenA')?.started).toBe(true);
+    });
+
+    it('restarts a bot whose token changed, and no-ops on an unchanged token', async () => {
+      const store = new InMemoryConfigStore();
+      store.set(makeRecord('u1', 'enc:tokenA'));
+      const { manager, gateways } = makeManager(store);
+      await manager.start();
+
+      // Same token → no restart.
+      await manager.reconcileUser('u1');
+      expect(gateways.created).toHaveLength(1);
+      expect(gateways.byToken('tokenA')?.stopped).toBe(false);
+
+      // Token changed → restart.
+      store.set(makeRecord('u1', 'enc:tokenB'));
+      await manager.reconcileUser('u1');
+      expect(gateways.byToken('tokenA')?.stopped).toBe(true);
+      expect(gateways.byToken('tokenB')?.started).toBe(true);
+      expect(manager.size).toBe(1);
+    });
+
+    it('stops a bot whose row was removed', async () => {
+      const store = new InMemoryConfigStore();
+      store.set(makeRecord('u1', 'enc:tokenA'));
+      const { manager, gateways } = makeManager(store);
+      await manager.start();
+
+      store.remove('u1'); // a settings delete
+      await manager.reconcileUser('u1');
+
+      expect(gateways.byToken('tokenA')?.stopped).toBe(true);
+      expect(manager.size).toBe(0);
+    });
+
+    it('logs and survives a read failure (recovered by the next trigger / restart)', async () => {
+      const store = new InMemoryConfigStore();
+      const errors: string[] = [];
+      const { manager } = makeManager(store, {
+        logger: { error: (m) => errors.push(m), warn: () => {}, info: () => {} },
+      });
+      vi.spyOn(store, 'findByUserId').mockRejectedValueOnce(new Error('db down'));
+
+      await expect(manager.reconcileUser('u1')).resolves.toBeUndefined();
+      expect(manager.size).toBe(0);
+      expect(errors.some((m) => m.includes('reconcileUser'))).toBe(true);
+    });
   });
 });

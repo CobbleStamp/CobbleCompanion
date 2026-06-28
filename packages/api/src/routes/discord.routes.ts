@@ -7,11 +7,11 @@ import { mintDiscordToken } from '../auth/discord-token-mint.js';
  * The internal token-mint endpoint for the Discord adapter (companion-discord.md §9,
  * plans/discord-surface.md §11 — the "connect as the real user" decision).
  *
- * The decoupled Discord worker can't reach `/ws` as a service consumer — that would
+ * The decoupled Discord service can't reach `/ws` as a service consumer — that would
  * namespace it as a *separate* user that doesn't own the companion. Instead it asks
  * this endpoint for a short-lived **app access token for the real user**, then connects
  * to `/ws` exactly like the web client. The signing secret (`jwtSigningSecret`) stays in
- * the API and is never held by the worker.
+ * the API and is never held by the service.
  *
  * Auth: the caller authenticates with the Discord **service credential** (the existing
  * `ServiceTokenVerifier` / `service_registry`), naming the target user via `X-User-Id`.

@@ -6,7 +6,7 @@
 > embodies in, one at a time — `product-overview.md` §2), reached through a **decoupled adapter**
 > that speaks only the public WebSocket contract.
 >
-> **Status: shipped.** The surface is built on `packages/discord/` (the worker) + the
+> **Status: shipped.** The surface is built on `packages/discord/` (the service) + the
 > api's `discord.config.*` WS methods and `/internal/discord/token` route; the web
 > settings panel attaches a bot. The sequenced, file-level build history lives in
 > `plans/discord-surface.md`. Present tense below describes the live design.
@@ -75,10 +75,11 @@ Two responsibilities inside `packages/discord/`:
 - **Gateway manager** — owns the set of live Discord bot connections (one per configured user),
   reads each user's token from the adapter's own encrypted config store, enforces the owner lock,
   and routes inbound Discord events (DMs, slash commands, button clicks) to the right per-user bridge.
-  It runs as a **single always-on sibling worker process** (`packages/discord` ships its own
+  It runs as a **single always-on sibling service process** (`packages/discord` ships its own
   entrypoint) — Discord allows only one gateway connection per bot, so the manager must be singleton
-  and cannot live in a horizontally-scaled API. It **polls `discord_config`** to pick up token/config
-  changes (no cross-process event bus).
+  and cannot live in a horizontally-scaled API. It holds **no cached config and runs no poll**: it
+  learns of a token/config change when the API calls its internal reconcile endpoint, and reads each
+  config field **on demand** at the point of use (§2.1).
 - **Bridge (per summoned user)** — a WebSocket client to `/ws`
   (`?access_token=<user_access_token>&companion=<id>`, `companion-endpoints.md` §handshake) that
   connects **as the real, companion-owning user** (§9 explains why, and how the token is obtained).
@@ -91,6 +92,43 @@ without touching the agent loop, memory, or embodiment mechanism. "Imports NO co
 no dependency on `@cobble/core`. (`@cobble/db` for the adapter's own table and `@cobble/shared` for
 contract types are infrastructure, not core intelligence.)
 
+### 2.1 Config discovery & reads — on-demand, trigger-reconciled (no poll, no cache)
+
+The adapter holds **no cached snapshot** of `discord_config` and runs **no poll**. Two distinct
+needs are served two different ways:
+
+- **Reading a config field** (the owner lock per inbound event, the bound companion at `/summon`,
+  the proactivity dial when forwarding) — read **on demand** at the point of use via
+  `findByUserId(userId)`, scoped to the one row needed. Nothing is held, so nothing goes stale.
+- **Maintaining the gateway-connection set** — a Discord gateway connection must exist _before_ any
+  event can arrive, so it cannot be established "on demand" (the demand it would answer is produced
+  _by_ the connection). It needs a trigger. The API owns the only external write path (the web
+  settings panel → the `discord.config.*` methods), so after each write (save / delete) the API
+  calls the adapter's internal **`POST /internal/reconcile { userId }`** endpoint — an
+  **internal-network-only** route (no auth — the network boundary is its sole guard, justified
+  below). The adapter reads that one row on demand and reconciles just that user's connection:
+  **start** it when a token first
+  appears, **restart** it when the bot **token** changes, **stop** it when the row is gone. Only the
+  bot token drives the connection lifecycle — owner, bound companion, and proactivity never restart
+  it; they are read on demand when used.
+- **Startup** — on boot the adapter has no connections in memory, so it reads every config row
+  **once** (`list()`) and reconnects each bot. This is one-shot state recovery, **not a poll**; it
+  never repeats.
+
+**Why a trigger, not a poll.** The live-connection set is long-lived process state keyed off a table
+another process writes; reconciling the two is a _pull_ (poll) unless something _pushes_ a delta. A
+targeted reconcile call is that push **without** coupling to a specific database feature (no Postgres
+`LISTEN/NOTIFY`) and **without** exposing the adapter publicly (the endpoint is internal-only). The
+API already takes, encrypts, stores, and validates the bot token, so one configurable outbound call
+adds no coupling the API didn't already carry — and the adapter stays a purely internal service.
+
+**Self-healing.** Dropping the poll drops its drift-correction, so the API **retries** the reconcile
+call and **logs a failure at `error`**; any reconcile missed while the adapter was down is recovered
+by the startup reconcile. The only writer of `discord_config` other than the API is the adapter's own
+`/link` (which binds the owner — no trigger needed, since the owner is read on demand and does not
+affect the connection), so a **lost trigger call is the sole drift case**, corrected on the adapter's
+next restart.
+
 ## 3. Design decisions
 
 | Decision                   | Choice                                                                                                                                                                           | Rationale                                                                                                                                                                                                                                                                                        |
@@ -102,10 +140,11 @@ contract types are infrastructure, not core intelligence.)
 | **Proactivity**            | Yes, gated by the existing proactivity dial                                                                                                                                      | Proactive DMs are the single best reason to be on Discord; the dial (`off`/`gentle`/`active`, `companion-motivation.md`) governs them. Only fire while summoned/embodied.                                                                                                                        |
 | **Approvals**              | In-Discord embed + Confirm/Reject buttons                                                                                                                                        | Going to the web app to approve would supersede the bot; approvals must be self-contained in Discord.                                                                                                                                                                                            |
 | **Reply style**            | Typing cue + single final message                                                                                                                                                | Discord is rate-limited and not built for token-by-token streaming; the bridge consumes the stream server-side and posts once.                                                                                                                                                                   |
-| **Runtime**                | Single always-on **sibling worker process**, encrypted token at rest, decoupled module                                                                                           | Discord allows one gateway connection per bot, so the manager is singleton; it lives in its own package consuming only the public contract, surviving API multi-node / scale-to-zero.                                                                                                            |
-| **Config ownership**       | Adapter owns `discord_config` (schema in `@cobble/db`); adapter reads, API writes                                                                                                | Keeps the adapter free of `@cobble/core` while letting the web settings panel persist the token through the API; the worker polls for changes.                                                                                                                                                   |
+| **Runtime**                | Single always-on **sibling service process**, encrypted token at rest, decoupled module                                                                                           | Discord allows one gateway connection per bot, so the manager is singleton; it lives in its own package consuming only the public contract, surviving API multi-node / scale-to-zero.                                                                                                            |
+| **Config ownership**       | Adapter owns `discord_config` (schema in `@cobble/db`); adapter reads, API writes                                                                                                | Keeps the adapter free of `@cobble/core` while letting the web settings panel persist the token through the API; the API then triggers the adapter to reconcile that bot (§2.1).                                                                                                                 |
+| **Config discovery**       | API-triggered reconcile + on-demand reads — **no poll, no cached snapshot** (§2.1)                                                                                               | A gateway connection must exist before any event, so the connection set needs a trigger, not a lazy read; the API (the only external writer) calls the adapter's internal reconcile endpoint, and every config field is read on demand at use. No DB-specific push; the adapter stays internal.   |
 | **Command registration**   | Global commands, auto-registered on `ready`, DM context enabled                                                                                                                  | Guild commands don't appear in DMs (our only surface); global auto-registration needs zero per-user setup. Bot must be DM-reachable (shares a server or user-installable).                                                                                                                       |
-| **Backend auth**           | Bridge connects as the **real user** via a short-lived app access token, minted by an **internal API endpoint** (gated by a Discord service credential + a `discord_config` row) | Service-token auth would namespace the bridge as a _separate_ user that doesn't own the companion (handshake 404). Connecting as the real user reuses the existing app-access-token verifier with **no `@cobble/core` change**; the `ACCESS_TOKEN_SECRET` stays in the API, never in the worker. |
+| **Backend auth**           | Bridge connects as the **real user** via a short-lived app access token, minted by an **internal API endpoint** (gated by a Discord service credential + a `discord_config` row) | Service-token auth would namespace the bridge as a _separate_ user that doesn't own the companion (handshake 404). Connecting as the real user reuses the existing app-access-token verifier with **no `@cobble/core` change**; the `ACCESS_TOKEN_SECRET` stays in the API, never in the service. |
 
 ## 4. Embodiment lifecycle
 
@@ -213,14 +252,14 @@ external_id)` user (`packages/core/src/identity/store.ts`, `ensureUserByClaim`),
   change**.
   - **Where the token comes from.** A new **internal API endpoint** mints it via
     `mintAccessToken(userId, ACCESS_TOKEN_SECRET, ttl)` (`packages/api/src/auth/session-tokens.ts`).
-    The worker authenticates _to that endpoint_ with a Discord **service credential** (a
+    The service authenticates _to that endpoint_ with a Discord **service credential** (a
     `service_registry` row). The surface is **always-on**: rather than a manual
     `pnpm --filter @cobble/db service add`, that row is seeded at API boot from
     `SERVICE_REGISTRY_SEEDS` (idempotent on the `(client_id, secret)` unique index), so a fresh
-    stack comes up with the worker already authenticated. The endpoint mints **only** for a
+    stack comes up with the service already authenticated. The endpoint mints **only** for a
     `userId` that has a `discord_config` row, and the bridge refreshes the short-lived token as
     needed. The signing key (`ACCESS_TOKEN_SECRET`) stays in the API and is **never** held by the
-    worker.
+    service.
   - **Per-user proof (`X-Discord-Bot-Token`).** The service credential is **shared across all
     Discord users**, so `X-User-Id` on its own is an unauthenticated claim — without more, any holder
     of the service secret could mint a full session for any Discord-enabled user. The mint therefore
@@ -228,7 +267,7 @@ external_id)` user (`packages/core/src/identity/store.ts`, `ensureUserByClaim`),
     stored `encryptedBotToken` for `userId` and rejects (opaque `403`) on any mismatch, absent header,
     or undecryptable record (constant-time compare, `discord-token-mint.ts` gate 4). The bot token is
     the one secret that actually identifies the user, so a leaked service credential **alone** cannot
-    mint for a user whose bot token it does not also hold. The worker already holds the decrypted
+    mint for a user whose bot token it does not also hold. The service already holds the decrypted
     token (it ran the gateway connection), so it sends it on the mint call; no user input chooses
     `userId` (it is bound to the bot connection that received the event, `gateway/manager.ts`).
   - **Surface scoping (`surface: 'discord'`).** The minted token carries a signed
@@ -250,8 +289,9 @@ external_id)` user (`packages/core/src/identity/store.ts`, `ensureUserByClaim`),
 - **Token at rest.** The bot token is a secret: stored **encrypted** (AES-256-GCM via `node:crypto`,
   key from environment/KMS), never plaintext, never logged. The config row —
   `{ userId, encryptedBotToken, boundCompanionId, ownerDiscordUserId, proactivity, linkCode }` — is
-  written by the API on behalf of the web settings panel; the sibling worker picks up the change on
-  its next `discord_config` poll and (re)starts that bot's gateway connection.
+  written by the API on behalf of the web settings panel; the API then calls the adapter's internal
+  reconcile endpoint (§2.1), which reads that one row on demand and (re)starts that bot's gateway
+  connection.
 - **No secrets in logs.** Errors are logged with operation + `userId`/`companionId` context, never the
   token or service secret (per the repo logging rule).
 

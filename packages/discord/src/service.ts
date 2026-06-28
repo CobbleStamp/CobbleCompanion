@@ -1,9 +1,9 @@
 /**
- * The Discord worker — the always-on sibling process (plans/discord-surface.md §11).
+ * The Discord service — the always-on sibling process (plans/discord-surface.md §11).
  * It is the composition root that wires the tested pieces together: the gateway
  * manager (one bot per user) → the owner-locked router → the per-user bridge
- * (summon/chat). {@link assembleWorker} is the wiring (kept injectable so the full
- * manager→router→bridge→chat path is integration-tested with fakes); {@link startWorker}
+ * (summon/chat). {@link assembleService} is the wiring (kept injectable so the full
+ * manager→router→bridge→chat path is integration-tested with fakes); {@link startService}
  * builds the real dependencies from config.
  */
 
@@ -17,6 +17,7 @@ import {
 import { CompanionBridge, type CompanionConnectionFactory } from './bridge.js';
 import { handleChat } from './chat.js';
 import { COMMAND_SPECS } from './commands.js';
+import { startControlServer, type ControlServer } from './control-server.js';
 import { createCompanionConnectionFactory } from './connection.js';
 import { createDiscordJsGatewayFactory } from './gateway/discord-js-gateway.js';
 import { GatewayManager } from './gateway/manager.js';
@@ -27,17 +28,16 @@ import { handleReadOnlyCommand } from './read-commands.js';
 import { BotRouter } from './router.js';
 import { createMintTokenSource } from './token-source.js';
 
-export interface AssembleWorkerParts {
+export interface AssembleServiceParts {
   readonly configStore: DiscordConfigStore;
   readonly gatewayFactory: DiscordGatewayFactory;
   readonly connectionFactory: CompanionConnectionFactory;
   /** Decrypt a stored bot token; null if it can't be (bot skipped). */
   readonly decryptToken: (encryptedBotToken: string) => string | null;
-  readonly pollIntervalMs: number;
   readonly logger: Logger;
 }
 
-export interface AssembledWorker {
+export interface AssembledService {
   readonly manager: GatewayManager;
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -48,7 +48,7 @@ export interface AssembledWorker {
  * (assigned after the bridge it depends on) — a forward reference that's safe because
  * the handlers only fire after `start()`.
  */
-export function assembleWorker(parts: AssembleWorkerParts): AssembledWorker {
+export function assembleService(parts: AssembleServiceParts): AssembledService {
   const { logger } = parts;
   let router: BotRouter;
 
@@ -58,8 +58,8 @@ export function assembleWorker(parts: AssembleWorkerParts): AssembledWorker {
     decryptToken: parts.decryptToken,
     onDirectMessage: (ctx) => {
       router.handleDirectMessage(ctx).catch((error) => {
-        logger.error('discord worker: DM handling failed', {
-          operation: 'discord.worker.dm',
+        logger.error('discord service: DM handling failed', {
+          operation: 'discord.service.dm',
           userId: ctx.userId,
           error,
         });
@@ -67,8 +67,8 @@ export function assembleWorker(parts: AssembleWorkerParts): AssembledWorker {
     },
     onSlashCommand: (ctx) => {
       router.handleSlashCommand(ctx).catch((error) => {
-        logger.error('discord worker: command handling failed', {
-          operation: 'discord.worker.command',
+        logger.error('discord service: command handling failed', {
+          operation: 'discord.service.command',
           userId: ctx.userId,
           error,
         });
@@ -76,20 +76,20 @@ export function assembleWorker(parts: AssembleWorkerParts): AssembledWorker {
     },
     onProposalAction: (ctx) => {
       bridge.handleProposalAction(ctx).catch((error) => {
-        logger.error('discord worker: proposal action failed', {
-          operation: 'discord.worker.proposal',
+        logger.error('discord service: proposal action failed', {
+          operation: 'discord.service.proposal',
           userId: ctx.userId,
           error,
         });
       });
     },
     commands: COMMAND_SPECS,
-    pollIntervalMs: parts.pollIntervalMs,
     logger,
   });
 
   const bridge = new CompanionBridge({
     connectionFactory: parts.connectionFactory,
+    configStore: parts.configStore,
     notify: (userId, channelId, content) => manager.sendDirectMessage(userId, channelId, content),
     onChat: (ctx, connection) => handleChat(ctx, connection, logger),
     onReadOnlyCommand: (ctx, connection) => handleReadOnlyCommand(ctx, connection, logger),
@@ -114,27 +114,29 @@ export function assembleWorker(parts: AssembleWorkerParts): AssembledWorker {
   };
 }
 
-export interface WorkerConfig {
+export interface ServiceConfig {
   readonly databaseUrl: string;
   readonly wsBaseUrl: string;
   readonly mintUrl: string;
   readonly serviceClientId: string;
   readonly serviceSecret: string;
   readonly tokenKeyBase64: string;
-  readonly pollIntervalMs: number;
+  /** Port the internal (no-auth, network-isolated) reconcile endpoint listens on
+   *  (companion-discord.md §2.1). */
+  readonly controlPort: number;
 }
 
-/** Read + validate the worker's environment. Throws (fail-fast) on a missing var. */
-export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
+/** Read + validate the service's environment. Throws (fail-fast) on a missing var. */
+export function loadServiceConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig {
   const require_ = (name: string): string => {
     const value = env[name];
     if (!value || value.length === 0) throw new Error(`${name} is required`);
     return value;
   };
-  const pollRaw = env['DISCORD_POLL_INTERVAL_MS'];
-  const pollIntervalMs = pollRaw ? Number.parseInt(pollRaw, 10) : 20_000;
-  if (!Number.isFinite(pollIntervalMs) || pollIntervalMs <= 0) {
-    throw new Error('DISCORD_POLL_INTERVAL_MS must be a positive integer');
+  const portRaw = env['DISCORD_SERVICE_PORT'];
+  const controlPort = portRaw ? Number.parseInt(portRaw, 10) : 8080;
+  if (!Number.isFinite(controlPort) || controlPort <= 0) {
+    throw new Error('DISCORD_SERVICE_PORT must be a positive integer');
   }
   return {
     databaseUrl: require_('DATABASE_URL'),
@@ -143,13 +145,13 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerCo
     serviceClientId: require_('DISCORD_SERVICE_CLIENT_ID'),
     serviceSecret: require_('DISCORD_SERVICE_SECRET'),
     tokenKeyBase64: require_('DISCORD_TOKEN_KEY'),
-    pollIntervalMs,
+    controlPort,
   };
 }
 
-/** Build real dependencies from config and start the worker. Returns a `stop()`. */
-export async function startWorker(
-  config: WorkerConfig,
+/** Build real dependencies from config and start the service. Returns a `stop()`. */
+export async function startService(
+  config: ServiceConfig,
   logger: Logger = consoleLogger,
 ): Promise<{ stop: () => Promise<void> }> {
   const { db, pool } = createPgDatabase(config.databaseUrl);
@@ -158,8 +160,8 @@ export async function startWorker(
   const decryptToken = (encrypted: string): string | null => {
     const result = decryptSecret(encrypted, tokenKey);
     if (!result.ok) {
-      logger.error('discord worker: failed to decrypt a bot token', {
-        operation: 'discord.worker.decrypt',
+      logger.error('discord service: failed to decrypt a bot token', {
+        operation: 'discord.service.decrypt',
         reason: result.reason,
       });
       return null;
@@ -172,7 +174,7 @@ export async function startWorker(
     serviceSecret: config.serviceSecret,
     logger,
   });
-  const worker = assembleWorker({
+  const service = assembleService({
     configStore,
     gatewayFactory: createDiscordJsGatewayFactory(logger),
     connectionFactory: createCompanionConnectionFactory({
@@ -182,14 +184,22 @@ export async function startWorker(
       logger,
     }),
     decryptToken,
-    pollIntervalMs: config.pollIntervalMs,
     logger,
   });
-  await worker.start();
-  logger.info('discord worker started', { operation: 'discord.worker.start' });
+  await service.start();
+  // Steady-state config discovery (companion-discord.md §2.1): the API POSTs to this
+  // internal-only endpoint after a discord_config write so the bot (re)starts at once —
+  // no poll. The startup reconcile above is the recovery floor if a trigger is missed.
+  const control: ControlServer = await startControlServer({
+    port: config.controlPort,
+    reconcileUser: (userId) => service.manager.reconcileUser(userId),
+    logger,
+  });
+  logger.info('discord service started', { operation: 'discord.service.start' });
   return {
     stop: async () => {
-      await worker.stop();
+      await control.close();
+      await service.stop();
       await pool.end();
     },
   };
@@ -197,7 +207,7 @@ export async function startWorker(
 
 // Run as a process only when invoked directly (not when imported by tests).
 if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
-  startWorker(loadWorkerConfig())
+  startService(loadServiceConfig())
     .then(({ stop }) => {
       const shutdown = (): void => {
         void stop().then(() => process.exit(0));
@@ -206,8 +216,8 @@ if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
       process.on('SIGTERM', shutdown);
     })
     .catch((error: unknown) => {
-      consoleLogger.error('discord worker failed to start', {
-        operation: 'discord.worker.start',
+      consoleLogger.error('discord service failed to start', {
+        operation: 'discord.service.start',
         error,
       });
       process.exit(1);

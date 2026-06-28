@@ -13,7 +13,7 @@ export const LINK_CODE_LENGTH = 8;
 
 /**
  * Generate a fresh single-use `/link` code (companion-discord.md §9). Minted by the
- * API when a user saves their bot token; the worker verifies it on `/link`. Shared
+ * API when a user saves their bot token; the service verifies it on `/link`. Shared
  * here so the API and any tooling produce the same shape.
  */
 export function generateLinkCode(): string {
@@ -29,7 +29,7 @@ export function generateLinkCode(): string {
  * Data access for `discord_config` (companion-discord.md §9). Lives in `@cobble/db`
  * — the shared data layer — so BOTH the api (which writes it on behalf of the web
  * settings panel, and reads it to authorize the token-mint endpoint) and the
- * decoupled `@cobble/discord` worker (which polls it) can use it without importing
+ * decoupled `@cobble/discord` service (which reads it on demand) can use it without importing
  * each other or `@cobble/core`.
  */
 
@@ -104,7 +104,7 @@ export class DrizzleDiscordConfigStore implements DiscordConfigStore {
     return row ? toRecord(row) : null;
   }
 
-  /** Every configured bot — the worker's poll reads this to (re)start gateways. */
+  /** Every configured bot — the service reads this at startup to (re)start gateways. */
   async list(): Promise<DiscordConfigRecord[]> {
     const rows = await this.db.select().from(discordConfig);
     return rows.map(toRecord);

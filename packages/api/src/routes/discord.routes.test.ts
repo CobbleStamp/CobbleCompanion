@@ -13,7 +13,7 @@ import { makeTestApp, silentLogger, testConfig, type TestApp } from '../test/hel
 
 const CLIENT_ID = 'discord-adapter';
 const SECRET = 'discord-service-secret';
-// The owner's real Discord bot token — the per-user secret the worker proves it holds.
+// The owner's real Discord bot token — the per-user secret the service proves it holds.
 const BOT_TOKEN = 'bot-token-aaa';
 const tokenKey = keyFromBase64(testConfig.discordTokenKey);
 
@@ -30,7 +30,7 @@ describe('POST /internal/discord/token', () => {
 
   beforeEach(async () => {
     ({ db, close: closeDb } = await createTestDatabase());
-    // Register the Discord service credential the worker authenticates with.
+    // Register the service-token credential the Discord service authenticates with.
     await db
       .insert(serviceRegistry)
       .values({ clientId: CLIENT_ID, secret: SECRET, secretType: 'plaintext' });

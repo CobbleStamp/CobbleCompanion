@@ -1,4 +1,4 @@
-import type { DiscordConfigRecord } from '@cobble/db';
+import type { DiscordConfigRecord, DiscordConfigStore } from '@cobble/db';
 import { describe, expect, it } from 'vitest';
 import {
   CompanionBridge,
@@ -79,6 +79,16 @@ function record(): DiscordConfigRecord {
   };
 }
 
+/** Config store the bridge reads on demand: returns the one user's record. */
+const configStore: DiscordConfigStore = {
+  findByUserId: async (userId) => (userId === 'u1' ? record() : null),
+  list: async () => [record()],
+  upsert: async () => record(),
+  reissueLinkCode: async () => record(),
+  bindOwner: async () => true,
+  delete: async () => {},
+};
+
 function cmdCtx(name: string): { ctx: SlashCommandContext; replies: string[] } {
   const replies: string[] = [];
   const reply = async (c: string): Promise<void> => {
@@ -88,7 +98,6 @@ function cmdCtx(name: string): { ctx: SlashCommandContext; replies: string[] } {
     replies,
     ctx: {
       userId: 'u1',
-      config: record(),
       command: { name, userId: 'owner-123', channelId: 'dm-1', options: {}, reply },
       reply,
     },
@@ -101,7 +110,6 @@ function dmCtx(content: string): { ctx: DirectMessageContext; replies: string[] 
     replies,
     ctx: {
       userId: 'u1',
-      config: record(),
       message: { authorId: 'owner-123', channelId: 'dm-1', content },
       reply: async (c) => {
         replies.push(c);
@@ -123,7 +131,6 @@ function proposalCtx(
     updates,
     ctx: {
       userId: 'u1',
-      config: record(),
       proposalId: 'p1',
       action,
       discordUserId,
@@ -169,6 +176,7 @@ function makeBridge(
       connections.push(connection);
       return connection;
     },
+    configStore,
     notify: async (userId, channelId, content) => {
       notices.push({ userId, channelId, content });
     },

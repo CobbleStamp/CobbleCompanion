@@ -131,8 +131,12 @@ export interface AppDeps {
   readonly growthStore: GrowthStore;
   /** Per-user Discord bot config (companion-discord.md §9). Read here to authorize
    *  the internal token-mint endpoint; written by the settings path. Lives in
-   *  `@cobble/db` so the decoupled Discord worker shares it without importing core. */
+   *  `@cobble/db` so the decoupled Discord service shares it without importing core. */
   readonly discordConfig: DiscordConfigStore;
+  /** Fire-and-forget trigger telling the Discord adapter to reconcile a user's bot after
+   *  a `discord.config.*` write (companion-discord.md §2.1) — replaces the adapter's old
+   *  poll. Absent/no-op when no reconcile URL is configured. */
+  readonly discordReconcile?: (userId: string) => Promise<void>;
   /** Authenticates every request that carries a credential: the composite routes a
    *  service caller (by its header) to the service verifier, else verifies the API's
    *  own session **access** token (auth/session-tokens.ts). */

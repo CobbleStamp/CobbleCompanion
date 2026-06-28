@@ -65,7 +65,6 @@ function dmCtx(
     replies,
     ctx: {
       userId: config.userId,
-      config,
       message: { authorId, channelId: 'dm-1', content },
       reply: async (c) => {
         replies.push(c);
@@ -90,7 +89,6 @@ function cmdCtx(
     replies,
     ctx: {
       userId: config.userId,
-      config,
       command: { name, userId: invokerId, channelId: 'dm-1', options, reply },
       reply,
     },
@@ -146,6 +144,20 @@ describe('BotRouter — owner lock (DMs)', () => {
 
     expect(ownerMessages).toHaveLength(1);
     expect(ownerMessages[0]?.message.content).toBe('hi cobble');
+  });
+
+  it('reads the owner from the store on demand — recognizes a just-linked owner (DM)', async () => {
+    // The context carries no config snapshot (companion-discord.md §2.1); the router
+    // reads the store at handling time, so an owner bound by a `/link` moments earlier
+    // is seen immediately — no poll/cache lag (the bug this design removes).
+    const linked = record({ ownerDiscordUserId: 'owner-123' });
+    const { router, ownerMessages } = makeRouter(new OneUserStore(linked));
+    const { ctx, replies } = dmCtx(record({ ownerDiscordUserId: null }), 'owner-123', 'hi cobble');
+
+    await router.handleDirectMessage(ctx);
+
+    expect(replies).toHaveLength(0);
+    expect(ownerMessages).toHaveLength(1);
   });
 });
 
@@ -248,6 +260,22 @@ describe('BotRouter — owner lock (commands)', () => {
 
     await router.handleSlashCommand(ctx);
 
+    expect(ownerCommands).toHaveLength(1);
+    expect(ownerCommands[0]?.command.name).toBe('summon');
+  });
+
+  it('reads the owner from the store on demand — /summon right after /link works', async () => {
+    // The original "/link then /summon" bug: the bind persisted but the manager's
+    // cached config lagged, so /summon was refused "link this first". With on-demand
+    // reads (companion-discord.md §2.1) the router reads the store at handling time, so
+    // the just-linked owner is recognized at once — no poll window.
+    const linked = record({ ownerDiscordUserId: 'owner-123' });
+    const { router, ownerCommands } = makeRouter(new OneUserStore(linked));
+    const { ctx, replies } = cmdCtx(record({ ownerDiscordUserId: null }), 'summon', 'owner-123');
+
+    await router.handleSlashCommand(ctx);
+
+    expect(replies).toHaveLength(0);
     expect(ownerCommands).toHaveLength(1);
     expect(ownerCommands[0]?.command.name).toBe('summon');
   });

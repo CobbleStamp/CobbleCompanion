@@ -37,7 +37,7 @@ export type DiscordTokenMintResult =
 const OPERATION = 'discord.mint';
 
 /**
- * Authorize a Discord-worker token-mint request and, if it passes, mint a short-lived
+ * Authorize a Discord-service token-mint request and, if it passes, mint a short-lived
  * **app access token for the real user** (companion-discord.md §9). Framework-free —
  * it takes the Fastify-free {@link AuthRequest} seam and returns a {@link
  * DiscordTokenMintResult}, so the HTTP route stays a thin transport adapter and this

@@ -1,7 +1,7 @@
 /**
  * The gateway manager (companion-discord.md §2): owns one Discord bot connection per
- * configured user, reconciling the live set against `discord_config` on a poll. It runs
- * as the single always-on sibling worker (plans/discord-surface.md §11) — Discord allows
+ * configured user, reconciling the live set against `discord_config` (startup pass + per-user reconcile triggers). It runs
+ * as the single always-on sibling service (plans/discord-surface.md §11) — Discord allows
  * one gateway connection per bot, so this must be singleton. It depends only on the
  * {@link DiscordGateway} seam and the `@cobble/db` config store, never on `@cobble/core`.
  *
@@ -21,10 +21,10 @@ import type {
   SlashCommandSpec,
 } from './types.js';
 
-/** An inbound DM, tagged with the user whose bot received it and that bot's config. */
+/** An inbound DM, tagged with the user whose bot received it. The handler reads any
+ *  config it needs on demand (`configStore.findByUserId`) — no snapshot is carried. */
 export interface DirectMessageContext {
   readonly userId: string;
-  readonly config: DiscordConfigRecord;
   readonly message: InboundDirectMessage;
   /** Reply in the same DM channel. */
   reply(content: string): Promise<void>;
@@ -34,10 +34,9 @@ export interface DirectMessageContext {
   sendProposal(card: ProposalCard): Promise<void>;
 }
 
-/** An inbound proposal button click, tagged with the owning user and that bot's config. */
+/** An inbound proposal button click, tagged with the owning user. */
 export interface ProposalActionContext {
   readonly userId: string;
-  readonly config: DiscordConfigRecord;
   readonly proposalId: string;
   readonly action: 'confirm' | 'reject';
   /** The clicker's Discord user id (checked against the owner lock). */
@@ -52,10 +51,9 @@ export interface ProposalActionContext {
   sendProposal(card: ProposalCard): Promise<void>;
 }
 
-/** An inbound slash command, tagged with the owning user and that bot's config. */
+/** An inbound slash command, tagged with the owning user. */
 export interface SlashCommandContext {
   readonly userId: string;
-  readonly config: DiscordConfigRecord;
   readonly command: InboundSlashCommand;
   /** Reply to the interaction (ephemeral). */
   reply(content: string): Promise<void>;
@@ -74,37 +72,34 @@ export interface GatewayManagerOptions {
   readonly onProposalAction: (ctx: ProposalActionContext) => void;
   /** Global slash commands (re)registered per bot on connect (DM-context enabled). */
   readonly commands: readonly SlashCommandSpec[];
-  readonly pollIntervalMs: number;
   readonly logger: Logger;
 }
 
 interface RunningBot {
-  encryptedBotToken: string;
-  config: DiscordConfigRecord;
+  readonly userId: string;
+  /** The encrypted token the live connection runs on — diffed on reconcile to decide
+   *  restart-vs-no-op. The only `discord_config` field the manager holds; everything
+   *  else is read on demand (companion-discord.md §2.1). */
+  readonly encryptedBotToken: string;
   readonly gateway: DiscordGateway;
 }
 
 export class GatewayManager {
   private readonly bots = new Map<string, RunningBot>();
-  private timer: ReturnType<typeof setTimeout> | null = null;
-  private running = false;
 
   constructor(private readonly opts: GatewayManagerOptions) {}
 
-  /** Initial reconcile, then poll forever (until {@link stop}). */
+  /**
+   * One-shot startup reconcile (companion-discord.md §2.1): reconnect every configured
+   * bot. There is **no poll** — ongoing token/config changes arrive via
+   * {@link reconcileUser}, called by the API's reconcile trigger.
+   */
   async start(): Promise<void> {
-    this.running = true;
     await this.sync();
-    this.scheduleNextPoll();
   }
 
-  /** Stop polling and disconnect every bot. */
+  /** Disconnect every bot. */
   async stop(): Promise<void> {
-    this.running = false;
-    if (this.timer) {
-      clearTimeout(this.timer);
-      this.timer = null;
-    }
     const stopping = [...this.bots.values()].map((bot) => this.safeStop(bot));
     this.bots.clear();
     await Promise.all(stopping);
@@ -132,9 +127,9 @@ export class GatewayManager {
   }
 
   /**
-   * Reconcile the live bots against the current `discord_config` rows: start newly
-   * configured bots, restart any whose token changed, refresh config on the rest, and
-   * stop bots whose config was removed.
+   * Full reconcile (startup): start newly configured bots, restart any whose token
+   * changed, and stop bots whose config row was removed. Reads every row once; the
+   * steady-state path is the targeted {@link reconcileUser}, not a repeat of this.
    */
   async sync(): Promise<void> {
     let configs: readonly DiscordConfigRecord[];
@@ -150,9 +145,9 @@ export class GatewayManager {
 
     const seen = new Set<string>();
     // Fan the bot starts out rather than awaiting each in turn: a slow start (a bot
-    // that takes the full ready-timeout to fail) must not block reconciling the others
-    // or stall the poll loop that runs in sync()'s .finally. startBot never rejects (it
-    // catches internally), so allSettled is belt-and-braces against a future change.
+    // that takes the full ready-timeout to fail) must not block reconciling the others.
+    // startBot never rejects (it catches internally), so allSettled is belt-and-braces
+    // against a future change.
     const starts: Promise<void>[] = [];
     for (const config of configs) {
       seen.add(config.userId);
@@ -165,10 +160,8 @@ export class GatewayManager {
         await this.safeStop(existing);
         this.bots.delete(config.userId);
         starts.push(this.startBot(config));
-      } else {
-        // Same token; refresh the cached config so handlers see the latest fields.
-        existing.config = config;
       }
+      // else: same token, already running — nothing to do (no cached config to refresh).
     }
     await Promise.allSettled(starts);
 
@@ -177,6 +170,46 @@ export class GatewayManager {
         await this.safeStop(bot);
         this.bots.delete(userId);
       }
+    }
+  }
+
+  /**
+   * Targeted reconcile for one user (companion-discord.md §2.1) — the steady-state
+   * path, invoked by the API's reconcile trigger after a `discord_config` write. Reads
+   * **only** that user's row on demand and converges that one bot: start it when a
+   * token first appears, restart it when the token changed, stop it when the row is
+   * gone. Same token → no-op (so a settings save that didn't touch the token never
+   * needlessly drops the gateway connection). Never throws — a read failure is logged
+   * and left for the next trigger / a restart's startup reconcile to recover.
+   */
+  async reconcileUser(userId: string): Promise<void> {
+    let config: DiscordConfigRecord | null;
+    try {
+      config = await this.opts.configStore.findByUserId(userId);
+    } catch (error) {
+      this.opts.logger.error('discord gateway reconcileUser failed to read config', {
+        operation: 'discord.gateway.reconcileUser',
+        userId,
+        error,
+      });
+      return;
+    }
+    const existing = this.bots.get(userId);
+    if (!config) {
+      if (existing) {
+        await this.safeStop(existing);
+        this.bots.delete(userId);
+      }
+      return;
+    }
+    if (!existing) {
+      await this.startBot(config);
+      return;
+    }
+    if (existing.encryptedBotToken !== config.encryptedBotToken) {
+      await this.safeStop(existing);
+      this.bots.delete(userId);
+      await this.startBot(config);
     }
   }
 
@@ -190,12 +223,11 @@ export class GatewayManager {
       return;
     }
     const gateway = this.opts.gatewayFactory(token);
-    // Resolve the freshest config at dispatch time (a poll may have refreshed it).
-    const configNow = (): DiscordConfigRecord => this.bots.get(config.userId)?.config ?? config;
+    // Events are tagged with the owning userId only; the router/bridge read whatever
+    // config they need on demand (companion-discord.md §2.1) — no snapshot is carried.
     gateway.onDirectMessage((message) => {
       this.opts.onDirectMessage({
         userId: config.userId,
-        config: configNow(),
         message,
         reply: (content) => gateway.sendDirectMessage(message.channelId, content),
         typing: () => gateway.sendTyping(message.channelId),
@@ -205,7 +237,6 @@ export class GatewayManager {
     gateway.onSlashCommand((command) => {
       this.opts.onSlashCommand({
         userId: config.userId,
-        config: configNow(),
         command,
         reply: (content) => command.reply(content),
       });
@@ -213,7 +244,6 @@ export class GatewayManager {
     gateway.onProposalAction((action: InboundProposalAction) => {
       this.opts.onProposalAction({
         userId: config.userId,
-        config: configNow(),
         proposalId: action.proposalId,
         action: action.action,
         discordUserId: action.userId,
@@ -225,8 +255,8 @@ export class GatewayManager {
     });
     // Record before start so a fast inbound event finds the entry.
     const bot: RunningBot = {
+      userId: config.userId,
       encryptedBotToken: config.encryptedBotToken,
-      config,
       gateway,
     };
     this.bots.set(config.userId, bot);
@@ -250,18 +280,9 @@ export class GatewayManager {
     } catch (error) {
       this.opts.logger.error('discord gateway failed to stop bot', {
         operation: 'discord.gateway.stop',
-        userId: bot.config.userId,
+        userId: bot.userId,
         error,
       });
     }
-  }
-
-  private scheduleNextPoll(): void {
-    if (!this.running) return;
-    this.timer = setTimeout(() => {
-      void this.sync().finally(() => this.scheduleNextPoll());
-    }, this.opts.pollIntervalMs);
-    // Don't let the poll timer alone keep the process alive.
-    (this.timer as { unref?: () => void }).unref?.();
   }
 }

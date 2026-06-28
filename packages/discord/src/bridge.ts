@@ -10,6 +10,7 @@
  * `@cobble/core`. Chat (T9) and read-only commands (T10) are injected hooks.
  */
 
+import type { DiscordConfigStore } from '@cobble/db';
 import type { ChatStreamEvent, CompanionStreamEvent } from '@cobble/shared';
 import type {
   DirectMessageContext,
@@ -54,6 +55,10 @@ export type CompanionConnectionFactory = (input: {
 
 export interface CompanionBridgeOptions {
   readonly connectionFactory: CompanionConnectionFactory;
+  /** Reads the bot config on demand (companion-discord.md §2.1): `/summon` needs the
+   *  bound companion + encrypted token, a proposal click needs the owner id. No
+   *  snapshot is held — the row is read at the point of use. */
+  readonly configStore: DiscordConfigStore;
   /** Send a DM to a user's bot channel — for async notices (e.g. supersession). */
   readonly notify: (userId: string, channelId: string, content: string) => Promise<void>;
   /** Handle an owner DM while embodied (the chat turn — T9). */
@@ -134,10 +139,9 @@ export class CompanionBridge {
    * the live connection (the proposal methods need the claim).
    */
   async handleProposalAction(ctx: ProposalActionContext): Promise<void> {
-    if (
-      ctx.config.ownerDiscordUserId !== null &&
-      ctx.discordUserId !== ctx.config.ownerDiscordUserId
-    ) {
+    const owner =
+      (await this.opts.configStore.findByUserId(ctx.userId))?.ownerDiscordUserId ?? null;
+    if (owner !== null && ctx.discordUserId !== owner) {
       return; // not the owner — ignore (proposals live in the owner's DM anyway).
     }
     const embodiment = this.active.get(ctx.userId);
@@ -152,7 +156,7 @@ export class CompanionBridge {
     return this.active.has(userId);
   }
 
-  /** Tear down every embodiment (worker shutdown). */
+  /** Tear down every embodiment (service shutdown). */
   stop(): void {
     for (const embodiment of this.active.values()) {
       embodiment.abort.abort();
@@ -166,11 +170,20 @@ export class CompanionBridge {
       await ctx.reply('I’m already here. ✨');
       return;
     }
-    const companionId = ctx.config.boundCompanionId;
+    // Read the binding on demand (no snapshot): the bound companion + the encrypted
+    // token the mint proof needs. Absent only if the row was deleted mid-session.
+    const config = await this.opts.configStore.findByUserId(ctx.userId);
+    if (!config) {
+      await ctx.reply(
+        'I’m not set up here yet — add a bot token in your CobbleCompanion settings.',
+      );
+      return;
+    }
+    const companionId = config.boundCompanionId;
     const connection = this.opts.connectionFactory({
       userId: ctx.userId,
       companionId,
-      encryptedBotToken: ctx.config.encryptedBotToken,
+      encryptedBotToken: config.encryptedBotToken,
     });
     // The takeover handler is armed before connect() resolves, but the embodiment is
     // only registered in `active` afterwards. A supersession landing in that gap would

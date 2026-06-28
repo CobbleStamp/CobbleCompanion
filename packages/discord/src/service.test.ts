@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import type { CompanionConnection, CompanionConnectionFactory } from './bridge.js';
 import type { Logger } from './gateway/types.js';
 import { fakeGatewayFactory } from './test/fake-gateway.js';
-import { assembleWorker } from './worker.js';
+import { assembleService } from './service.js';
 
 const silent: Logger = { error: () => {}, warn: () => {}, info: () => {} };
 
@@ -51,7 +51,7 @@ function fakeConnectionFactory(reply: string): CompanionConnectionFactory {
   });
 }
 
-describe('assembleWorker (manager → router → bridge → chat)', () => {
+describe('assembleService (manager → router → bridge → chat)', () => {
   it('drives a linked owner from summon through a chat reply', async () => {
     const config: DiscordConfigRecord = {
       userId: 'u1',
@@ -64,16 +64,15 @@ describe('assembleWorker (manager → router → bridge → chat)', () => {
       updatedAt: new Date(0),
     };
     const gateways = fakeGatewayFactory();
-    const worker = assembleWorker({
+    const service = assembleService({
       configStore: new OneUserStore(config),
       gatewayFactory: gateways.factory,
       connectionFactory: fakeConnectionFactory('Hello from Cobble.'),
       decryptToken: (encrypted) => encrypted.replace(/^enc:/, ''),
-      pollIntervalMs: 60_000,
       logger: silent,
     });
 
-    await worker.start();
+    await service.start();
     const bot = gateways.byToken('tokenA');
     expect(bot?.started).toBe(true);
 
@@ -85,7 +84,7 @@ describe('assembleWorker (manager → router → bridge → chat)', () => {
 
     // The chat reply was sent to the DM channel.
     expect(bot?.sent.some((m) => m.content === 'Hello from Cobble.')).toBe(true);
-    await worker.stop();
+    await service.stop();
   });
 
   it('refuses a DM from a non-owner (owner lock), sending nothing', async () => {
@@ -100,22 +99,21 @@ describe('assembleWorker (manager → router → bridge → chat)', () => {
       updatedAt: new Date(0),
     };
     const gateways = fakeGatewayFactory();
-    const worker = assembleWorker({
+    const service = assembleService({
       configStore: new OneUserStore(config),
       gatewayFactory: gateways.factory,
       connectionFactory: fakeConnectionFactory('should not happen'),
       decryptToken: (e) => e.replace(/^enc:/, ''),
-      pollIntervalMs: 60_000,
       logger: silent,
     });
-    await worker.start();
+    await service.start();
     const bot = gateways.byToken('tokenA');
 
     bot!.receiveDirectMessage({ authorId: 'intruder', channelId: 'dm-1', content: 'let me in' });
     await flush();
 
     expect(bot?.sent).toHaveLength(0);
-    await worker.stop();
+    await service.stop();
   });
 });
 

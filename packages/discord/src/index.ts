@@ -4,7 +4,7 @@
  * (`docs/companion-endpoints.md`); it imports nothing from `@cobble/core`.
  *
  * Build status: scaffolding (T1) — the WebSocket transport. The gateway manager,
- * bridge, and worker entrypoint land in later tasks (`docs/plans/discord-surface.md`
+ * bridge, and service entrypoint land in later tasks (`docs/plans/discord-surface.md`
  * §9).
  */
 
@@ -55,8 +55,16 @@ export { COMMAND_SPECS } from './commands.js';
 export { consoleLogger } from './logger.js';
 export { createMintTokenSource } from './token-source.js';
 export type { MintTokenSourceDeps } from './token-source.js';
-export { assembleWorker, loadWorkerConfig, startWorker } from './worker.js';
-export type { AssembleWorkerParts, AssembledWorker, WorkerConfig } from './worker.js';
+export { assembleService, loadServiceConfig, startService } from './service.js';
+export type { AssembleServiceParts, AssembledService, ServiceConfig } from './service.js';
+export { handleReconcileRequest, startControlServer, RECONCILE_PATH } from './control-server.js';
+export type {
+  ControlServer,
+  ControlServerDeps,
+  ReconcileHandlerDeps,
+  ReconcileHttpRequest,
+  ReconcileUser,
+} from './control-server.js';
 export { createDiscordJsGatewayFactory } from './gateway/discord-js-gateway.js';
 export type {
   DiscordGateway,

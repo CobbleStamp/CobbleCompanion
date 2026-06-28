@@ -15,6 +15,17 @@
 > opens the companion elsewhere. Chat + read-only slash commands + approval
 > buttons + gated proactive DMs. DM-only for the PoC.
 
+> **Design revision (config discovery).** The mechanism by which the adapter learns of
+> `discord_config` changes has been redesigned: the original build used a **poll + a cached
+> config snapshot** in the gateway manager (every `DISCORD_POLL_INTERVAL_MS`). That is
+> superseded by **API-triggered reconcile + on-demand reads** — no poll, no cached snapshot
+> (canonical: `companion-discord.md` §2.1). After each `discord_config` write the API POSTs
+> to the adapter's internal `POST /internal/reconcile { userId }` endpoint, and every config
+> field (owner, bound companion, dial) is read on demand at the point of use. **References
+> to a `discord_config` poll / poll interval below are historical** — they describe what
+> shipped first; the rework is tracked as **T17**. This also dissolved a bug where `/summon`
+> immediately after `/link` was refused because the cached snapshot lagged the write.
+
 ## 1. The model in one paragraph
 
 Each user pastes a **Discord bot token** into their account settings. The backend
@@ -90,7 +101,7 @@ token for the real user** (`?access_token=…`), verified by the existing
 app-access-token verifier (`CompositeVerifier` browser path,
 `packages/api/src/auth/jwt-verifier.ts`) — **no `@cobble/core` change**. The token
 is minted by a new **internal API endpoint** (`mintAccessToken`,
-`packages/api/src/auth/session-tokens.ts`) that the worker calls with a Discord
+`packages/api/src/auth/session-tokens.ts`) that the service calls with a Discord
 **service credential** (`service_registry`); the endpoint mints only for a `userId`
 with a `discord_config` row, and `ACCESS_TOKEN_SECRET` never leaves the API.
 
@@ -143,7 +154,7 @@ Quiet-hours is a possible later refinement.
   one-time **`/link <code>`** handshake (code shown in web settings) so we never
   trust "first DM wins."
 - **Backend auth (§11):** the bridge connects to `/ws` as the **real user** with a
-  short-lived app access token minted by an internal API endpoint; the worker
+  short-lived app access token minted by an internal API endpoint; the service
   authenticates to that endpoint with a Discord service credential
   (`service_registry`) and never holds `ACCESS_TOKEN_SECRET`.
 - **No secrets in logs:** bot tokens, the service secret, and minted access tokens
@@ -185,7 +196,7 @@ T2 ─▶ T2b ─┘   T4 ─┘                       │      └─▶ T11
   `{url, headers, embodying}`; demux `{id,result}` / `{id,error}` / `{id,stream}` /
   `{event,data}`; `call`/`callStream`/`onEvent`; `embodiment.ready` gating;
   `SupersededError` / `ConnectionClosedError`), `src/index.ts`. `@cobble/db` and
-  `discord.js` are added by their tasks; the worker entrypoint lands in T6 (nothing
+  `discord.js` are added by their tasks; the service entrypoint lands in T6 (nothing
   to run before then). `packages/*` already covers the package.
 - AC met: `pnpm --filter @cobble/discord typecheck` green; **10 fake-socket unit
   tests** green (connect, `ping`/`auth.me` round-trips, error reject, streaming,
@@ -199,7 +210,7 @@ T2 ─▶ T2b ─┘   T4 ─┘                       │      └─▶ T11
 
 - Action: `pnpm --filter @cobble/db service add discord-adapter "discord"` →
   prints the secret once. Boot-seed via `seedCredentials` for dev. This credential
-  authenticates the worker **to the internal mint endpoint (T2b)** — not to `/ws`
+  authenticates the service **to the internal mint endpoint (T2b)** — not to `/ws`
   directly (the bridge connects to `/ws` as the real user, §11).
 - AC: the seeded client authenticates against T2b; secret sourced from env, never
   hardcoded.
@@ -231,7 +242,7 @@ T2 ─▶ T2b ─┘   T4 ─┘                       │      └─▶ T11
 - Verify: api unit/integration test for the route (mint → connect `/ws` →
   `embodiment.whoami` resolves the real user's companion).
 
-> **Checkpoint A:** the worker can obtain a real-user access token from T2b and hold
+> **Checkpoint A:** the service can obtain a real-user access token from T2b and hold
 > an authenticated, companion-claiming `/ws` session as that user. Discord I/O
 > untouched so far.
 
@@ -260,14 +271,14 @@ nullable`, `proactivity text default 'gentle'`, `linkCode text nullable`,
   versioned `v1.iv.tag.cipher` envelope), `keyFromBase64`, and `secretsEqual`
   (constant-time, for `/link` codes). `decrypt` returns a discriminated `Result`
   (`ok | bad_key | malformed`) — never null, never throws on tamper. 14 unit tests.
-- Note: the key is passed in (the worker derives it from `DISCORD_TOKEN_KEY`); the
+- Note: the key is passed in (the service derives it from `DISCORD_TOKEN_KEY`); the
   module is pure/key-source-agnostic.
 
 **T5 — Config store** _(needs: T3, T4)_ — **✓ store built** (location changed)
 
 - Done: the store lives in **`@cobble/db`** (`db/src/discord-config-store.ts`,
   `DrizzleDiscordConfigStore`), **not** `packages/discord` — both the api (write +
-  the mint endpoint's authorize-read) and the worker (poll-read) use it without
+  the mint endpoint's authorize-read) and the service (on-demand read, T17) use it without
   importing each other or `@cobble/core` (the §1 config-ownership decision). Methods:
   `findByUserId`, `list`, `upsert` (re-save resets owner + link code), `bindOwner`
   (consumes the code), `delete`. 6 PGlite tests.
@@ -275,7 +286,7 @@ nullable`, `proactivity text default 'gentle'`, `linkCode text nullable`,
   data-access layer); encryption/decryption is the boundary's job (T4 `crypto.ts`),
   not the store's — cleaner separation than the original "encrypt on write" sketch.
 - Remaining: wiring the encrypt-on-write at the settings path (T13) and
-  decrypt-on-read in the worker (T6).
+  decrypt-on-read in the service (T6).
 
 ### Phase 2 — Discord I/O
 
@@ -338,7 +349,7 @@ nullable`, `proactivity text default 'gentle'`, `linkCode text nullable`,
   commands (T10) are injected hooks. 8 bridge + 2 connection-glue tests.
 - **Checkpoint C reached and green** (logic-level): the summon/supersede model works
   end-to-end against fakes. The remaining real-Discord/real-`/ws` demo is the live
-  integration test (task #4) + the worker assembly (below).
+  integration test (task #4) + the service assembly (below).
 - Original sketch follows:
 - Files: `packages/discord/src/bridge/embodiment.ts` (open WS `?companion=`, await
   `embodiment.ready`; handle `embodiment.superseded` + close `4002` → Dormant +
@@ -429,18 +440,19 @@ nullable`, `proactivity text default 'gentle'`, `linkCode text nullable`,
 - Files: `packages/web/src/pages/` settings panel + an **API**-side config method/REST
   (the API writes `discord_config` via `@cobble/db`, §11) — token (encrypted),
   bound companion via `companions.list`, dial; mints + returns the single-use
-  `/link` code (8-char, 15-min TTL) with a regenerate action. The sibling worker
-  picks up the change on its next `discord_config` poll (T6).
+  `/link` code (8-char, 15-min TTL) with a regenerate action. On save the API calls
+  the adapter's reconcile endpoint so the bot (re)starts at once (T17; originally a
+  `discord_config` poll, T6).
 - AC: a user pastes a token, selects a companion, sees the `/link` code (and can
-  regenerate), sets the dial; saving persists (token encrypted) and the worker
-  (re)starts that bot's gateway connection within one poll interval.
+  regenerate), sets the dial; saving persists (token encrypted) and the adapter
+  (re)starts that bot's gateway connection immediately via the reconcile trigger (T17).
 - Verify: `pnpm --filter @cobble/web test` + manual flow against local stack.
 
 ### Phase 9 — Operability & merge
 
 **T2 — Register the Discord service client** _(ops; needs: T2b)_
 
-- A `service_client` credential for the worker (the `DISCORD_SERVICE_CLIENT_ID` /
+- A `service_client` credential for the service (the `DISCORD_SERVICE_CLIENT_ID` /
   `DISCORD_SERVICE_SECRET` the mint endpoint pins to, §11) and a key for
   `DISCORD_TOKEN_KEY`. Not code — a deployment/secrets step.
 
@@ -450,7 +462,7 @@ nullable`, `proactivity text default 'gentle'`, `linkCode text nullable`,
   claims embodiment, runs a chat turn, and observes a real `embodiment.superseded`
   takeover. (Tracked separately as the transport's live integration test.)
 
-**T15 — Always-on worker deployment** _(needs: worker assembly)_
+**T15 — Always-on service deployment** _(needs: service assembly)_
 
 - A min-instances=1 container (or an EC2 process) for `packages/discord` — documented
   in `docs/infra-setup.md` (and the AWS/GCP apply runbooks), per the §11 infra note.
@@ -460,21 +472,43 @@ nullable`, `proactivity text default 'gentle'`, `linkCode text nullable`,
 - The design doc (`companion-discord.md`) + this plan are the living docs while the
   surface is on the branch; the repo-wide canonical sources are updated **when the PR
   merges** (CLAUDE.md "When to Update Docs"): the new `packages/discord` component +
-  the `/internal/discord/token` route + the worker process in `docs/architecture.md`
+  the `/internal/discord/token` route + the service process in `docs/architecture.md`
   §3 (Component Map) and §4.1 (folder tree); Discord as a surface in
-  `docs/product-overview.md`; the `discord_config` data model + worker config in
-  `docs/implementation.md`; the worker run/env in `README.md`; and flipping this doc's
+  `docs/product-overview.md`; the `discord_config` data model + service config in
+  `docs/implementation.md`; the service run/env in `README.md`; and flipping this doc's
   and `companion-discord.md`'s **"proposed"** banners to shipped.
 
-### Worker assembly — **✓ built** (the runnable composition root)
+**T17 — Config discovery: reconcile trigger + on-demand reads** _(rework; supersedes the T6 poll)_ — **✓ built**
 
-`packages/discord/src/worker.ts` wires manager → router → bridge → chat.
-`assembleWorker(parts)` is the injectable wiring (so the full path is
+- Replace the gateway manager's poll + cached `RunningBot.config` snapshot with:
+  (1) **on-demand reads** — the router/bridge fetch `findByUserId(userId)` at the point
+  of use (owner lock, `/summon` companion, dial); the handler contexts stop carrying a
+  `config` snapshot; `RunningBot` keeps only the live gateway + the running token (hash)
+  needed to decide restart-vs-no-op. (2) An internal **`POST /internal/reconcile { userId }`**
+  endpoint on `packages/discord` (listens on `DISCORD_SERVICE_PORT`, internal-network only,
+  no auth — the network boundary is its sole guard) that reads the one row and reconciles
+  just that bot. (3) The API calls it (URL `DISCORD_RECONCILE_URL`, empty = disabled) after each
+  `discord.config.*` write, with bounded retry and an `error` log on failure. (4) A one-shot
+  **startup reconcile** (`list()` once at boot) reconnects existing bots; the poll loop and
+  `DISCORD_POLL_INTERVAL_MS` are removed.
+- AC: saving a token (or `/link`) is reflected on the **next** `/summon` with no wait — no
+  20s poll window; killing the trigger (`DISCORD_RECONCILE_URL` empty) still recovers on the
+  adapter's next restart. Canonical design: `companion-discord.md` §2.1.
+- Files: `packages/discord/src/gateway/manager.ts`, the handler context shapes + `router.ts`
+  / `bridge.ts`, a new control-server module in `packages/discord`, the API
+  `discord.config.*` write methods, service/API config, `docker-compose.yml`, `.env.example`.
+
+### Service assembly — **✓ built** (the runnable composition root)
+
+`packages/discord/src/service.ts` wires manager → router → bridge → chat.
+`assembleService(parts)` is the injectable wiring (so the full path is
 integration-tested with a fake gateway: a linked owner's `/summon` → DM → chat reply,
-and a non-owner DM is refused); `loadWorkerConfig(env)` reads the worker env
+and a non-owner DM is refused); `loadServiceConfig(env)` reads the service env
 (`DATABASE_URL`, `DISCORD_WS_BASE_URL`, `DISCORD_MINT_URL`,
-`DISCORD_SERVICE_CLIENT_ID`, `DISCORD_SERVICE_SECRET`, `DISCORD_TOKEN_KEY`,
-`DISCORD_POLL_INTERVAL_MS`); `startWorker(config)` builds the real deps (the
+`DISCORD_SERVICE_CLIENT_ID`, `DISCORD_SERVICE_SECRET`, `DISCORD_TOKEN_KEY`, and —
+after the **T17** rework — `DISCORD_SERVICE_PORT` for the reconcile endpoint, in place
+of the retired `DISCORD_POLL_INTERVAL_MS`);
+`startService(config)` builds the real deps (the
 `discord.js` gateway factory, the `WsTransport` connection factory, and the HTTP
 `createMintTokenSource` client for T2b) and runs as the always-on sibling process
 (`pnpm --filter @cobble/discord {dev,serve,start}`). `onReadOnlyCommand` now wires the
@@ -509,18 +543,19 @@ client_id, external_id)` user that doesn't own the companion (`ensureUserByClaim
   bridge connects to `/ws` as the **real user** with a short-lived **app access
   token** (`?access_token=…`), verified by the existing app-access-token verifier
   (`CompositeVerifier` browser path) — **no `@cobble/core` change**. A new internal
-  api route (T2b) mints that token via `mintAccessToken`, authenticating the worker
+  api route (T2b) mints that token via `mintAccessToken`, authenticating the service
   by its Discord **service credential** and authorizing only `userId`s that have a
-  `discord_config` row. `ACCESS_TOKEN_SECRET` stays in the api; the worker never
-  holds it. (Rejected: sharing the signing secret with the worker — too broad a
+  `discord_config` row. `ACCESS_TOKEN_SECRET` stays in the api; the service never
+  holds it. (Rejected: sharing the signing secret with the service — too broad a
   privilege; a Discord-bot-token verifier in core — pulls Discord into the hot auth
   path and couples core to Discord.)
 - **Config ownership** — the adapter **owns `discord_config`, schema in
   `@cobble/db`**. The adapter _reads_ it; the API _writes_ it on behalf of the web
   settings panel (the API already depends on `@cobble/db`). Neither imports the
-  other; neither imports `@cobble/core`. The sibling worker (below) **polls
-  `discord_config`** to pick up token/config changes — no cross-process event bus.
-- **Process placement** — the gateway manager runs as a **sibling worker process**:
+  other; neither imports `@cobble/core`. The sibling service (below) learns of
+  token/config changes via the API's **reconcile trigger** and reads each field on
+  demand — no poll, no cached snapshot (T17; `companion-discord.md` §2.1).
+- **Process placement** — the gateway manager runs as a **sibling service process**:
   `packages/discord` ships its own always-on entrypoint, run as a **single
   instance**. This respects Discord's one-gateway-connection-per-bot rule and
   survives API multi-node / Cloud Run scale-to-zero. Infra impact: a new always-on
@@ -543,7 +578,7 @@ client_id, external_id)` user that doesn't own the companion (`ensureUserByClaim
 > **Status: shipped.** All tasks below (T11, T12, T13, T14, T15, T16) are built —
 > this section is the historical record of the final pass, kept for the concrete,
 > file-level steps and the decisions that reshaped the §9 sketches. Earlier tasks
-> (T1–T10, worker assembly, T2b) were already built. Each task stayed
+> (T1–T10, service assembly, T2b) were already built. Each task stayed
 > **independently green** (`pnpm -r run typecheck` + its own tests) and followed
 > **fakes over mocks**.
 
@@ -559,10 +594,10 @@ client_id, external_id)` user that doesn't own the companion (`ensureUserByClaim
   already import `@cobble/db` (which has no `@cobble/*` deps) — so the AES-256-GCM
   util (`encryptSecret`/`decryptSecret`/`keyFromBase64`/`secretsEqual`) moves from
   `packages/discord/src/crypto.ts` to `db/src/crypto.ts`, re-exported from
-  `db/src/index.ts`. The worker and router import it from `@cobble/db`. This is the
+  `db/src/index.ts`. The service and router import it from `@cobble/db`. This is the
   first step of T13 (nothing else depends on it).
-- **D3 — `DISCORD_TOKEN_KEY` becomes SHARED (API + worker).** The API encrypts on
-  write; the worker decrypts on read — same key. It moves to the SHARED segment of
+- **D3 — `DISCORD_TOKEN_KEY` becomes SHARED (API + service).** The API encrypts on
+  write; the service decrypts on read — same key. It moves to the SHARED segment of
   `.env`/`.env.example` and is added to the API config schema
   (`packages/api/src/config.ts`, `discordTokenKey: z.string().default('')`). When it
   is empty the `discord.config.*` methods are disabled (return an
@@ -579,7 +614,7 @@ client_id, external_id)` user that doesn't own the companion (`ensureUserByClaim
   messages it did **not** already render through the chat stream (T9) — track
   rendered message ids (and suppress events that arrive while a chat turn is
   in-flight on that connection).
-- **D6 — AWS runs the worker on the same single EC2 micro.** No GCP. The worker runs
+- **D6 — AWS runs the service on the same single EC2 micro.** No GCP. The service runs
   as a **second `docker run` (`cobble-discord`) from the same image**, alongside
   `cobble-app` + `caddy`, reaching the API over **loopback** (`ws://127.0.0.1:3000`,
   `http://127.0.0.1:3000/internal/discord/token`). The prod image must first be
@@ -615,7 +650,7 @@ proposalId, action: 'confirm'|'reject', reply })`), routed by `GatewayManager` l
   Reject → `connection.rejectProposal(id)` + update the message); render helper in
   `command-render.ts` (or a new `proposal-render.ts`). Extend the `CompanionConnection`
   seam with `confirmProposal`/`rejectProposal`. Wire `onProposalAction` in `bridge.ts`
-  and `worker.ts`. Detect the `proposal` stream event in `chat.ts` → `gateway.sendProposal`.
+  and `service.ts`. Detect the `proposal` stream event in `chat.ts` → `gateway.sendProposal`.
 - **AC:** a turn that yields a proposal posts an embed + two buttons; Confirm calls
   `proposals.confirm`, streams, and posts the resulting turn; Reject calls
   `proposals.reject` and disables/updates the embed; a non-owner button click is ignored.
@@ -658,7 +693,7 @@ single-use `/link` code (with regenerate) — no seed script. Replaces
 
 - **T13.0 — Crypto move (D2).** Move `packages/discord/src/crypto.ts` →
   `db/src/crypto.ts`; export from `db/src/index.ts`; update imports in
-  `packages/discord` (`worker.ts`, `router.ts`, gateway) to `@cobble/db`; move its unit
+  `packages/discord` (`service.ts`, `router.ts`, gateway) to `@cobble/db`; move its unit
   tests. Add a `generateLinkCode()` helper (8-char, no-look-alike alphabet) next to the
   config store so the API method and any tooling share one implementation. Green:
   `pnpm -r run typecheck` + existing crypto tests pass from the new location.
@@ -682,9 +717,9 @@ discordTokenKey)` + `generateLinkCode()` + `discordConfig.upsert(...)` → `{ li
   in `App.tsx`; a "Discord" header button in `pages/Chat.tsx`. Follow the
   `ProactivityDial` optimistic-update pattern.
 - **AC:** save persists with the token **encrypted** (assert the stored blob ≠
-  plaintext and decrypts back); `get` never returns the token; the worker picks up the
-  new row within one poll interval and the bot comes online; regenerate replaces the
-  code; delete unconfigures. `.env`/`.env.example` updated (D3) and the seed script
+  plaintext and decrypts back); `get` never returns the token; the save triggers the
+  adapter's reconcile endpoint (T17) and the bot comes online at once; regenerate
+  replaces the code; delete unconfigures. `.env`/`.env.example` updated (D3) and the seed script
   removed.
 - **Tests:** api route/method tests (set→get round-trip, encryption, ownership
   rejection, `not_configured` when key absent); web component test for the panel.
@@ -703,14 +738,14 @@ discordTokenKey)` + `generateLinkCode()` + `discordConfig.upsert(...)` → `{ li
 - **AC:** all three (claim, chat turn, supersede takeover) pass against a real `/ws`.
 - **Verify:** `make test-integration` (excluded from the default run; real Postgres).
 
-### T15 — Always-on worker deployment _(needs: worker assembly ✓, D6)_
+### T15 — Always-on service deployment _(needs: service assembly ✓, D6)_
 
-**Goal.** `make run-docker` runs the worker locally; AWS runs it on the same EC2 micro.
+**Goal.** `make run-docker` runs the service locally; AWS runs it on the same EC2 micro.
 
 - **T15.0 — Image includes `packages/discord`.** `Dockerfile`: add
   `packages/discord/package.json` to the `deps` layer copy list, and ensure the
   `server`/`source` stage carries its source (the full-repo `source` stage already
-  copies everything; the lockfile/deps snapshot is the gap). Verify the worker can
+  copies everything; the lockfile/deps snapshot is the gap). Verify the service can
   start from the built image: `docker run … <image> pnpm --filter @cobble/discord serve`.
 - **T15.1 — Local compose.** Add a `discord` service to `docker-compose.yml` (build
   the same target, `command: pnpm --filter @cobble/discord serve`, `env_file: .env`,
@@ -725,9 +760,9 @@ ws://api:3000`, `DISCORD_MINT_URL=http://api:3000/internal/discord/token`,
   `/etc/cobble.env`, and add a second `docker run -d --restart=always --name
 cobble-discord --env-file /etc/cobble.env "$IMAGE" pnpm --filter @cobble/discord
 serve` after `cobble-app`. (Loopback reach; no Caddy/public exposure.)
-- **AC:** local — `make run-docker` runs Postgres + API + web + worker, and a seeded
+- **AC:** local — `make run-docker` runs Postgres + API + web + service, and a seeded
   bot comes online; AWS — `make deploy-dev` leaves `cobble-app` + `caddy` +
-  `cobble-discord` all `--restart=always`, worker reaching the API on loopback.
+  `cobble-discord` all `--restart=always`, service reaching the API on loopback.
 - **Verify:** local compose up; AWS preview/diff (`make pulumi-preview`) shows the
   added container + params.
 
@@ -742,9 +777,9 @@ Documented in `docs/infra-setup.md` + `infra/aws/README.md`.
 
 On PR merge, update the repo-wide canonical sources (CLAUDE.md "When to Update Docs"):
 the `packages/discord` component + `/internal/discord/token` route + the
-`discord.config.*` methods + the worker process in `docs/architecture.md` §3/§4.1;
+`discord.config.*` methods + the service process in `docs/architecture.md` §3/§4.1;
 Discord as a surface in `docs/product-overview.md`; the `discord_config` data model +
-worker/`DISCORD_*` config in `docs/implementation.md`; the worker run/env + the
+service/`DISCORD_*` config in `docs/implementation.md`; the service run/env + the
 single-EC2 deployment in `README.md`, `docs/infra-setup.md`, `infra/aws/README.md`;
 and flip the **"proposed"** banners in this plan and `companion-discord.md` to shipped.
 

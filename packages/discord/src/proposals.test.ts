@@ -56,16 +56,6 @@ function ctxFor(action: 'confirm' | 'reject'): {
     proposals,
     ctx: {
       userId: 'u1',
-      config: {
-        userId: 'u1',
-        encryptedBotToken: 'x',
-        boundCompanionId: 'c1',
-        ownerDiscordUserId: 'owner-1',
-        linkCode: null,
-        linkCodeIssuedAt: null,
-        createdAt: new Date(0),
-        updatedAt: new Date(0),
-      },
       proposalId: 'p1',
       action,
       discordUserId: 'owner-1',

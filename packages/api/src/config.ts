@@ -160,11 +160,18 @@ export interface AppConfig {
   readonly discordServiceClientId: string;
   /**
    * Base64 of the 32-byte AES-256-GCM key the API uses to **encrypt** a Discord bot
-   * token before storing it (the `discord.config.*` WS methods, T13), and the worker
+   * token before storing it (the `discord.config.*` WS methods, T13), and the service
    * uses to decrypt it. Empty (default) disables the `discord.config.*` methods — the
    * web settings panel reports Discord as unavailable. Shared key, deployment-managed.
    */
   readonly discordTokenKey: string;
+  /**
+   * The Discord adapter's internal reconcile endpoint (companion-discord.md §2.1). After
+   * a `discord.config.*` write the API POSTs `{ userId }` here so the bot (re)starts at
+   * once — replacing the old poll. Empty (default) disables the trigger; the adapter
+   * still picks the change up on its next restart.
+   */
+  readonly discordReconcileUrl: string;
   /** Lifetime (seconds) of an app access token — short, since it rides the WS
    *  handshake URL and is refreshed on demand against /auth/refresh. */
   readonly accessTokenTtlSec: number;
@@ -293,6 +300,9 @@ const envSchema = z
     // Base64 of the 32-byte AES key for Discord bot-token encryption (T13). Empty
     // (default) disables the discord.config.* WS methods.
     DISCORD_TOKEN_KEY: z.string().default(''),
+    // The adapter's internal reconcile endpoint the API POSTs to after a discord_config
+    // write (companion-discord.md §2.1). Empty (default) disables the trigger.
+    DISCORD_RECONCILE_URL: z.string().default(''),
     // App access-token lifetime (seconds); default 15 min. Short — it's refreshed
     // on demand and travels the WS handshake URL.
     ACCESS_TOKEN_TTL_SEC: z.coerce
@@ -551,6 +561,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     jwtSigningSecret: parsed.JWT_SIGNING_SECRET,
     discordServiceClientId: parsed.DISCORD_SERVICE_CLIENT_ID,
     discordTokenKey: parsed.DISCORD_TOKEN_KEY,
+    discordReconcileUrl: parsed.DISCORD_RECONCILE_URL,
     accessTokenTtlSec: parsed.ACCESS_TOKEN_TTL_SEC,
     refreshTokenTtlSec: parsed.REFRESH_TOKEN_TTL_SEC,
     port: parsed.PORT,

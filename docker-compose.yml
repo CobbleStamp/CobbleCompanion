@@ -34,6 +34,10 @@ services:
       APP_URL: http://localhost:3001
       PORT: '3000'
       NODE_ENV: development
+      # After a discord_config write the api POSTs here so the discord adapter
+      # reconciles that bot at once (companion-discord.md §2.1). The discord service
+      # is reached on the compose network — never host-mapped.
+      DISCORD_RECONCILE_URL: http://discord:8080/internal/reconcile
     ports:
       - '3000:3000'
     depends_on:
@@ -52,11 +56,15 @@ services:
     depends_on:
       - api
 
-  # The always-on Discord worker (companion-discord.md). Reads DISCORD_SERVICE_*,
-  # DISCORD_TOKEN_KEY from .env; reaches the api over the compose network. The
-  # service credential it authenticates with is seeded into the DB by the api at
-  # boot from SERVICE_REGISTRY_SEEDS (.env), so the worker comes up green on a
-  # fresh stack and idles until a user saves a bot token in the web settings panel.
+  # The always-on Discord service (companion-discord.md). Reads DISCORD_SERVICE_*,
+  # DISCORD_TOKEN_KEY from .env; reaches the api over the compose network. The service
+  # credential it authenticates with is seeded into the DB by the api at boot from
+  # SERVICE_REGISTRY_SEEDS (.env), so the service comes up green on a fresh stack and
+  # idles until a user saves a bot token in the web settings panel. It exposes an
+  # internal reconcile endpoint (port 8080) that the api POSTs to after a config write
+  # (companion-discord.md §2.1) — reachable only on the compose network (no `ports:`
+  # mapping), so it is never exposed to the host; that isolation is its only guard
+  # (the endpoint carries no auth).
   discord:
     build:
       context: .
@@ -71,6 +79,7 @@ services:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/cobble
       DISCORD_WS_BASE_URL: ws://api:3000
       DISCORD_MINT_URL: http://api:3000/internal/discord/token
+      DISCORD_SERVICE_PORT: '8080'
     depends_on:
       postgres:
         condition: service_healthy

@@ -113,9 +113,12 @@ instance:
    `127.0.0.1:3000` only (never exposed — the SG has no `:3000`). If the **Discord
    surface** is configured (the `discordServiceClientId` Pulumi config is set), it
    also runs a second container `cobble-discord` from the same image — the always-on
-   Discord worker (`companion-discord.md`), `--network host` so it reaches the api on
-   loopback, with the `DISCORD_*` env (its two secrets fetched from SSM like the
-   others). Left off by default, so the worker isn't started unconfigured;
+   Discord service (`companion-discord.md`), `--network host` so it reaches the api on
+   loopback **and** the api reaches the service's internal reconcile endpoint on
+   loopback (`DISCORD_RECONCILE_URL` → `127.0.0.1:$DISCORD_SERVICE_PORT`, no poll, no
+   auth — the loopback/closed-SG boundary is its only guard, `companion-discord.md`
+   §2.1), with the `DISCORD_*` env (its two secrets: service secret + token key). Left
+   off by default, so the service isn't started unconfigured;
 5. mounts the **persistent Caddy data volume** at `/var/lib/caddy/data`
    (formatted only if blank, so existing certs are never wiped; `fsck`'d first if
    it already has a filesystem, in case it detached uncleanly) — this EBS volume
