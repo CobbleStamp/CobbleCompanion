@@ -75,17 +75,22 @@ independent unless a dependency is noted.
 
 ### Tier A — architectural (one PR each; higher risk / wider blast radius)
 
-#### A1 · Extract `proposals.confirm` into a `confirmProposal` domain service
-- **Problem.** `ws/methods/streaming.ts` `proposals.confirm` orchestrates ~7
+#### A1 · Extract `proposals.confirm` into a `confirmProposal` domain service — ✅ shipped
+- **Problem.** `ws/methods/streaming.ts` `proposals.confirm` orchestrated ~7
   collaborators inline (markResolved, dispatchTool, toolCallLog, procedural,
   leads.markStatus, memory.appendMessage, harness.continueAfterApproval) with
   branching + four error-tag blocks. A use-case living in the transport layer —
   the inverse of `discord.routes.ts`.
-- **Approach.** `confirmProposal(deps, {...}): Promise<Result>` domain module;
-  the handler shrinks to parse → delegate → emit/map.
-- **Risk.** **High** — hot chat/approval path. Lean on the existing ws-method +
-  streaming tests; add coverage for the service.
-- **Acceptance.** ws-method + streaming tests green; handler is a thin adapter.
+- **Done.** `confirmProposal(deps, input): Promise<ConfirmProposalResult>` in
+  `packages/api/src/proposals/confirm-proposal.ts` — a total discriminated-union
+  result (`not_pending` | `confirmed{proposal, toolResult, outcomeRow}`) that
+  never throws for the lost-claim case, with ISP-narrowed (`Pick`) deps mirroring
+  `discord-token-mint.ts`. The handler shrank to parse → fence/over-cap →
+  delegate → map (Conflict / branch on origin / stream or emit). Operation log
+  tags preserved byte-for-byte.
+- **Acceptance met.** ws-method + phase3 tests green; new `confirm-proposal.test.ts`
+  covers the claim, success-only side-effects, tool-error path, and best-effort
+  swallow. Full api suite green (250).
 
 #### A2 · Extract `sources.file` into a `stageAndEnqueueFileSource` service
 - **Problem.** `ws/methods/sources.ts` `sources.file` inlines ~70 lines of
@@ -171,8 +176,8 @@ independent unless a dependency is noted.
 1. **Batch 2 = M1 + M2 + M3** (one branch/PR) — ✅ shipped (§3b); finishes the
    medium tier (M1 reduced to the `namespacedToolName` dedup — Zod rewrite
    dropped, §5).
-2. **A1, A2** — the WS-method layer extractions (the flagship layering fix);
-   one PR each, hot path, land carefully.
+2. **A1** ✅ shipped (`confirmProposal`); **A2** next — the WS-method layer
+   extractions (the flagship layering fix); one PR each, hot path, land carefully.
 3. **A4** — `Chat.tsx`; isolated, can go in parallel with the API work.
 4. **A5 → A6** — A5 first (it owns the moved `Ws*Message` envelope), then A6.
 5. **A3** — the harness split; highest risk, do it on its own with the most care,

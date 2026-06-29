@@ -1,13 +1,13 @@
-import { dispatchTool, type GreetingService, type GrowthService, type Logger } from '@cobble/core';
+import { type GreetingService, type GrowthService, type Logger } from '@cobble/core';
 import {
   companionUnavailableNotice,
   sendMessageSchema,
   type ChatStreamEvent,
   type CompanionDto,
-  type MessageDto,
 } from '@cobble/shared';
 import { z } from 'zod';
 import type { AppDeps } from '../../app.js';
+import { confirmProposal } from '../../proposals/confirm-proposal.js';
 import { overCapGuard } from '../../quota-guard.js';
 import { SUPERSEDED_CLOSE } from '../connection.js';
 import type { WsCallContext, WsMethods } from '../dispatch.js';
@@ -173,57 +173,20 @@ export function streamingMethods(deps: AppDeps): WsMethods {
       if (overCap) {
         throw new OverCapError(overCap);
       }
-      // Atomic claim: only the call that flips pending→approved executes.
-      const proposal = await proposals.markResolved(companionId, proposalId, 'approved');
-      if (!proposal) {
+      // The use case (claim → dispatch → bookkeeping → outcome row) is a transport-free
+      // domain service; the handler owns only fencing/over-cap above and the live-stream
+      // re-entry below (the gold-reference layering, discord.routes.ts).
+      const confirmation = await confirmProposal(
+        { proposals, tools, toolCallLog, procedural, leads, memory, logger: ctx.logger },
+        { companionId, ownerId: ctx.userId, proposalId },
+      );
+      if (confirmation.outcome === 'not_pending') {
         throw new ConflictError('proposal is no longer pending');
       }
-      const result = await dispatchTool(
-        tools,
-        proposal.toolName,
-        proposal.toolArgs,
-        { companionId, ownerId: ctx.userId },
-        ctx.logger,
-        proposal.toolCallId ?? undefined,
-      );
-      try {
-        await toolCallLog.record(companionId, proposal.toolName, proposal.toolArgs, result.content);
-      } catch (error) {
-        ctx.logger.error('failed to log approved tool call', {
-          operation: 'proposals.confirm.log',
-          companionId,
-          proposalId,
-          error,
-        });
-      }
-      if (!result.isError) {
-        try {
-          await procedural.record(companionId, proposal.summary, [proposal.toolName]);
-        } catch (error) {
-          ctx.logger.error('failed to record procedural memory', {
-            operation: 'proposals.confirm.procedural',
-            companionId,
-            proposalId,
-            error,
-          });
-        }
-        await advanceIngested(leads, companionId, proposal.leadId, proposalId, ctx.logger);
-      }
-      let outcomeRow: MessageDto | null = null;
-      try {
-        outcomeRow = await memory.appendMessage(companionId, 'assistant', result.content, {
-          kind: 'tool_step',
-          metadata: { toolName: proposal.toolName },
-        });
-      } catch (error) {
-        ctx.logger.error('failed to record approved action row', {
-          operation: 'proposals.confirm.row',
-          companionId,
-          proposalId,
-          error,
-        });
-      }
+      const { proposal, toolResult, outcomeRow } = confirmation;
 
+      // A chat-origin approval re-enters the agent loop with the tool outcome (streamed);
+      // an explore/autonomous one is self-directed, so the motivation engine drives next.
       if (proposal.origin === 'chat') {
         const superseded = await ctx.connection.runSerial(() =>
           emitAll(
@@ -231,7 +194,7 @@ export function streamingMethods(deps: AppDeps): WsMethods {
             harness.continueAfterApproval({
               companion,
               ownerId: ctx.userId,
-              outcome: result.content,
+              outcome: toolResult.content,
               holdsLease: leaseGuard(companionId, connectionId, claimSeq),
             }),
           ),
@@ -248,28 +211,6 @@ export function streamingMethods(deps: AppDeps): WsMethods {
       return { done: true };
     },
   };
-}
-
-/** Advance an explore-origin lead to `ingested` (best-effort). */
-async function advanceIngested(
-  leads: AppDeps['leads'],
-  companionId: string,
-  leadId: string | null,
-  proposalId: string,
-  logger: Logger,
-): Promise<void> {
-  if (!leadId) return;
-  try {
-    await leads.markStatus(companionId, leadId, 'ingested');
-  } catch (error) {
-    logger.error('failed to advance lead lifecycle', {
-      operation: 'proposals.confirm.advanceLead',
-      companionId,
-      proposalId,
-      leadId,
-      error,
-    });
-  }
 }
 
 /** The Phase-5 growth recompute as the turn stream's tail (token-free; idempotent).
