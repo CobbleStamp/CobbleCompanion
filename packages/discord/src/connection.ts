@@ -12,7 +12,7 @@
 import type { ChatStreamEvent, CompanionStreamEvent } from '@cobble/shared';
 import type { CompanionConnection, CompanionConnectionFactory } from './bridge.js';
 import type { Logger } from './gateway/types.js';
-import { WsTransport, type WsSocketFactory } from './ws-client.js';
+import { defaultSocketFactory, WsTransport, type WsSocketFactory } from './ws-client.js';
 
 /** Cap on remembered turn-reply ids (for proactive dedup); oldest are trimmed. */
 const PRODUCED_ID_CAP = 500;
@@ -37,7 +37,10 @@ export function createCompanionConnectionFactory(
   deps: CompanionConnectionDeps,
 ): CompanionConnectionFactory {
   return ({ userId, companionId, encryptedBotToken }): CompanionConnection => {
-    const transport = new WsTransport({ factory: deps.socketFactory, logger: deps.logger });
+    const transport = new WsTransport({
+      factory: deps.socketFactory ?? defaultSocketFactory,
+      logger: deps.logger,
+    });
     let supersededHandler: () => void = () => {};
     transport.onEvent((event) => {
       if (event === 'embodiment.superseded') supersededHandler();

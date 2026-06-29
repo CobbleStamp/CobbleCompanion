@@ -138,18 +138,27 @@ independent unless a dependency is noted.
 - **Acceptance met.** All 42 `Chat.test.tsx` tests + the full 155-test web suite
   green; `vite build` clean; no behavior change.
 
-#### A5 · Unify the triplicated WS transport
+#### A5 · Unify the triplicated WS transport — ✅ shipped (Node side); web + test deferred
 - **Problem.** The same WS envelope/transport (a `StreamQueue`, `SupersededError`,
   the `'stream'|'result'|'error'` demux, the embodiment-ready/superseded
-  lifecycle) is implemented three times against the same `@cobble/shared`
+  lifecycle) was implemented three times against the same `@cobble/shared`
   message union: `web/src/api/ws.ts`, `discord/src/ws-client.ts`,
   `api/src/test/ws-client.ts`.
-- **Approach.** A shared transport (a `@cobble/shared` submodule or small
-  package) parameterized by a socket factory (the seam already exists in
-  `ws-client.ts` as `WsSocket`/`WsSocketFactory`).
-- **Risk.** Medium-high — cross-package; preserves the documented discord↔core
-  decoupling (transport speaks only `@cobble/shared`).
-- **Acceptance.** web + discord + api tests green against the shared transport.
+- **Done.** The canonical transport (`WsTransport` + `StreamQueue` + `WsSocket`/
+  `WsSocketFactory` + the error classes) now lives in `@cobble/shared`
+  (`ws-transport.ts`), socket-agnostic and Node/browser-free (it speaks only
+  `@cobble/shared` types). `discord/src/ws-client.ts` collapsed from 434 lines to a
+  re-export + the Node `ws` factory; the live `api/src/ws/discord-transport.test.ts`
+  exercises the shared transport end-to-end against a real `/ws`.
+- **Deferred, with reason.** The **web** singleton (`web/src/api/ws.ts`) layers
+  reconnect + companion-switching + a process-wide socket on the same envelope and
+  has **no direct test** — a blind rewrite of the live-chat transport in a large PR
+  is unsafe; it belongs in its own PR with manual browser QA. The **api test
+  client** (`openWs`) has bespoke semantics (resolve-on-open, reject-on-unauthorized-
+  companion, collect-to-array streams, `nextEvents` batching); wrapping it faithfully
+  would risk the 250-test suite for a test-only DRY gain.
+- **Acceptance.** discord (127) + shared (13) + api (250) suites green; the shared
+  transport is validated live by `discord-transport.test.ts`.
 
 #### A6 · Split `shared/contracts.ts` (1213 lines) into a `contracts/` barrel
 - **Problem.** One file spans ~12 domains (messages, upload, ingestion, the WS
