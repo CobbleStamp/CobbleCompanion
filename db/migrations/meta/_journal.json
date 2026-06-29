@@ -8,6 +8,13 @@
       "when": 1781855803261,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1782481225607,
+      "tag": "0001_simple_frank_castle",
+      "breakpoints": true
     }
   ]
 }

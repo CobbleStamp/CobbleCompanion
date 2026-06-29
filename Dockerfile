@@ -16,6 +16,7 @@ COPY packages/shared/package.json ./packages/shared/
 COPY packages/core/package.json ./packages/core/
 COPY packages/api/package.json ./packages/api/
 COPY packages/web/package.json ./packages/web/
+COPY packages/discord/package.json ./packages/discord/
 COPY db/package.json ./db/
 RUN pnpm install --frozen-lockfile
 
@@ -42,6 +43,13 @@ ENV VITE_API_URL=$VITE_API_URL
 RUN pnpm --filter @cobble/web build
 EXPOSE 3000
 CMD ["sh", "-c", "pnpm db:migrate && pnpm --filter @cobble/api run serve"]
+
+# --- Discord worker: the always-on sibling process (companion-discord.md §2) ---
+# Run via tsx like the api dev target. On AWS the single `server` image is run with
+# this command overridden instead (docs/infra-setup.md); locally compose uses this
+# target directly.
+FROM source AS discord
+CMD ["pnpm", "--filter", "@cobble/discord", "run", "serve"]
 
 # --- Web build: compile the SPA (API URL baked in at build time) ---
 FROM source AS web-build

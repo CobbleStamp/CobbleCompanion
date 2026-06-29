@@ -5,7 +5,13 @@
  */
 
 import { hostname } from 'node:os';
-import { createPgDatabase, EMBEDDING_DIMENSIONS, seedCredentials, type Database } from '@cobble/db';
+import {
+  createPgDatabase,
+  DrizzleDiscordConfigStore,
+  EMBEDDING_DIMENSIONS,
+  seedCredentials,
+  type Database,
+} from '@cobble/db';
 import {
   composeRetrieveContext,
   ConsolidationService,
@@ -89,6 +95,7 @@ import { createSubprocessSandbox } from './cli/subprocess-sandbox.js';
 import { StreamableHttpMcpGateway } from './mcp/sdk-client.js';
 import { buildToolAcquisitionWiring } from './acquisition/wiring.js';
 import { createTraceSink } from './tracing/langfuse-sink.js';
+import { createReconcileNotifier } from './discord/reconcile-notifier.js';
 
 function createGateway(config: AppConfig): LlmGateway {
   if (config.llmProvider === 'fake') {
@@ -559,6 +566,11 @@ async function main(): Promise<void> {
     affect: affectStore,
     growth,
     growthStore,
+    discordConfig: new DrizzleDiscordConfigStore(db),
+    discordReconcile: createReconcileNotifier({
+      url: config.discordReconcileUrl,
+      logger: consoleLogger,
+    }),
     tokenVerifier: createTokenVerifier(config, db),
     googleVerifier: new GoogleIdTokenVerifier(config.googleClientId),
     config,

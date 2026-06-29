@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createPgDatabase, type Database } from './client.js';
 import {
   companions,
+  discordConfig,
   EMBEDDING_DIMENSIONS,
   episodes,
   facts,
@@ -474,5 +475,74 @@ describe('user-model Tier-2 belief schema (Phase 12, PGlite + pgvector)', () => 
       .from(proactiveOutcomes)
       .where(eq(proactiveOutcomes.id, outcome!.id));
     expect(after?.drivenByUserFactId).toBeNull();
+  });
+});
+
+// discord_config (companion-discord.md §9): one bot per user, owned by the
+// decoupled adapter. These assert the migration's shape under the same PGlite path
+// production uses.
+describe('discord_config schema (PGlite)', () => {
+  let db: Database;
+  let close: () => Promise<void>;
+
+  beforeEach(async () => {
+    ({ db, close } = await createTestDatabase());
+  });
+
+  afterEach(async () => {
+    await close();
+  });
+
+  async function seedUserAndCompanion(): Promise<{ userId: string; companionId: string }> {
+    const [user] = await db.insert(users).values({ email: 'discord@example.com' }).returning();
+    const [companion] = await db
+      .insert(companions)
+      .values({ ownerId: user!.id, name: 'Pebble', form: 'fox', temperament: 'curious' })
+      .returning();
+    return { userId: user!.id, companionId: companion!.id };
+  }
+
+  it('stores a discord_config row and reads it back', async () => {
+    const { userId, companionId } = await seedUserAndCompanion();
+    const [config] = await db
+      .insert(discordConfig)
+      .values({
+        userId,
+        encryptedBotToken: 'v1.iv.tag.cipher',
+        boundCompanionId: companionId,
+      })
+      .returning();
+
+    expect(config?.userId).toBe(userId);
+    expect(config?.boundCompanionId).toBe(companionId);
+    // Unlinked until `/link`; the proactivity intensity is NOT stored here.
+    expect(config?.ownerDiscordUserId).toBeNull();
+    expect(config?.linkCode).toBeNull();
+    expect(config?.createdAt).toBeInstanceOf(Date);
+  });
+
+  it('allows at most one bot per user (user_id is the primary key)', async () => {
+    const { userId, companionId } = await seedUserAndCompanion();
+    await db
+      .insert(discordConfig)
+      .values({ userId, encryptedBotToken: 'v1.a.b.c', boundCompanionId: companionId });
+
+    await expect(
+      db
+        .insert(discordConfig)
+        .values({ userId, encryptedBotToken: 'v1.d.e.f', boundCompanionId: companionId }),
+    ).rejects.toThrow();
+  });
+
+  it('cascades the config away when its user is deleted', async () => {
+    const { userId, companionId } = await seedUserAndCompanion();
+    await db
+      .insert(discordConfig)
+      .values({ userId, encryptedBotToken: 'v1.a.b.c', boundCompanionId: companionId });
+
+    await db.delete(users).where(eq(users.id, userId));
+
+    const rows = await db.select().from(discordConfig).where(eq(discordConfig.userId, userId));
+    expect(rows).toHaveLength(0);
   });
 });

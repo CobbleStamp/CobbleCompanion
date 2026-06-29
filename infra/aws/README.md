@@ -13,26 +13,26 @@ deployment diagram, resource catalog, and runtime layout are in
 
 ## Decisions
 
-| | |
-|---|---|
-| Language | TypeScript |
-| State backend | AWS S3 |
-| Secret encryption | Passphrase (`PULUMI_CONFIG_PASSPHRASE`) |
-| Stacks | `dev` only initially |
-| Provider | `@pulumi/aws` (pinned, no `^`) |
-| Database | Supabase (external; `DATABASE_URL` secret) |
-| Admin access | SSM Session Manager (no SSH, no open port 22) |
+|                   |                                               |
+| ----------------- | --------------------------------------------- |
+| Language          | TypeScript                                    |
+| State backend     | AWS S3                                        |
+| Secret encryption | Passphrase (`PULUMI_CONFIG_PASSPHRASE`)       |
+| Stacks            | `dev` only initially                          |
+| Provider          | `@pulumi/aws` (pinned, no `^`)                |
+| Database          | Supabase (external; `DATABASE_URL` secret)    |
+| Admin access      | SSM Session Manager (no SSH, no open port 22) |
 
 ## Modules
 
-| File | Owns |
-|---|---|
-| `src/network.ts` | VPC, one public subnet, IGW, route table, `cc-web` security group |
-| `src/registry.ts` | ECR repo + lifecycle policy + `imageUri`/`registryHost` helpers |
-| `src/storage.ts` | S3 bucket for upload staging — private (public-access-blocked), SSE-S3, **lifecycle TTL** on `tmp-uploads/` (1-day expiry = the staging GC backstop), **CORS** allowing presigned `PUT` from the app origin (staging-object-storage.md) |
-| `src/secrets.ts` | SSM Parameter Store `SecureString` params `OPENROUTER_API_KEY` + `DATABASE_URL` (placeholder value, set out of band; free Standard tier) |
-| `src/iam.ts` | EC2 instance role + profile (ECR pull; `ssm:GetParameter(s)` + scoped `kms:Decrypt`; SSM Session Manager; **scoped `s3:{Put,Get,Delete}Object` on the uploads bucket's `tmp-uploads/*`** for presigning + ingest read/delete) |
-| `src/compute.ts` | EC2 instance (encrypted root), persistent encrypted EBS volume for Caddy certs (survives redeploy), EIP, `user-data` (swap, Docker app + Caddy, keep-alive timer) |
+| File              | Owns                                                                                                                                                                                                                                    |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/network.ts`  | VPC, one public subnet, IGW, route table, `cc-web` security group                                                                                                                                                                       |
+| `src/registry.ts` | ECR repo + lifecycle policy + `imageUri`/`registryHost` helpers                                                                                                                                                                         |
+| `src/storage.ts`  | S3 bucket for upload staging — private (public-access-blocked), SSE-S3, **lifecycle TTL** on `tmp-uploads/` (1-day expiry = the staging GC backstop), **CORS** allowing presigned `PUT` from the app origin (staging-object-storage.md) |
+| `src/secrets.ts`  | SSM Parameter Store `SecureString` params `OPENROUTER_API_KEY` + `DATABASE_URL` (placeholder value, set out of band; free Standard tier)                                                                                                |
+| `src/iam.ts`      | EC2 instance role + profile (ECR pull; `ssm:GetParameter(s)` + scoped `kms:Decrypt`; SSM Session Manager; **scoped `s3:{Put,Get,Delete}Object` on the uploads bucket's `tmp-uploads/*`** for presigning + ingest read/delete)           |
+| `src/compute.ts`  | EC2 instance (encrypted root), persistent encrypted EBS volume for Caddy certs (survives redeploy), EIP, `user-data` (swap, Docker app + Caddy, keep-alive timer)                                                                       |
 
 ---
 
@@ -86,6 +86,35 @@ aws ssm put-parameter --type SecureString --overwrite \
 Point a DNS **A record** for `companion.<domain>` at `instancePublicIp` (the
 Elastic IP) so Caddy can obtain a Let's Encrypt cert.
 
+### The Discord surface (always-on)
+
+The Discord surface (`docs/companion-discord.md`) is **always-on**. The same EC2 box
+runs the `cobble-discord` service as a second container from the same image, started
+on every deploy. It's **zero-touch**: the service's service-token credential is generated
+once and kept stable in Pulumi state, injected inline into `/etc/cobble.env` (this
+is single-tenant, so — unlike the OpenRouter key and DB DSN — the Discord service
+secret and bot-token key are **not** in SSM; they live in user-data + Pulumi state), and
+the API seeds the matching `service_registry` row at boot from an inline
+`SERVICE_REGISTRY_SEEDS`. Both containers run `--network host`, so the API reaches the
+service's internal reconcile endpoint on loopback (`DISCORD_RECONCILE_URL` →
+`127.0.0.1:$DISCORD_SERVICE_PORT`) to (re)start a bot the instant its token is saved — no
+poll. That endpoint carries no auth; the closed security group (no rule for the port) is
+its only guard (`docs/companion-discord.md` §2.1).
+
+No setup is required to turn it on. Optional overrides:
+
+```bash
+# Override the (public) client id default ("discord-adapter"):
+pulumi config set cobblecompanion-aws:discordServiceClientId <id>
+# Supply your own secret / bot-token key instead of the generated ones:
+pulumi config set --secret cobblecompanion-aws:discordServiceSecret <secret>
+pulumi config set --secret cobblecompanion-aws:discordTokenKey "$(openssl rand -base64 32)"
+```
+
+`DISCORD_TOKEN_KEY` must stay stable — it decrypts the bot tokens stored in
+`discord_config`; rotating it strands already-saved tokens. The generated value is
+stable across `pulumi up`, so leave it alone unless you deliberately rotate.
+
 ---
 
 ## Phase D — Push the image + roll the instance
@@ -104,7 +133,7 @@ runs `pulumi up`. Because the tag is baked into `user-data` and the instance has
 `userDataReplaceOnChange`, this **replaces the instance**, which re-bootstraps and
 pulls the new image. Pass `TAG=<sha>` to skip the rebuild and just re-apply.
 
-Caddy's Let's Encrypt state lives on a separate EBS volume that is *not* replaced,
+Caddy's Let's Encrypt state lives on a separate EBS volume that is _not_ replaced,
 so certs are re-attached (not re-issued) across redeploys — this is what keeps
 frequent deploys from hitting Let's Encrypt's duplicate-cert rate limit. The
 instance is set to `deleteBeforeReplace`, so the old box (and its volume

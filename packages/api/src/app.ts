@@ -31,6 +31,7 @@ import type {
   UserModelStore,
   VitalityStore,
 } from '@cobble/core';
+import type { DiscordConfigStore } from '@cobble/db';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
@@ -43,6 +44,7 @@ import type { TokenVerifier } from './auth/jwt-verifier.js';
 import type { AppConfig } from './config.js';
 import { registerAdminRoutes } from './routes/admin.routes.js';
 import { registerAuthRoutes } from './routes/auth.routes.js';
+import { registerDiscordRoutes } from './routes/discord.routes.js';
 import { registerSourceRoutes } from './routes/source.routes.js';
 import { registerUuidParamGuard } from './uuid.js';
 import { registerWebSocket } from './ws/register.js';
@@ -127,6 +129,14 @@ export interface AppDeps {
   readonly growth: GrowthService;
   /** The growth high-water mark — used to fire reflections once (P5). */
   readonly growthStore: GrowthStore;
+  /** Per-user Discord bot config (companion-discord.md §9). Read here to authorize
+   *  the internal token-mint endpoint; written by the settings path. Lives in
+   *  `@cobble/db` so the decoupled Discord service shares it without importing core. */
+  readonly discordConfig: DiscordConfigStore;
+  /** Fire-and-forget trigger telling the Discord adapter to reconcile a user's bot after
+   *  a `discord.config.*` write (companion-discord.md §2.1) — replaces the adapter's old
+   *  poll. Absent/no-op when no reconcile URL is configured. */
+  readonly discordReconcile?: (userId: string) => Promise<void>;
   /** Authenticates every request that carries a credential: the composite routes a
    *  service caller (by its header) to the service verifier, else verifies the API's
    *  own session **access** token (auth/session-tokens.ts). */
@@ -140,7 +150,7 @@ export interface AppDeps {
 }
 
 // API route prefixes that must 404 (not fall through to the SPA index.html).
-const API_PREFIXES = ['/admin', '/auth', '/companions', '/food', '/health'] as const;
+const API_PREFIXES = ['/admin', '/auth', '/companions', '/food', '/health', '/internal'] as const;
 
 // Query-string params that carry a live bearer credential and must never reach the
 // access log. A browser `WebSocket` cannot set an Authorization header, so the bearer
@@ -276,6 +286,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   // admin-only observability read (ops tooling speaks HTTP, not the WS envelope).
   // Everything else is a WS method (deliver-scalability.md §6).
   registerAuthRoutes(app, deps);
+  // Internal, service-authed token-mint for the Discord adapter (companion-discord.md
+  // §9). A no-op unless DISCORD_SERVICE_CLIENT_ID is configured.
+  registerDiscordRoutes(app, deps);
   registerSourceRoutes(app, deps, requireAuth);
   registerAdminRoutes(app, deps, requireAuth, requireAdmin);
 

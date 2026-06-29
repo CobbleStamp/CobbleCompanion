@@ -1,15 +1,15 @@
 # Infrastructure & Deployment
 
 CobbleCompanion deploys to **one of two clouds — pick one per environment**. Both
-run the *same* container (Fastify API + built React SPA on one origin) against the
-*same* external **Supabase** Postgres; they differ only in how the box is hosted
+run the _same_ container (Fastify API + built React SPA on one origin) against the
+_same_ external **Supabase** Postgres; they differ only in how the box is hosted
 and how secrets/TLS are wired. All infrastructure is managed as code with Pulumi
 under `infra/`.
 
-| Option | Shape | IaC | Apply runbook |
-|---|---|---|---|
-| **AWS EC2 `t3.micro`** (canonical) | one always-on box runs the container behind **Caddy** (TLS) | `infra/aws` | [`infra/aws/README.md`](../infra/aws/README.md) |
-| **GCP Cloud Run** (alternative) | the container runs as a serverless service, TLS + URL managed by Google | `infra/gcp` | [`infra/gcp/README.md`](../infra/gcp/README.md) |
+| Option                             | Shape                                                                   | IaC         | Apply runbook                                   |
+| ---------------------------------- | ----------------------------------------------------------------------- | ----------- | ----------------------------------------------- |
+| **AWS EC2 `t3.micro`** (canonical) | one always-on box runs the container behind **Caddy** (TLS)             | `infra/aws` | [`infra/aws/README.md`](../infra/aws/README.md) |
+| **GCP Cloud Run** (alternative)    | the container runs as a serverless service, TLS + URL managed by Google | `infra/gcp` | [`infra/gcp/README.md`](../infra/gcp/README.md) |
 
 This doc is the canonical map of both — the diagrams, the resources, and the cost.
 For the step-by-step apply runbooks (commands, apply order, out-of-band steps) see
@@ -83,13 +83,13 @@ gateway.
 
 ### AWS resources (`infra/aws`)
 
-| Module | Resources |
-|---|---|
-| `src/network.ts` | VPC `10.0.0.0/16`; one public subnet (first AZ, auto-assign public IP); Internet Gateway + route table; `cc-web` security group — inbound `80`/`443` from anywhere, all egress, **no SSH** |
-| `src/registry.ts` | ECR repo `cobblecompanion` (scan-on-push) + lifecycle policy (expire untagged after 1 day; keep the 10 most recent) |
-| `src/secrets.ts` | SSM Parameter Store `SecureString` params `/cobblecompanion/OPENROUTER_API_KEY` + `/cobblecompanion/DATABASE_URL` (free Standard tier, AWS-managed KMS key), each with a `REPLACE_ME` placeholder (`ignoreChanges` on the value, so out-of-band values are never reverted) |
-| `src/iam.ts` | EC2 IAM role + instance profile: `AmazonSSMManagedInstanceCore` (Session Manager), scoped ECR pull, `ssm:GetParameter(s)` on exactly the two params + `kms:Decrypt` scoped to SSM (`ViaService`) |
-| `src/compute.ts` | `t3.micro` (Amazon Linux 2023, 16 GB gp3 encrypted root); separate 2 GB encrypted gp3 data volume for Caddy's Let's Encrypt state (survives instance replacement so certs aren't re-issued every deploy); Elastic IP + association; `user-data` bootstrap (below); `userDataReplaceOnChange` so a new image tag replaces the instance |
+| Module            | Resources                                                                                                                                                                                                                                                                                                                             |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/network.ts`  | VPC `10.0.0.0/16`; one public subnet (first AZ, auto-assign public IP); Internet Gateway + route table; `cc-web` security group — inbound `80`/`443` from anywhere, all egress, **no SSH**                                                                                                                                            |
+| `src/registry.ts` | ECR repo `cobblecompanion` (scan-on-push) + lifecycle policy (expire untagged after 1 day; keep the 10 most recent)                                                                                                                                                                                                                   |
+| `src/secrets.ts`  | SSM Parameter Store `SecureString` params `/cobblecompanion/OPENROUTER_API_KEY` + `/cobblecompanion/DATABASE_URL` (free Standard tier, AWS-managed KMS key), each with a `REPLACE_ME` placeholder (`ignoreChanges` on the value, so out-of-band values are never reverted)                                                            |
+| `src/iam.ts`      | EC2 IAM role + instance profile: `AmazonSSMManagedInstanceCore` (Session Manager), scoped ECR pull, `ssm:GetParameter(s)` scoped to exactly the managed params (`OPENROUTER_API_KEY`, `DATABASE_URL`, and the two `DISCORD_*` secrets) + `kms:Decrypt` scoped to SSM (`ViaService`)                                                   |
+| `src/compute.ts`  | `t3.micro` (Amazon Linux 2023, 16 GB gp3 encrypted root); separate 2 GB encrypted gp3 data volume for Caddy's Let's Encrypt state (survives instance replacement so certs aren't re-issued every deploy); Elastic IP + association; `user-data` bootstrap (below); `userDataReplaceOnChange` so a new image tag replaces the instance |
 
 Stack outputs (`pulumi stack output`): `ecrRepoUrl`, `instancePublicIp`, `url`.
 
@@ -110,7 +110,15 @@ instance:
    `DATABASE_URL` **fetched from SSM Parameter Store via the instance profile**
    (`aws ssm get-parameter --with-decryption`; no plaintext in user-data or state);
 4. logs in to ECR, pulls the image, and runs `cobble-app` published to
-   `127.0.0.1:3000` only (never exposed — the SG has no `:3000`);
+   `127.0.0.1:3000` only (never exposed — the SG has no `:3000`). If the **Discord
+   surface** is configured (the `discordServiceClientId` Pulumi config is set), it
+   also runs a second container `cobble-discord` from the same image — the always-on
+   Discord service (`companion-discord.md`), `--network host` so it reaches the api on
+   loopback **and** the api reaches the service's internal reconcile endpoint on
+   loopback (`DISCORD_RECONCILE_URL` → `127.0.0.1:$DISCORD_SERVICE_PORT`, no poll, no
+   auth — the loopback/closed-SG boundary is its only guard, `companion-discord.md`
+   §2.1), with the `DISCORD_*` env (its two secrets: service secret + token key). Left
+   off by default, so the service isn't started unconfigured;
 5. mounts the **persistent Caddy data volume** at `/var/lib/caddy/data`
    (formatted only if blank, so existing certs are never wiped; `fsck`'d first if
    it already has a filesystem, in case it detached uncleanly) — this EBS volume
@@ -144,17 +152,17 @@ and the first-apply sequence):
 
 ### Cost (AWS)
 
-| Component | Spec | ~Monthly |
-|---|---|---|
-| EC2 `t3.micro` | on-demand, 24/7 | ~$8 |
-| Public IPv4 (Elastic IP) | 1 address × $0.005/hr | ~$3.65 |
-| EBS root | 16 GB gp3 | ~$1.30 |
-| EBS Caddy data | 2 GB gp3 (persistent cert store) | ~$0.16 |
-| ECR storage | ~3 GB of images (free 500 MB/mo for the first year) | ~$0.30 |
-| Secrets (SSM Parameter Store, SecureString Standard) | 2 params | $0 |
-| Data transfer | low (personal) | ~$0–2 |
-| Supabase | Free tier (with keep-alive) | $0 |
-| **Total** | | **~$13–15/mo** |
+| Component                                            | Spec                                                | ~Monthly       |
+| ---------------------------------------------------- | --------------------------------------------------- | -------------- |
+| EC2 `t3.micro`                                       | on-demand, 24/7                                     | ~$8            |
+| Public IPv4 (Elastic IP)                             | 1 address × $0.005/hr                               | ~$3.65         |
+| EBS root                                             | 16 GB gp3                                           | ~$1.30         |
+| EBS Caddy data                                       | 2 GB gp3 (persistent cert store)                    | ~$0.16         |
+| ECR storage                                          | ~3 GB of images (free 500 MB/mo for the first year) | ~$0.30         |
+| Secrets (SSM Parameter Store, SecureString Standard) | 2 params                                            | $0             |
+| Data transfer                                        | low (personal)                                      | ~$0–2          |
+| Supabase                                             | Free tier (with keep-alive)                         | $0             |
+| **Total**                                            |                                                     | **~$13–15/mo** |
 
 Notes: every public IPv4 is billed since Feb 2024, so the Elastic IP costs even
 while attached (free for the first 12 months on a new account). Secrets use SSM
@@ -195,12 +203,12 @@ public invoker is `allUsers` — the API still enforces auth at the app layer.
 
 ### GCP resources (`infra/gcp`)
 
-| Module | Resources |
-|---|---|
-| `src/apis.ts` | Enables the required service APIs (`run`, `artifactregistry`, `secretmanager`, `iam`, `iamcredentials`); everything else `dependsOn` these |
-| `src/registry.ts` | Artifact Registry Docker repo `cobblecompanion` + `imageUri()` helper (`<region>-docker.pkg.dev/<project>/cobblecompanion/api:<tag>`) |
-| `src/secrets.ts` | Secret Manager containers `DATABASE_URL` + `OPENROUTER_API_KEY` (values populated out of band; plaintext never in IaC or state) |
-| `src/iam.ts` | Runtime service account `cc-api`: `secretmanager.secretAccessor` on the two secrets + `artifactregistry.reader` on the repo |
+| Module            | Resources                                                                                                                                            |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/apis.ts`     | Enables the required service APIs (`run`, `artifactregistry`, `secretmanager`, `iam`, `iamcredentials`); everything else `dependsOn` these           |
+| `src/registry.ts` | Artifact Registry Docker repo `cobblecompanion` + `imageUri()` helper (`<region>-docker.pkg.dev/<project>/cobblecompanion/api:<tag>`)                |
+| `src/secrets.ts`  | Secret Manager containers `DATABASE_URL` + `OPENROUTER_API_KEY` (values populated out of band; plaintext never in IaC or state)                      |
+| `src/iam.ts`      | Runtime service account `cc-api`: `secretmanager.secretAccessor` on the two secrets + `artifactregistry.reader` on the repo                          |
 | `src/cloudrun.ts` | The `cc-api` Cloud Run service (`minInstances=1`, `maxInstances=5`, 1 vCPU / 512 MiB, secrets as `SecretManagerEnvVar`) + public-invoker IAM binding |
 
 Stack outputs (`pulumi stack output`): `apiUrl`, `containerRepoId`.
@@ -232,14 +240,14 @@ every ~2 days, or move to **Supabase Pro** (never pauses).
 
 ### Cost (GCP)
 
-| Component | Spec | ~Monthly |
-|---|---|---|
-| Cloud Run | `minInstances=1`, 1 vCPU / 512 MiB, mostly idle | ~$10–18 |
-| Artifact Registry storage | ~3 GB of images | ~$0.30 |
-| Secret Manager | 2 active secret versions + low access | ~$0.12 |
-| Egress | low (personal) | ~$0–2 |
-| Supabase | Free tier | $0 |
-| **Total** | | **~$11–20/mo** |
+| Component                 | Spec                                            | ~Monthly       |
+| ------------------------- | ----------------------------------------------- | -------------- |
+| Cloud Run                 | `minInstances=1`, 1 vCPU / 512 MiB, mostly idle | ~$10–18        |
+| Artifact Registry storage | ~3 GB of images                                 | ~$0.30         |
+| Secret Manager            | 2 active secret versions + low access           | ~$0.12         |
+| Egress                    | low (personal)                                  | ~$0–2          |
+| Supabase                  | Free tier                                       | $0             |
+| **Total**                 |                                                 | **~$11–20/mo** |
 
 Notes: the dominant cost is the always-allocated `minInstances=1` instance — drop
 it to `minInstances=0` to scale to ~$0 at idle if you can tolerate cold starts on

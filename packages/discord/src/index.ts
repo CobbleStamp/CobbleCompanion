@@ -1,0 +1,77 @@
+/**
+ * `@cobble/discord` — the decoupled Discord surface adapter
+ * (`docs/companion-discord.md`). It speaks only the public `/ws` contract
+ * (`docs/companion-endpoints.md`); it imports nothing from `@cobble/core`.
+ *
+ * Build status: scaffolding (T1) — the WebSocket transport. The gateway manager,
+ * bridge, and service entrypoint land in later tasks (`docs/plans/discord-surface.md`
+ * §9).
+ */
+
+export {
+  WsTransport,
+  SupersededError,
+  ConnectionClosedError,
+  WsCallError,
+  defaultSocketFactory,
+} from './ws-client.js';
+export type {
+  WsSocket,
+  WsSocketFactory,
+  ConnectOptions,
+  EventListener,
+  CloseInfo,
+  CloseListener,
+} from './ws-client.js';
+
+// Token-at-rest crypto + the `/link` code generator now live in `@cobble/db` (the
+// shared data layer) so the api can encrypt on write; import them from there.
+
+export { GatewayManager } from './gateway/manager.js';
+export type {
+  GatewayManagerOptions,
+  DirectMessageContext,
+  SlashCommandContext,
+  ProposalActionContext,
+} from './gateway/manager.js';
+export { BotRouter, LINK_CODE_TTL_MS, LINK_COMMAND } from './router.js';
+export type { RouterOptions } from './router.js';
+
+export { CompanionBridge, SUMMON_COMMAND, STATUS_COMMAND } from './bridge.js';
+export type {
+  CompanionBridgeOptions,
+  CompanionConnection,
+  CompanionConnectionFactory,
+} from './bridge.js';
+export { createCompanionConnectionFactory } from './connection.js';
+export type { CompanionConnectionDeps } from './connection.js';
+export { handleChat } from './chat.js';
+export { handleProposalAction } from './proposals.js';
+export { renderTurnStream } from './turn-render.js';
+export type { TurnSurface } from './turn-render.js';
+export { runProactiveLoop, streamGreeting } from './proactive.js';
+export type { PostMessage } from './proactive.js';
+export { COMMAND_SPECS } from './commands.js';
+export { consoleLogger } from './logger.js';
+export { createMintTokenSource } from './token-source.js';
+export type { MintTokenSourceDeps } from './token-source.js';
+export { assembleService, loadServiceConfig, startService } from './service.js';
+export type { AssembleServiceParts, AssembledService, ServiceConfig } from './service.js';
+export { handleReconcileRequest, startControlServer, RECONCILE_PATH } from './control-server.js';
+export type {
+  ControlServer,
+  ControlServerDeps,
+  ReconcileHandlerDeps,
+  ReconcileHttpRequest,
+  ReconcileUser,
+} from './control-server.js';
+export { createDiscordJsGatewayFactory } from './gateway/discord-js-gateway.js';
+export type {
+  DiscordGateway,
+  DiscordGatewayFactory,
+  InboundDirectMessage,
+  InboundProposalAction,
+  ProposalCard,
+  SlashCommandSpec,
+  Logger,
+} from './gateway/types.js';

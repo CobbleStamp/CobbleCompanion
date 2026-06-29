@@ -3,6 +3,7 @@ import type { WsMethods } from './dispatch.js';
 import { requireEmbodiment } from './fencing.js';
 import { activityMethods } from './methods/activity.js';
 import { companionMethods } from './methods/companions.js';
+import { discordConfigMethods } from './methods/discord-config.js';
 import { episodeMethods } from './methods/episodes.js';
 import { inventoryMethods } from './methods/inventory.js';
 import { memoryMethods } from './methods/memory.js';
@@ -48,6 +49,7 @@ export function buildWsMethods(deps: AppDeps): WsMethods {
     ...inventoryMethods(deps),
     ...activityMethods(deps),
     ...vitalityMethods(deps),
+    ...discordConfigMethods(deps),
     ...streamingMethods(deps),
   };
 }

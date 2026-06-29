@@ -22,13 +22,13 @@ For the full product vision see [`docs/product-overview.md`](./docs/product-over
 
 Start here, then follow the links:
 
-| Document | Covers |
-|---|---|
-| [`docs/product-overview.md`](./docs/product-overview.md) | What the product is and why |
-| [`docs/development-plan.md`](./docs/development-plan.md) | Scope, phases, acceptance criteria, roadmap |
-| [`docs/architecture.md`](./docs/architecture.md) | Components, the agent loop, flows, decisions |
-| [`docs/implementation.md`](./docs/implementation.md) | Data models, harness internals, config, security |
-| [`AGENTS.md`](./AGENTS.md) · [`CLAUDE.md`](./CLAUDE.md) | Working rules · AI-agent entry point |
+| Document                                                 | Covers                                           |
+| -------------------------------------------------------- | ------------------------------------------------ |
+| [`docs/product-overview.md`](./docs/product-overview.md) | What the product is and why                      |
+| [`docs/development-plan.md`](./docs/development-plan.md) | Scope, phases, acceptance criteria, roadmap      |
+| [`docs/architecture.md`](./docs/architecture.md)         | Components, the agent loop, flows, decisions     |
+| [`docs/implementation.md`](./docs/implementation.md)     | Data models, harness internals, config, security |
+| [`AGENTS.md`](./AGENTS.md) · [`CLAUDE.md`](./CLAUDE.md)  | Working rules · AI-agent entry point             |
 
 ## Stack
 
@@ -76,6 +76,17 @@ To provision consumer credentials declaratively on launch instead of running the
 `SERVICE_REGISTRY_SEEDS='[{"client_id":"sprout","secret":"<secret>","label":"seed"}]'`. Seeding is
 additive and idempotent (each pair is inserted once; re-seeding is a no-op), and never revokes rows
 it didn't seed. Secrets are deployment-managed — never commit them.
+
+### Discord surface (optional)
+
+CobbleCompanion can also be summoned into a **Discord DM** via a bring-your-own bot
+(`docs/companion-discord.md`). It runs as a separate always-on service (`packages/discord`)
+that hosts each user's bot and bridges DMs to `/ws`. To run it locally:
+
+1. Register the Discord service's service-token credential and set the shared encryption key, then add to `.env`:
+   `DISCORD_SERVICE_CLIENT_ID` + `DISCORD_SERVICE_SECRET` (from `pnpm --filter @cobble/db service add discord-adapter discord`, or a `SERVICE_REGISTRY_SEEDS` entry) and `DISCORD_TOKEN_KEY` (`openssl rand -base64 32`, shared by the API and service). The service also reads `DISCORD_WS_BASE_URL` + `DISCORD_MINT_URL` (default to `localhost:3000`) and listens for the reconcile call on `DISCORD_SERVICE_PORT`; the API reads `DISCORD_RECONCILE_URL` (the service's reconcile endpoint — empty disables the trigger). On a token save the API POSTs to that endpoint so the bot connects at once — no poll. The endpoint is internal-network only and carries no auth (`docs/companion-discord.md` §2.1).
+2. Run the service alongside `pnpm dev`: `pnpm --filter @cobble/discord dev` (or `docker compose up` — it now includes a `discord` service).
+3. In the web app's **Discord** settings panel, paste your bot token, pick a companion, and run the shown `/link <code>` then `/summon` in a DM with your bot.
 
 ## Deployment
 

@@ -4,7 +4,7 @@
  * verifier, so route tests exercise the true auth → route → core → db path.
  */
 
-import { EMBEDDING_DIMENSIONS } from '@cobble/db';
+import { DrizzleDiscordConfigStore, EMBEDDING_DIMENSIONS } from '@cobble/db';
 import { createTestDatabase } from '@cobble/db/testing';
 import {
   composeRetrieveContext,
@@ -152,6 +152,12 @@ export const testConfig: AppConfig = {
   appUrl: 'http://localhost:3001',
   googleClientId: 'test-google-client-id',
   jwtSigningSecret: 'test-jwt-signing-secret-at-least-32-bytes!!',
+  // Off by default; a route test enables it via options.config.
+  discordServiceClientId: '',
+  // A valid 32-byte AES key (base64) so the discord.config.* methods are enabled in tests.
+  discordTokenKey: Buffer.alloc(32, 7).toString('base64'),
+  // Reconcile trigger off by default in tests (a test injects a spy via options).
+  discordReconcileUrl: '',
   accessTokenTtlSec: 15 * 60,
   refreshTokenTtlSec: 24 * 60 * 60,
   port: 0,
@@ -239,6 +245,12 @@ export interface TestAppOptions {
    * route is mounted and writes are observable on disk.
    */
   readonly staging?: UploadStagingStore;
+  /**
+   * Spy/stub for the Discord reconcile trigger (companion-discord.md §2.1). The
+   * `discord.config.*` set/delete methods call it; a test injects a fn to assert the
+   * trigger fired (and that read-only methods don't fire it).
+   */
+  readonly discordReconcile?: (userId: string) => Promise<void>;
 }
 
 export async function makeTestApp(
@@ -511,6 +523,8 @@ export async function makeTestApp(
     reactionLearn,
     growth,
     growthStore,
+    discordConfig: new DrizzleDiscordConfigStore(db),
+    ...(options.discordReconcile ? { discordReconcile: options.discordReconcile } : {}),
     harness: new Harness({
       gateway: llmGateway,
       memory,

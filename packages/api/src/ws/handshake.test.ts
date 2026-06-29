@@ -8,6 +8,7 @@
 
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { mintSurfaceAccessToken } from '../auth/session-tokens.js';
 import { makeTestApp, type TestApp } from '../test/helpers.js';
 import { makeWsAuth } from './handshake.js';
 
@@ -67,6 +68,28 @@ describe('ws handshake origin pin', () => {
     await wsAuth(request, reply);
 
     expect(sent.statusCode).toBeUndefined(); // no rejection
+    expect(request.userId).toBeTruthy();
+  });
+
+  it('accepts a discord-surface token at /ws (rejected only by the HTTP guard)', async () => {
+    // The Discord bridge embodies over /ws with a surface-scoped token. The WS handshake
+    // must accept it — the surface scope only fences it OUT of the HTTP API, not /ws.
+    const wsAuth = makeWsAuth(ctx.deps);
+    const token = mintSurfaceAccessToken(
+      { authSource: 'google', email: 'discord-user@example.com' },
+      'discord',
+      ctx.deps.config.jwtSigningSecret,
+      ctx.deps.config.accessTokenTtlSec,
+    );
+    const request = fakeRequest({
+      origin: ctx.deps.config.appUrl,
+      authorization: `Bearer ${token}`,
+    });
+    const { reply, sent } = fakeReply();
+
+    await wsAuth(request, reply);
+
+    expect(sent.statusCode).toBeUndefined(); // accepted
     expect(request.userId).toBeTruthy();
   });
 

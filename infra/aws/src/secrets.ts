@@ -36,6 +36,9 @@ const specs: readonly ParamSpec[] = [
     description:
       'Supabase pooled (PgBouncer) DSN, port 6543 transaction mode. Consumed by the api.',
   },
+  // NOTE: the Discord surface is always-on and single-tenant; its secret
+  // (DISCORD_SERVICE_SECRET) and bot-token key (DISCORD_TOKEN_KEY) are supplied
+  // inline via Pulumi config in compute.ts (like local docker's .env), not SSM.
 ];
 
 export interface ManagedParameter {

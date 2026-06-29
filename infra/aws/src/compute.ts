@@ -4,14 +4,18 @@
 //   - caddy      : terminates TLS (Let's Encrypt) on 80/443 and reverse-proxies
 //                  to the app on loopback.
 // Postgres is on Supabase; a systemd timer pings it every ~2 days so the free
-// tier doesn't auto-pause. Secrets are fetched at boot via the instance profile,
-// so no plaintext lives in user-data or Pulumi state.
+// tier doesn't auto-pause. The external secrets (OpenRouter key, DB DSN) are
+// fetched at boot from SSM via the instance profile, so no plaintext lives in
+// user-data or Pulumi state. EXCEPTION: the single-tenant Discord secret + bot-
+// token key are supplied inline (see the discord block below), so those two do
+// live in user-data + Pulumi state — an accepted trade for a not-public surface.
 //
 // `userDataReplaceOnChange` means bumping the image tag (which changes user-data)
 // replaces the instance — a clean, immutable redeploy. The Elastic IP is a
 // separate resource so the public address survives the replacement.
 import * as aws from '@pulumi/aws';
 import * as pulumi from '@pulumi/pulumi';
+import * as random from '@pulumi/random';
 import { publicSubnet, webSg } from './network';
 import { imageUri, registryHost } from './registry';
 import { instanceProfile } from './iam';
@@ -27,6 +31,27 @@ const imageTag = cfg.get('imageTag') ?? 'latest';
 const googleClientId = cfg.require('googleClientId');
 const llmModel = cfg.get('llmModel') ?? 'anthropic/claude-3.5-sonnet';
 const domain = cfg.require('domain');
+// The Discord surface is always-on (companion-discord.md §9). The client id is the
+// public half of the Discord service's service-token credential; it defaults to a fixed value and
+// the api auto-seeds the matching service_registry row at boot from
+// SERVICE_REGISTRY_SEEDS (built below). The secret + bot-token key are single-tenant
+// and supplied inline (like local docker's .env), not via SSM: each is taken from
+// Pulumi config if set, else generated once and kept stable in Pulumi state (the
+// token key must survive instance replacement so already-stored bot tokens stay
+// decryptable). NOTE: this means those two values live in user-data + Pulumi state.
+const discordServiceClientId = cfg.get('discordServiceClientId') ?? 'discord-adapter';
+const discordServiceSecret =
+  cfg.getSecret('discordServiceSecret') ??
+  new random.RandomString('discord-service-secret', { length: 43, special: false }).result;
+const discordTokenKey =
+  cfg.getSecret('discordTokenKey') ??
+  new random.RandomBytes('discord-token-key', { length: 32 }).base64;
+// The seed the api consumes at boot to insert the Discord service's credential row (idempotent
+// on the (client_id, secret) unique index). pulumi.jsonStringify resolves the secret
+// Output into the JSON.
+const discordServiceRegistrySeeds = pulumi.jsonStringify([
+  { client_id: discordServiceClientId, secret: discordServiceSecret, label: 'discord' },
+]);
 // Optional ACME contact email. Caddy issues certs fine without one, but setting
 // it opts into Let's Encrypt expiry/issue notifications. Emitted as a global
 // Caddy options block only when configured.
@@ -73,6 +98,16 @@ const secretFetchScript = pulumi
       .join('\n'),
   );
 
+// The Discord service runs as a SECOND container from the SAME image, with the run
+// command overridden to the service entrypoint (companion-discord.md §2,
+// plans/discord-surface.md D6). Host network so it reaches the api on the host's
+// loopback :3000 (like Caddy). Always emitted — the surface is always-on and its
+// env (DISCORD_*) is always present in /etc/cobble.env.
+const discordServiceBlock = `docker rm -f cobble-discord 2>/dev/null || true
+docker run -d --restart=always --name cobble-discord --network host \\
+  --env-file /etc/cobble.env "$IMAGE" \\
+  pnpm --filter @cobble/discord run serve`;
+
 const userData = pulumi.interpolate`#!/bin/bash
 exec > >(tee /var/log/cobble-bootstrap.log) 2>&1
 set -x
@@ -107,6 +142,12 @@ UPLOAD_STAGING_BACKEND=s3
 UPLOAD_STAGING_S3_BUCKET=${uploadsBucket.bucket}
 UPLOAD_STAGING_S3_REGION=${region}
 UPLOAD_STAGING_PREFIX=${UPLOAD_PREFIX}
+DISCORD_SERVICE_CLIENT_ID=${discordServiceClientId}
+DISCORD_SERVICE_SECRET=${discordServiceSecret}
+DISCORD_TOKEN_KEY=${discordTokenKey}
+SERVICE_REGISTRY_SEEDS=${discordServiceRegistrySeeds}
+DISCORD_WS_BASE_URL=ws://127.0.0.1:3000
+DISCORD_MINT_URL=http://127.0.0.1:3000/internal/discord/token
 EOF
 ${secretFetchScript}
 
@@ -126,6 +167,9 @@ done
 docker rm -f cobble-app 2>/dev/null || true
 docker run -d --restart=always --name cobble-app \\
   -p 127.0.0.1:3000:3000 --env-file /etc/cobble.env "$IMAGE"
+
+# 4b. The Discord service (same image, service command), if the surface is configured.
+${discordServiceBlock}
 
 # 5. Persistent Caddy data volume. The instance is replaced on every redeploy
 #    (userDataReplaceOnChange), so Let's Encrypt certs + the ACME account must

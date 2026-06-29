@@ -1,9 +1,9 @@
 # CobbleCompanion — Implementation
 
 > **How it works internally:** data models, schemas, configuration, error handling, and security
-> implementation — enough for a developer to modify the system using only this doc. For *what the
-> system is* (components, flows, decisions) see `architecture.md`; for *what we're building and in
-> what order* see `development-plan.md`.
+> implementation — enough for a developer to modify the system using only this doc. For _what the
+> system is_ (components, flows, decisions) see `architecture.md`; for _what we're building and in
+> what order_ see `development-plan.md`.
 
 ## 1. Data Model
 
@@ -79,17 +79,19 @@ erDiagram
 ```
 
 ### `users`
-| Field | Type | Notes |
-|---|---|---|
-| `id` | uuid (PK) | |
-| `auth_source` | text, default `google` | how this user authenticates: `google` (Google Sign-In — email-keyed) \| `service` (a server-to-server consumer such as Sprout — keyed by `(service_client_id, external_id)`). Set per-user from the credentials each request carries — auth is per-request, not a server-wide mode (§5) |
-| `service_client_id` | text, nullable | the owning consumer (`service_registry.client_id`) when `auth_source = service`; null for `google`. Namespaces `external_id` so two consumers can reuse the same id without colliding |
-| `external_id` | text, nullable | the consumer's opaque user id (e.g. a Sprout UUID) when `auth_source = service`; null for `google`. Unique within `(auth_source, service_client_id)` |
-| `email` | text, nullable, unique | login identity when `auth_source = google`; null for `service` (a service user has no email) |
-| `is_admin` | boolean, default `false` | gates the operator-only `/admin/queue` snapshot (queue/embodiment observability, `architecture.md` §6). Set out-of-band; no self-service path |
-| `created_at` | timestamptz | |
+
+| Field               | Type                     | Notes                                                                                                                                                                                                                                                                                   |
+| ------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                | uuid (PK)                |                                                                                                                                                                                                                                                                                         |
+| `auth_source`       | text, default `google`   | how this user authenticates: `google` (Google Sign-In — email-keyed) \| `service` (a server-to-server consumer such as Sprout — keyed by `(service_client_id, external_id)`). Set per-user from the credentials each request carries — auth is per-request, not a server-wide mode (§5) |
+| `service_client_id` | text, nullable           | the owning consumer (`service_registry.client_id`) when `auth_source = service`; null for `google`. Namespaces `external_id` so two consumers can reuse the same id without colliding                                                                                                   |
+| `external_id`       | text, nullable           | the consumer's opaque user id (e.g. a Sprout UUID) when `auth_source = service`; null for `google`. Unique within `(auth_source, service_client_id)`                                                                                                                                    |
+| `email`             | text, nullable, unique   | login identity when `auth_source = google`; null for `service` (a service user has no email)                                                                                                                                                                                            |
+| `is_admin`          | boolean, default `false` | gates the operator-only `/admin/queue` snapshot (queue/embodiment observability, `architecture.md` §6). Set out-of-band; no self-service path                                                                                                                                           |
+| `created_at`        | timestamptz              |                                                                                                                                                                                                                                                                                         |
 
 ### `service_registry`
+
 Server-to-server consumer credentials (§5). One row per `(client_id, secret)`, so a consumer can hold several active secrets at once for **overlap rotation**.
 | Field | Type | Notes |
 |---|---|---|
@@ -123,40 +125,42 @@ Server-to-server consumer credentials (§5). One row per `(client_id, secret)`, 
 > See §3 and §5.
 
 ### `companions` — the canonical "home"
-| Field | Type | Notes |
-|---|---|---|
-| `id` | uuid (PK) | |
-| `owner_id` | uuid (FK → `users.id`) | tenancy scope |
-| `name` | text | user-chosen |
-| `form` | text | species/appearance archetype (seed) |
-| `temperament` | text | **immutable** starting personality seed (`product-overview.md` §5.5) |
-| `evolved_persona` | text, nullable | "who I've become with you" — re-synthesized from episodes, blended into the persona prompt beside the seed; null until the first evolution |
-| `persona_updated_through_seq` | bigint, default 0 | transcript `seq` the evolved persona was last synthesized from (evolution cursor) |
-| `consolidated_through_seq` | bigint, default 0 | highest transcript `seq` already rolled into episodes (consolidation cursor) |
-| `user_persona` | text, nullable | "who **you** are to me" — the User Model's **Tier-3** synthesized understanding of the user, re-synthesized from `user_facts` + episodes by the background reflection pass and blended into the persona prompt beside `evolved_persona` (the symmetric self-model); null until the first synthesis (`companion-memory.md` §4, `development-plan.md` §4c) |
-| `user_facts_through_seq` | bigint, default 0 | _(Phase 12)_ highest transcript `seq` the **User-Model Reflector** has extracted Tier-2 beliefs through — the **belief-extraction cursor**, independent of `consolidated_through_seq` so a failed reflection never advances past an unprocessed window (mirrors the evolution cursor's independence) |
-| `user_model_updated_through_seq` | bigint, default 0 | transcript `seq` the `user_persona` was last synthesized from (Tier-3 user-model cursor, mirrors the evolution cursor; Phase 13) |
-| `created_at` | timestamptz | |
-| `last_seen_at` | timestamptz, **nullable** | _(Phase 14)_ when the user was last present with this companion — the durable arrival clock the greeting gate computes its gap from. Stamped (to `now`) on every arrival check **after** the gap is read, so an idle return doesn't re-greet. **NULL = never seen**, which is exactly the first-meeting signal (the introduction overrides the dial). `companion-greeting.md` §3 |
+
+| Field                            | Type                      | Notes                                                                                                                                                                                                                                                                                                                                                                            |
+| -------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                             | uuid (PK)                 |                                                                                                                                                                                                                                                                                                                                                                                  |
+| `owner_id`                       | uuid (FK → `users.id`)    | tenancy scope                                                                                                                                                                                                                                                                                                                                                                    |
+| `name`                           | text                      | user-chosen                                                                                                                                                                                                                                                                                                                                                                      |
+| `form`                           | text                      | species/appearance archetype (seed)                                                                                                                                                                                                                                                                                                                                              |
+| `temperament`                    | text                      | **immutable** starting personality seed (`product-overview.md` §5.5)                                                                                                                                                                                                                                                                                                             |
+| `evolved_persona`                | text, nullable            | "who I've become with you" — re-synthesized from episodes, blended into the persona prompt beside the seed; null until the first evolution                                                                                                                                                                                                                                       |
+| `persona_updated_through_seq`    | bigint, default 0         | transcript `seq` the evolved persona was last synthesized from (evolution cursor)                                                                                                                                                                                                                                                                                                |
+| `consolidated_through_seq`       | bigint, default 0         | highest transcript `seq` already rolled into episodes (consolidation cursor)                                                                                                                                                                                                                                                                                                     |
+| `user_persona`                   | text, nullable            | "who **you** are to me" — the User Model's **Tier-3** synthesized understanding of the user, re-synthesized from `user_facts` + episodes by the background reflection pass and blended into the persona prompt beside `evolved_persona` (the symmetric self-model); null until the first synthesis (`companion-memory.md` §4, `development-plan.md` §4c)                         |
+| `user_facts_through_seq`         | bigint, default 0         | _(Phase 12)_ highest transcript `seq` the **User-Model Reflector** has extracted Tier-2 beliefs through — the **belief-extraction cursor**, independent of `consolidated_through_seq` so a failed reflection never advances past an unprocessed window (mirrors the evolution cursor's independence)                                                                             |
+| `user_model_updated_through_seq` | bigint, default 0         | transcript `seq` the `user_persona` was last synthesized from (Tier-3 user-model cursor, mirrors the evolution cursor; Phase 13)                                                                                                                                                                                                                                                 |
+| `created_at`                     | timestamptz               |                                                                                                                                                                                                                                                                                                                                                                                  |
+| `last_seen_at`                   | timestamptz, **nullable** | _(Phase 14)_ when the user was last present with this companion — the durable arrival clock the greeting gate computes its gap from. Stamped (to `now`) on every arrival check **after** the gap is read, so an idle return doesn't re-greet. **NULL = never seen**, which is exactly the first-meeting signal (the introduction overrides the dial). `companion-greeting.md` §3 |
 
 ### `messages` — transcript (episodic-memory substrate)
-| Field | Type | Notes |
-|---|---|---|
-| `id` | uuid (PK) | |
-| `seq` | bigserial | monotonic per-row ordinal — authoritative chronological order |
-| `companion_id` | uuid (FK → `companions.id`) | indexed with `seq` (`messages_companion_idx`) for recency recall |
-| `role` | text | `user` \| `assistant` \| `system` |
-| `content` | text | |
-| `kind` | text | `message` \| `tool_step` \| `proposal` — `$type<MessageKind>()`, default `message`.<br>What the row *is*, so the rich conversation (grounded answers, read-only look-ups, held actions) reconstructs identically on reload.<br>**Only `message` rows enter the LLM-context projection** (`getMessagesSince` and the recency window filter to `kind='message'`); `tool_step`/`proposal` are UI chrome — never re-fed to the model nor consolidated into episodes |
-| `metadata` | jsonb | nullable `MessageMetadata`: `citations` on a grounded `message`; `toolName` on a `tool_step`; `toolName`+`proposalId` on a `proposal` (the id wires the row to the live approval queue).<br>Lets the surface re-render the row faithfully |
-| `source_id` | uuid (FK → `sources.id`, **`ON DELETE SET NULL`**) | nullable; set on a file upload's attachment chip (a `user` turn) and its acknowledgement (an `assistant` turn) so the chat reconstructs the 📎 chip + "View status →" link on reload.<br>`SET NULL` (not cascade): deleting a source must never delete an append-only transcript turn — it just drops the link |
-| `created_at` | timestamptz | episodic memory builds on these timestamped turns |
+
+| Field          | Type                                               | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| -------------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`           | uuid (PK)                                          |                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `seq`          | bigserial                                          | monotonic per-row ordinal — authoritative chronological order                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `companion_id` | uuid (FK → `companions.id`)                        | indexed with `seq` (`messages_companion_idx`) for recency recall                                                                                                                                                                                                                                                                                                                                                                                                |
+| `role`         | text                                               | `user` \| `assistant` \| `system`                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `content`      | text                                               |                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `kind`         | text                                               | `message` \| `tool_step` \| `proposal` — `$type<MessageKind>()`, default `message`.<br>What the row _is_, so the rich conversation (grounded answers, read-only look-ups, held actions) reconstructs identically on reload.<br>**Only `message` rows enter the LLM-context projection** (`getMessagesSince` and the recency window filter to `kind='message'`); `tool_step`/`proposal` are UI chrome — never re-fed to the model nor consolidated into episodes |
+| `metadata`     | jsonb                                              | nullable `MessageMetadata`: `citations` on a grounded `message`; `toolName` on a `tool_step`; `toolName`+`proposalId` on a `proposal` (the id wires the row to the live approval queue).<br>Lets the surface re-render the row faithfully                                                                                                                                                                                                                       |
+| `source_id`    | uuid (FK → `sources.id`, **`ON DELETE SET NULL`**) | nullable; set on a file upload's attachment chip (a `user` turn) and its acknowledgement (an `assistant` turn) so the chat reconstructs the 📎 chip + "View status →" link on reload.<br>`SET NULL` (not cascade): deleting a source must never delete an append-only transcript turn — it just drops the link                                                                                                                                                  |
+| `created_at`   | timestamptz                                        | episodic memory builds on these timestamped turns                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 > **Proactive ingestion notes.** A successful or failed read appends a single `assistant` turn
 > here via the **Ingestion Announcer** (`packages/core/src/ingestion/announcer.ts`): an
 > in-character note generated through the metered LLM gateway (spent from the companion's stamina),
 > with a single-sourced **canned fallback** (`@cobble/shared`) when stamina is empty, when
-> generation throws, or when no persona is available. It is appended *before* the job's terminal
+> generation throws, or when no persona is available. It is appended _before_ the job's terminal
 > status flip, and an announcement failure is logged but never alters the job outcome
 > (`architecture.md` §4.8). These notes carry no `source_id` (no chip/link — just a message).
 
@@ -171,16 +175,17 @@ Server-to-server consumer credentials (§5). One row per `(client_id, secret)`, 
 > transcript order. `seq` is a single global sequence, so it orders the whole transcript.
 
 ### `message_reactions` — emoji reactions
-| Field | Type | Notes |
-|---|---|---|
-| `id` | uuid (PK) | |
-| `message_id` | uuid (FK → `messages.id`, **`ON DELETE CASCADE`**) | the row reacted to — only `kind='message'` rows are reactable |
-| `companion_id` | uuid (FK → `companions.id`, **`ON DELETE CASCADE`**) | tenancy/scoping |
-| `reactor` | text | `user` \| `companion` — who placed it |
-| `emoji` | text | the reaction glyph; **unique `(message_id, reactor, emoji)`** so a re-tap is idempotent and un-reacting is a `DELETE` |
-| `reward` | real | nullable; the **value-created** reward the inline reaction-read assigns to a _user_ reaction (∅ for a companion reaction, or until the read resolves) |
-| `reward_note` | text | nullable; the read's short note ("moved, engaged") — the corpus the **reflection** pass consumes |
-| `created_at` | timestamptz | |
+
+| Field          | Type                                                 | Notes                                                                                                                                                 |
+| -------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`           | uuid (PK)                                            |                                                                                                                                                       |
+| `message_id`   | uuid (FK → `messages.id`, **`ON DELETE CASCADE`**)   | the row reacted to — only `kind='message'` rows are reactable                                                                                         |
+| `companion_id` | uuid (FK → `companions.id`, **`ON DELETE CASCADE`**) | tenancy/scoping                                                                                                                                       |
+| `reactor`      | text                                                 | `user` \| `companion` — who placed it                                                                                                                 |
+| `emoji`        | text                                                 | the reaction glyph; **unique `(message_id, reactor, emoji)`** so a re-tap is idempotent and un-reacting is a `DELETE`                                 |
+| `reward`       | real                                                 | nullable; the **value-created** reward the inline reaction-read assigns to a _user_ reaction (∅ for a companion reaction, or until the read resolves) |
+| `reward_note`  | text                                                 | nullable; the read's short note ("moved, engaged") — the corpus the **reflection** pass consumes                                                      |
+| `created_at`   | timestamptz                                          |                                                                                                                                                       |
 
 > **Why a separate table, not `messages.metadata`.** The transcript is append-only and immutable
 > (`architecture.md` §4.7); a reaction is **mutable** (added later, removed, re-added). Keeping mutable
@@ -197,17 +202,18 @@ Server-to-server consumer credentials (§5). One row per `(client_id, secret)`, 
 > ordinary answer nudges the approval/competence drive at a smaller rate (`companion-reactions.md` §4, §7).
 
 ### `episodes` — consolidated episodic memory
-| Field | Type | Notes |
-|---|---|---|
-| `id` | uuid (PK) | |
-| `companion_id` | uuid (FK → `companions.id`, cascade) | tenancy scope; indexed `(companion_id, occurred_end)` for the time-window filter + "latest episodes" scans, and `(companion_id, seq_end)` for the cursor |
-| `summary` | text | the consolidated narrative ("you loved the ceviche in Lima…") |
-| `seq_start` / `seq_end` | bigint | transcript `seq` range this episode consolidated — idempotent, incremental rebuilds |
-| `occurred_start` / `occurred_end` | timestamptz | wall-clock span the episode covers; rendered as the date on each recalled block |
-| `salience` | real, nullable | self-reported 0–1 weight, stored and displayed only. Filler is dropped at consolidation (the reflection pass omits it); recall ranking (RRF) does **not** use this value (§6) |
-| `embedding` | `vector(1024)`, nullable | HNSW `vector_cosine_ops`; nullable → recalled lexically until embedded |
-| `fts` | tsvector (generated from `summary`) | GIN-indexed |
-| `created_at` | timestamptz | |
+
+| Field                             | Type                                 | Notes                                                                                                                                                                         |
+| --------------------------------- | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                              | uuid (PK)                            |                                                                                                                                                                               |
+| `companion_id`                    | uuid (FK → `companions.id`, cascade) | tenancy scope; indexed `(companion_id, occurred_end)` for the time-window filter + "latest episodes" scans, and `(companion_id, seq_end)` for the cursor                      |
+| `summary`                         | text                                 | the consolidated narrative ("you loved the ceviche in Lima…")                                                                                                                 |
+| `seq_start` / `seq_end`           | bigint                               | transcript `seq` range this episode consolidated — idempotent, incremental rebuilds                                                                                           |
+| `occurred_start` / `occurred_end` | timestamptz                          | wall-clock span the episode covers; rendered as the date on each recalled block                                                                                               |
+| `salience`                        | real, nullable                       | self-reported 0–1 weight, stored and displayed only. Filler is dropped at consolidation (the reflection pass omits it); recall ranking (RRF) does **not** use this value (§6) |
+| `embedding`                       | `vector(1024)`, nullable             | HNSW `vector_cosine_ops`; nullable → recalled lexically until embedded                                                                                                        |
+| `fts`                             | tsvector (generated from `summary`)  | GIN-indexed                                                                                                                                                                   |
+| `created_at`                      | timestamptz                          |                                                                                                                                                                               |
 
 > **Derived, not canonical.** Episodes are a rebuildable overlay over the one transcript (no
 > session entity — invariant #6). A background **consolidation** pass reflects the
@@ -218,26 +224,28 @@ Server-to-server consumer credentials (§5). One row per `(client_id, secret)`, 
 > window and salience — do not steer recall; see §6.)
 
 ### `sources` — Layer 0: verbatim originals
-| Field | Type | Notes |
-|---|---|---|
-| `id` | uuid (PK) | |
-| `companion_id` | uuid (FK → `companions.id`, cascade) | tenancy scope |
-| `kind` | text | `pdf` \| `note` \| `link` \| `txt` \| `md` \| `docx` \| `pptx` — free text typed via `$type<SourceKind>()`, so new formats need no migration; accepted-format/MIME contract → `architecture.md` §4.8 |
-| `title` | text | display title ("your Peru book") |
-| `origin` | text, nullable | filename / URL; null for notes |
-| `raw_text` | text | **canonical** extracted text — everything derived is rebuildable from it |
-| `byte_size` | integer, nullable | |
-| `created_at` | timestamptz | |
+
+| Field          | Type                                 | Notes                                                                                                                                                                                                |
+| -------------- | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`           | uuid (PK)                            |                                                                                                                                                                                                      |
+| `companion_id` | uuid (FK → `companions.id`, cascade) | tenancy scope                                                                                                                                                                                        |
+| `kind`         | text                                 | `pdf` \| `note` \| `link` \| `txt` \| `md` \| `docx` \| `pptx` — free text typed via `$type<SourceKind>()`, so new formats need no migration; accepted-format/MIME contract → `architecture.md` §4.8 |
+| `title`        | text                                 | display title ("your Peru book")                                                                                                                                                                     |
+| `origin`       | text, nullable                       | filename / URL; null for notes                                                                                                                                                                       |
+| `raw_text`     | text                                 | **canonical** extracted text — everything derived is rebuildable from it                                                                                                                             |
+| `byte_size`    | integer, nullable                    |                                                                                                                                                                                                      |
+| `created_at`   | timestamptz                          |                                                                                                                                                                                                      |
 
 ### `ingestion_jobs` — reading-progress surface
-| Field | Type | Notes |
-|---|---|---|
-| `id` / `companion_id` / `source_id` | uuid | cascade FKs |
-| `status` | text | `queued → parsing → segmenting → enriching → embedding → done` \| `failed`; `deferred` is off-line (parsed, awaiting stamina — resumes once the companion is fed — `architecture.md` §4.8) |
-| `sections_total` / `sections_done` | integer | drives "read N of M" |
-| `error` | text, nullable | user-safe failure reason; detail stays in logs |
-| `parsed_doc` | jsonb, nullable | parsed paragraphs held while `deferred`, so the AI passes resume without a re-upload; null otherwise |
-| `created_at` / `updated_at` | timestamptz | |
+
+| Field                               | Type            | Notes                                                                                                                                                                                      |
+| ----------------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `id` / `companion_id` / `source_id` | uuid            | cascade FKs                                                                                                                                                                                |
+| `status`                            | text            | `queued → parsing → segmenting → enriching → embedding → done` \| `failed`; `deferred` is off-line (parsed, awaiting stamina — resumes once the companion is fed — `architecture.md` §4.8) |
+| `sections_total` / `sections_done`  | integer         | drives "read N of M"                                                                                                                                                                       |
+| `error`                             | text, nullable  | user-safe failure reason; detail stays in logs                                                                                                                                             |
+| `parsed_doc`                        | jsonb, nullable | parsed paragraphs held while `deferred`, so the AI passes resume without a re-upload; null otherwise                                                                                       |
+| `created_at` / `updated_at`         | timestamptz     |                                                                                                                                                                                            |
 
 > The durable status surface is what let the in-process runner give way to the durable job-queue
 > worker with no schema/API change (`architecture.md` §4.8, §8), and lets deferred jobs survive a restart.
@@ -269,13 +277,14 @@ stateDiagram-v2
 ```
 
 ### `companions` — vitality columns (stamina + energy wallets)
+
 The two halves of a companion's vitality are **inline columns on the `companions` row** (1:1 with
 the companion — no separate wallet table):
 
-| Field | Type | Notes |
-|---|---|---|
-| `stamina_balance_tokens` | bigint, not null, default 1_000_000 | tokens left for **user-initiated** work (chat, assigned tasks). |
-| `energy_balance_tokens` | bigint, not null, default 1_000_000 | tokens left for **self-initiated** work (the motivation engine). A separate wallet so autonomy can't starve interaction. |
+| Field                    | Type                                | Notes                                                                                                                    |
+| ------------------------ | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `stamina_balance_tokens` | bigint, not null, default 1_000_000 | tokens left for **user-initiated** work (chat, assigned tasks).                                                          |
+| `energy_balance_tokens`  | bigint, not null, default 1_000_000 | tokens left for **self-initiated** work (the motivation engine). A separate wallet so autonomy can't starve interaction. |
 
 > Each balance is seeded at companion creation from `STARTING_VITALITY_TOKENS` (the column default is
 > the safety net for a bare insert). Spend decrements it (atomic SQL `GREATEST(0, balance - n)` — a
@@ -287,67 +296,70 @@ the companion — no separate wallet table):
 > `'stamina' | 'energy'` discriminator (`packages/core/src/quota/vitality-store.ts`).
 
 ### `user_food` — the per-user food pantry
-| Field | Type | Notes |
-|---|---|---|
-| `user_id` | uuid (PK, FK → `users.id`, cascade) | one row per user; the foods the user holds, spendable on any of their companions |
-| `ration` / `spark` / `treat` | integer, not null | counts of each food type. Seeded with `initialFood` (default 10 each) on the row's first creation; a feed decrements one (atomic SQL `count - 1`, guarded ≥ 0). Not replenished in the PoC. |
-| `updated_at` | timestamptz | |
+
+| Field                        | Type                                | Notes                                                                                                                                                                                       |
+| ---------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `user_id`                    | uuid (PK, FK → `users.id`, cascade) | one row per user; the foods the user holds, spendable on any of their companions                                                                                                            |
+| `ration` / `spark` / `treat` | integer, not null                   | counts of each food type. Seeded with `initialFood` (default 10 each) on the row's first creation; a feed decrements one (atomic SQL `count - 1`, guarded ≥ 0). Not replenished in the PoC. |
+| `updated_at`                 | timestamptz                         |                                                                                                                                                                                             |
 
 > The feeding economy's supply (`companion-economy.md`). The `feed` WS method consumes one
 > food from this row and adds its grants to the fed companion's wallet(s). When a count hits 0 the
 > feed returns 409; a developer raises it directly in the DB (no buying in the PoC).
 
 ### `sections` — Layer 1: retrieval units
-| Field | Type | Notes |
-|---|---|---|
-| `id` / `companion_id` / `source_id` | uuid | cascade FKs; companion denormalized for filtered retrieval |
-| `chapter_title` | text, nullable | structural parent label |
-| `topic_title` | text | Pass-1 segmentation output |
-| `original_text` | text | **pure verbatim** paragraph slice — never model-rewritten |
-| `context_header` | text, nullable | Pass-2 one-liner; prefixed onto the **embedding input only** |
-| `para_start` / `para_end` | integer | 1-based inclusive paragraph range (provenance) |
-| `page_start` / `page_end` | integer, nullable | PDF page range |
-| `ord` | integer | section order within its source |
-| `embedding` | `vector(1024)` | nullable until the embed pass; dimension pinned by `EMBEDDING_DIMENSIONS` (db schema) — changing it requires a migration |
-| `fts` | tsvector, generated | `to_tsvector('english', original_text)` |
+
+| Field                               | Type                | Notes                                                                                                                    |
+| ----------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `id` / `companion_id` / `source_id` | uuid                | cascade FKs; companion denormalized for filtered retrieval                                                               |
+| `chapter_title`                     | text, nullable      | structural parent label                                                                                                  |
+| `topic_title`                       | text                | Pass-1 segmentation output                                                                                               |
+| `original_text`                     | text                | **pure verbatim** paragraph slice — never model-rewritten                                                                |
+| `context_header`                    | text, nullable      | Pass-2 one-liner; prefixed onto the **embedding input only**                                                             |
+| `para_start` / `para_end`           | integer             | 1-based inclusive paragraph range (provenance)                                                                           |
+| `page_start` / `page_end`           | integer, nullable   | PDF page range                                                                                                           |
+| `ord`                               | integer             | section order within its source                                                                                          |
+| `embedding`                         | `vector(1024)`      | nullable until the embed pass; dimension pinned by `EMBEDDING_DIMENSIONS` (db schema) — changing it requires a migration |
+| `fts`                               | tsvector, generated | `to_tsvector('english', original_text)`                                                                                  |
 
 Indexes: HNSW (`vector_cosine_ops`) on `embedding` — chosen over IVFFlat because it needs no
 training set and fits incremental ingestion; GIN on `fts`; btree on `(companion_id)` and
 `(source_id, ord)`.
 
 ### `facts` — Layer 2: typed knowledge overlay
-| Field | Type | Notes |
-|---|---|---|
-| `id` / `companion_id` | uuid | cascade FK |
-| `section_id` | uuid (FK → `sections.id`, cascade) | **provenance — non-nullable by contract** (`ontology.md` §4) |
-| `fact_type` | text | closed core set, validated at ingestion (`ontology.md` §2) |
-| `subject` / `predicate` / `object` | text (predicate nullable) | entities are denormalized strings; normalization is owned by `ontology.md` §5 |
-| `confidence` | real, nullable | extraction self-reported (0–1), advisory |
+
+| Field                              | Type                               | Notes                                                                         |
+| ---------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------- |
+| `id` / `companion_id`              | uuid                               | cascade FK                                                                    |
+| `section_id`                       | uuid (FK → `sections.id`, cascade) | **provenance — non-nullable by contract** (`ontology.md` §4)                  |
+| `fact_type`                        | text                               | closed core set, validated at ingestion (`ontology.md` §2)                    |
+| `subject` / `predicate` / `object` | text (predicate nullable)          | entities are denormalized strings; normalization is owned by `ontology.md` §5 |
+| `confidence`                       | real, nullable                     | extraction self-reported (0–1), advisory                                      |
 
 ### `user_facts` — the User Model (typed knowledge about the user)
 
 The companion's structured understanding of its user — the same typed-fact contract as `facts`
 (`ontology.md`), but the **subject is the privileged user entity**. A separate table because the
 lifecycle differs: identity attributes are revised on a new value (most singular; `languages`/`relationships` are multi-valued and accrete) and are editable/forgettable today (Phase 11); beliefs accrete, decay, and are read-only until Phase 13 (the `editFact`/`forgetFact` path refuses belief predicates until then). **Revision is replace, not a chain (Phase 13):** the reflector reconciles by **replacing** the current value (latest wins) — Phase 12's superseded chain is **removed** (no `superseded_*` rows), the timeline living in episodic memory (`ontology.md` §4). **Forgetting:** Tier-2 beliefs fade by salience decay (the everyday forgetting); the explicit control is **`deleteFact(userId, factId)`** — a single-row delete (replacing the Phase-11 soft-supersede `forgetFact`), **necessary** for non-decaying Tier-1 and offered on Tier-2 for immediacy; **sensitive** rows get a true purge (optionally forgetting the source turn). **No tombstone** — re-derivation from the lossless transcript is accepted relearning, not a bug.
-**Keyed by `user_id`, not `companion_id`** — facts are objective truths about the *person* (name, age,
-"vegetarian"), so they are shared across any companion the user owns; only the *synthesized
-understanding* of the user (Tier-3 `companions.user_persona`) is per-companion (`development-plan.md`
+**Keyed by `user_id`, not `companion_id`** — facts are objective truths about the _person_ (name, age,
+"vegetarian"), so they are shared across any companion the user owns; only the _synthesized
+understanding_ of the user (Tier-3 `companions.user_persona`) is per-companion (`development-plan.md`
 §4c; the truth/understanding split, `companion-memory.md` §4). Mechanism, tiers, and the
 extraction/retrieval flow → `companion-memory.md` §4.
 
-| Field | Type | Notes |
-|---|---|---|
-| `id` / `user_id` | uuid | cascade FK → `users.id` (tenancy — the user owns the fact) |
-| `source` | text `$type<UserFactSource>` | **origin** — `transcript` (learned in conversation, the usual case) \| `auth_seed` (the name from Google sign-in) \| `user_edit` (the user set/corrected it in the browser). Determines which provenance columns are set and informs default confidence |
-| `learned_by_companion_id` | uuid (FK → `companions.id`, **`ON DELETE SET NULL`**), **nullable** | which companion's conversation taught this — set only when `source='transcript'` (null for `auth_seed`/`user_edit`). The fact outlives the companion (it's the user's), so the link nulls rather than cascades |
-| `learned_from_seq` | bigint, **nullable** | **reserved provenance** — the transcript `seq` a fact was learned from. The Phase-11 inline-capture path does **not** populate it (the harness reads `MessageDto`, which omits `seq`) — it records the `learned_by_companion_id` link instead; pinning the exact turn is a Phase-12 reflector concern, so this is null on every fact today (no FK to the churning `episodes`; re-extraction rebuilds from the transcript) |
-| `fact_type` | text | the closed core set, validated at extraction (`ontology.md` §2) — identity is an `attribute`, a taste a `relation`/`attribute`, a life event an `event` |
-| `subject` / `predicate` / `object` | text (predicate nullable) | `subject` is the user entity; **polarity is carried by the predicate** (`prefers` vs `dislikes`), so likes/dislikes need no extra column. Denormalized strings, per `ontology.md` §5 |
-| `confidence` | real, nullable | (0–1), advisory; default tracks `source` — explicit `transcript` statement → high, inferred → low, `auth_seed` → modest (a guess from the account), `user_edit` → authoritative. Steers retrieval ranking, decay, and supersession precedence, never storage |
-| `salience` | real, nullable | event-driven strength weight (Tier-2); multiplies a belief's fused hybrid-recall score (`1 + 0.5·salience`), so a reinforced belief rises and a cut one sinks among comparably-relevant hits — a gentle prior over relevance, never an injector. Bumped/cut on reinforce + proactive reaction. The **stored** value is the last genuine reinforcement; **Phase 13 decays it lazily at read time** (effective = `salience × decay(now − updated_at)`, see the Tier-2 note below) — no sweeper writes here |
-| `sensitive` | boolean, default `false` | _(Phase 13)_ marks a fact about a protected matter (gender, age, health, religion, sexuality, ethnicity, political leaning — the closed `SENSITIVE_MATTERS` set). Set when such a fact is persisted; a low-confidence **inference** about a sensitive matter is **gated at write** (not stored unless it clears a higher confidence bar — `ontology.md` §4), while an explicit user statement always passes. Surfaced/badged in the browser for scrutiny |
-| `superseded_at` · `superseded_by` | timestamptz · uuid, nullable | _(Phase 12 — **removed in Phase 13**)_ the superseded-chain columns: Phase 12 kept revised rows as dated history. Phase 13 switches to **replace** (current-state only; the timeline is episodic memory's job, `ontology.md` §4) and **drops both columns** along with the supersede-then-backfill store path |
-| `created_at` / `updated_at` | timestamptz | |
+| Field                              | Type                                                                | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ---------------------------------- | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id` / `user_id`                   | uuid                                                                | cascade FK → `users.id` (tenancy — the user owns the fact)                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `source`                           | text `$type<UserFactSource>`                                        | **origin** — `transcript` (learned in conversation, the usual case) \| `auth_seed` (the name from Google sign-in) \| `user_edit` (the user set/corrected it in the browser). Determines which provenance columns are set and informs default confidence                                                                                                                                                                                                                                                  |
+| `learned_by_companion_id`          | uuid (FK → `companions.id`, **`ON DELETE SET NULL`**), **nullable** | which companion's conversation taught this — set only when `source='transcript'` (null for `auth_seed`/`user_edit`). The fact outlives the companion (it's the user's), so the link nulls rather than cascades                                                                                                                                                                                                                                                                                           |
+| `learned_from_seq`                 | bigint, **nullable**                                                | **reserved provenance** — the transcript `seq` a fact was learned from. The Phase-11 inline-capture path does **not** populate it (the harness reads `MessageDto`, which omits `seq`) — it records the `learned_by_companion_id` link instead; pinning the exact turn is a Phase-12 reflector concern, so this is null on every fact today (no FK to the churning `episodes`; re-extraction rebuilds from the transcript)                                                                                |
+| `fact_type`                        | text                                                                | the closed core set, validated at extraction (`ontology.md` §2) — identity is an `attribute`, a taste a `relation`/`attribute`, a life event an `event`                                                                                                                                                                                                                                                                                                                                                  |
+| `subject` / `predicate` / `object` | text (predicate nullable)                                           | `subject` is the user entity; **polarity is carried by the predicate** (`prefers` vs `dislikes`), so likes/dislikes need no extra column. Denormalized strings, per `ontology.md` §5                                                                                                                                                                                                                                                                                                                     |
+| `confidence`                       | real, nullable                                                      | (0–1), advisory; default tracks `source` — explicit `transcript` statement → high, inferred → low, `auth_seed` → modest (a guess from the account), `user_edit` → authoritative. Steers retrieval ranking, decay, and supersession precedence, never storage                                                                                                                                                                                                                                             |
+| `salience`                         | real, nullable                                                      | event-driven strength weight (Tier-2); multiplies a belief's fused hybrid-recall score (`1 + 0.5·salience`), so a reinforced belief rises and a cut one sinks among comparably-relevant hits — a gentle prior over relevance, never an injector. Bumped/cut on reinforce + proactive reaction. The **stored** value is the last genuine reinforcement; **Phase 13 decays it lazily at read time** (effective = `salience × decay(now − updated_at)`, see the Tier-2 note below) — no sweeper writes here |
+| `sensitive`                        | boolean, default `false`                                            | _(Phase 13)_ marks a fact about a protected matter (gender, age, health, religion, sexuality, ethnicity, political leaning — the closed `SENSITIVE_MATTERS` set). Set when such a fact is persisted; a low-confidence **inference** about a sensitive matter is **gated at write** (not stored unless it clears a higher confidence bar — `ontology.md` §4), while an explicit user statement always passes. Surfaced/badged in the browser for scrutiny                                                 |
+| `superseded_at` · `superseded_by`  | timestamptz · uuid, nullable                                        | _(Phase 12 — **removed in Phase 13**)_ the superseded-chain columns: Phase 12 kept revised rows as dated history. Phase 13 switches to **replace** (current-state only; the timeline is episodic memory's job, `ontology.md` §4) and **drops both columns** along with the supersede-then-backfill store path                                                                                                                                                                                            |
+| `created_at` / `updated_at`        | timestamptz                                                         |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 > **Tier-2 belief columns (Phase 12, in the table).** The same `user_facts` table carries the Tier-2
 > overlay: `embedding` (`vector(1024)`, HNSW `vector_cosine_ops`), `fts` (tsvector generated from
@@ -357,23 +369,23 @@ extraction/retrieval flow → `companion-memory.md` §4.
 > reaction to a belief-driven proactive act (`companion-motivation.md` §7). **Passive time-decay** of
 > salience and the **stale-drop retrieval cutoff** are Phase 13, and are **lazy** — no sweeper rewrites
 > rows. A single pure function `effectiveSalience(salience, updatedAt, now) = salience × exp(−ln2 ·
-> ageDays / HALF_LIFE_DAYS)` (uniform configurable half-life, `BELIEF_SALIENCE_HALF_LIFE_DAYS` in §3) is
+ageDays / HALF_LIFE_DAYS)` (uniform configurable half-life, `BELIEF_SALIENCE_HALF_LIFE_DAYS` in §3) is
 > applied in the **two** read paths that consult salience — the Tier-2 retrieval arm's `searchBeliefs`
 > tilt and the motivation engine's `topInterestBelief` — so a belief that hasn't been reinforced fades
 > from recall and from driving bursts on its own; one below a `STALE_SALIENCE_FLOOR` is excluded from
 > both but **never auto-deleted** (it stays in the browser, forgettable). The stored column is unchanged
-> by reads — decay is a computed *view*, keeping the stored value meaningful as "true reinforced
+> by reads — decay is a computed _view_, keeping the stored value meaningful as "true reinforced
 > strength" so a later reinforce composes cleanly. Both writers (inline capture, reflector)
 > compute the embedding at write; a null-embedding row degrades gracefully to FTS-only retrieval (the
 > `fts` column is generated, so always present) (`development-plan.md` §4c). Both writers embed the
 > belief under its **natural-language rendering** (`beliefPhrase`, e.g. `interestedIn jazz` →
-> "the user is interested in jazz") — the *same* phrasing the recall block surfaces — so the stored
+> "the user is interested in jazz") — the _same_ phrasing the recall block surfaces — so the stored
 > vector lives in the same register as the natural-language turn it is recalled against. This symmetry
 > is what makes the floor meaningful: a terse `predicate object` tag sits in a different register from a
 > full query sentence, inflating cosine distance and risking the floor dropping a genuinely relevant
 > belief. The vector arm carries a **relevance floor** (`BeliefSearchParams.maxVectorDistance`, default
 > `0.8` cosine distance in the retrieval arm): a belief farther than this is dropped rather than pulled
-> in to fill the top-K, so the "what I know about you" block is what's *relevant now*, not every belief
+> in to fill the top-K, so the "what I know about you" block is what's _relevant now_, not every belief
 > while the user has ≤ topK of them. The FTS arm self-gates (a term match is a relevance gate); the
 > floor is a starting value, tuned against the `user-extract`/`user-beliefs` evals as belief volume grows.
 
@@ -386,7 +398,7 @@ extraction/retrieval flow → `companion-memory.md` §4.
 > out any non-Tier-1 predicate so a Phase-12 belief sharing the table cannot leak in. **Tier 2 —
 > learned beliefs**: a **closed** predicate set `TIER2_PREDICATES` = `prefers`/`dislikes`/`interestedIn`/`believes`
 > (validated at extraction, mirroring `TIER1_PREDICATES`; polarity rides the predicate); too many for
-> context, so surfaced by the retrieval arm over *current* Tier-2 rows only (`architecture.md` §4.3) —
+> context, so surfaced by the retrieval arm over _current_ Tier-2 rows only (`architecture.md` §4.3) —
 > added in Phase 12. **Tier 3 — user persona**:
 > the synthesized narrative in `companions.user_persona` (Phase 13). Indexes: btree on
 > `(user_id, predicate)` for the current-facts scan; plus a **partial unique index**
@@ -410,16 +422,17 @@ subject/object — how a section whose text only says "he" is still found by "Pi
 hit carries provenance (source title, chapter, topic, para/page range) + the verbatim text.
 
 ### `proposals` — approval queue
-| Field | Type | Notes |
-|---|---|---|
-| `id` / `companion_id` | uuid | cascade FK |
-| `lead_id` | uuid, nullable | FK → `leads.id` (`on delete set null`). The reading-list lead this proposal came from (explore-origin); null for a chat-origin proposal. Resolving the proposal advances this lead's lifecycle |
-| `tool_name` | text | the effectful tool the companion wants to run |
-| `tool_args` | jsonb | the serialized call, run verbatim once approved |
-| `tool_call_id` | text, nullable | the provider's tool-call id (audit/correlation) |
-| `summary` | text | human-readable description shown in the approval card |
-| `status` | text `$type<ProposalStatus>` | `pending` → `approved`/`rejected` |
-| `created_at` / `resolved_at` | timestamptz (resolved nullable) | |
+
+| Field                        | Type                            | Notes                                                                                                                                                                                          |
+| ---------------------------- | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id` / `companion_id`        | uuid                            | cascade FK                                                                                                                                                                                     |
+| `lead_id`                    | uuid, nullable                  | FK → `leads.id` (`on delete set null`). The reading-list lead this proposal came from (explore-origin); null for a chat-origin proposal. Resolving the proposal advances this lead's lifecycle |
+| `tool_name`                  | text                            | the effectful tool the companion wants to run                                                                                                                                                  |
+| `tool_args`                  | jsonb                           | the serialized call, run verbatim once approved                                                                                                                                                |
+| `tool_call_id`               | text, nullable                  | the provider's tool-call id (audit/correlation)                                                                                                                                                |
+| `summary`                    | text                            | human-readable description shown in the approval card                                                                                                                                          |
+| `status`                     | text `$type<ProposalStatus>`    | `pending` → `approved`/`rejected`                                                                                                                                                              |
+| `created_at` / `resolved_at` | timestamptz (resolved nullable) |                                                                                                                                                                                                |
 
 > **Exactly-once:** confirm/reject is a conditional update `WHERE status='pending'` that returns the
 > row only to the winner (mirrors the deferred-job claim, `architecture.md` §4.8), so a double-confirm
@@ -448,22 +461,24 @@ stateDiagram-v2
 ```
 
 ### `tool_calls` — audit log
-| Field | Type | Notes |
-|---|---|---|
-| `id` / `companion_id` | uuid | cascade FK |
-| `seq` | bigserial | monotonic order (`created_at` ties within a ms) |
+
+| Field                      | Type                | Notes                                                             |
+| -------------------------- | ------------------- | ----------------------------------------------------------------- |
+| `id` / `companion_id`      | uuid                | cascade FK                                                        |
+| `seq`                      | bigserial           | monotonic order (`created_at` ties within a ms)                   |
 | `name` / `args` / `result` | text / jsonb / text | one row per executed call — the DoD's "every tool call is logged" |
-| `created_at` | timestamptz | |
+| `created_at`               | timestamptz         |                                                                   |
 
 ### `leads` — reading-list inventory
-| Field | Type | Notes |
-|---|---|---|
-| `id` / `companion_id` | uuid | cascade FK |
-| `seq` | bigserial | stable reading-list order |
-| `url` | text | unique per `(companion_id, url)` → re-discovery is idempotent |
-| `why` | text, nullable | where it was captured (the page it came from) |
-| `status` | text `$type<LeadStatus>` | `new` → `read` → `ingested`/`discarded` |
-| `created_at` | timestamptz | |
+
+| Field                 | Type                     | Notes                                                         |
+| --------------------- | ------------------------ | ------------------------------------------------------------- |
+| `id` / `companion_id` | uuid                     | cascade FK                                                    |
+| `seq`                 | bigserial                | stable reading-list order                                     |
+| `url`                 | text                     | unique per `(companion_id, url)` → re-discovery is idempotent |
+| `why`                 | text, nullable           | where it was captured (the page it came from)                 |
+| `status`              | text `$type<LeadStatus>` | `new` → `read` → `ingested`/`discarded`                       |
+| `created_at`          | timestamptz              |                                                               |
 
 > The body-then-will substrate: filled by `web_fetch` link harvest, worked on command
 > (`/explore`), and by the motivation engine on idle (`architecture.md` §4.5).
@@ -473,13 +488,14 @@ stateDiagram-v2
 > `proposals.lead_id`). `/leads` lists only `new`+`read`, so a resolved lead leaves the reading list.
 
 ### `procedural_memories` — learned workflows
-| Field | Type | Notes |
-|---|---|---|
-| `id` / `companion_id` | uuid | cascade FK |
-| `seq` | bigserial | newest-first listing |
-| `title` | text | the approved action's summary |
-| `steps` | jsonb | ordered tool names the workflow ran |
-| `created_at` | timestamptz | |
+
+| Field                 | Type        | Notes                               |
+| --------------------- | ----------- | ----------------------------------- |
+| `id` / `companion_id` | uuid        | cascade FK                          |
+| `seq`                 | bigserial   | newest-first listing                |
+| `title`               | text        | the approved action's summary       |
+| `steps`               | jsonb       | ordered tool names the workflow ran |
+| `created_at`          | timestamptz |                                     |
 
 > Seeded on a successful approved action; browseable, and a relevant routine also resurfaces as a
 > retrieval-as-hint in context (`architecture.md` §4.3).
@@ -572,10 +588,10 @@ erDiagram
   (`companion-economy.md`).
 - **`companion_affect`** — the companion's **rolling read of the
   user's mood**, one row per companion: `valence` ∈ [−1, 1] + a short natural-language `note`. The
-  agent loop upserts it on every *successful* read (last-write-wins); the prior read is fed forward to
+  agent loop upserts it on every _successful_ read (last-write-wins); the prior read is fed forward to
   attune the next reply, and the turn-over-turn change is the reinforcement signal
   (`companion-motivation.md` §7). The read is taken via a structured **`report_affect` tool call**
-  (named `valence` + `note` fields, provider-parsed) — no free-text parsing. A malformed *field*
+  (named `valence` + `note` fields, provider-parsed) — no free-text parsing. A malformed _field_
   degrades to neutral (still a genuine read), but a **missing call or provider failure is a non-read**
   (`null`): the prior baseline is kept and nothing is learned, so a transient hiccup can't masquerade as
   a neutral mood and fabricate a reward delta. The user's message is **fenced in `<user_message>` tags**
@@ -610,7 +626,7 @@ erDiagram
   `companion-reactions.md`.
 
 Presence is **derived from the `active_embodiment` claim** (below), not a separate table: a
-live (non-expired) claim *is* presence, with `last_activity_at`/`tab_visible` carrying the
+live (non-expired) claim _is_ presence, with `last_activity_at`/`tab_visible` carrying the
 foreground/idle detail (D5; `core/src/embodiment/presence.ts`, `architecture.md` §4.5).
 
 - **`companion_growth`** —
@@ -639,18 +655,18 @@ semantics.
 
 #### `jobs` — durable background work queue
 
-| Field | Type | Notes |
-|---|---|---|
-| `id` | uuid (PK) | |
-| `companion_id` | uuid (FK → `companions.id`, cascade) | the companion the work is for |
-| `type` | text (`JobType`) | `consolidate` \| `motivation` \| `ingest` \| `reaction_learn` |
-| `dedupe_key` | text | coalescing key — bare type for companion-wide work, discriminated by payload for per-event work |
-| `payload` | jsonb (`JobPayload`), default `{}` | type-specific reference, never bulk data (e.g. `reaction_learn` → messageId + emoji) |
-| `run_at` | timestamptz, default `now()` | earliest eligible time (`now()` for immediate; future for backoff / "deferred") |
-| `status` | text (`JobStatus`), default `pending` | `pending` \| `done` \| `failed` |
-| `attempts` | integer, default `0` | retry counter |
-| `last_error` | text, nullable | user-/operator-safe last failure reason; internal detail stays in logs |
-| `created_at` / `updated_at` | timestamptz | |
+| Field                       | Type                                  | Notes                                                                                           |
+| --------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `id`                        | uuid (PK)                             |                                                                                                 |
+| `companion_id`              | uuid (FK → `companions.id`, cascade)  | the companion the work is for                                                                   |
+| `type`                      | text (`JobType`)                      | `consolidate` \| `motivation` \| `ingest` \| `reaction_learn`                                   |
+| `dedupe_key`                | text                                  | coalescing key — bare type for companion-wide work, discriminated by payload for per-event work |
+| `payload`                   | jsonb (`JobPayload`), default `{}`    | type-specific reference, never bulk data (e.g. `reaction_learn` → messageId + emoji)            |
+| `run_at`                    | timestamptz, default `now()`          | earliest eligible time (`now()` for immediate; future for backoff / "deferred")                 |
+| `status`                    | text (`JobStatus`), default `pending` | `pending` \| `done` \| `failed`                                                                 |
+| `attempts`                  | integer, default `0`                  | retry counter                                                                                   |
+| `last_error`                | text, nullable                        | user-/operator-safe last failure reason; internal detail stays in logs                          |
+| `created_at` / `updated_at` | timestamptz                           |                                                                                                 |
 
 Indexes: **partial-unique** `(companion_id, dedupe_key) WHERE status='pending'` (coalescing — a
 repeat enqueue upserts onto the pending row rather than piling up duplicates); `(status, run_at)`
@@ -658,13 +674,13 @@ for the "due, pending, oldest-first" claiming scan. Mechanism → `deliver-scala
 
 #### `companion_claims` — per-companion work lease
 
-| Field | Type | Notes |
-|---|---|---|
-| `companion_id` | uuid (PK, FK → `companions.id`, cascade) | one lease row per companion |
-| `owner` | text | opaque id of the processor/node holding the lease (observability) |
-| `generation` | bigint, default `0` | monotonic claim counter, bumped on each (re)claim — a fencing token |
-| `claimed_until` | timestamptz | the lease is live only while `now() < claimed_until`; a crashed processor's claim lapses and another node reclaims |
-| `updated_at` | timestamptz | |
+| Field           | Type                                     | Notes                                                                                                              |
+| --------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `companion_id`  | uuid (PK, FK → `companions.id`, cascade) | one lease row per companion                                                                                        |
+| `owner`         | text                                     | opaque id of the processor/node holding the lease (observability)                                                  |
+| `generation`    | bigint, default `0`                      | monotonic claim counter, bumped on each (re)claim — a fencing token                                                |
+| `claimed_until` | timestamptz                              | the lease is live only while `now() < claimed_until`; a crashed processor's claim lapses and another node reclaims |
+| `updated_at`    | timestamptz                              |                                                                                                                    |
 
 A processor claims a whole companion before draining its jobs, so exactly one processor
 fleet-wide touches a companion's background state at a time (the single-writer invariant the
@@ -672,16 +688,16 @@ in-process runners used to get from a `Set`). Distinct from `active_embodiment`.
 
 #### `active_embodiment` — the live WS embodiment claim
 
-| Field | Type | Notes |
-|---|---|---|
-| `companion_id` | uuid (PK, FK → `companions.id`, cascade) | one live connection per companion (the "one room at a time" rule) |
-| `connection_id` | text | the holding connection's **ULID** — the fencing token (timestamp-sortable, "newer wins" by lexical compare) |
-| `node` | text | host/pid of the node holding the connection (observability) |
-| `claim_seq` | bigint, default `0` | DB-stamped monotonic claim counter, bumped on each (re)claim; part of the fencing key (`connection_id` + `claim_seq`) so a recurred ULID can't revive a superseded claim (ABA guard) |
-| `last_heartbeat` | timestamptz | refreshed by the holder's heartbeat; a value past the TTL is reclaimable (crash backstop) |
-| `last_activity_at` | timestamptz, default `now()` | presence (D5): last real interaction (a turn) |
-| `tab_visible` | boolean, default `true` | presence: whether the room is foregrounded |
-| `updated_at` | timestamptz | |
+| Field              | Type                                     | Notes                                                                                                                                                                                |
+| ------------------ | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `companion_id`     | uuid (PK, FK → `companions.id`, cascade) | one live connection per companion (the "one room at a time" rule)                                                                                                                    |
+| `connection_id`    | text                                     | the holding connection's **ULID** — the fencing token (timestamp-sortable, "newer wins" by lexical compare)                                                                          |
+| `node`             | text                                     | host/pid of the node holding the connection (observability)                                                                                                                          |
+| `claim_seq`        | bigint, default `0`                      | DB-stamped monotonic claim counter, bumped on each (re)claim; part of the fencing key (`connection_id` + `claim_seq`) so a recurred ULID can't revive a superseded claim (ABA guard) |
+| `last_heartbeat`   | timestamptz                              | refreshed by the holder's heartbeat; a value past the TTL is reclaimable (crash backstop)                                                                                            |
+| `last_activity_at` | timestamptz, default `now()`             | presence (D5): last real interaction (a turn)                                                                                                                                        |
+| `tab_visible`      | boolean, default `true`                  | presence: whether the room is foregrounded                                                                                                                                           |
+| `updated_at`       | timestamptz                              |                                                                                                                                                                                      |
 
 A new connection **force-claims** (its newer ULID wins); the prior holder self-fences when its
 heartbeat renew finds it no longer owns the row. The fence (`holds`) matches the exact claim —
@@ -692,13 +708,13 @@ and it stays fenced out. Handoff design + the in-turn fence → `architecture.md
 
 #### `companion_events` — durable live-event log
 
-| Field | Type | Notes |
-|---|---|---|
-| `seq` | bigserial (PK) | per-row monotonic cursor the embodiment connection reads past |
-| `companion_id` | uuid (FK → `companions.id`, cascade) | indexed `(companion_id, seq)` |
-| `event` | jsonb (`CompanionStreamEvent`) | the event to push over the WS |
-| `xid` | xid8, default `pg_current_xact_id()` | the inserting transaction id — the live reader's **visibility horizon** |
-| `created_at` | timestamptz | |
+| Field          | Type                                 | Notes                                                                   |
+| -------------- | ------------------------------------ | ----------------------------------------------------------------------- |
+| `seq`          | bigserial (PK)                       | per-row monotonic cursor the embodiment connection reads past           |
+| `companion_id` | uuid (FK → `companions.id`, cascade) | indexed `(companion_id, seq)`                                           |
+| `event`        | jsonb (`CompanionStreamEvent`)       | the event to push over the WS                                           |
+| `xid`          | xid8, default `pg_current_xact_id()` | the inserting transaction id — the live reader's **visibility horizon** |
+| `created_at`   | timestamptz                          |                                                                         |
 
 Sole live-delivery substrate: every publish point appends a row; the one embodiment connection's
 node reads rows past its cursor on each heartbeat and pushes them, so an event written on **any**
@@ -711,7 +727,7 @@ never skipped — the **visibility-gap guard** (`core/src/events/log.ts`; `archi
 Upload bytes are **not** stored in Postgres. They live in object storage (S3 in production)
 or a local filesystem root (dev/CI), behind the `UploadStagingStore` port
 (`core/src/ingestion/upload-staging*.ts`); the backend is chosen by
-`UPLOAD_STAGING_BACKEND` (`s3` | `file`). The `uploadId` *is* the object key —
+`UPLOAD_STAGING_BACKEND` (`s3` | `file`). The `uploadId` _is_ the object key —
 `tmp-uploads/<ownerId>/<uuid>__<kind>` — so there is no staging metadata table: the owner
 (authorization at enqueue) and kind (payload reconstruction) are read back from the key.
 
@@ -727,6 +743,26 @@ or a local filesystem root (dev/CI), behind the `UploadStagingStore` port
   `purgeExpired()` (wired in `api/src/index.ts` next to the other periodic sweeps). Full
   design → `docs/plans/staging-object-storage.md` (supersedes the byte-storage part of
   `deliver-scalability.md` §6 D-A).
+
+#### `discord_config` — the Discord surface's per-user bot config
+
+Owned by the Discord adapter (schema in `@cobble/db`; `companion-discord.md` §9). The
+**API writes** it (the `discord.config.*` WS methods, on behalf of the web settings panel)
+and reads it to authorize the token-mint route; the decoupled **adapter reads it on demand**
+(per inbound event / at `/summon`) — **no poll, no cached snapshot**. After each write the
+API calls the adapter's internal `POST /internal/reconcile { userId }` endpoint, which reads
+that one row and (re)starts/stops the bot's gateway connection (`companion-discord.md` §2.1).
+Neither side imports the other or `@cobble/core`.
+
+| Field                       | Type                                | Notes                                                                                                         |
+| --------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `user_id`                   | uuid (PK, FK → `users.id`, cascade) | one bot per user                                                                                              |
+| `encrypted_bot_token`       | text                                | the Discord bot token, **AES-256-GCM encrypted** at rest (`DISCORD_TOKEN_KEY`); never plaintext, never logged |
+| `bound_companion_id`        | uuid (FK → `companions.id`)         | the companion the bot embodies                                                                                |
+| `owner_discord_user_id`     | text, nullable                      | the owner's Discord id, bound once via `/link`; null until linked (the bot answers no one)                    |
+| `link_code`                 | text, nullable                      | single-use 8-char `/link` code (no-look-alike alphabet); cleared on a successful link                         |
+| `link_code_issued_at`       | timestamptz, nullable               | issued-at for the ~15-min code TTL                                                                            |
+| `created_at` / `updated_at` | timestamptz                         | a (re)save resets the owner + re-issues the code                                                              |
 
 ### Migrations & versioning
 
@@ -756,23 +792,33 @@ loop.
 // the blocks plus the `usage` spent recalling them (the query embedding), so
 // the harness can meter the whole turn against the companion's stamina wallet
 // (`companions.stamina_balance_tokens`, §1).
-interface RetrieveParams { companionId: string; userContent: string }
-interface RetrieveResult { blocks: readonly ContextBlock[]; usage: TokenUsage }
+interface RetrieveParams {
+  companionId: string;
+  userContent: string;
+}
+interface RetrieveResult {
+  blocks: readonly ContextBlock[];
+  usage: TokenUsage;
+}
 type RetrieveContext = (params: RetrieveParams) => Promise<RetrieveResult>;
 
 // a context block may carry provenance (semantic recall); the harness
 // surfaces a turn's provenance as a `citations` stream event before `done`
-interface ContextBlock { role: MessageRole; content: string; provenance?: Citation[] }
+interface ContextBlock {
+  role: MessageRole;
+  content: string;
+  provenance?: Citation[];
+}
 
 // tool hooks — gate around every tool call. The gate writes a pending
 // proposal + returns Block for an effectful call (→ exit-to-approve); afterToolCall
 // receives the executed call so it can log name+args+result.
 type BeforeToolCall = (call: ToolCall, ctx: TurnCtx) => Promise<ToolCall | Block>;
-type AfterToolCall  = (result: ToolResult, call: ToolCall, ctx: TurnCtx) => Promise<ToolResult>;
+type AfterToolCall = (result: ToolResult, call: ToolCall, ctx: TurnCtx) => Promise<ToolResult>;
 // TurnCtx carries { companionId, ownerId } so tools scope tenant state + bill tokens.
 
 // initiation hook — produces a non-human ENTRY
-type Initiator = (companionId: string) => Promise<Entry | null>;                   // null → stay idle
+type Initiator = (companionId: string) => Promise<Entry | null>; // null → stay idle
 ```
 
 **Semantic retrieval** (`packages/core/src/harness/semantic-retrieve.ts`): embeds
@@ -810,7 +856,7 @@ blocks (verbatim sections with source/para preambles), then the most-recent N tr
 **Post-turn perception (inline salient capture).** After the reply streams, the same perception
 step that senses affect (`senseAffect`, §2.3 / `companion-motivation.md`) also runs a conservative
 **user-fact extractor** — a sibling call site that reads the just-finished exchange and emits
-*candidate* `user_facts` for **explicit, high-signal** statements only ("call me Sam", "I'm
+_candidate_ `user_facts` for **explicit, high-signal** statements only ("call me Sam", "I'm
 vegetarian"). It writes them (a revision **replaces** the current value — a stated name is just the `name`
 attribute, no special path; multi-valued `languages`/`relationships` accrete); deeper inference,
 dedup, replace-reconciliation, and Tier-3 synthesis are deferred to the
@@ -823,7 +869,7 @@ the gateway via `LlmStreamParams.tools` (not the prompt text); prior tool-call/r
 replayed into the message array in the OpenAI wire shape.
 
 **Prompt registry (code-as-truth).** The persona, attunement, and every other prompt that defines a
-turn's *instruction* (the system/user message that tells the model what to do) are not inline
+turn's _instruction_ (the system/user message that tells the model what to do) are not inline
 strings — each is a typed `PromptTemplate<I>` in `core/src/prompts/catalog/`,
 rendered at its call site via `render(template, input)`. A template carries an `id`, an
 author-declared `semver`, and a pure `build(input)`; `render` stamps the call with a
@@ -835,9 +881,9 @@ never sent to the provider) carries it through `meteredLlmGateway` for metering 
 main chat turn is stamped `persona` and also passes `LlmStreamParams.coPromptRefs` — co-occurring
 prompt refs (today the affect-attunement line) recorded as `coPrompts` triples on the `llm_call` span
 so the stamp describes the whole call, not just the primary prompt (`coPromptRefs(affect)`,
-`harness/context.ts`). **Deliberate exclusion:** the episodic and semantic *retrieval context blocks*
+`harness/context.ts`). **Deliberate exclusion:** the episodic and semantic _retrieval context blocks_
 (`harness/episodic-retrieve.ts`, `harness/semantic-retrieve.ts`) are not registry templates — they
-are fenced, untrusted *data* assembled per turn, not instructions, so each keeps its inline sentinel
+are fenced, untrusted _data_ assembled per turn, not instructions, so each keeps its inline sentinel
 fencing. The how-to (changing/adding a prompt) lives in `guide-prompts.md`.
 
 ### 2.3 Turn & loop mechanics
@@ -892,7 +938,7 @@ for emoji reactions (§1, `companion-reactions.md` §8).
   the append is logged at `error` on failure and never allowed to fail the originating write (a
   delivery hiccup must not break persistence — `common/logging.md`). The decorator is wired once at
   the composition root (`api/src/index.ts`) — `new PublishingMemoryStore(new TranscriptMemoryStore(db),
-  bus, logger)` — so harness, greeter, and announcer all publish through the one shared instance with
+bus, logger)` — so harness, greeter, and announcer all publish through the one shared instance with
   no call-site change.
 - **Bus = durable append.** `CompanionEventBus` (`core/src/events/bus.ts`) is now a one-method
   interface (`publish(companionId, event)`); the production `DurableCompanionEventBus`
@@ -904,7 +950,7 @@ for emoji reactions (§1, `companion-reactions.md` §8).
   row as a `{ event: 'companion', data }` WS frame, advancing the cursor to the max seq delivered.
   Reads are **visibility-horizon gated**: only rows whose inserting transaction id (`xid`) is below
   `pg_snapshot_xmin(pg_current_snapshot())` are returned, so a `bigserial` `seq` that was assigned at
-  INSERT but commits *after* a higher seq is never skipped (the connect cursor is `latestSettledSeq`,
+  INSERT but commits _after_ a higher seq is never skipped (the connect cursor is `latestSettledSeq`,
   not the raw max, for the same reason — §1, `deliver-scalability.md` §C). Message events include
   `tool_step`/`proposal` kinds, so a surface that wasn't the turn's initiator still renders a complete
   transcript.
@@ -938,35 +984,41 @@ for emoji reactions (§1, `companion-reactions.md` §8).
 
 Loaded from environment / a secret manager; required values validated at startup (fail fast).
 
-| Variable | Purpose |
-|---|---|
-| `DATABASE_URL` | Postgres connection (secure connection required) |
-| `LLM_PROVIDER` | Selects the gateway backend: `openrouter` (default) \| `fake` |
-| `OPENROUTER_API_KEY` | LLM provider credential (secret — required when provider=`openrouter`) |
-| `LLM_MODEL` | Model id passed to the provider |
-| `SERVICE_REGISTRY_SEEDS` | JSON array of `{ client_id, secret, secret_type?, label? }` provisioned into `service_registry` on launch (additive + idempotent; §5). Default `[]`. Secrets are deployment-managed — never committed |
-| `GOOGLE_CLIENT_ID` | OAuth Web client ID — public, served to the SPA and used as the API's ID-token audience. **Required** — Google Sign-In is the browser scheme (auth is per-request: Google + service-token coexist, §5) |
-| `APP_URL` | Web client origin (allowed CORS origin for local cross-origin dev) |
-| `PORT` | Server port the Fastify API binds (default 3000; behind Caddy on the EC2 deploy, or injected as 8080 by GCP Cloud Run) |
-| `EMBEDDING_PROVIDER` | `openrouter` (default) \| `fake` (tests/offline dev) |
-| `EMBEDDING_MODEL` | Embedding model id (default `perplexity/pplx-embed-v1-0.6b`) |
-| `EMBEDDING_DIM` | Requested embedding dimensionality (default 1024) — **must equal** the `sections.embedding` `vector()` column dimension; the API fails fast at startup on mismatch, and changing it requires a migration |
-| `INGESTION_MODEL` | Cheap model for the two ingestion reading passes (default `google/gemini-2.5-flash`) — input-heavy, output-bounded (`architecture.md` §4.8) |
-| `INGESTION_MAX_BYTES` | Source upload size cap, also the link-fetch body ceiling (default 25 MiB) |
-| `USE_CONTEXT_HEADER` | `true` (default) \| `false` — prefix the Pass-2 context header onto embedding inputs (the eval A/B knob, `companion-memory.md` §5) |
-| `STARTING_VITALITY_TOKENS` | The token balance a new companion is seeded with in **each** vitality column (`stamina_balance_tokens` + `energy_balance_tokens`) at creation (default 1 000 000). Not a cap — wallets only refill by feeding (§4.8). |
-| `INGESTION_QUEUE_MAX` | Backstop cap on queued+in-flight ingestion runs across all owners; submissions past it get 429 (default 100) |
-| `WS_MAX_PAYLOAD_BYTES` | Max size of a single inbound WS frame (default 256 KiB); `ws` closes (1009) an oversized frame at the transport before any `JSON.parse`, bounding event-loop stall (`architecture.md` §6) |
-| `WS_MAX_IN_FLIGHT` | Per-connection cap on concurrently-dispatching requests (default 32); frames multiplex, so past the cap a frame is shed with a `rate_limited` error rather than fanning out unbounded work against CPU / the DB pool |
-| `MCP_SERVERS` | Developer whitelist of MCP servers as a JSON array of `{ ref, endpoint, label?, authTokenEnv? }` — the trust boundary for tool acquisition.<br>Empty (default `[]`) disables MCP. HTTP/SSE endpoints only (`companion-tools.md` §7) |
-| `MAX_EQUIPPED_TOOLS` | Per-companion cap on the equipped-tool set (default 8); the single tier evicts LRU past it (`development-plan.md` Phase 9) |
-| `CLI_TOOLS_PATH` | Directory of CLI tool-definition folders (each a `TOOL.json` + `TOOL.md`) — the CLI track's trust boundary, must be **read-only + deployment-controlled** and not overlap the CLI scratch dir (rejected at startup).<br>Empty (default) disables the CLI track (`companion-tools.md` §6) |
-| `CLI_SCRATCH_DIR` | Root for the per-tenant ephemeral working dirs CLI runs execute in (separate from `CLI_TOOLS_PATH`; cleaned up after each run). Empty (default) → the OS temp dir (`companion-tools.md` §7) |
-| `TRACING_PROVIDER` | Online tracing backend: `none` (default) \| `langfuse` (`runbook-tracing.md`) |
-| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | Langfuse credentials (secret; required when `TRACING_PROVIDER=langfuse`) |
-| `LANGFUSE_HOST` | Langfuse base URL (default `https://cloud.langfuse.com`) — **HTTPS only** (it carries the keys + payload); `http://` permitted solely for `localhost` |
-| `TRACING_SAMPLE_RATE` | Fraction of turns traced, deterministic per trace id, `0`–`1` (default `0` — nothing sent until raised) |
-| `TRACING_REDACT` | `strict` (default, metadata only — no content) \| `metadata_only` (same as `strict` today) \| `off` (sends content with a defensive PII/secret scrub) |
+| Variable                                      | Purpose                                                                                                                                                                                                                                                                                          |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `DATABASE_URL`                                | Postgres connection (secure connection required)                                                                                                                                                                                                                                                 |
+| `LLM_PROVIDER`                                | Selects the gateway backend: `openrouter` (default) \| `fake`                                                                                                                                                                                                                                    |
+| `OPENROUTER_API_KEY`                          | LLM provider credential (secret — required when provider=`openrouter`)                                                                                                                                                                                                                           |
+| `LLM_MODEL`                                   | Model id passed to the provider                                                                                                                                                                                                                                                                  |
+| `SERVICE_REGISTRY_SEEDS`                      | JSON array of `{ client_id, secret, secret_type?, label? }` provisioned into `service_registry` on launch (additive + idempotent; §5). Default `[]`. Secrets are deployment-managed — never committed                                                                                            |
+| `GOOGLE_CLIENT_ID`                            | OAuth Web client ID — public, served to the SPA and used as the API's ID-token audience. **Required** — Google Sign-In is the browser scheme (auth is per-request: Google + service-token coexist, §5)                                                                                           |
+| `APP_URL`                                     | Web client origin (allowed CORS origin for local cross-origin dev)                                                                                                                                                                                                                               |
+| `PORT`                                        | Server port the Fastify API binds (default 3000; behind Caddy on the EC2 deploy, or injected as 8080 by GCP Cloud Run)                                                                                                                                                                           |
+| `EMBEDDING_PROVIDER`                          | `openrouter` (default) \| `fake` (tests/offline dev)                                                                                                                                                                                                                                             |
+| `EMBEDDING_MODEL`                             | Embedding model id (default `perplexity/pplx-embed-v1-0.6b`)                                                                                                                                                                                                                                     |
+| `EMBEDDING_DIM`                               | Requested embedding dimensionality (default 1024) — **must equal** the `sections.embedding` `vector()` column dimension; the API fails fast at startup on mismatch, and changing it requires a migration                                                                                         |
+| `INGESTION_MODEL`                             | Cheap model for the two ingestion reading passes (default `google/gemini-2.5-flash`) — input-heavy, output-bounded (`architecture.md` §4.8)                                                                                                                                                      |
+| `INGESTION_MAX_BYTES`                         | Source upload size cap, also the link-fetch body ceiling (default 25 MiB)                                                                                                                                                                                                                        |
+| `USE_CONTEXT_HEADER`                          | `true` (default) \| `false` — prefix the Pass-2 context header onto embedding inputs (the eval A/B knob, `companion-memory.md` §5)                                                                                                                                                               |
+| `STARTING_VITALITY_TOKENS`                    | The token balance a new companion is seeded with in **each** vitality column (`stamina_balance_tokens` + `energy_balance_tokens`) at creation (default 1 000 000). Not a cap — wallets only refill by feeding (§4.8).                                                                            |
+| `INGESTION_QUEUE_MAX`                         | Backstop cap on queued+in-flight ingestion runs across all owners; submissions past it get 429 (default 100)                                                                                                                                                                                     |
+| `WS_MAX_PAYLOAD_BYTES`                        | Max size of a single inbound WS frame (default 256 KiB); `ws` closes (1009) an oversized frame at the transport before any `JSON.parse`, bounding event-loop stall (`architecture.md` §6)                                                                                                        |
+| `WS_MAX_IN_FLIGHT`                            | Per-connection cap on concurrently-dispatching requests (default 32); frames multiplex, so past the cap a frame is shed with a `rate_limited` error rather than fanning out unbounded work against CPU / the DB pool                                                                             |
+| `MCP_SERVERS`                                 | Developer whitelist of MCP servers as a JSON array of `{ ref, endpoint, label?, authTokenEnv? }` — the trust boundary for tool acquisition.<br>Empty (default `[]`) disables MCP. HTTP/SSE endpoints only (`companion-tools.md` §7)                                                              |
+| `MAX_EQUIPPED_TOOLS`                          | Per-companion cap on the equipped-tool set (default 8); the single tier evicts LRU past it (`development-plan.md` Phase 9)                                                                                                                                                                       |
+| `CLI_TOOLS_PATH`                              | Directory of CLI tool-definition folders (each a `TOOL.json` + `TOOL.md`) — the CLI track's trust boundary, must be **read-only + deployment-controlled** and not overlap the CLI scratch dir (rejected at startup).<br>Empty (default) disables the CLI track (`companion-tools.md` §6)         |
+| `CLI_SCRATCH_DIR`                             | Root for the per-tenant ephemeral working dirs CLI runs execute in (separate from `CLI_TOOLS_PATH`; cleaned up after each run). Empty (default) → the OS temp dir (`companion-tools.md` §7)                                                                                                      |
+| `TRACING_PROVIDER`                            | Online tracing backend: `none` (default) \| `langfuse` (`runbook-tracing.md`)                                                                                                                                                                                                                    |
+| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | Langfuse credentials (secret; required when `TRACING_PROVIDER=langfuse`)                                                                                                                                                                                                                         |
+| `LANGFUSE_HOST`                               | Langfuse base URL (default `https://cloud.langfuse.com`) — **HTTPS only** (it carries the keys + payload); `http://` permitted solely for `localhost`                                                                                                                                            |
+| `TRACING_SAMPLE_RATE`                         | Fraction of turns traced, deterministic per trace id, `0`–`1` (default `0` — nothing sent until raised)                                                                                                                                                                                          |
+| `TRACING_REDACT`                              | `strict` (default, metadata only — no content) \| `metadata_only` (same as `strict` today) \| `off` (sends content with a defensive PII/secret scrub)                                                                                                                                            |
+| `DISCORD_SERVICE_CLIENT_ID`                   | The `service_registry.client_id` of the Discord service. Read by **both** the API (pins `POST /internal/discord/token` to this client) and the service (authenticates to the mint route). Defaults to `discord-adapter`; the always-on surface relies on the matching credential row being seeded via `SERVICE_REGISTRY_SEEDS` (`companion-discord.md` §9) |
+| `DISCORD_TOKEN_KEY`                           | Base64 of a 32-byte AES-256-GCM key. Shared: the API encrypts a saved bot token with it (the `discord.config.*` methods), the service decrypts. **Must stay stable** — rotating it strands tokens already in `discord_config`                                                                       |
+| `DISCORD_SERVICE_SECRET`                      | _(service only)_ the secret half of the Discord service's service-token credential, presented to the mint route                                                                                                                                                                                                  |
+| `DISCORD_WS_BASE_URL` / `DISCORD_MINT_URL`    | _(service only)_ the `/ws` origin + the token-mint URL the service connects to (loopback on the single-box deploy)                                                                                                                                                                                 |
+| `DISCORD_SERVICE_PORT`                        | _(service only)_ port the adapter's internal reconcile endpoint (`POST /internal/reconcile`) listens on; **internal network only, never host-mapped** — its sole guard, so the endpoint carries no auth (`companion-discord.md` §2.1)                                                              |
+| `DISCORD_RECONCILE_URL`                       | _(API only)_ the adapter's reconcile endpoint URL the API POSTs to after a `discord_config` write (e.g. `http://discord:PORT/internal/reconcile`; loopback on the single-box deploy). **Empty disables the trigger** — the adapter still picks up the change on its next restart                  |
 
 **Tracing seam.** The harness opens one `TraceSink` trace per turn and nests
 `assemble_context` / `llm_call` (one per call, via `meteredLlmGateway`, stamped with the
@@ -1045,7 +1097,7 @@ Implements the trust-model boundaries in `architecture.md` §8.
 - **Service-to-service auth** — always live alongside Google (no mode switch); a request is routed
   here whenever it carries the `X-Service-Client-Id` header. A trusted backend consumer (e.g. Sprout)
   calls CobbleCompanion on behalf of its own anonymous-UUID users. It sends `X-Service-Client-Id:
-  <client_id>`, `Authorization: Bearer <secret>`, and `X-User-Id: <uuid>` on every request. The API
+<client_id>`, `Authorization: Bearer <secret>`, and `X-User-Id: <uuid>` on every request. The API
   validates the `(client_id, secret)` pair against the **`service_registry`** table — a constant-time
   compare per the row's `secret_type` (`plaintext` today) over the consumer's non-revoked secrets —
   and only then trusts the user headers, provisioning/looking up the `users` row by
@@ -1087,6 +1139,7 @@ Implements the trust-model boundaries in `architecture.md` §8.
 Out of scope for this release; the roadmap is owned by `development-plan.md`.
 
 **Built, not yet wired (gaps).**
+
 - **Episodic recall steering.** `EpisodicStore.searchEpisodes` accepts an `after`/`before`
   time-window filter (unit-tested), but no recall path passes one — neither the harness episodic arm
   nor `/episodes/search` (`episodeSearchSchema` has no time fields, and nothing parses time from a
@@ -1095,6 +1148,7 @@ Out of scope for this release; the roadmap is owned by `development-plan.md`.
   reaches recall because consolidation omits it, not because salience down-weights it.
 
 **Built (post-PoC workstream).**
+
 - **Runtime tool acquisition** — the implementation behind `companion-tools.md`, **both tracks built**
   (`development-plan.md` Phases 9–10) over one **source-polymorphic `CapabilitySource`** seam
   (`core/acquisition/`) the catalog builder, `load_tool`, and the equipped-registry resolver dispatch
@@ -1102,7 +1156,7 @@ Out of scope for this release; the roadmap is owned by `development-plan.md`.
   table — lightweight index of id, name, one-line description, source over every whitelisted tool;
   no argument schemas); a per-companion **equipped set** (`equipped_tools` table) rebuilt at startup,
   a single tier bounded by **`maxEquippedTools`** (env `MAX_EQUIPPED_TOOLS`, LRU eviction; the fixed
-  *core* tools live in code, never in this set); **`search_tools`** (a cheap off-loop LLM lookup over
+  _core_ tools live in code, never in this set); **`search_tools`** (a cheap off-loop LLM lookup over
   the catalog in its own context → ranked ids) and **`load_tool`** (connect if needed → fetch
   **fresh** schema → equip); an **HTTP-MCP adapter** (MCP tool def → the existing `Tool` interface
   §2.1, namespaced `mcp__<ref>__<tool>` with sha256-anchored collision-safe truncation, `tools/call`
@@ -1117,8 +1171,8 @@ Out of scope for this release; the roadmap is owned by `development-plan.md`.
   CLI trust boundary), each a `TOOL.json` (binary + model-facing `parameters` JSON Schema + argv
   template + mandatory limits) + `TOOL.md` (usage prompt); `parseCliToolDef` validates them and
   `cliToolToTool` validates the model's args against the schema, renders each `{param}` into a
-  **discrete argv element** (no shell), and fences output as untrusted. No-shell kills *command*
-  injection but not *option* injection (a value like `-rf`/`--config=/x` that the binary parses as a
+  **discrete argv element** (no shell), and fences output as untrusted. No-shell kills _command_
+  injection but not _option_ injection (a value like `-rf`/`--config=/x` that the binary parses as a
   flag); `unsafeArgvPlaceholders` flags any bare leading-placeholder argv element and
   `FileSystemCliToolStore` logs an operator warning at load (not a skip — the curator anchors it as
   `--in={path}` or behind a `--`, `companion-tools.md` §7). The **`CliToolStore`** seam
@@ -1134,7 +1188,8 @@ Out of scope for this release; the roadmap is owned by `development-plan.md`.
   `development-plan.md`.
 
 **Out of scope / future.**
-- **Onboarding personality seed** — drive weights stay neutral so the character card is *earned*.
+
+- **Onboarding personality seed** — drive weights stay neutral so the character card is _earned_.
 - **Deeper reinforcement** — a contextual-bandit policy beyond the additive change-as-reward nudge.
 - **Auth** — refresh-token **rotation + reuse-detection** and server-side **revocation**, which need
   per-session server state the current stateless app-session tokens (§5) deliberately omit; plus

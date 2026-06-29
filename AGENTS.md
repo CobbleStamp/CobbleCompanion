@@ -13,6 +13,7 @@ Violation of any Iron Law requires immediate correction before proceeding.
 7. **No tautological tests.** Every test must exercise real logic, a real function, or a real integration point. Tests that only assert the contents of a static data structure (e.g., verifying a dict literal has the keys you just typed) are not testing behavior — remove them. A test is valid only if a realistic bug could cause it to fail.
 8. **Explicit types always.** All variables, function arguments, and return types must have explicit type annotations. No untyped declarations. This applies to function signatures, class attributes, and local variables where the type is not obvious from a literal assignment.
 9. **Docstrings declare responsibility.** Every source file must begin with a docstring explaining what the file does, and every exported function, method, and class must have a docstring stating its single responsibility — what it is accountable for, not a restatement of its signature. The purpose is to force articulation of responsibility before writing the code; a unit whose responsibility cannot be stated in one sentence is doing too much and must be split. Private/internal helpers are exempt unless their behavior is non-obvious.
+10. **Simplest thing that works (KISS).** Keep code and design simple and stupid; never engineer beyond what is needed right now. Build for the requirement in front of you, not an imagined future. Before adding any abstraction, layer, option, indirection, config knob, or safeguard, justify it against a **concrete, present need** — if the only justification is "might need it later," "more flexible," "defense in depth," or "best practice," cut it. When two designs both satisfy the requirement, choose the one with fewer moving parts; prefer deleting over adding. Over-engineering is a defect, not diligence.
 
 ---
 
@@ -98,6 +99,7 @@ Before claiming any work is done, verify:
 | `docs/howto-run-evals.md`      | How to run the offline eval harness (tiers, datasets, the prompt A/B knob)                                                                                                                     | What memory eval measures & why (`companion-memory.md` §5)                                                                                          |
 | `docs/runbook-tracing.md`      | Operating & enabling online tracing (Langfuse) + privacy posture                                                                                                                               | Tracing seam/data model (`architecture.md` §3, `implementation.md` §3), env vars (`.env.example`)                                                   |
 | `docs/documentation-rules.md`  | Doc taxonomy rules (types, scopes, naming)                                                                                                                                                     | Actual doc content                                                                                                                                  |
+| `docs/architecture-rules.md`   | Enforceable, measurable structural rules (numbered `R<n>`) to score code against — e.g. R1 thin transport adapters                                                                              | Component map / data flows (`architecture.md`), prose conventions (this file §Code Quality)                                                         |
 | `README.md`                    | Orientation, quick start, setup steps                                                                                                                                                          | Architecture, cross-component concepts                                                                                                              |
 
 **Doc naming convention** (under `docs/`):
@@ -140,6 +142,7 @@ Before claiming any work is done, verify:
 - Remove unused imports before committing.
 - DRY: if logic appears twice, extract it. Near-duplicates differing only in a parameter must be parameterized.
 - Separate orchestration (sequencing, coordination) from computation (pure functions, data transforms).
+- **Transport handlers are thin adapters** (decode → delegate → encode); domain logic lives in framework-free modules returning a typed `Result`. This is rule **R1** — see `docs/architecture-rules.md` for the full rule, checklist, and known violations to migrate.
 - **Never signal failure or error with `null`/`undefined`.** A function that can fail in a way the caller must handle returns a discriminated `Result` (`{ ok: true; … } | { ok: false; reason: … }`, matching the repo's existing `ok`-tagged shape, e.g. `FeedResult`). `null`/`undefined` is reserved for a genuine _absence_ of a value (e.g. `findById` → `T | null`); throwing is for truly exceptional, unrecoverable conditions. See `~/.claude/rules/typescript/coding-style.md` §Error Handling for the rationale and pattern.
 - Iron Laws 4-6 (no dead code, no tautological tests, explicit types) also apply here — see §Iron Laws above.
 - Docstrings on files and exported units are mandatory — see Iron Law 9.
@@ -168,4 +171,5 @@ Before claiming any work is done, verify:
 | Running evals (offline harness)           | `docs/howto-run-evals.md`      |
 | Online tracing / observability            | `docs/runbook-tracing.md`      |
 | Documentation rules                       | `docs/documentation-rules.md`  |
+| Architecture rules (enforceable, R<n>)    | `docs/architecture-rules.md`   |
 | Local dev setup                           | `README.md`                    |
