@@ -92,15 +92,22 @@ independent unless a dependency is noted.
   covers the claim, success-only side-effects, tool-error path, and best-effort
   swallow. Full api suite green (250).
 
-#### A2 · Extract `sources.file` into a `stageAndEnqueueFileSource` service
-- **Problem.** `ws/methods/sources.ts` `sources.file` inlines ~70 lines of
-  orchestration across `staging` + `semantic` + `ingest` + `memory`
-  (upload-key auth, magic-byte validation, enqueue, best-effort transcript
-  append) — no domain-service layer.
-- **Approach.** `stageAndEnqueueFileSource(deps, input): Promise<Result>`;
-  handler does param-parse + delegate + DTO-map.
-- **Risk.** High — upload path. Pin with the sources tests.
-- **Acceptance.** sources tests green; handler thin.
+#### A2 · Extract `sources.file` into a `stageAndEnqueueFileSource` service — ✅ shipped
+- **Problem.** `ws/methods/sources.ts` `sources.file` inlined ~70 lines of
+  orchestration across `staging` + `semantic` + `ingest` + `memory` (upload-key
+  auth, magic-byte validation, enqueue, best-effort transcript append) — no
+  domain-service layer.
+- **Done.** `stageAndEnqueueFileSource(deps, input, resolveCompanionId)` in
+  `packages/api/src/sources/stage-file-source.ts` — ISP-narrowed (`Pick`) deps and
+  a total `{ ok: true … } | { ok: false; failure: {kind, message} }` result; the
+  handler maps `kind → NotFound/QueueFull/BadParams` (messages byte-for-byte) and
+  passes companion resolution as a thunk so the companion-independent validation
+  still runs first (exact former error order on a non-embodied caller). The shared
+  `finishEnqueue` (create source+job → request ingest) moved into the service and
+  is reused by the note/link `enqueueSource`; the two format-message constants
+  moved to `file-format.ts`.
+- **Acceptance met.** All 23 source-route + uploads-local tests green (the service
+  is exercised end-to-end through every validation branch); handler is a thin adapter.
 
 #### A3 · Split the `harness.ts` god class (1166 lines)
 - **Problem.** `Harness` bundles ≥6 responsibilities: the agent loop, prompt
