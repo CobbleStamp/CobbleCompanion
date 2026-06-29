@@ -16,7 +16,7 @@ export const MAGIC_PEEK_BYTES = 1024;
 
 /** User-safe rejection when a filename's extension is not an ingestible format. */
 export const UNSUPPORTED_FILE_TYPE =
-  'unsupported file type — upload a PDF, .txt, .md, .docx, or .pptx';
+  'unsupported file type — supported formats are PDF, .txt, .md, .docx, and .pptx';
 
 /** User-safe rejection when an upload exceeds the configured ingestion byte cap. */
 export const FILE_TOO_LARGE = 'the uploaded file is too large';
