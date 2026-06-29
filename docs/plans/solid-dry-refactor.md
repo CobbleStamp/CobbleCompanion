@@ -121,17 +121,22 @@ independent unless a dependency is noted.
 - **Acceptance.** all harness tests green; the loop class no longer owns
   perception/embedding/background internals.
 
-#### A4 · Decompose `web/src/pages/Chat.tsx` (~906 lines)
-- **Problem.** One component owns transcript, composer, attach, proposals,
+#### A4 · Decompose `web/src/pages/Chat.tsx` (991 lines) — ✅ shipped
+- **Problem.** One component owned transcript, composer, attach, proposals,
   greeting, embodiment establishment, reconnect/backoff + a two-layer event
-  buffer, and room-takeover, across ~18 `useState`/`useRef`. The web polling
-  hooks (`useIngestionJobs`/`useProposals`/`usePresenceHeartbeat`) re-implement
-  mount-guard + timer.
-- **Approach.** Extract `useEmbodimentSync()` (subscription/buffer/reconnect),
-  split `<ChatTranscript>` / `<ChatComposer>`, and a shared `usePolling(fetcher,
-  intervalMs, isActive)`.
-- **Risk.** Medium — isolated to `packages/web`, test-covered (`Chat.test.tsx`).
-- **Acceptance.** web tests green; no behavior change.
+  buffer, and room-takeover, across ~18 `useState`/`useRef`.
+- **Done.** `Chat.tsx` is now 431 lines (turn-streaming + compose only). Extracted
+  to `pages/chat/`: `useEmbodimentSync` (the standing channel + snapshot +
+  reconnect + buffer + room-takeover), `chat-lines.ts` (the `ChatLine` model + all
+  pure merge/reduce/fold helpers, React-free), and the `<ChatTranscript>` /
+  `<ChatComposer>` views (the composer owns its own refs, autogrow, and Enter/IME
+  keys). Verbatim moves — no logic change.
+- **`usePolling` dropped.** The three polling hooks have genuinely different re-arm
+  policies (active-gated one-shot vs poll-forever-via-tick vs interval+listeners)
+  and each has its own test; one shared hook would be a poor-fitting abstraction
+  risking timing regressions for little gain (cf. §5). Left as-is.
+- **Acceptance met.** All 42 `Chat.test.tsx` tests + the full 155-test web suite
+  green; `vite build` clean; no behavior change.
 
 #### A5 · Unify the triplicated WS transport
 - **Problem.** The same WS envelope/transport (a `StreamQueue`, `SupersededError`,
