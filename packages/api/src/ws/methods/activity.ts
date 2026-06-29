@@ -15,7 +15,7 @@ const listParams = z.object({
 
 /** Autonomous-activity log (mirrors proactive-activity.routes) — keyset-paginated. */
 export function activityMethods(deps: AppDeps): WsMethods {
-  const { rewards, embodiment } = deps;
+  const { proactiveActivity, embodiment } = deps;
   return {
     'activity.list': async (ctx, params) => {
       const { limit = DEFAULT_LIMIT, before } = parseParams(
@@ -25,8 +25,8 @@ export function activityMethods(deps: AppDeps): WsMethods {
       );
       const companionId = await companionOf(embodiment, ctx);
       const [outcomes, stats] = await Promise.all([
-        rewards.listDetailed(companionId, limit, before),
-        rewards.stats(companionId),
+        proactiveActivity.listDetailed(companionId, limit, before),
+        proactiveActivity.stats(companionId),
       ]);
       const nextCursor =
         outcomes.length === limit ? (outcomes[outcomes.length - 1]?.seq ?? null) : null;

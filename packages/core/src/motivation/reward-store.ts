@@ -88,11 +88,15 @@ export interface ProactiveOutcomeDetail extends ProactiveOutcomeRecord {
   readonly sources: readonly ProactiveReadSourceDto[];
 }
 
+/**
+ * The reinforcement WRITE/claim loop: record an initiation and atomically fill in
+ * its reward when the user reacts. The hot attribution path the engine, reinforce,
+ * the reaction learner and the greeter depend on — read-only projections (the
+ * Activity view, the Initiative-axis aggregate) live on {@link ProactiveActivityReader}.
+ */
 export interface ProactiveOutcomeStore {
   /** Record a fresh initiation (reward pending). */
   record(companionId: string, input: RecordOutcomeInput): Promise<ProactiveOutcomeRecord>;
-  /** Aggregate initiative counts for the growth Initiative axis. */
-  stats(companionId: string): Promise<ProactiveOutcomeStats>;
   /**
    * The most recent outcome still awaiting a reward (reward is null), if any —
    * the target the next user reaction is attributed to (Phase 4.1). Newest first.
@@ -120,6 +124,18 @@ export interface ProactiveOutcomeStore {
   setReward(companionId: string, id: string, reward: number): Promise<boolean>;
   /** Recent outcomes, newest-first (measurement + tests). */
   list(companionId: string, limit: number): Promise<readonly ProactiveOutcomeRecord[]>;
+}
+
+/**
+ * Read-only projections over recorded outcomes (no mutation): the keyset-paginated
+ * Activity view and the Initiative-axis aggregate. Split from {@link ProactiveOutcomeStore}
+ * so the heavy read-model assembly (joins, findings batch-load, DTO enrichment) and
+ * its tuning sit apart from the hot attribution write path (ISP/SRP). Consumers: the
+ * Activity WS method and the growth service's Initiative axis.
+ */
+export interface ProactiveActivityReader {
+  /** Aggregate initiative counts for the growth Initiative axis. */
+  stats(companionId: string): Promise<ProactiveOutcomeStats>;
   /**
    * Recent outcomes enriched with the joined report note + driving belief, newest-
    * first, for the read-only Activity view. Keyset-paginated: pass the last page's
@@ -154,20 +170,6 @@ export class DrizzleProactiveOutcomeStore implements ProactiveOutcomeStore {
       throw new Error('failed to record proactive outcome');
     }
     return toRecord(row);
-  }
-
-  async stats(companionId: string): Promise<ProactiveOutcomeStats> {
-    const [row] = await this.db
-      .select({
-        total: count(),
-        positive: sql<number>`cast(count(*) filter (where ${proactiveOutcomes.reward} > 0) as int)`,
-      })
-      .from(proactiveOutcomes)
-      .where(eq(proactiveOutcomes.companionId, companionId));
-    return {
-      total: Number(row?.total ?? 0),
-      positive: Number(row?.positive ?? 0),
-    };
   }
 
   async findLatestUnresolved(companionId: string): Promise<ProactiveOutcomeRecord | null> {
@@ -224,6 +226,25 @@ export class DrizzleProactiveOutcomeStore implements ProactiveOutcomeStore {
       .orderBy(desc(proactiveOutcomes.seq))
       .limit(limit);
     return rows.map(toRecord);
+  }
+}
+
+/** Drizzle/Postgres implementation of {@link ProactiveActivityReader}. */
+export class DrizzleProactiveActivityReader implements ProactiveActivityReader {
+  constructor(private readonly db: Database) {}
+
+  async stats(companionId: string): Promise<ProactiveOutcomeStats> {
+    const [row] = await this.db
+      .select({
+        total: count(),
+        positive: sql<number>`cast(count(*) filter (where ${proactiveOutcomes.reward} > 0) as int)`,
+      })
+      .from(proactiveOutcomes)
+      .where(eq(proactiveOutcomes.companionId, companionId));
+    return {
+      total: Number(row?.total ?? 0),
+      positive: Number(row?.positive ?? 0),
+    };
   }
 
   async listDetailed(

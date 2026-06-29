@@ -13,7 +13,10 @@ import { DrizzleEpisodicMemoryStore } from '../memory/episodic-store.js';
 import { TranscriptMemoryStore } from '../memory/store.js';
 import { DrizzleSemanticMemoryStore } from '../memory/semantic-store.js';
 import { DrizzleCompanionAffectStore } from '../motivation/affect-store.js';
-import { DrizzleProactiveOutcomeStore } from '../motivation/reward-store.js';
+import {
+  DrizzleProactiveActivityReader,
+  DrizzleProactiveOutcomeStore,
+} from '../motivation/reward-store.js';
 import { DrizzleProceduralStore } from '../tools/procedural-store.js';
 import { DrizzleToolCallLog } from '../tools/tool-call-log.js';
 import { DrizzleGrowthStore } from './growth-store.js';
@@ -32,6 +35,7 @@ describe('GrowthService', () => {
   let procedural: DrizzleProceduralStore;
   let toolCallLog: DrizzleToolCallLog;
   let rewards: DrizzleProactiveOutcomeStore;
+  let activity: DrizzleProactiveActivityReader;
   let affect: DrizzleCompanionAffectStore;
   let memory: TranscriptMemoryStore;
   let growthStore: DrizzleGrowthStore;
@@ -46,6 +50,7 @@ describe('GrowthService', () => {
     procedural = new DrizzleProceduralStore(db);
     toolCallLog = new DrizzleToolCallLog(db);
     rewards = new DrizzleProactiveOutcomeStore(db);
+    activity = new DrizzleProactiveActivityReader(db);
     affect = new DrizzleCompanionAffectStore(db);
     memory = new TranscriptMemoryStore(db);
     const user = await identity.ensureUserByEmail('owner@example.com');
@@ -62,7 +67,7 @@ describe('GrowthService', () => {
       episodic,
       procedural,
       toolCallLog,
-      rewards,
+      activity,
       affect,
       growth: growthStore,
       memory,

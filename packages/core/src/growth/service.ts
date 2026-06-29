@@ -26,7 +26,7 @@ import type { MemoryStore } from '../memory/store.js';
 import type { SemanticMemoryStore } from '../memory/semantic-store.js';
 import { DRIVE_LABELS, DRIVES, resolveWeights } from '../motivation/drives.js';
 import type { CompanionAffectStore } from '../motivation/affect-store.js';
-import type { ProactiveOutcomeStore } from '../motivation/reward-store.js';
+import type { ProactiveActivityReader } from '../motivation/reward-store.js';
 import type { ProceduralStore } from '../tools/procedural-store.js';
 import type { ToolCallLog } from '../tools/tool-call-log.js';
 import { capabilityChecklist, capabilityLabel, computeObserved } from './capabilities.js';
@@ -78,7 +78,8 @@ export interface GrowthServiceDeps {
   readonly episodic: EpisodicMemoryStore;
   readonly procedural: ProceduralStore;
   readonly toolCallLog: ToolCallLog;
-  readonly rewards: ProactiveOutcomeStore;
+  /** Read-only initiative aggregate for the Initiative axis (no attribution writes). */
+  readonly activity: ProactiveActivityReader;
   readonly affect: CompanionAffectStore;
   readonly growth: GrowthStore;
   readonly memory: MemoryStore;
@@ -186,7 +187,7 @@ export class GrowthService {
         this.deps.episodic.averageSalience(companionId),
         this.deps.procedural.count(companionId),
         this.deps.toolCallLog.stats(companionId),
-        this.deps.rewards.stats(companionId),
+        this.deps.activity.stats(companionId),
         this.deps.affect.get(companionId),
       ]);
 

@@ -1,7 +1,8 @@
 # Refactoring plan: SOLID / DRY / layering cleanup
 
 > **Status: in progress.** Batch 1 shipped in **PR #27** (`refactor: collapse
-> duplication and tighten layering across core/api`). This doc is the canonical
+> duplication and tighten layering across core/api`); Batch 2 (the Tier-M tasks)
+> is shipped on branch `docs/solid-dry-refactor-plan`. This doc is the canonical
 > record of a whole-codebase review and the **followable backlog** for the
 > remaining work. Each task below is sized to land as its own reviewable PR.
 
@@ -53,53 +54,24 @@ Behavior-preserving DRY + layering wins, all green (1265 core+api tests):
 | `buildBudget` moved `routes/` → `ws/methods/vitality-meter.ts` | Coupling-Layer |
 | Deleted unwired `MotivationRunner`/`ConsolidationRunner` (superseded by `JobProcessorPool`) | Over-eng / dead code |
 
+## 3b. Shipped — Batch 2 (Tier M)
+
+Behavior-preserving, full workspace green (typecheck + prettier + 1020 core / 245
+api tests):
+
+| Fix | Bucket |
+| --- | --- |
+| `namespacedToolName(prefix, …segments)` (`tools/tool.ts`) ← `cliToolName`/`mcpToolName` each re-implemented the same sanitize + join + 64-char hash-truncate (M1) | DRY |
+| `ProactiveActivityReader` split out of `ProactiveOutcomeStore` — read-only projections (`listDetailed` + `stats`, the joins/findings-load) separated from the hot attribution write/claim path; `growth` + `activity` now depend on the slim reader (M2) | ISP / SRP |
+| Belief-salience **policy** (`SALIENCE_RANK_WEIGHT` + the `1 + W·s` rank formula → `salienceRankMultiplier`, plus `DEFAULT_BELIEF_SALIENCE`/`BELIEF_REINFORCE_STEP`) moved from `user-model/store.ts` into the `decay.ts` policy module; the store now imports policy, defines none (M3) | SRP |
+
+> **M1 scope decision.** Only the `namespacedToolName` dedup shipped. The planned
+> **Zod rewrite of `validateArgs` was reviewed and rejected** — see §5.
+
 ## 4. Backlog
 
 Line numbers are indicative (they drift); locate by symbol. Each task is
 independent unless a dependency is noted.
-
-### Tier M — medium, behavior-preserving (lower risk; can share a branch)
-
-#### M1 · `cli/adapter.ts` hand-rolled arg validator → Zod
-- **Problem.** `validateArgs` (`packages/core/src/cli/adapter.ts`) hand-rolls a
-  JSON-Schema subset (required / type / enum / additionalProperties). This is a
-  **security boundary** — validated values become subprocess `argv` — and the
-  repo standard is Zod (already a dependency, used at every other boundary).
-  Rolling our own validator at exactly the place not to is both over-engineering
-  and a risk. `cliToolName` also duplicates `mcpToolName`'s sanitize+hash-truncate.
-- **Approach.** Compile each tool's `parameters` to a Zod schema once at
-  tool-build time; validate with it. Extract a shared `namespacedToolName(prefix,
-  ref)` for the cli/mcp name derivation.
-- **Risk.** Medium — must preserve current accept/reject semantics exactly
-  (error messages may change). Pin behavior with tests first.
-- **Acceptance.** `cli/adapter.test.ts` green; add cases for each rejection path;
-  no behavior change in what is accepted/rejected.
-
-#### M2 · Split the read-projection out of `DrizzleProactiveOutcomeStore` (ISP)
-- **Problem.** `motivation/reward-store.ts` mixes the hot **reward-attribution
-  write path** (`record`/`setReward`/`findUnresolved*`) with a **read-only
-  Activity projection** (`listDetailed`/`loadFindings`/`toDetail`,
-  `MAX_FINDINGS_PER_SOURCE`). Its 5 attribution consumers (engine, reinforce,
-  learner, greeter, growth) use ~5 of 8 methods — an ISP violation.
-- **Approach.** Extract a `ProactiveActivityReader` interface + impl for the
-  projection; keep `ProactiveOutcomeStore` lean. Update wiring + the one
-  Activity consumer.
-- **Risk.** Low-medium — interface split + DI wiring; no logic change.
-- **Acceptance.** reward-store + activity tests green; attribution consumers
-  depend only on the slim interface.
-
-#### M3 · Move recall *policy* out of `DrizzleUserModelStore`
-- **Problem.** `user-model/store.ts` (584 lines) is a repository that also holds
-  recall **policy**: salience decay/stale filtering and the reinforce-step /
-  rank-weight constants (`BELIEF_REINFORCE_STEP`, `SALIENCE_RANK_WEIGHT`,
-  `effectiveSalience`/`isStale` use inside `searchBeliefs`). Tuning recall means
-  editing the data layer (SRP).
-- **Approach.** Relocate the decay/ranking policy + constants to the user-model
-  policy layer (`decay.ts` / a small policy module); pass a `weightOf` / live
-  predicate into the search. Keep the store to persist/read.
-- **Risk.** Medium — touches recall ranking; behavior must be identical.
-- **Acceptance.** `user-model/store.test.ts` (incl. salience-tilt, stale-floor,
-  vector-floor cases) green unchanged.
 
 ### Tier A — architectural (one PR each; higher risk / wider blast radius)
 
@@ -182,11 +154,23 @@ independent unless a dependency is noted.
   over-engineering — three callers each need a different subset (joins, vector
   floor, stale filter, salience weight). `memory/sql-fragments.ts` (shipped) was
   the right-sized extraction; the per-store search bodies stay.
+- **Rewriting `cli/adapter.ts` `validateArgs` to Zod (the dropped half of M1).**
+  The tool's `parameters` is **runtime data** authored in `TOOL.json`, and it
+  **must exist as JSON Schema** — it's what `toToolDef` advertises to the LLM.
+  Zod fits *statically-known* schemas; here we'd have to write a JSON-Schema→Zod
+  compiler (no such precedent anywhere in the repo) of roughly the same size as
+  the current 47-line validator — so no simplification, and it introduces a
+  **second representation of the same contract** that must stay in sync with the
+  JSON Schema. That's a DRY *regression* at a security boundary. The current
+  validator checks directly against the single source of truth, and the real
+  injection defense is `renderArgv` + `unsafeArgvPlaceholders`, not this contract
+  check. Keep the direct validator.
 
 ## 6. Sequencing & PR strategy
 
-1. **Batch 2 = M1 + M2 + M3** (one branch/PR) — finishes the medium tier; low
-   risk, same shape as PR #27.
+1. **Batch 2 = M1 + M2 + M3** (one branch/PR) — ✅ shipped (§3b); finishes the
+   medium tier (M1 reduced to the `namespacedToolName` dedup — Zod rewrite
+   dropped, §5).
 2. **A1, A2** — the WS-method layer extractions (the flagship layering fix);
    one PR each, hot path, land carefully.
 3. **A4** — `Chat.tsx`; isolated, can go in parallel with the API work.

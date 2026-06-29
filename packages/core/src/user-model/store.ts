@@ -29,7 +29,13 @@ import {
   withinDistance,
 } from '../memory/sql-fragments.js';
 import { reciprocalRankFusion } from '../memory/rrf.js';
-import { effectiveSalience, isStale } from './decay.js';
+import {
+  BELIEF_REINFORCE_STEP,
+  DEFAULT_BELIEF_SALIENCE,
+  effectiveSalience,
+  isStale,
+  salienceRankMultiplier,
+} from './decay.js';
 import { isSensitiveMatter } from './sensitive.js';
 
 /** The privileged entity every user-fact is about (ontology.md §1). */
@@ -40,18 +46,6 @@ const DEFAULT_IDENTITY_FACT_TYPE = 'attribute';
 const AUTH_SEED_CONFIDENCE = 0.5;
 /** A value the user set directly is authoritative — it wins over any inference. */
 const USER_EDIT_CONFIDENCE = 1;
-/** A new Tier-2 belief starts mid-strength; reinforcement/decay move it from here. */
-const DEFAULT_BELIEF_SALIENCE = 0.5;
-/** Salience bump when an identical belief is restated (idempotent reinforcement). */
-const BELIEF_REINFORCE_STEP = 0.1;
-/**
- * How strongly `salience` tilts hybrid recall ranking (Phase 12). A belief's fused
- * relevance score is multiplied by `1 + WEIGHT * salience`, so salience ∈ [0, 1] maps
- * to a [1, 1 + WEIGHT]× boost. Kept gentle so relevance dominates — salience reorders
- * comparably-relevant hits and breaks near-ties (a reinforced belief rises, a cut one
- * sinks) rather than dragging in beliefs no arm found relevant. Tunable.
- */
-const SALIENCE_RANK_WEIGHT = 0.5;
 /** Beliefs are `attribute` facts in the closed core set (ontology.md §2). */
 const BELIEF_FACT_TYPE = 'attribute';
 
@@ -491,7 +485,7 @@ export class DrizzleUserModelStore implements UserModelStore {
       (row) => row.id,
       params.topK,
       undefined,
-      (row) => 1 + SALIENCE_RANK_WEIGHT * effective(row),
+      (row) => salienceRankMultiplier(effective(row)),
     ).map(({ item, score }) => ({ belief: toUserFactDto(item), score }));
   }
 
