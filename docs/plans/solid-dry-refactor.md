@@ -166,15 +166,17 @@ independent unless a dependency is noted.
 - **Acceptance.** discord (127) + shared (13) + api (250) suites green; the shared
   transport is validated live by `discord-transport.test.ts`.
 
-#### A6 · Split `shared/contracts.ts` (1213 lines) into a `contracts/` barrel
+#### A6 · Split `shared/contracts.ts` (1213 lines) into a `contracts/` barrel — ⏸ skipped (by decision)
 - **Problem.** One file spans ~12 domains (messages, upload, ingestion, the WS
   envelope, motivation, growth, economy, memory, user-model, discord, citations,
-  errors). Organization, not bloat (no dead schemas) — but a module-level SRP miss.
-- **Approach.** Split by domain into `contracts/*.ts` with an `index.ts`
-  re-export; the `@cobble/shared` import surface stays identical. Move the
-  `Ws*Message` envelope into the shared transport module from A5.
-- **Risk.** Low-medium — wide but mechanical; typecheck catches misses.
-- **Acceptance.** full workspace typecheck green; import surface unchanged.
+  errors). Organization, not bloat (no dead schemas) — a module-level SRP miss.
+- **Decision (deliberately not done).** Unlike A1–A5, this addresses none of the
+  review's three lenses (over-engineering, SOLID/DRY, coupling/layering) — the file
+  is well-sectioned and cohesive; the only issue is length. Its types are densely
+  cross-linked (`MessageDto`↔`Citation`↔`ReactionDto`↔streaming↔proposals), so a
+  split trades a navigable single file for a web of intra-package imports and a large
+  mechanical diff, for marginal benefit. Left as-is; revisit as a trivial standalone
+  PR only if the file actually starts impeding work.
 
 ## 5. Reviewed and intentionally NOT changed
 
@@ -205,10 +207,11 @@ independent unless a dependency is noted.
    dropped, §5).
 2. **A1** ✅ shipped (`confirmProposal`); **A2** next — the WS-method layer
    extractions (the flagship layering fix); one PR each, hot path, land carefully.
-3. **A4** — `Chat.tsx`; isolated, can go in parallel with the API work.
-4. **A5 → A6** — A5 first (it owns the moved `Ws*Message` envelope), then A6.
-5. **A3** — the harness split; highest risk, do it on its own with the most care,
-   ideally after the others so the tree is otherwise settled.
+3. **A4** ✅ shipped — `Chat.tsx` decomposed.
+4. **A5** ✅ shipped (Node side) — shared transport + discord; web/test deferred (§A5).
+5. **A3** ✅ shipped — the harness perception/background split.
+6. **A6** ⏸ skipped by decision (§A6) — cosmetic; serves none of the three lenses.
 
-Every PR: behavior-preserving, `pnpm -r run typecheck` + `pnpm lint` +
-`vitest run` green, and verified against this doc's acceptance criteria.
+A1–A5 shipped together in one PR (off `refactor/a1-confirm-proposal-service`), each
+a behavior-preserving commit: `pnpm -r run typecheck` + `pnpm lint` + the relevant
+`vitest run` suites green, verified against each task's acceptance criteria.
