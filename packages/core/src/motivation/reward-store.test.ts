@@ -7,7 +7,7 @@ import { DrizzleIdentityStore } from '../identity/store.js';
 import { TranscriptMemoryStore } from '../memory/store.js';
 import { DrizzleSemanticMemoryStore } from '../memory/semantic-store.js';
 import { DrizzleUserModelStore } from '../user-model/store.js';
-import { DrizzleProactiveOutcomeStore } from './reward-store.js';
+import { DrizzleProactiveActivityReader, DrizzleProactiveOutcomeStore } from './reward-store.js';
 import { DEFAULT_DRIVE_WEIGHTS } from './drives.js';
 
 describe('DrizzleProactiveOutcomeStore', () => {
@@ -16,6 +16,7 @@ describe('DrizzleProactiveOutcomeStore', () => {
   let companionId: string;
   let userId: string;
   let rewards: DrizzleProactiveOutcomeStore;
+  let activity: DrizzleProactiveActivityReader;
   let memory: TranscriptMemoryStore;
   let userModel: DrizzleUserModelStore;
   let semantic: DrizzleSemanticMemoryStore;
@@ -40,6 +41,7 @@ describe('DrizzleProactiveOutcomeStore', () => {
     });
     companionId = companion.id;
     rewards = new DrizzleProactiveOutcomeStore(db);
+    activity = new DrizzleProactiveActivityReader(db);
     memory = new TranscriptMemoryStore(db);
     userModel = new DrizzleUserModelStore(db);
     semantic = new DrizzleSemanticMemoryStore(db);
@@ -209,7 +211,7 @@ describe('DrizzleProactiveOutcomeStore', () => {
         drivenByUserFactId: belief.id,
       });
 
-      const [detail] = await rewards.listDetailed(companionId, 10);
+      const [detail] = await activity.listDetailed(companionId, 10);
       expect(detail?.noteContent).toBe('I read about Rust ownership.');
       expect(detail?.drive).toBe('curiosity');
       expect(detail?.driveSnapshot).toEqual(DEFAULT_DRIVE_WEIGHTS);
@@ -219,7 +221,7 @@ describe('DrizzleProactiveOutcomeStore', () => {
 
     it('lists a non-belief-driven outcome with null belief (LEFT JOIN)', async () => {
       await rewards.record(companionId, { noteMessageId: await noteId('plain'), drive: 'bond' });
-      const [detail] = await rewards.listDetailed(companionId, 10);
+      const [detail] = await activity.listDetailed(companionId, 10);
       expect(detail?.noteContent).toBe('plain');
       expect(detail?.belief).toBeNull();
     });
@@ -232,9 +234,9 @@ describe('DrizzleProactiveOutcomeStore', () => {
         drive: 'understanding',
       });
 
-      const firstPage = await rewards.listDetailed(companionId, 2);
+      const firstPage = await activity.listDetailed(companionId, 2);
       expect(firstPage.map((o) => o.noteContent)).toEqual(['3', '2']); // newest first
-      const nextPage = await rewards.listDetailed(companionId, 2, firstPage[1]!.seq);
+      const nextPage = await activity.listDetailed(companionId, 2, firstPage[1]!.seq);
       expect(nextPage).toHaveLength(1);
       expect(nextPage[0]!.noteContent).toBe('1');
     });
@@ -256,7 +258,7 @@ describe('DrizzleProactiveOutcomeStore', () => {
         readSources: [{ sourceId: src.id, title: 'https://ex.com/cpi' }],
       });
 
-      const [detail] = await rewards.listDetailed(companionId, 10);
+      const [detail] = await activity.listDetailed(companionId, 10);
       expect(detail?.sources).toHaveLength(1);
       expect(detail?.sources[0]?.sourceId).toBe(src.id);
       expect(detail?.sources[0]?.title).toBe('https://ex.com/cpi');
@@ -276,14 +278,14 @@ describe('DrizzleProactiveOutcomeStore', () => {
         readSources: [{ sourceId: src.id, title: 'https://ex.com/empty' }],
       });
 
-      const [detail] = await rewards.listDetailed(companionId, 10);
+      const [detail] = await activity.listDetailed(companionId, 10);
       expect(detail?.sources).toHaveLength(1);
       expect(detail?.sources[0]?.findings).toEqual([]);
     });
 
     it('defaults sources to an empty array for a non-reading act (legacy row)', async () => {
       await rewards.record(companionId, { noteMessageId: await noteId('plain'), drive: 'bond' });
-      const [detail] = await rewards.listDetailed(companionId, 10);
+      const [detail] = await activity.listDetailed(companionId, 10);
       expect(detail?.sources).toEqual([]);
     });
 
@@ -301,7 +303,7 @@ describe('DrizzleProactiveOutcomeStore', () => {
         drive: 'curiosity',
       });
 
-      const mine = await rewards.listDetailed(companionId, 10);
+      const mine = await activity.listDetailed(companionId, 10);
       expect(mine).toHaveLength(1);
       expect(mine[0]!.noteContent).toBe('mine');
     });

@@ -18,6 +18,7 @@ import type {
   Logger,
   MemoryStore,
   PresenceStore,
+  ProactiveActivityReader,
   ProactiveOutcomeStore,
   ProceduralStore,
   ProposalStore,
@@ -113,6 +114,8 @@ export interface AppDeps {
   readonly food: FoodStore;
   /** Reinforcement log — one outcome per proactive initiation (P4). */
   readonly rewards: ProactiveOutcomeStore;
+  /** Read-only projections over outcomes: the Activity view + Initiative aggregate (P4/P5). */
+  readonly proactiveActivity: ProactiveActivityReader;
   /** Emoji reactions on transcript messages, both directions (companion-reactions.md). */
   readonly reactions: ReactionStore;
   /** The will's half of the reaction loop — enqueues a `reaction_learn` job so the

@@ -6,8 +6,37 @@
  * data, §4.7) rather than throwing into the loop.
  */
 
+import { createHash } from 'node:crypto';
+
 import type { ToolResult, TurnCtx } from '../harness/hooks.js';
 import type { ToolDef } from '../llm/gateway.js';
+
+/** Provider tool-name limit (OpenAI-compatible): `^[a-zA-Z0-9_-]{1,64}$`. */
+const MAX_TOOL_NAME_LENGTH = 64;
+/** Hex length of the disambiguating hash appended to an over-length tool name. */
+const NAME_HASH_LENGTH = 8;
+
+/**
+ * Derive the advertised name for a dynamically-acquired tool:
+ * `<prefix>__<segment>__…`, each segment sanitized to the provider charset and the
+ * whole capped at {@link MAX_TOOL_NAME_LENGTH} — namespaced so an acquired tool can
+ * never collide with a native tool or another source's. When the joined name would
+ * exceed the cap, it is truncated and anchored with a short hash of the *full* name:
+ * bare truncation would let two distinct refs that share a 64-char prefix collapse to
+ * the same name, and a duplicate name silently shadows a tool in the registry's
+ * by-name dispatch. Deterministic by construction — every site that recomputes a
+ * tool's name (e.g. the equipped summary) must agree, so the rule lives here once.
+ * Shared by the CLI (`cli__<ref>`) and MCP (`mcp__<ref>__<tool>`) adapters.
+ */
+export function namespacedToolName(prefix: string, ...segments: readonly string[]): string {
+  const clean = (value: string): string => value.replace(/[^a-zA-Z0-9_-]/gu, '_');
+  const full = [prefix, ...segments.map(clean)].join('__');
+  if (full.length <= MAX_TOOL_NAME_LENGTH) {
+    return full;
+  }
+  const suffix = `_${createHash('sha256').update(full).digest('hex').slice(0, NAME_HASH_LENGTH)}`;
+  return `${full.slice(0, MAX_TOOL_NAME_LENGTH - suffix.length)}${suffix}`;
+}
 
 export interface Tool {
   readonly name: string;

@@ -8,22 +8,14 @@
  * whitelist is the gate for these tools, not propose→approve (§6).
  */
 
-import { createHash } from 'node:crypto';
-
 import type { ToolResult } from '../harness/hooks.js';
 import { stripSentinels, UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../text/untrusted.js';
 import { consoleLogger, type Logger } from '../logging.js';
-import { type Tool, toolErrorMessage } from '../tools/tool.js';
+import { namespacedToolName, type Tool, toolErrorMessage } from '../tools/tool.js';
 import type { McpGateway, McpServerSpec, McpToolDef } from './gateway.js';
 
 /** Cap on returned text — a tool result feeds context, not an unbounded archive. */
 const DEFAULT_MAX_CHARS = 8000;
-
-/** Provider tool-name limit (OpenAI-compatible): `^[a-zA-Z0-9_-]{1,64}$`. */
-const MAX_TOOL_NAME_LENGTH = 64;
-
-/** Hex length of the disambiguating hash appended to an over-length tool name. */
-const NAME_HASH_LENGTH = 8;
 
 export interface McpToolAdapterOptions {
   readonly gateway: McpGateway;
@@ -35,24 +27,11 @@ export interface McpToolAdapterOptions {
 }
 
 /**
- * The advertised name for an MCP tool: `mcp__<ref>__<tool>`, with each segment
- * sanitized to the provider charset and the whole capped — namespaced so a
- * server's tool can never collide with a native tool or another server's.
+ * The advertised name for an MCP tool: `mcp__<ref>__<tool>`
+ * (see {@link namespacedToolName}).
  */
 export function mcpToolName(ref: string, toolName: string): string {
-  const clean = (value: string): string => value.replace(/[^a-zA-Z0-9_-]/gu, '_');
-  const full = `mcp__${clean(ref)}__${clean(toolName)}`;
-  if (full.length <= MAX_TOOL_NAME_LENGTH) {
-    return full;
-  }
-  // Bare truncation would let two distinct tools that share a 64-char prefix
-  // collapse to the same name — and a duplicate name silently shadows a tool in
-  // the registry's by-name dispatch (registry.ts) while both still advertise.
-  // Anchor the truncated name with a short hash of the *full* name so distinct
-  // tools stay distinct. Deterministic by construction: the equipped summary
-  // recomputes this name independently (acquisition/equipped-summary.ts) and must agree.
-  const suffix = `_${createHash('sha256').update(full).digest('hex').slice(0, NAME_HASH_LENGTH)}`;
-  return `${full.slice(0, MAX_TOOL_NAME_LENGTH - suffix.length)}${suffix}`;
+  return namespacedToolName('mcp', ref, toolName);
 }
 
 /** Build a {@link Tool} that proxies to one MCP tool on a whitelisted server. */

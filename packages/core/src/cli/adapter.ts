@@ -12,38 +12,21 @@
  * propose→approve (§6).
  */
 
-import { createHash } from 'node:crypto';
-
 import type { ToolResult, TurnCtx } from '../harness/hooks.js';
 import { stripSentinels, UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../text/untrusted.js';
 import { consoleLogger, type Logger } from '../logging.js';
-import { type Tool, toolErrorMessage } from '../tools/tool.js';
+import { namespacedToolName, type Tool, toolErrorMessage } from '../tools/tool.js';
 import type { CommandSandbox } from './sandbox.js';
 import type { CliToolDef } from './tool-def.js';
 
 /** Cap on returned text — a tool result feeds context, not an unbounded archive. */
 const DEFAULT_MAX_CHARS = 8000;
-/** Provider tool-name limit (OpenAI-compatible): `^[a-zA-Z0-9_-]{1,64}$`. */
-const MAX_TOOL_NAME_LENGTH = 64;
-const NAME_HASH_LENGTH = 8;
 
 const PLACEHOLDER = /\{(\w+)\}/gu;
 
-/**
- * The advertised name for a CLI tool: `cli__<ref>`, sanitized to the provider
- * charset and capped — namespaced so it can never collide with a native tool or an
- * MCP tool. Mirrors {@link mcpToolName}; the hash anchor keeps two long refs that
- * share a 64-char prefix distinct (a duplicate name silently shadows in the
- * registry's by-name dispatch).
- */
+/** The advertised name for a CLI tool: `cli__<ref>` (see {@link namespacedToolName}). */
 export function cliToolName(ref: string): string {
-  const clean = ref.replace(/[^a-zA-Z0-9_-]/gu, '_');
-  const full = `cli__${clean}`;
-  if (full.length <= MAX_TOOL_NAME_LENGTH) {
-    return full;
-  }
-  const suffix = `_${createHash('sha256').update(full).digest('hex').slice(0, NAME_HASH_LENGTH)}`;
-  return `${full.slice(0, MAX_TOOL_NAME_LENGTH - suffix.length)}${suffix}`;
+  return namespacedToolName('cli', ref);
 }
 
 export interface CliToolAdapterOptions {

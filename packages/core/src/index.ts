@@ -398,7 +398,9 @@ export {
 } from './greeting/greeter.js';
 // Reinforcement — outcome store, change-as-reward weight update, attribution (Phase 4)
 export {
+  DrizzleProactiveActivityReader,
   DrizzleProactiveOutcomeStore,
+  type ProactiveActivityReader,
   type ProactiveOutcomeBelief,
   type ProactiveOutcomeDetail,
   type ProactiveOutcomeRecord,

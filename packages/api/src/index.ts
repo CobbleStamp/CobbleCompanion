@@ -34,6 +34,7 @@ import {
   DrizzleServiceRegistry,
   DrizzleLeadStore,
   DrizzleProceduralStore,
+  DrizzleProactiveActivityReader,
   DrizzleProactiveOutcomeStore,
   DrizzleProposalStore,
   DrizzleReactionStore,
@@ -166,6 +167,7 @@ async function main(): Promise<void> {
   // Reinforcement log + the rolling affect read — built early so the harness can
   // sense the user's mood each turn (Phase 4.2) and the will can learn from it.
   const rewards = new DrizzleProactiveOutcomeStore(db);
+  const proactiveActivity = new DrizzleProactiveActivityReader(db);
   const affectStore = new DrizzleCompanionAffectStore(db);
   const reactions = new DrizzleReactionStore(db);
   const semantic = new DrizzleSemanticMemoryStore(db);
@@ -527,7 +529,7 @@ async function main(): Promise<void> {
     episodic,
     procedural,
     toolCallLog,
-    rewards,
+    activity: proactiveActivity,
     affect: affectStore,
     growth: growthStore,
     memory,
@@ -561,6 +563,7 @@ async function main(): Promise<void> {
     energy,
     food,
     rewards,
+    proactiveActivity,
     reactions,
     reactionLearn,
     affect: affectStore,

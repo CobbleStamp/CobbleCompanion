@@ -55,6 +55,7 @@ import {
   DrizzleEmbodimentStore,
   makeIngestJobHandler,
   makeIngestWorkRequester,
+  DrizzleProactiveActivityReader,
   DrizzleProactiveOutcomeStore,
   DrizzleReactionStore,
   ReactionLearner,
@@ -440,6 +441,7 @@ export async function makeTestApp(
   const energy = new DrizzleVitalityStore(db, 'energy');
   const food = new DrizzleFoodStore(db, { initialFood: DEFAULT_GROWTH_CONFIG.initialFood });
   const rewards = new DrizzleProactiveOutcomeStore(db);
+  const proactiveActivity = new DrizzleProactiveActivityReader(db);
   const affectStore = new DrizzleCompanionAffectStore(db);
   const reactionLearner = new ReactionLearner({
     rewards,
@@ -458,7 +460,7 @@ export async function makeTestApp(
     episodic,
     procedural,
     toolCallLog,
-    rewards,
+    activity: proactiveActivity,
     affect: affectStore,
     growth: growthStore,
     memory,
@@ -519,6 +521,7 @@ export async function makeTestApp(
     energy,
     food,
     rewards,
+    proactiveActivity,
     reactions,
     reactionLearn,
     growth,
