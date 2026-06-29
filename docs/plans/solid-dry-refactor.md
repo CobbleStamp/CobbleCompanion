@@ -109,17 +109,23 @@ independent unless a dependency is noted.
 - **Acceptance met.** All 23 source-route + uploads-local tests green (the service
   is exercised end-to-end through every validation branch); handler is a thin adapter.
 
-#### A3 · Split the `harness.ts` god class (1166 lines)
-- **Problem.** `Harness` bundles ≥6 responsibilities: the agent loop, prompt
+#### A3 · Split the `harness.ts` god class (1181 lines) — ✅ shipped
+- **Problem.** `Harness` bundled ≥6 responsibilities: the agent loop, prompt
   assembly, affect perception/learning, user-model capture/embedding, token
   metering, and background-task lifecycle.
-- **Approach.** Extract a `PostTurnPerception` collaborator (affect +
-  user-fact capture + belief embedding + their two serialize-by-key chains) and
-  a `BackgroundTaskGroup` (`trackBackground`/`whenIdle`), injected into the
-  harness. Optionally extract `executeToolCalls` from `runLoop`.
-- **Risk.** **Highest** — the hottest path. Land in small steps, each green.
-- **Acceptance.** all harness tests green; the loop class no longer owns
-  perception/embedding/background internals.
+- **Done.** harness.ts is now 890 lines. Extracted `PostTurnPerception`
+  (`post-turn-perception.ts`) — the affect sense+learn, user-fact capture, belief
+  embedding, and their two serialize-by-key chains (per-companion affect,
+  per-user capture) + `affectContext` + the `HarnessAffect`/`HarnessUserModel`
+  types (re-exported from `harness.ts` so the import surface is unchanged); and
+  `BackgroundTaskGroup` (`background-tasks.ts`) — `track`/`whenIdle`. The harness
+  injects both, keeps the pre-turn affect/profile *reads* for prompt assembly, and
+  `runTurn` now calls `perception.needsSnapshot` / `perception.afterTurn` and tracks
+  the returned tasks. Verbatim logic move; `whenIdle()` stays public, delegating.
+- **`executeToolCalls` extraction** left for a follow-up (optional in the plan);
+  the perception + background split is the bulk of the god-class win.
+- **Acceptance met.** All 106 harness tests + the full 1020-test core suite green;
+  the loop class no longer owns perception/embedding/background internals.
 
 #### A4 · Decompose `web/src/pages/Chat.tsx` (991 lines) — ✅ shipped
 - **Problem.** One component owned transcript, composer, attach, proposals,

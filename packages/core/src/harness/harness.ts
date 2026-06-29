@@ -1,5 +1,4 @@
 import {
-  isTier2Predicate,
   type ChatStreamEvent,
   type Citation,
   type CompanionDto,
@@ -8,19 +7,22 @@ import {
   type UserFactDto,
 } from '@cobble/shared';
 import { randomUUID } from 'node:crypto';
-import type { EmbeddingGateway } from '../embedding/gateway.js';
 import type { LlmGateway, LlmMessage, StreamResult } from '../llm/gateway.js';
 import { toolStepSummary } from '../tools/tool.js';
 import { consoleLogger, type Logger } from '../logging.js';
 import { isConversational, type MemoryStore } from '../memory/store.js';
-import { senseAffect, type AffectReading } from '../motivation/affect.js';
-import type { CompanionAffectStore } from '../motivation/affect-store.js';
+import type { AffectReading } from '../motivation/affect.js';
 import type { VitalityStore } from '../quota/vitality-store.js';
-import { captureUserFacts } from '../user-model/extractor.js';
-import { beliefPhrase } from '../user-model/phrasing.js';
-import type { UserModelStore } from '../user-model/store.js';
+import { BackgroundTaskGroup } from './background-tasks.js';
+import {
+  PostTurnPerception,
+  type HarnessAffect,
+  type HarnessUserModel,
+} from './post-turn-perception.js';
 import { dispatchTool } from '../tools/dispatch.js';
 import { ToolRegistry } from '../tools/registry.js';
+
+export type { HarnessAffect, HarnessUserModel } from './post-turn-perception.js';
 import {
   guardedTraceSink,
   noopTraceSink,
@@ -58,47 +60,6 @@ const HELD_TURN_FALLBACK = 'I’ve set that aside for you to confirm.';
 
 /** User-facing text when a turn can't be completed (failures are data, §4.7). */
 const TURN_ERROR_MESSAGE = 'Cobble hit a problem while responding. Please try again.';
-
-/** Recent transcript turns to give the affect read as context (Phase 4.2). */
-const AFFECT_CONTEXT_TURNS = 6;
-
-/** Confidence for a fact the user EXPLICITLY stated — high, but below a user_edit's
- *  authoritative 1.0, so a later correction in the browser still wins (Phase 11). */
-const CAPTURED_FACT_CONFIDENCE = 0.9;
-
-/**
- * Affect perception + learning wiring (Phase 4.2, companion-motivation.md §7).
- * Optional: when present, the harness senses the user's mood each turn (storing
- * the rolling read) and hands the *change* to `reinforce` for the will to learn
- * from. The body senses; the will learns. Omitted = the pre-4.2 path (no affect).
- */
-export interface HarnessAffect {
-  readonly store: CompanionAffectStore;
-  /** Cheap model for the one-shot mood read. */
-  readonly model: string;
-  /** Consumes the turn-over-turn change in mood (the slow loop). Optional. */
-  readonly reinforce?: (companionId: string, delta: number) => Promise<void>;
-}
-
-/**
- * User-Model wiring (Phase 11, companion-memory.md §4). Optional: when present, the
- * harness injects the user's Tier-1 core profile into the persona each turn and, after
- * the reply, captures any explicit identity facts the user stated (inline salient
- * capture). Omitted = no user-model reads (the pre-Phase-11 path).
- */
-export interface HarnessUserModel {
-  readonly store: UserModelStore;
-  /** Cheap model for the one-shot capture read (reuse the ingestion model). */
-  readonly model: string;
-  /**
-   * Embeds explicit Tier-2 beliefs at capture so they recall by vector immediately
-   * (Phase 12). Omit → beliefs are stored embedding-less and recall via FTS only until
-   * the reflector back-fills them. All three must be present to embed.
-   */
-  readonly embeddings?: EmbeddingGateway;
-  readonly embeddingModel?: string;
-  readonly embeddingDimensions?: number;
-}
 
 export interface HarnessOptions {
   readonly gateway: LlmGateway;
@@ -205,19 +166,12 @@ export class Harness {
   private readonly userModel: HarnessUserModel | undefined;
   private readonly traceSink: TraceSink;
   private readonly logger: Logger;
-  /** In-flight post-turn affect reads — launched fire-and-forget, tracked so
-   *  shutdown/tests can await them settling (see {@link whenIdle}). */
-  private readonly backgroundTasks = new Set<Promise<void>>();
-  /** Tail of the per-companion affect chain. The read→sense→upsert is serialized
-   *  per companion so a fast follow-up turn can't read the same stale `prior`
-   *  baseline (double-counting the mood delta) or clobber a newer reading with a
-   *  late older upsert — both failure modes of the last-write-wins store. */
-  private readonly affectChains = new Map<string, Promise<void>>();
-  /** Tail of the per-USER user-fact capture chain. Keyed by userId (= the owner),
-   *  not companionId: user-facts are per-user, so two of a user's companions writing
-   *  the same singular attribute must serialize through one chain. Independent of
-   *  {@link affectChains} so a slow capture never delays the affect read. */
-  private readonly userFactChains = new Map<string, Promise<void>>();
+  /** Post-turn perception + learning (affect sense + user-fact capture), launched
+   *  fire-and-forget after the reply streams; owns its own per-key serialization. */
+  private readonly perception: PostTurnPerception;
+  /** The fire-and-forget background tasks (the perception reads), awaitable on
+   *  shutdown / in tests via {@link whenIdle}. */
+  private readonly background = new BackgroundTaskGroup();
 
   constructor(options: HarnessOptions) {
     this.gateway = options.gateway;
@@ -235,6 +189,13 @@ export class Harness {
     this.quota = options.quota;
     this.affect = options.affect;
     this.userModel = options.userModel;
+    this.perception = new PostTurnPerception({
+      gateway: this.gateway,
+      logger: this.logger,
+      quota: this.quota,
+      affect: this.affect,
+      userModel: this.userModel,
+    });
     // Guard the sink so a misbehaving adapter can never break a turn (logging.md).
     this.traceSink = guardedTraceSink(options.traceSink ?? noopTraceSink, (error) =>
       this.logger.error('trace sink failed (tracing dropped for this call)', {
@@ -267,11 +228,9 @@ export class Harness {
       // drops the final turn as "the message being read" — would drop the reply instead,
       // leaving the user message duplicated against `userText`. Capturing here keeps that
       // invariant. Skipped entirely when neither perception is wired (no extra query).
-      const capturesUserFacts = Boolean(this.userModel) && ownerId !== undefined;
-      const perceptionSnapshot =
-        this.affect || capturesUserFacts
-          ? await this.memory.getRecentMessages(companion.id, this.recentLimit)
-          : [];
+      const perceptionSnapshot = this.perception.needsSnapshot(ownerId)
+        ? await this.memory.getRecentMessages(companion.id, this.recentLimit)
+        : [];
       const superseded = yield* this.runLoop(
         companion,
         ownerId,
@@ -290,29 +249,21 @@ export class Harness {
       if (superseded) {
         return true;
       }
-      // Perception + learning (Phase 4.2) — launched AFTER the reply has fully
-      // streamed (all tokens + `done` already yielded) and deliberately NOT
-      // awaited: the generator returns immediately so the SSE socket closes on
-      // `done` and the route's post-turn nudges fire without waiting a full
-      // affect round-trip. Awaiting bought no ordering — the client is told
-      // `done` before this runs, so the next turn already races this read either
-      // way. Self-catching (perceiveAndLearn never throws), so the floated
-      // promise can't surface as an unhandled rejection.
-      //
-      // Serialize per companion: chain this read after the prior turn's so its
-      // upsert lands before the next read captures `prior` (no double-count, no
-      // clobber). `.catch` isolates a prior link's failure; the snapshot was
-      // already taken above, so the chained read still reflects this turn.
-      if (this.affect) {
-        this.trackBackground(this.chainAffect(companion.id, perceptionSnapshot, userContent));
-      }
-      // Inline salient capture (Phase 11) — an INDEPENDENT background task (not chained
-      // onto the affect read, so neither delays the other), serialized per USER since
-      // user-facts are per-user. Same snapshot, same post-`done` timing as affect.
-      if (capturesUserFacts && ownerId) {
-        this.trackBackground(
-          this.chainUserFacts(ownerId, companion.id, perceptionSnapshot, userContent),
-        );
+      // Perception + learning (Phase 4.2 affect, Phase 11–12 capture) — launched AFTER
+      // the reply has fully streamed (all tokens + `done` already yielded) and
+      // deliberately NOT awaited: the generator returns immediately so the SSE socket
+      // closes on `done` and the route's post-turn nudges fire without waiting a full
+      // round-trip. Awaiting bought no ordering — the client is told `done` before this
+      // runs, so the next turn already races these reads either way. The perception owns
+      // the per-key serialization (companion for affect, user for capture) and is
+      // self-catching, so the tracked promises can't surface as unhandled rejections.
+      for (const task of this.perception.afterTurn({
+        companionId: companion.id,
+        ownerId,
+        userContent,
+        snapshot: perceptionSnapshot,
+      })) {
+        this.background.track(task);
       }
       return false;
     } catch (error) {
@@ -329,25 +280,13 @@ export class Harness {
   }
 
   /**
-   * Resolves once every in-flight post-turn affect read has settled. The reads
-   * are launched fire-and-forget from {@link runTurn} so the SSE socket can close
-   * on `done`; this lets a graceful shutdown — or a test asserting the read's
-   * effects — wait for that background work to finish. Never rejects: each task
-   * self-catches.
+   * Resolves once every in-flight post-turn read has settled. The reads are launched
+   * fire-and-forget from {@link runTurn} so the SSE socket can close on `done`; this
+   * lets a graceful shutdown — or a test asserting the read's effects — wait for that
+   * background work to finish. Never rejects: each task self-catches.
    */
   async whenIdle(): Promise<void> {
-    while (this.backgroundTasks.size > 0) {
-      await Promise.all([...this.backgroundTasks]);
-    }
-  }
-
-  /** Register a fire-and-forget task so {@link whenIdle} can await it, removing
-   *  it once settled. The task is already self-catching, so this never rejects. */
-  private trackBackground(task: Promise<void>): void {
-    const tracked = task.finally(() => {
-      this.backgroundTasks.delete(tracked);
-    });
-    this.backgroundTasks.add(tracked);
+    await this.background.whenIdle();
   }
 
   /**
@@ -382,221 +321,6 @@ export class Harness {
       return false;
     } finally {
       trace.end(traceError !== undefined ? { error: traceError } : undefined);
-    }
-  }
-
-  /**
-   * Queue a post-turn affect read behind the companion's prior one so the
-   * read→sense→upsert window can't overlap for the same companion. Each link is
-   * self-catching (perceiveAndLearn never throws); the `.catch` on the prior tail
-   * defends against any unexpected rejection so the chain can't wedge. The map
-   * entry is cleared once this read is the tail, keeping it from growing.
-   */
-  private chainAffect(
-    companionId: string,
-    recent: readonly MessageDto[],
-    userContent: string,
-  ): Promise<void> {
-    const prior = this.affectChains.get(companionId) ?? Promise.resolve();
-    const next = prior
-      .catch(() => undefined)
-      .then(() => this.perceiveAndLearn(companionId, userContent, recent));
-    this.affectChains.set(companionId, next);
-    void next.finally(() => {
-      if (this.affectChains.get(companionId) === next) {
-        this.affectChains.delete(companionId);
-      }
-    });
-    return next;
-  }
-
-  /**
-   * Sense the user's mood from this turn and let the will learn from its change
-   * (Phase 4.2, companion-motivation.md §7). Loads the prior read, senses the
-   * fresh one, stores it (so the next turn has a baseline), and hands the
-   * turn-over-turn `delta` to `reinforce`. The body senses; the will decides what
-   * that teaches. Best-effort throughout — a perception hiccup must never disrupt
-   * the turn that carried it (logging.md); the reply has already streamed.
-   */
-  private async perceiveAndLearn(
-    companionId: string,
-    userContent: string,
-    recent: readonly MessageDto[],
-  ): Promise<void> {
-    if (!this.affect) {
-      return;
-    }
-    try {
-      // The read→sense→upsert is serialized per companion (chainAffect): this
-      // runs only after the prior turn's upsert has landed, so `prior` is never a
-      // stale baseline (no double-counted delta) and a late older upsert can't
-      // clobber a newer reading. The upsert remains last-write-wins, which is safe
-      // under this single-writer-per-companion ordering. (A second process running
-      // the same companion would reintroduce the race; out of scope for the
-      // single-instance PoC — see affect-store.ts.)
-      const prior = await this.affect.store.get(companionId);
-      const reading = await senseAffect(
-        {
-          llm: this.gateway,
-          model: this.affect.model,
-          logger: this.logger,
-          ...(this.quota ? { quota: this.quota } : {}),
-        },
-        {
-          companionId,
-          recentContext: affectContext(recent),
-          userText: userContent,
-        },
-      );
-      // A non-read (provider hiccup or the model declining to report) is not
-      // evidence of a neutral mood — it's no evidence. Keep the prior baseline and
-      // learn nothing, so a transient failure can't fabricate a mood swing (and a
-      // spurious reward) on this turn or the next.
-      if (!reading) {
-        return;
-      }
-      await this.affect.store.upsert(companionId, reading);
-      // First-ever turn (no prior) has no baseline → delta 0, so nothing is
-      // learned; the reading is still stored for next time.
-      const delta = reading.valence - (prior?.valence ?? reading.valence);
-      if (this.affect.reinforce) {
-        await this.affect.reinforce(companionId, delta);
-      }
-    } catch (error) {
-      this.logger.error('failed to perceive/learn user affect', {
-        operation: 'harness.perceiveAndLearn',
-        companionId,
-        error,
-      });
-    }
-  }
-
-  /**
-   * Queue a post-turn user-fact capture behind the user's prior one (per-USER, since
-   * facts are shared across a user's companions). Mirrors {@link chainAffect}: each
-   * link self-catches, the `.catch` on the prior tail defends against a wedge, and the
-   * map entry clears once this is the tail.
-   */
-  private chainUserFacts(
-    userId: string,
-    companionId: string,
-    recent: readonly MessageDto[],
-    userContent: string,
-  ): Promise<void> {
-    const prior = this.userFactChains.get(userId) ?? Promise.resolve();
-    const next = prior
-      .catch(() => undefined)
-      .then(() => this.captureAndStore(userId, companionId, recent, userContent));
-    this.userFactChains.set(userId, next);
-    void next.finally(() => {
-      if (this.userFactChains.get(userId) === next) {
-        this.userFactChains.delete(userId);
-      }
-    });
-    return next;
-  }
-
-  /**
-   * Capture the explicit facts in this turn and persist them (companion-memory.md §4).
-   * The extractor reads; the store writes. Tier-1 identity attributes supersede per
-   * predicate; Tier-2 beliefs (Phase 12) are embedded for hybrid recall and recorded as
-   * beliefs (an identical restatement reinforces, never duplicates). Best-effort
-   * throughout — a capture hiccup must never disrupt the turn that carried it
-   * (logging.md); the reply has already streamed.
-   */
-  private async captureAndStore(
-    userId: string,
-    companionId: string,
-    recent: readonly MessageDto[],
-    userContent: string,
-  ): Promise<void> {
-    if (!this.userModel) {
-      return;
-    }
-    try {
-      const candidates = await captureUserFacts(
-        {
-          llm: this.gateway,
-          model: this.userModel.model,
-          logger: this.logger,
-          ...(this.quota ? { quota: this.quota } : {}),
-        },
-        { companionId, recentContext: affectContext(recent), userText: userContent },
-      );
-      if (!candidates || candidates.length === 0) {
-        return;
-      }
-      const beliefs = candidates.filter((c) => isTier2Predicate(c.predicate));
-      const identity = candidates.filter((c) => !isTier2Predicate(c.predicate));
-
-      for (const candidate of identity) {
-        await this.userModel.store.recordTranscriptFact({
-          userId,
-          predicate: candidate.predicate,
-          object: candidate.object,
-          learnedByCompanionId: companionId,
-          confidence: CAPTURED_FACT_CONFIDENCE,
-        });
-      }
-
-      // Embed all beliefs in one call (best-effort — a null embedding still recalls via
-      // FTS, so an embedding hiccup degrades rather than dropping the belief).
-      const embeddings = await this.embedBeliefs(companionId, beliefs);
-      for (let i = 0; i < beliefs.length; i++) {
-        const candidate = beliefs[i]!;
-        await this.userModel.store.recordBelief({
-          userId,
-          predicate: candidate.predicate,
-          object: candidate.object,
-          source: 'transcript',
-          learnedByCompanionId: companionId,
-          confidence: CAPTURED_FACT_CONFIDENCE,
-          ...(embeddings?.[i] ? { embedding: embeddings[i]! } : {}),
-        });
-      }
-    } catch (error) {
-      this.logger.error('failed to capture/store user facts', {
-        operation: 'harness.captureUserFacts',
-        companionId,
-        error,
-      });
-    }
-  }
-
-  /**
-   * Embed each belief's text for hybrid recall, returning vectors aligned to `beliefs`
-   * (or null when embedding is unconfigured or fails — beliefs then recall via FTS).
-   * Best-effort: an embedding failure must not drop the captured beliefs.
-   */
-  private async embedBeliefs(
-    companionId: string,
-    beliefs: readonly { predicate: string; object: string }[],
-  ): Promise<readonly (readonly number[] | undefined)[] | null> {
-    const cfg = this.userModel;
-    if (
-      !cfg?.embeddings ||
-      !cfg.embeddingModel ||
-      cfg.embeddingDimensions === undefined ||
-      beliefs.length === 0
-    ) {
-      return null;
-    }
-    try {
-      const { vectors } = await cfg.embeddings.embed({
-        // Embed the natural-language rendering (not a terse `predicate object` tag) so the
-        // stored vector lives in the same register as the recall query — see beliefPhrase.
-        input: beliefs.map((b) => beliefPhrase(b.predicate, b.object)),
-        model: cfg.embeddingModel,
-        dimensions: cfg.embeddingDimensions,
-      });
-      return beliefs.map((_, i) => vectors[i]);
-    } catch (error) {
-      this.logger.error('failed to embed captured beliefs; storing FTS-only', {
-        operation: 'harness.embedBeliefs',
-        companionId,
-        error,
-      });
-      return null;
     }
   }
 
@@ -1152,21 +876,6 @@ export class Harness {
       usage: ZERO_USAGE,
     };
   };
-}
-
-/**
- * Format recent transcript turns as context for the affect read (Phase 4.2):
- * conversational turns only (tool-step/proposal rows are UI chrome), and drop the
- * final turn — that's the user message being read, passed separately as the
- * subject. Capped to the last {@link AFFECT_CONTEXT_TURNS} so the read stays cheap.
- */
-function affectContext(recent: readonly MessageDto[]): string {
-  return recent
-    .filter(isConversational)
-    .slice(0, -1)
-    .slice(-AFFECT_CONTEXT_TURNS)
-    .map((message) => `${message.role}: ${message.content}`)
-    .join('\n');
 }
 
 /** Collapse repeated passages from the same source span into one citation. */
