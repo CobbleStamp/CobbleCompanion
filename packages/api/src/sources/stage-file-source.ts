@@ -53,8 +53,8 @@ export interface StageFileSourceInput {
 
 /**
  * A typed rejection mapped 1:1 onto the WS error the handler throws — `kind` picks the
- * error class, `message` is the client-safe text (preserved byte-for-byte from the
- * former inline handler). Keeping the transport error classes out of the domain.
+ * error class, `message` is the client-safe text. Keeping the transport error classes
+ * out of the domain.
  */
 export interface StageFileSourceFailure {
   readonly kind: 'not_found' | 'bad_params' | 'queue_full';

@@ -153,4 +153,61 @@ describe('confirmProposal', () => {
     if (result.outcome !== 'confirmed') return;
     expect(result.outcomeRow).toBeNull();
   });
+
+  it('returns the claimed proposal verbatim, including a non-chat origin', async () => {
+    // The chat loop re-enters off `proposal.origin`; a non-chat origin (explore /
+    // autonomous) must survive the round-trip unaltered so the caller can branch on it.
+    const { deps } = buildDeps({
+      proposal: proposalRecord({ origin: 'explore' as ProposalOrigin, leadId: 'lead1' }),
+    });
+    const result = await confirmProposal(deps, input);
+
+    expect(result.outcome).toBe('confirmed');
+    if (result.outcome !== 'confirmed') return;
+    expect(result.proposal.origin).toBe('explore');
+    expect(result.proposal.id).toBe(PROPOSAL);
+  });
+
+  it('swallows a thrown tool-call log (proposals.confirm.log) and still confirms', async () => {
+    const { deps, spies } = buildDeps({ proposal: proposalRecord() });
+    const error = vi.fn();
+    const throwingLog = {
+      record: async () => {
+        throw new Error('audit store down');
+      },
+    } as unknown as ConfirmProposalDeps['toolCallLog'];
+
+    const result = await confirmProposal(
+      { ...deps, toolCallLog: throwingLog, logger: { ...silentLogger, error } },
+      input,
+    );
+
+    // A failed audit-log write is logged, never aborting the confirm (the action ran).
+    expect(result.outcome).toBe('confirmed');
+    expect(error).toHaveBeenCalledOnce();
+    expect(error.mock.calls[0]?.[1]).toMatchObject({ operation: 'proposals.confirm.log' });
+    // The success-only side-effects still run after the swallow.
+    expect(spies.appendMessage).toHaveBeenCalledOnce();
+  });
+
+  it('swallows a thrown procedural record (proposals.confirm.procedural) and still confirms', async () => {
+    const { deps, spies } = buildDeps({ proposal: proposalRecord() });
+    const error = vi.fn();
+    const throwingProcedural = {
+      record: async () => {
+        throw new Error('procedural store down');
+      },
+    } as unknown as ConfirmProposalDeps['procedural'];
+
+    const result = await confirmProposal(
+      { ...deps, procedural: throwingProcedural, logger: { ...silentLogger, error } },
+      input,
+    );
+
+    expect(result.outcome).toBe('confirmed');
+    expect(error).toHaveBeenCalledOnce();
+    expect(error.mock.calls[0]?.[1]).toMatchObject({ operation: 'proposals.confirm.procedural' });
+    // The transcript row still lands after a swallowed procedural failure.
+    expect(spies.appendMessage).toHaveBeenCalledOnce();
+  });
 });

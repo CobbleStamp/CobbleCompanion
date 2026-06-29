@@ -82,7 +82,14 @@ export interface WsTransportLogger {
 }
 
 export interface WsTransportOptions {
-  /** Socket factory: the real `ws` socket, Node's `WebSocket`, or a test fake. */
+  /**
+   * Socket factory — REQUIRED by design, no default. This module is environment-agnostic
+   * (it pulls in no Node or browser API), so it cannot reach for a concrete socket: the
+   * caller injects their environment's one (the real `ws` socket, Node's global
+   * `WebSocket`, or a test fake). The Node default lives in
+   * `packages/discord/src/connection.ts`; keep this field required so the shared module
+   * never has to import Node `ws`.
+   */
   readonly factory: WsSocketFactory;
   /** Structured logger for dropped frames and misbehaving event listeners. */
   readonly logger: WsTransportLogger;
