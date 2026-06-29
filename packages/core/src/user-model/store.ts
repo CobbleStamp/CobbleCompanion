@@ -22,6 +22,12 @@ import {
 } from '@cobble/shared';
 import { type Database, userFacts } from '@cobble/db';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import {
+  cosineDistance,
+  ftsMatches,
+  ftsRankDesc,
+  withinDistance,
+} from '../memory/sql-fragments.js';
 import { reciprocalRankFusion } from '../memory/rrf.js';
 import { effectiveSalience, isStale } from './decay.js';
 import { isSensitiveMatter } from './sensitive.js';
@@ -442,7 +448,7 @@ export class DrizzleUserModelStore implements UserModelStore {
     const filter = this.currentBeliefFilter(userId);
     // An empty query embedding (provider down, caller degraded) skips the vector arm —
     // lexical FTS still answers (mirrors the semantic/episodic hybrid).
-    const distance = sql`${userFacts.embedding} <=> ${JSON.stringify([...params.queryEmbedding])}::vector`;
+    const distance = cosineDistance(userFacts.embedding, params.queryEmbedding);
     // Relevance floor (Phase 12): when the caller sets `maxVectorDistance`, the vector
     // arm gates on distance, not just orders by it — so a far belief is never pulled in
     // just to fill the top-K. Without it, every belief surfaces while N ≤ topK, framed as
@@ -454,7 +460,7 @@ export class DrizzleUserModelStore implements UserModelStore {
         : and(
             filter,
             sql`${userFacts.embedding} IS NOT NULL`,
-            sql`${distance} <= ${params.maxVectorDistance}`,
+            withinDistance(distance, params.maxVectorDistance),
           );
     const vectorRows =
       params.queryEmbedding.length === 0
@@ -468,8 +474,8 @@ export class DrizzleUserModelStore implements UserModelStore {
     const lexicalRows = await this.db
       .select()
       .from(userFacts)
-      .where(and(filter, sql`${userFacts.fts} @@ plainto_tsquery('english', ${params.queryText})`))
-      .orderBy(sql`ts_rank(${userFacts.fts}, plainto_tsquery('english', ${params.queryText})) DESC`)
+      .where(and(filter, ftsMatches(userFacts.fts, params.queryText)))
+      .orderBy(ftsRankDesc(userFacts.fts, params.queryText))
       .limit(params.topK);
     // Lazy time-decay (Phase 13): score each belief's *effective* salience (stored ×
     // decay(now − updated_at)). A belief that has faded below the stale floor stops
@@ -501,7 +507,7 @@ export class DrizzleUserModelStore implements UserModelStore {
       .select()
       .from(userFacts)
       .where(and(this.currentBeliefFilter(userId), sql`${userFacts.embedding} IS NOT NULL`))
-      .orderBy(sql`${userFacts.embedding} <=> ${JSON.stringify([...embedding])}::vector`)
+      .orderBy(cosineDistance(userFacts.embedding, embedding))
       .limit(k);
     return rows.map(toUserFactDto);
   }

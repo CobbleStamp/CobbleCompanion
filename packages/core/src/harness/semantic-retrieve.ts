@@ -12,9 +12,14 @@ import type { Citation } from '@cobble/shared';
 import type { EmbeddingGateway } from '../embedding/gateway.js';
 import type { Logger } from '../logging.js';
 import type { SemanticMemoryStore, SemanticSearchHit } from '../memory/semantic-store.js';
-import type { MemoryStore } from '../memory/store.js';
+import { isConversational, type MemoryStore } from '../memory/store.js';
 import { ZERO_USAGE, type TokenUsage } from '../usage.js';
+import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN, stripSentinels } from '../text/untrusted.js';
 import type { ContextBlock, RetrieveContext } from './hooks.js';
+
+// Re-exported for the retrieval-path consumers that fence through this module
+// (user-model-retrieve, tests). The canonical definitions live in text/untrusted.
+export { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../text/untrusted.js';
 
 export interface SemanticRetrieveOptions {
   readonly memory: MemoryStore;
@@ -51,7 +56,7 @@ export function createSemanticRetrieveContext(options: SemanticRetrieveOptions):
         // Only conversational turns enter the model's context; tool-step and
         // proposal rows are UI chrome (architecture.md §4.7).
         ...recent
-          .filter((message) => (message.kind ?? 'message') === 'message')
+          .filter(isConversational)
           .map((message): ContextBlock => ({ role: message.role, content: message.content })),
       ],
       usage,
@@ -90,14 +95,6 @@ async function retrieveSemanticBlocks(
     return { blocks: [], usage: ZERO_USAGE };
   }
 }
-
-/**
- * Sentinels fencing the untrusted region of a grounding block. Stripped from
- * every hit field before rendering so ingested content cannot close (or fake)
- * the fence.
- */
-export const UNTRUSTED_OPEN = '<<<UNTRUSTED-SOURCE-MATERIAL';
-export const UNTRUSTED_CLOSE = 'END-UNTRUSTED-SOURCE-MATERIAL>>>';
 
 /** Longest title rendered into the prompt; anything longer is noise or abuse. */
 const MAX_INLINE_TITLE_LENGTH = 200;
@@ -149,20 +146,6 @@ function sanitizeInline(value: string): string {
   return flattened.length > MAX_INLINE_TITLE_LENGTH
     ? `${flattened.slice(0, MAX_INLINE_TITLE_LENGTH)}…`
     : flattened;
-}
-
-/**
- * Remove the fence sentinels from untrusted content, repeating until stable
- * so spliced fragments cannot recombine into a sentinel after one pass.
- */
-function stripSentinels(value: string): string {
-  let current = value;
-  let previous: string;
-  do {
-    previous = current;
-    current = current.split(UNTRUSTED_CLOSE).join('').split(UNTRUSTED_OPEN).join('');
-  } while (current !== previous);
-  return current;
 }
 
 function toCitation(hit: SemanticSearchHit): Citation {

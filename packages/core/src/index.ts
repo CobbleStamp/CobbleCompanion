@@ -215,12 +215,12 @@ export {
   type ConsolidationCandidate,
   type PersonaSummary,
 } from './memory/consolidation.js';
-export { ConsolidationRunner, type ConsolidationTarget } from './memory/consolidation-runner.js';
 export {
   ConsolidationService,
   sweepConsolidation,
   type ConsolidationServiceOptions,
   type ConsolidationSweepDeps,
+  type ConsolidationTarget,
 } from './memory/consolidation-service.js';
 export { reciprocalRankFusion, RRF_K } from './memory/rrf.js';
 export {
@@ -379,7 +379,6 @@ export {
   type CompanionVoice,
   runAutonomousBurst,
 } from './motivation/autonomous-burst.js';
-export { MotivationRunner, type MotivationTarget } from './motivation/engine-runner.js';
 export { type MotivationSweepDeps, sweepMotivation } from './motivation/engine-sweep.js';
 // Greeting on arrival (Phase 14) — the bond-driven reaction to the user returning.
 export {

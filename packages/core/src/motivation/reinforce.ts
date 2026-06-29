@@ -20,7 +20,33 @@ import type { ProactiveOutcomeStore } from './reward-store.js';
 import { nudgeDriveWeight } from './weights.js';
 
 /** How strongly a reaction's mood change moves the driving belief's salience. */
-const BELIEF_REWARD_RATE = 0.1;
+export const BELIEF_REWARD_RATE = 0.1;
+
+/**
+ * The Phase 12 belief-learning loop, shared by both reinforcement entry points
+ * (the ambient affect delta here, the addressed reaction in reactions/learner.ts):
+ * when an act was driven by a Tier-2 belief, move that belief's salience by the
+ * reward — reinforced if the user welcomed it, weakened if not. Best-effort: a
+ * belief hiccup must never undo the drive-weight nudge already applied
+ * (logging.md). No-op when there is no user model or no driving belief.
+ */
+export async function adjustDrivingBelief(
+  userModel: UserModelStore | undefined,
+  ownerId: string,
+  drivenByUserFactId: string | null,
+  reward: number,
+  logger: Logger,
+  operation: string,
+): Promise<void> {
+  if (!userModel || !drivenByUserFactId) {
+    return;
+  }
+  try {
+    await userModel.adjustBeliefSalience(ownerId, drivenByUserFactId, BELIEF_REWARD_RATE * reward);
+  } catch (error) {
+    logger.error('failed to adjust driving belief salience', { operation, error });
+  }
+}
 
 export interface ReinforceDeps {
   readonly rewards: ProactiveOutcomeStore;
@@ -68,25 +94,14 @@ export async function reinforceFromDelta(
     const next = nudgeDriveWeight(resolveWeights(companion.driveWeights), outcome.drive, delta);
     await deps.identity.updateDriveWeights(companionId, next);
 
-    // Phase 12 belief-learning loop: when this act was driven by a Tier-2 belief, the
-    // same mood change also moves that belief's salience — reinforced if the user
-    // welcomed it, weakened if they didn't. Best-effort; a belief hiccup must not undo
-    // the weight nudge already applied.
-    if (deps.userModel && outcome.drivenByUserFactId) {
-      try {
-        await deps.userModel.adjustBeliefSalience(
-          companion.ownerId,
-          outcome.drivenByUserFactId,
-          BELIEF_REWARD_RATE * delta,
-        );
-      } catch (error) {
-        deps.logger.error('failed to adjust driving belief salience', {
-          operation: 'motivation.reinforceFromDelta.belief',
-          companionId,
-          error,
-        });
-      }
-    }
+    await adjustDrivingBelief(
+      deps.userModel,
+      companion.ownerId,
+      outcome.drivenByUserFactId,
+      delta,
+      deps.logger,
+      'motivation.reinforceFromDelta.belief',
+    );
   } catch (error) {
     deps.logger.error('failed to reinforce from affect delta', {
       operation: 'motivation.reinforceFromDelta',

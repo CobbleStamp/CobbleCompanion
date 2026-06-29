@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { FakeEmbeddingGateway } from '../embedding/fake.js';
 import type { EmbeddingGateway } from '../embedding/gateway.js';
 import type { EpisodeSearchHit, EpisodicMemoryStore } from '../memory/episodic-store.js';
-import { UNTRUSTED_CLOSE } from '../ingestion/untrusted.js';
+import { UNTRUSTED_CLOSE } from '../text/untrusted.js';
 import { ZERO_USAGE } from '../usage.js';
 import { createEpisodicRetrieveContext, toEpisodeBlock } from './episodic-retrieve.js';
 

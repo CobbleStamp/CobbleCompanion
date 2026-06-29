@@ -17,7 +17,7 @@ import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import type { MemoryStore } from '../memory/store.js';
 import { ingestionAnnounceTemplate, render } from '../prompts/index.js';
-import type { VitalityStore } from '../quota/vitality-store.js';
+import { meterSpend, type VitalityStore } from '../quota/vitality-store.js';
 import { createUsageAccumulator, meteredLlmGateway } from '../usage.js';
 
 /** A terminal ingestion outcome worth telling the user about. */
@@ -117,24 +117,18 @@ export class LlmIngestionAnnouncer implements IngestionAnnouncer {
       text += delta;
     }
 
-    await this.debit(outcome.companionId, usage.total().totalTokens);
-    return text.trim();
-  }
-
-  /** Meter the note's tokens against the companion's stamina; best-effort (logging.md). */
-  private async debit(companionId: string, totalTokens: number): Promise<void> {
-    if (!this.options.quota || totalTokens <= 0) {
-      return;
-    }
-    try {
-      await this.options.quota.spend(companionId, totalTokens);
-    } catch (error) {
-      this.options.logger.error('failed to record ingestion-note token usage', {
+    // Meter the note's tokens against the companion's stamina; best-effort (logging.md).
+    await meterSpend(
+      this.options.quota,
+      outcome.companionId,
+      usage.total().totalTokens,
+      this.options.logger,
+      {
+        message: 'failed to record ingestion-note token usage',
         operation: 'ingestion.announcer.debit',
-        companionId,
-        error,
-      });
-    }
+      },
+    );
+    return text.trim();
   }
 }
 

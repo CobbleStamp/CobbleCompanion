@@ -11,7 +11,7 @@ import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import { render, segmenterTemplate } from '../prompts/index.js';
 import type { Paragraph } from './parser.js';
-import { MAX_INGESTION_PROMPT_CHARS, stripSentinels } from './untrusted.js';
+import { MAX_INGESTION_PROMPT_CHARS, stripSentinels } from '../text/untrusted.js';
 
 /** A section boundary from Pass 1: which whole paragraphs form one cohesive unit. */
 export interface SectionBoundary {

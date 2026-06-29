@@ -9,6 +9,7 @@
  */
 
 import type { MessageDto } from '@cobble/shared';
+import { isConversational } from '../memory/store.js';
 
 /** A transcript row a user reaction may attach to — the companion's own
  *  `message`-kind turn, proven by {@link asReactableMessage}. */
@@ -20,7 +21,7 @@ export type ReactableMessage = MessageDto & {
 /** Parse a fetched row into a reactable one — `null` when it is chrome
  *  (`tool_step` / `proposal`) or not an assistant turn. */
 export function asReactableMessage(message: MessageDto): ReactableMessage | null {
-  return message.role === 'assistant' && (message.kind ?? 'message') === 'message'
+  return message.role === 'assistant' && isConversational(message)
     ? (message as ReactableMessage)
     : null;
 }

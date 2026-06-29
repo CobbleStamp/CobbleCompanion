@@ -7,7 +7,7 @@
  * summaries; this template strips sentinels and fences the untrusted material.
  */
 
-import { stripSentinels, UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../../ingestion/untrusted.js';
+import { stripSentinels, UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../../text/untrusted.js';
 import type { PromptTemplate } from '../types.js';
 
 /** The companion's name, the prior user-persona (raw), and raw fact + memory lines. */

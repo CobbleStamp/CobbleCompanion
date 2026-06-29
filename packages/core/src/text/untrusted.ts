@@ -1,14 +1,15 @@
 /**
- * Prompt-injection fencing for the ingestion passes (Pass 1 segmentation, Pass 2
- * enrichment). Source documents are attacker-influenced data, so their verbatim
- * text — and the titles derived from them — must be framed as untrusted and
- * never as instructions. This mirrors the chat-path convention established for
- * grounding blocks (see harness/semantic-retrieve.ts): a single sentinel-fenced
- * region whose sentinels are stripped from the enclosed content so ingested
- * text cannot close (or fake) the fence.
+ * Prompt-injection fencing — the single, canonical untrusted-text boundary for
+ * the whole codebase. Any attacker-influenced text (ingested source documents
+ * and their derived titles, retrieved grounding passages, MCP/CLI tool output,
+ * user-model material) must be framed as untrusted and never as instructions:
+ * a single sentinel-fenced region whose sentinels are stripped from the enclosed
+ * content so the text cannot close (or fake) the fence. Lives in `text/` because
+ * it is a text-security primitive, not specific to any one domain (ingestion,
+ * harness retrieval, and tools all fence through these same definitions).
  */
 
-/** Sentinels fencing the untrusted region of an ingestion prompt. */
+/** Sentinels fencing an untrusted region of a prompt. */
 export const UNTRUSTED_OPEN = '<<<UNTRUSTED-SOURCE-MATERIAL';
 export const UNTRUSTED_CLOSE = 'END-UNTRUSTED-SOURCE-MATERIAL>>>';
 

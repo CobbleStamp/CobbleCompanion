@@ -16,7 +16,7 @@ import {
   stripSentinels,
   UNTRUSTED_CLOSE,
   UNTRUSTED_OPEN,
-} from './untrusted.js';
+} from '../text/untrusted.js';
 
 /** A typed fact extracted from one section, pre-persistence (no ids yet). */
 export interface ExtractedFact {

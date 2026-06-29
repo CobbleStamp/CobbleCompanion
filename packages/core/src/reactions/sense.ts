@@ -19,7 +19,7 @@ import { drainStream } from '../llm/drain.js';
 import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import { reactionSenseTemplate, render, REPORT_REACTION } from '../prompts/index.js';
-import type { VitalityStore } from '../quota/vitality-store.js';
+import { meterSpend, type VitalityStore } from '../quota/vitality-store.js';
 import { createUsageAccumulator, meteredLlmGateway } from '../usage.js';
 
 /** A single read of the value a reaction signals. */
@@ -94,19 +94,11 @@ export async function senseReaction(
     // Bill best-effort for the tokens consumed — in `finally` so a mid-stream throw
     // still bills what was metered. The read happened whether or not the model
     // reported; a quota hiccup is our infra fault and must not void it (logging.md).
-    if (deps.quota && params.companionId) {
-      const total = usage.total().totalTokens;
-      if (total > 0) {
-        try {
-          await deps.quota.spend(params.companionId, total);
-        } catch (error) {
-          deps.logger.error('failed to record reaction read usage', {
-            operation: 'reactions.sense.bill',
-            companionId: params.companionId,
-            error,
-          });
-        }
-      }
+    if (params.companionId) {
+      await meterSpend(deps.quota, params.companionId, usage.total().totalTokens, deps.logger, {
+        message: 'failed to record reaction read usage',
+        operation: 'reactions.sense.bill',
+      });
     }
   }
 }

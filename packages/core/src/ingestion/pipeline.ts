@@ -12,7 +12,8 @@ import type { IngestionAnnouncer } from './announcer.js';
 import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import type { NewSection, SectionRecord, SemanticMemoryStore } from '../memory/semantic-store.js';
-import type { VitalityStore } from '../quota/vitality-store.js';
+import { meterSpend, type VitalityStore } from '../quota/vitality-store.js';
+import { embedInBatches } from '../embedding/batch.js';
 import { createUsageAccumulator, meteredLlmGateway, type UsageAccumulator } from '../usage.js';
 import { buildEmbeddingInput } from './embedder.js';
 import { enrichSection } from './enricher.js';
@@ -100,9 +101,6 @@ export interface IngestionRunParams {
 export interface IngestionTarget {
   run(params: IngestionRunParams): Promise<void>;
 }
-
-/** Sections embedded per gateway call. */
-const EMBED_BATCH_SIZE = 32;
 
 export class IngestionPipeline {
   private readonly sourceParser: SourceParser;
@@ -294,24 +292,26 @@ export class IngestionPipeline {
     headers: ReadonlyMap<string, string>,
     usage: UsageAccumulator,
   ): Promise<void> {
-    for (let offset = 0; offset < sections.length; offset += EMBED_BATCH_SIZE) {
-      const batch = sections.slice(offset, offset + EMBED_BATCH_SIZE);
-      const { vectors, usage: embedUsage } = await this.options.embeddings.embed({
-        input: batch.map((section) =>
-          buildEmbeddingInput(
-            {
-              originalText: section.originalText,
-              contextHeader: headers.get(section.id) ?? null,
-            },
-            this.options.useContextHeader,
-          ),
+    const embedded = await embedInBatches(
+      this.options.embeddings,
+      sections,
+      (section) =>
+        buildEmbeddingInput(
+          {
+            originalText: section.originalText,
+            contextHeader: headers.get(section.id) ?? null,
+          },
+          this.options.useContextHeader,
         ),
+      {
         model: this.options.embeddingModel,
         dimensions: this.options.embeddingDimensions,
-      });
-      usage.sink.add(embedUsage);
-      for (let i = 0; i < batch.length; i++) {
-        await this.options.semantic.setSectionEmbedding(batch[i]!.id, vectors[i]!);
+        sink: usage.sink,
+      },
+    );
+    for (const { item, vector } of embedded) {
+      if (vector) {
+        await this.options.semantic.setSectionEmbedding(item.id, vector);
       }
     }
   }
@@ -325,18 +325,13 @@ export class IngestionPipeline {
   private async debit(params: IngestionRunParams, usage: UsageAccumulator): Promise<void> {
     const total = usage.total().totalTokens;
     const { quota, accountId } = this.meterFor(params);
-    if (!quota || !accountId || total <= 0) {
+    if (!accountId) {
       return;
     }
-    try {
-      await quota.spend(accountId, total);
-    } catch (error) {
-      this.options.logger.error('failed to record ingestion token usage', {
-        operation: 'ingestion.pipeline.debit',
-        accountId,
-        error,
-      });
-    }
+    await meterSpend(quota, accountId, total, this.options.logger, {
+      message: 'failed to record ingestion token usage',
+      operation: 'ingestion.pipeline.debit',
+    });
   }
 }
 

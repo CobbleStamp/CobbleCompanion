@@ -1,6 +1,6 @@
 import type { CompanionDto, DriveWeights, PersonalityKnobs, ProactivityDial } from '@cobble/shared';
 import { companions, type Database, DEFAULT_STARTING_VITALITY_TOKENS, users } from '@cobble/db';
-import { and, eq, lte } from 'drizzle-orm';
+import { and, type AnyColumn, eq, lte } from 'drizzle-orm';
 
 export interface UserRecord {
   readonly id: string;
@@ -269,38 +269,46 @@ export class DrizzleIdentityStore implements IdentityStore {
     return rows.map(toCompanionDto);
   }
 
+  /**
+   * Advance a monotonic per-companion cursor column, optionally writing companion
+   * columns alongside it. The guard writes only when this batch is not behind the
+   * stored cursor: a stale run with a lower seq is a safe no-op (never a rewind);
+   * an equal or higher seq applies — so the initial write at seq 0 still lands.
+   * Keeps the cursor correct independent of the Phase B companion claim
+   * (deliver-scalability.md §8).
+   */
+  private async advanceCursor(
+    companionId: string,
+    cursorColumn: AnyColumn,
+    cursorValue: number,
+    set: Partial<typeof companions.$inferInsert>,
+  ): Promise<void> {
+    await this.db
+      .update(companions)
+      .set(set)
+      .where(and(eq(companions.id, companionId), lte(cursorColumn, cursorValue)));
+  }
+
   async updateEvolvedPersona(
     companionId: string,
     evolvedPersona: string,
     personaUpdatedThroughSeq: number,
   ): Promise<void> {
-    await this.db
-      .update(companions)
-      .set({ evolvedPersona, personaUpdatedThroughSeq })
-      .where(
-        and(
-          eq(companions.id, companionId),
-          // Monotonic guard: write only when this batch is not behind the stored
-          // cursor. A stale run with a lower seq is a safe no-op (never a rewind);
-          // an equal or higher seq applies — so the initial write at seq 0 still
-          // lands. Keeps the cursor correct independent of the Phase B companion
-          // claim (deliver-scalability.md §8).
-          lte(companions.personaUpdatedThroughSeq, personaUpdatedThroughSeq),
-        ),
-      );
+    await this.advanceCursor(
+      companionId,
+      companions.personaUpdatedThroughSeq,
+      personaUpdatedThroughSeq,
+      {
+        evolvedPersona,
+        personaUpdatedThroughSeq,
+      },
+    );
   }
 
   async advanceUserFactsThroughSeq(companionId: string, throughSeq: number): Promise<void> {
-    await this.db
-      .update(companions)
-      .set({ userFactsThroughSeq: throughSeq })
-      .where(
-        and(
-          eq(companions.id, companionId),
-          // Monotonic guard — see updateEvolvedPersona (deliver-scalability.md §8).
-          lte(companions.userFactsThroughSeq, throughSeq),
-        ),
-      );
+    await this.advanceCursor(companionId, companions.userFactsThroughSeq, throughSeq, {
+      userFactsThroughSeq: throughSeq,
+    });
   }
 
   async updateUserPersona(
@@ -308,16 +316,12 @@ export class DrizzleIdentityStore implements IdentityStore {
     userPersona: string,
     userModelUpdatedThroughSeq: number,
   ): Promise<void> {
-    await this.db
-      .update(companions)
-      .set({ userPersona, userModelUpdatedThroughSeq })
-      .where(
-        and(
-          eq(companions.id, companionId),
-          // Monotonic guard — see updateEvolvedPersona (deliver-scalability.md §8).
-          lte(companions.userModelUpdatedThroughSeq, userModelUpdatedThroughSeq),
-        ),
-      );
+    await this.advanceCursor(
+      companionId,
+      companions.userModelUpdatedThroughSeq,
+      userModelUpdatedThroughSeq,
+      { userPersona, userModelUpdatedThroughSeq },
+    );
   }
 
   async markSeen(companionId: string, at: Date): Promise<void> {

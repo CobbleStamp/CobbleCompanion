@@ -12,7 +12,7 @@ import type { EmbeddingGateway } from '../embedding/gateway.js';
 import type { LlmGateway, LlmMessage, StreamResult } from '../llm/gateway.js';
 import { toolStepSummary } from '../tools/tool.js';
 import { consoleLogger, type Logger } from '../logging.js';
-import type { MemoryStore } from '../memory/store.js';
+import { isConversational, type MemoryStore } from '../memory/store.js';
 import { senseAffect, type AffectReading } from '../motivation/affect.js';
 import type { CompanionAffectStore } from '../motivation/affect-store.js';
 import type { VitalityStore } from '../quota/vitality-store.js';
@@ -332,8 +332,8 @@ export class Harness {
    * Resolves once every in-flight post-turn affect read has settled. The reads
    * are launched fire-and-forget from {@link runTurn} so the SSE socket can close
    * on `done`; this lets a graceful shutdown — or a test asserting the read's
-   * effects — wait for that background work to finish (mirrors the runner idiom,
-   * consolidation-runner.ts). Never rejects: each task self-catches.
+   * effects — wait for that background work to finish. Never rejects: each task
+   * self-catches.
    */
   async whenIdle(): Promise<void> {
     while (this.backgroundTasks.size > 0) {
@@ -720,12 +720,7 @@ export class Harness {
         // `settledNormally` stays false so the `finally` debits the tokens already
         // metered (retrieval + completed steps were really spent) and tears down any
         // in-flight stream. The bounded overlap is one in-flight step.
-        if (await this.leaseLost(holdsLease)) {
-          this.logger.info('turn stood down mid-loop — embodiment was superseded', {
-            operation: 'harness.runLoop',
-            companionId: companion.id,
-            iteration,
-          });
+        if (await this.stoodDown(holdsLease, companion.id, iteration, 'turn stood down mid-loop')) {
           return true;
         }
 
@@ -781,12 +776,14 @@ export class Harness {
           // run for seconds, during which the lease may have moved. Re-check before
           // persisting the reply so a turn that lost the lease mid-call does not
           // write its assistant message. `finally` debits the metered tokens.
-          if (await this.leaseLost(holdsLease)) {
-            this.logger.info('turn stood down before reply — embodiment was superseded', {
-              operation: 'harness.runLoop',
-              companionId: companion.id,
+          if (
+            await this.stoodDown(
+              holdsLease,
+              companion.id,
               iteration,
-            });
+              'turn stood down before reply',
+            )
+          ) {
             return true;
           }
           settledNormally = true;
@@ -858,15 +855,14 @@ export class Harness {
             // that lost the lease mid-dispatch does not record chrome for the superseded
             // connection. Stand down like the reply/held paths — the new connection's turn
             // re-derives the step; otherwise both connections write rows for one companion.
-            if (await this.leaseLost(holdsLease)) {
-              this.logger.info(
-                'turn stood down before tool-step write — embodiment was superseded',
-                {
-                  operation: 'harness.runLoop',
-                  companionId: companion.id,
-                  iteration,
-                },
-              );
+            if (
+              await this.stoodDown(
+                holdsLease,
+                companion.id,
+                iteration,
+                'turn stood down before tool-step write',
+              )
+            ) {
               return true;
             }
             yield* this.recordToolStep(registry, companion.id, gated.name, gated.args);
@@ -880,12 +876,7 @@ export class Harness {
           // Owner-fenced write: don't persist the pre-amble + proposal rows (nor
           // surface the proposals) under a stale lease. The new connection's turn
           // re-derives the held action; otherwise both turns would write it.
-          if (await this.leaseLost(holdsLease)) {
-            this.logger.info('held turn stood down — embodiment was superseded', {
-              operation: 'harness.runLoop',
-              companionId: companion.id,
-              iteration,
-            });
+          if (await this.stoodDown(holdsLease, companion.id, iteration, 'held turn stood down')) {
             return true;
           }
           settledNormally = true;
@@ -962,6 +953,30 @@ export class Harness {
       });
       return false;
     }
+  }
+
+  /**
+   * Owner-fence checkpoint (deliver-scalability.md §5.2): true if this turn has
+   * lost the embodiment lease and must stand down WITHOUT its pending write, logged
+   * with `where` so the four runLoop checkpoints (mid-loop, before-reply,
+   * before-tool-step-write, held) stay distinguishable. The single place the
+   * "lease moved → log → stand down" decision lives.
+   */
+  private async stoodDown(
+    holdsLease: HoldsLease | undefined,
+    companionId: string,
+    iteration: number,
+    where: string,
+  ): Promise<boolean> {
+    if (!(await this.leaseLost(holdsLease))) {
+      return false;
+    }
+    this.logger.info(`${where} — embodiment was superseded`, {
+      operation: 'harness.runLoop',
+      companionId,
+      iteration,
+    });
+    return true;
   }
 
   /** Has the run hit either dead-loop ceiling (iteration count or token budget)? */
@@ -1132,7 +1147,7 @@ export class Harness {
       // Only conversational turns enter the model's context; tool-step and
       // proposal rows are UI chrome (architecture.md §4.7).
       blocks: recent
-        .filter((message) => (message.kind ?? 'message') === 'message')
+        .filter(isConversational)
         .map((message) => ({ role: message.role, content: message.content })),
       usage: ZERO_USAGE,
     };
@@ -1147,7 +1162,7 @@ export class Harness {
  */
 function affectContext(recent: readonly MessageDto[]): string {
   return recent
-    .filter((message) => (message.kind ?? 'message') === 'message')
+    .filter(isConversational)
     .slice(0, -1)
     .slice(-AFFECT_CONTEXT_TURNS)
     .map((message) => `${message.role}: ${message.content}`)

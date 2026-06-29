@@ -8,7 +8,7 @@
 import type { MessageRole } from '@cobble/shared';
 import { describe, expect, it, vi } from 'vitest';
 import { FakeLlmGateway } from '../llm/fake.js';
-import { UNTRUSTED_CLOSE } from '../ingestion/untrusted.js';
+import { UNTRUSTED_CLOSE } from '../text/untrusted.js';
 import {
   consolidateWindow,
   parseEpisodes,

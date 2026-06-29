@@ -130,10 +130,10 @@ export class MotivationEngine {
       // second reward-bearing initiation while a prior act is still awaiting the
       // user's reaction. The per-turn affect delta attributes to a SINGLE
       // pending outcome (reinforce.ts); a second would mis-credit the reaction
-      // and orphan a row. Reactions only *resolve* outcomes and the runner
-      // drains serially (engine-runner.ts), so this check and the record inside
-      // the burst can't race into two pending rows. Queried only once a move is
-      // chosen, so idle ticks stay free.
+      // and orphan a row. Reactions only *resolve* outcomes and motivation ticks
+      // drain serially per companion (claim-serialised jobs, job-queue.ts), so
+      // this check and the record inside the burst can't race into two pending
+      // rows. Queried only once a move is chosen, so idle ticks stay free.
       if (await this.deps.rewards.findLatestUnresolved(companionId)) {
         logger.info('motivation tick deferred; a note awaits the user reaction', {
           companionId,

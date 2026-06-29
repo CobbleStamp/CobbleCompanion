@@ -12,7 +12,7 @@
  * block (no recency window); compose it ahead of the semantic arm so recency appends once.
  */
 
-import { MAX_INGESTION_PROMPT_CHARS, stripSentinels } from '../ingestion/untrusted.js';
+import { MAX_INGESTION_PROMPT_CHARS, stripSentinels } from '../text/untrusted.js';
 import { beliefPhrase } from '../user-model/phrasing.js';
 import { effectiveSalience } from '../user-model/decay.js';
 import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from './semantic-retrieve.js';

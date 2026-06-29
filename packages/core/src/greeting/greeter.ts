@@ -29,7 +29,7 @@ import type { MemoryStore } from '../memory/store.js';
 import { resolveWeights } from '../motivation/drives.js';
 import type { ProactiveOutcomeStore } from '../motivation/reward-store.js';
 import { greetingTemplate, render, type GreetingInput } from '../prompts/index.js';
-import type { VitalityStore } from '../quota/vitality-store.js';
+import { meterSpend, type VitalityStore } from '../quota/vitality-store.js';
 import type { ProposalStore } from '../tools/proposal-store.js';
 import type { UserModelStore } from '../user-model/store.js';
 import { createUsageAccumulator, meteredLlmGateway } from '../usage.js';
@@ -260,18 +260,16 @@ export class GreetingService {
       return { ok: false, reason: 'error' };
     } finally {
       // Bill STAMINA in `finally` so a mid-stream throw still spends what was metered.
-      const total = usage.total().totalTokens;
-      if (total > 0) {
-        try {
-          await this.deps.stamina.spend(companionId, total);
-        } catch (error) {
-          this.deps.logger.error('failed to record greeting stamina spend', {
-            operation: 'greeting.bill',
-            companionId,
-            error,
-          });
-        }
-      }
+      await meterSpend(
+        this.deps.stamina,
+        companionId,
+        usage.total().totalTokens,
+        this.deps.logger,
+        {
+          message: 'failed to record greeting stamina spend',
+          operation: 'greeting.bill',
+        },
+      );
     }
   }
 
