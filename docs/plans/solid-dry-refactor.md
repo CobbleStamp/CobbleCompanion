@@ -75,74 +75,108 @@ independent unless a dependency is noted.
 
 ### Tier A — architectural (one PR each; higher risk / wider blast radius)
 
-#### A1 · Extract `proposals.confirm` into a `confirmProposal` domain service
-- **Problem.** `ws/methods/streaming.ts` `proposals.confirm` orchestrates ~7
+#### A1 · Extract `proposals.confirm` into a `confirmProposal` domain service — ✅ shipped
+- **Problem.** `ws/methods/streaming.ts` `proposals.confirm` orchestrated ~7
   collaborators inline (markResolved, dispatchTool, toolCallLog, procedural,
   leads.markStatus, memory.appendMessage, harness.continueAfterApproval) with
   branching + four error-tag blocks. A use-case living in the transport layer —
   the inverse of `discord.routes.ts`.
-- **Approach.** `confirmProposal(deps, {...}): Promise<Result>` domain module;
-  the handler shrinks to parse → delegate → emit/map.
-- **Risk.** **High** — hot chat/approval path. Lean on the existing ws-method +
-  streaming tests; add coverage for the service.
-- **Acceptance.** ws-method + streaming tests green; handler is a thin adapter.
+- **Done.** `confirmProposal(deps, input): Promise<ConfirmProposalResult>` in
+  `packages/api/src/proposals/confirm-proposal.ts` — a total discriminated-union
+  result (`not_pending` | `confirmed{proposal, toolResult, outcomeRow}`) that
+  never throws for the lost-claim case, with ISP-narrowed (`Pick`) deps mirroring
+  `discord-token-mint.ts`. The handler shrank to parse → fence/over-cap →
+  delegate → map (Conflict / branch on origin / stream or emit). Operation log
+  tags preserved byte-for-byte.
+- **Acceptance met.** ws-method + phase3 tests green; new `confirm-proposal.test.ts`
+  covers the claim, success-only side-effects, tool-error path, and best-effort
+  swallow. Full api suite green (250).
 
-#### A2 · Extract `sources.file` into a `stageAndEnqueueFileSource` service
-- **Problem.** `ws/methods/sources.ts` `sources.file` inlines ~70 lines of
-  orchestration across `staging` + `semantic` + `ingest` + `memory`
-  (upload-key auth, magic-byte validation, enqueue, best-effort transcript
-  append) — no domain-service layer.
-- **Approach.** `stageAndEnqueueFileSource(deps, input): Promise<Result>`;
-  handler does param-parse + delegate + DTO-map.
-- **Risk.** High — upload path. Pin with the sources tests.
-- **Acceptance.** sources tests green; handler thin.
+#### A2 · Extract `sources.file` into a `stageAndEnqueueFileSource` service — ✅ shipped
+- **Problem.** `ws/methods/sources.ts` `sources.file` inlined ~70 lines of
+  orchestration across `staging` + `semantic` + `ingest` + `memory` (upload-key
+  auth, magic-byte validation, enqueue, best-effort transcript append) — no
+  domain-service layer.
+- **Done.** `stageAndEnqueueFileSource(deps, input, resolveCompanionId)` in
+  `packages/api/src/sources/stage-file-source.ts` — ISP-narrowed (`Pick`) deps and
+  a total `{ ok: true … } | { ok: false; failure: {kind, message} }` result; the
+  handler maps `kind → NotFound/QueueFull/BadParams` (messages byte-for-byte) and
+  passes companion resolution as a thunk so the companion-independent validation
+  still runs first (exact former error order on a non-embodied caller). The shared
+  `finishEnqueue` (create source+job → request ingest) moved into the service and
+  is reused by the note/link `enqueueSource`; the two format-message constants
+  moved to `file-format.ts`.
+- **Acceptance met.** All 23 source-route + uploads-local tests green (the service
+  is exercised end-to-end through every validation branch); handler is a thin adapter.
 
-#### A3 · Split the `harness.ts` god class (1166 lines)
-- **Problem.** `Harness` bundles ≥6 responsibilities: the agent loop, prompt
+#### A3 · Split the `harness.ts` god class (1181 lines) — ✅ shipped
+- **Problem.** `Harness` bundled ≥6 responsibilities: the agent loop, prompt
   assembly, affect perception/learning, user-model capture/embedding, token
   metering, and background-task lifecycle.
-- **Approach.** Extract a `PostTurnPerception` collaborator (affect +
-  user-fact capture + belief embedding + their two serialize-by-key chains) and
-  a `BackgroundTaskGroup` (`trackBackground`/`whenIdle`), injected into the
-  harness. Optionally extract `executeToolCalls` from `runLoop`.
-- **Risk.** **Highest** — the hottest path. Land in small steps, each green.
-- **Acceptance.** all harness tests green; the loop class no longer owns
-  perception/embedding/background internals.
+- **Done.** harness.ts is now 890 lines. Extracted `PostTurnPerception`
+  (`post-turn-perception.ts`) — the affect sense+learn, user-fact capture, belief
+  embedding, and their two serialize-by-key chains (per-companion affect,
+  per-user capture) + `affectContext` + the `HarnessAffect`/`HarnessUserModel`
+  types (re-exported from `harness.ts` so the import surface is unchanged); and
+  `BackgroundTaskGroup` (`background-tasks.ts`) — `track`/`whenIdle`. The harness
+  injects both, keeps the pre-turn affect/profile *reads* for prompt assembly, and
+  `runTurn` now calls `perception.needsSnapshot` / `perception.afterTurn` and tracks
+  the returned tasks. Verbatim logic move; `whenIdle()` stays public, delegating.
+- **`executeToolCalls` extraction** left for a follow-up (optional in the plan);
+  the perception + background split is the bulk of the god-class win.
+- **Acceptance met.** All 106 harness tests + the full 1020-test core suite green;
+  the loop class no longer owns perception/embedding/background internals.
 
-#### A4 · Decompose `web/src/pages/Chat.tsx` (~906 lines)
-- **Problem.** One component owns transcript, composer, attach, proposals,
+#### A4 · Decompose `web/src/pages/Chat.tsx` (991 lines) — ✅ shipped
+- **Problem.** One component owned transcript, composer, attach, proposals,
   greeting, embodiment establishment, reconnect/backoff + a two-layer event
-  buffer, and room-takeover, across ~18 `useState`/`useRef`. The web polling
-  hooks (`useIngestionJobs`/`useProposals`/`usePresenceHeartbeat`) re-implement
-  mount-guard + timer.
-- **Approach.** Extract `useEmbodimentSync()` (subscription/buffer/reconnect),
-  split `<ChatTranscript>` / `<ChatComposer>`, and a shared `usePolling(fetcher,
-  intervalMs, isActive)`.
-- **Risk.** Medium — isolated to `packages/web`, test-covered (`Chat.test.tsx`).
-- **Acceptance.** web tests green; no behavior change.
+  buffer, and room-takeover, across ~18 `useState`/`useRef`.
+- **Done.** `Chat.tsx` is now 431 lines (turn-streaming + compose only). Extracted
+  to `pages/chat/`: `useEmbodimentSync` (the standing channel + snapshot +
+  reconnect + buffer + room-takeover), `chat-lines.ts` (the `ChatLine` model + all
+  pure merge/reduce/fold helpers, React-free), and the `<ChatTranscript>` /
+  `<ChatComposer>` views (the composer owns its own refs, autogrow, and Enter/IME
+  keys). Verbatim moves — no logic change.
+- **`usePolling` dropped.** The three polling hooks have genuinely different re-arm
+  policies (active-gated one-shot vs poll-forever-via-tick vs interval+listeners)
+  and each has its own test; one shared hook would be a poor-fitting abstraction
+  risking timing regressions for little gain (cf. §5). Left as-is.
+- **Acceptance met.** All 42 `Chat.test.tsx` tests + the full 155-test web suite
+  green; `vite build` clean; no behavior change.
 
-#### A5 · Unify the triplicated WS transport
+#### A5 · Unify the triplicated WS transport — ✅ shipped (Node side); web + test deferred
 - **Problem.** The same WS envelope/transport (a `StreamQueue`, `SupersededError`,
   the `'stream'|'result'|'error'` demux, the embodiment-ready/superseded
-  lifecycle) is implemented three times against the same `@cobble/shared`
+  lifecycle) was implemented three times against the same `@cobble/shared`
   message union: `web/src/api/ws.ts`, `discord/src/ws-client.ts`,
   `api/src/test/ws-client.ts`.
-- **Approach.** A shared transport (a `@cobble/shared` submodule or small
-  package) parameterized by a socket factory (the seam already exists in
-  `ws-client.ts` as `WsSocket`/`WsSocketFactory`).
-- **Risk.** Medium-high — cross-package; preserves the documented discord↔core
-  decoupling (transport speaks only `@cobble/shared`).
-- **Acceptance.** web + discord + api tests green against the shared transport.
+- **Done.** The canonical transport (`WsTransport` + `StreamQueue` + `WsSocket`/
+  `WsSocketFactory` + the error classes) now lives in `@cobble/shared`
+  (`ws-transport.ts`), socket-agnostic and Node/browser-free (it speaks only
+  `@cobble/shared` types). `discord/src/ws-client.ts` collapsed from 434 lines to a
+  re-export + the Node `ws` factory; the live `api/src/ws/discord-transport.test.ts`
+  exercises the shared transport end-to-end against a real `/ws`.
+- **Deferred, with reason.** The **web** singleton (`web/src/api/ws.ts`) layers
+  reconnect + companion-switching + a process-wide socket on the same envelope and
+  has **no direct test** — a blind rewrite of the live-chat transport in a large PR
+  is unsafe; it belongs in its own PR with manual browser QA. The **api test
+  client** (`openWs`) has bespoke semantics (resolve-on-open, reject-on-unauthorized-
+  companion, collect-to-array streams, `nextEvents` batching); wrapping it faithfully
+  would risk the 250-test suite for a test-only DRY gain.
+- **Acceptance.** discord (127) + shared (13) + api (250) suites green; the shared
+  transport is validated live by `discord-transport.test.ts`.
 
-#### A6 · Split `shared/contracts.ts` (1213 lines) into a `contracts/` barrel
+#### A6 · Split `shared/contracts.ts` (1213 lines) into a `contracts/` barrel — ⏸ skipped (by decision)
 - **Problem.** One file spans ~12 domains (messages, upload, ingestion, the WS
   envelope, motivation, growth, economy, memory, user-model, discord, citations,
-  errors). Organization, not bloat (no dead schemas) — but a module-level SRP miss.
-- **Approach.** Split by domain into `contracts/*.ts` with an `index.ts`
-  re-export; the `@cobble/shared` import surface stays identical. Move the
-  `Ws*Message` envelope into the shared transport module from A5.
-- **Risk.** Low-medium — wide but mechanical; typecheck catches misses.
-- **Acceptance.** full workspace typecheck green; import surface unchanged.
+  errors). Organization, not bloat (no dead schemas) — a module-level SRP miss.
+- **Decision (deliberately not done).** Unlike A1–A5, this addresses none of the
+  review's three lenses (over-engineering, SOLID/DRY, coupling/layering) — the file
+  is well-sectioned and cohesive; the only issue is length. Its types are densely
+  cross-linked (`MessageDto`↔`Citation`↔`ReactionDto`↔streaming↔proposals), so a
+  split trades a navigable single file for a web of intra-package imports and a large
+  mechanical diff, for marginal benefit. Left as-is; revisit as a trivial standalone
+  PR only if the file actually starts impeding work.
 
 ## 5. Reviewed and intentionally NOT changed
 
@@ -171,12 +205,13 @@ independent unless a dependency is noted.
 1. **Batch 2 = M1 + M2 + M3** (one branch/PR) — ✅ shipped (§3b); finishes the
    medium tier (M1 reduced to the `namespacedToolName` dedup — Zod rewrite
    dropped, §5).
-2. **A1, A2** — the WS-method layer extractions (the flagship layering fix);
-   one PR each, hot path, land carefully.
-3. **A4** — `Chat.tsx`; isolated, can go in parallel with the API work.
-4. **A5 → A6** — A5 first (it owns the moved `Ws*Message` envelope), then A6.
-5. **A3** — the harness split; highest risk, do it on its own with the most care,
-   ideally after the others so the tree is otherwise settled.
+2. **A1** ✅ shipped (`confirmProposal`); **A2** next — the WS-method layer
+   extractions (the flagship layering fix); one PR each, hot path, land carefully.
+3. **A4** ✅ shipped — `Chat.tsx` decomposed.
+4. **A5** ✅ shipped (Node side) — shared transport + discord; web/test deferred (§A5).
+5. **A3** ✅ shipped — the harness perception/background split.
+6. **A6** ⏸ skipped by decision (§A6) — cosmetic; serves none of the three lenses.
 
-Every PR: behavior-preserving, `pnpm -r run typecheck` + `pnpm lint` +
-`vitest run` green, and verified against this doc's acceptance criteria.
+A1–A5 shipped together in one PR (off `refactor/a1-confirm-proposal-service`), each
+a behavior-preserving commit: `pnpm -r run typecheck` + `pnpm lint` + the relevant
+`vitest run` suites green, verified against each task's acceptance criteria.
