@@ -1,7 +1,7 @@
 import { feed } from '@cobble/core';
 import { feedSchema, setProactivityDialSchema, type FeedResultDto } from '@cobble/shared';
 import type { AppDeps } from '../../app.js';
-import { buildBudget } from '../../routes/vitality.js';
+import { buildBudget } from './vitality-meter.js';
 import type { WsMethods } from '../dispatch.js';
 import { companionOf, ConflictError, parseParams } from './helpers.js';
 

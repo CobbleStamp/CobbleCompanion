@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../ingestion/untrusted.js';
+import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../text/untrusted.js';
 import type { TurnCtx } from '../harness/hooks.js';
 import { cliToolName, cliToolToTool } from './adapter.js';
 import { type CommandRequest, type CommandResult, FakeCommandSandbox } from './sandbox.js';

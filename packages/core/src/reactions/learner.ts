@@ -26,10 +26,11 @@
 import type { MessageDto } from '@cobble/shared';
 import type { IdentityStore } from '../identity/store.js';
 import type { Logger } from '../logging.js';
-import type { MemoryStore } from '../memory/store.js';
+import { isConversational, type MemoryStore } from '../memory/store.js';
 import { resolveWeights } from '../motivation/drives.js';
 import type { ProactiveOutcomeRecord, ProactiveOutcomeStore } from '../motivation/reward-store.js';
 import { nudgeDriveWeight } from '../motivation/weights.js';
+import { adjustDrivingBelief } from '../motivation/reinforce.js';
 import type { UserModelStore } from '../user-model/store.js';
 import { asReactableMessage, type ReactableMessage } from './reactable.js';
 import { senseReaction, type ReactionSenseDeps } from './sense.js';
@@ -41,9 +42,6 @@ const REACTION_LEARNING_RATE = 0.1;
 /** An ordinary-answer reaction nudges `approval` more gently — lighter, fuzzier,
  *  far more frequent, so everyday feedback drifts the dial rather than whipsawing it. */
 const APPROVAL_REACTION_RATE = 0.04;
-/** How strongly a reaction's reward moves a driving belief's salience (mirrors
- *  reinforce.ts). */
-const BELIEF_REWARD_RATE = 0.1;
 /** Recent turns fed to the read as context. */
 const RECENT_CONTEXT_TURNS = 8;
 /**
@@ -237,21 +235,14 @@ export class ReactionLearner {
     );
     await this.deps.identity.updateDriveWeights(companionId, next);
 
-    if (this.deps.userModel && outcome.drivenByUserFactId) {
-      try {
-        await this.deps.userModel.adjustBeliefSalience(
-          companion.ownerId,
-          outcome.drivenByUserFactId,
-          BELIEF_REWARD_RATE * reward,
-        );
-      } catch (error) {
-        this.deps.logger.error('failed to adjust driving belief salience from reaction', {
-          operation: 'reactions.learn.belief',
-          companionId,
-          error,
-        });
-      }
-    }
+    await adjustDrivingBelief(
+      this.deps.userModel,
+      companion.ownerId,
+      outcome.drivenByUserFactId,
+      reward,
+      this.deps.logger,
+      'reactions.learn.belief',
+    );
   }
 
   /** A reaction on an ordinary answer: nudge the approval drive gently. */

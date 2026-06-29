@@ -6,7 +6,7 @@
  * fences it and carries the verbatim instruction.
  */
 
-import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../../ingestion/untrusted.js';
+import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../../text/untrusted.js';
 import type { PromptTemplate } from '../types.js';
 
 /** The pre-rendered, ordinal-numbered, sentinel-stripped paragraph batch. */

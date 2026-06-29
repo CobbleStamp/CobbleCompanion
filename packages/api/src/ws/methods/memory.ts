@@ -8,6 +8,7 @@ import {
 } from '@cobble/shared';
 import type { AppDeps } from '../../app.js';
 import type { WsMethods } from '../dispatch.js';
+import { toJobDto } from './dto.js';
 import { companionOf, embedSearchQuery, NotFoundError, parseParams } from './helpers.js';
 
 /** Memory browser (mirrors memory.routes): a sectioned snapshot + hybrid search. */
@@ -20,30 +21,29 @@ export function memoryMethods(deps: AppDeps): WsMethods {
       if (!companion) {
         throw new NotFoundError('companion not found');
       }
+      // Independent per-store reads — fan out together rather than awaiting in series.
+      const [messageCount, episodeCount, counts, jobs, procedureCount] = await Promise.all([
+        memory.countMessages(companionId),
+        episodic.countEpisodes(companionId),
+        semantic.counts(companionId),
+        semantic.listJobs(companionId),
+        procedural.count(companionId),
+      ]);
       const episodicSection: EpisodicMemorySection = {
         status: 'available',
-        messageCount: await memory.countMessages(companionId),
-        episodeCount: await episodic.countEpisodes(companionId),
+        messageCount,
+        episodeCount,
       };
-      const counts = await semantic.counts(companionId);
-      const jobs = await semantic.listJobs(companionId);
       const semanticSection: SemanticMemorySection = {
         status: 'available',
         sourceCount: counts.sources,
         sectionCount: counts.sections,
         factCount: counts.facts,
-        jobs: jobs.map((job) => ({
-          id: job.id,
-          sourceId: job.sourceId,
-          status: job.status,
-          sectionsTotal: job.sectionsTotal,
-          sectionsDone: job.sectionsDone,
-          error: job.error,
-        })),
+        jobs: jobs.map(toJobDto),
       };
       const proceduralSection: ProceduralMemorySection = {
         status: 'available',
-        procedureCount: await procedural.count(companionId),
+        procedureCount,
       };
       const snapshot: MemorySnapshotDto = {
         identity: companion,

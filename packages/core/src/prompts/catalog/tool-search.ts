@@ -9,7 +9,7 @@
  * whitelist, so discovery can never widen the trust gate (§6).
  */
 
-import { stripSentinels, UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../../ingestion/untrusted.js';
+import { stripSentinels, UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../../text/untrusted.js';
 import type { ToolDef } from '../../llm/gateway.js';
 import type { PromptTemplate } from '../types.js';
 

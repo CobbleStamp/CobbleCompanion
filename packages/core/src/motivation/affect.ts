@@ -24,7 +24,7 @@ import { drainStream } from '../llm/drain.js';
 import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import { affectSenseTemplate, render, REPORT_AFFECT } from '../prompts/index.js';
-import type { VitalityStore } from '../quota/vitality-store.js';
+import { meterSpend, type VitalityStore } from '../quota/vitality-store.js';
 import { createUsageAccumulator, meteredLlmGateway } from '../usage.js';
 
 /** A single read of the user's emotional state. */
@@ -103,19 +103,11 @@ export async function senseAffect(
     // mid-stream throw still bills what was already metered. Whether or not the
     // model reported, the read happened. A quota hiccup is our infra fault and must
     // never void the outcome (logging.md, billing-crash policy).
-    if (deps.quota && params.companionId) {
-      const total = usage.total().totalTokens;
-      if (total > 0) {
-        try {
-          await deps.quota.spend(params.companionId, total);
-        } catch (error) {
-          deps.logger.error('failed to record affect read usage', {
-            operation: 'motivation.affect.bill',
-            companionId: params.companionId,
-            error,
-          });
-        }
-      }
+    if (params.companionId) {
+      await meterSpend(deps.quota, params.companionId, usage.total().totalTokens, deps.logger, {
+        message: 'failed to record affect read usage',
+        operation: 'motivation.affect.bill',
+      });
     }
   }
 }

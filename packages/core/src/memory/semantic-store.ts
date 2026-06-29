@@ -11,6 +11,7 @@
 import { companions, facts, ingestionJobs, sections, sources, type Database } from '@cobble/db';
 import type { IngestionStatus, SourceKind } from '@cobble/shared';
 import { and, count, desc, eq, sql } from 'drizzle-orm';
+import { cosineDistance, ftsMatches, ftsRankDesc } from './sql-fragments.js';
 import type { ParsedDocument } from '../ingestion/parser.js';
 import { stripNul } from '../text/sanitize.js';
 import { reciprocalRankFusion } from './rrf.js';
@@ -349,22 +350,15 @@ export class DrizzleSemanticMemoryStore implements SemanticMemoryStore {
             .from(sections)
             .innerJoin(sources, eq(sections.sourceId, sources.id))
             .where(and(...filterClauses, sql`${sections.embedding} IS NOT NULL`))
-            .orderBy(
-              sql`${sections.embedding} <=> ${JSON.stringify([...params.queryEmbedding])}::vector`,
-            )
+            .orderBy(cosineDistance(sections.embedding, params.queryEmbedding))
             .limit(params.topK);
 
     const lexicalRows = await this.db
       .select(hitColumns)
       .from(sections)
       .innerJoin(sources, eq(sections.sourceId, sources.id))
-      .where(
-        and(
-          ...filterClauses,
-          sql`${sections.fts} @@ plainto_tsquery('english', ${params.queryText})`,
-        ),
-      )
-      .orderBy(sql`ts_rank(${sections.fts}, plainto_tsquery('english', ${params.queryText})) DESC`)
+      .where(and(...filterClauses, ftsMatches(sections.fts, params.queryText)))
+      .orderBy(ftsRankDesc(sections.fts, params.queryText))
       .limit(params.topK);
 
     return combineHits(

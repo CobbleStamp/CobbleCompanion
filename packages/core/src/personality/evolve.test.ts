@@ -9,7 +9,7 @@ import { createTestDatabase } from '@cobble/db/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DrizzleIdentityStore } from '../identity/store.js';
 import { FakeLlmGateway } from '../llm/fake.js';
-import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../ingestion/untrusted.js';
+import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../text/untrusted.js';
 import { DrizzleEpisodicMemoryStore, type NewEpisode } from '../memory/episodic-store.js';
 import type { VitalityStore } from '../quota/vitality-store.js';
 import { LlmPersonalityEvolver, type PersonalityEvolverOptions } from './evolve.js';

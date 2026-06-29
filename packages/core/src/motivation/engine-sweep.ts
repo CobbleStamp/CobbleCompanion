@@ -7,43 +7,25 @@
  */
 
 import type { Logger } from '../logging.js';
+import { sweepCompanions, type CompanionRequester } from '../jobs/sweep.js';
 import type { LeadStore } from '../tools/lead-store.js';
 
 export interface MotivationSweepDeps {
   readonly leads: LeadStore;
   /**
-   * Anything that turns a companion id into a requested tick — the in-process
-   * `MotivationRunner` or, post-Phase-B, the job-queue requester. Structural so
-   * the sweep is agnostic to which drains the work.
+   * Anything that turns a companion id into a requested tick — the job-queue
+   * work requester. Structural so the sweep is agnostic to what drains the work.
    */
-  readonly runner: { request(companionId: string): void };
+  readonly runner: CompanionRequester;
   readonly logger: Logger;
 }
 
 /** Request a tick for each companion with pending leads. Returns the count requested. */
 export async function sweepMotivation(deps: MotivationSweepDeps): Promise<number> {
-  let companionIds: readonly string[];
-  try {
-    companionIds = await deps.leads.companionsWithNewLeads();
-  } catch (error) {
-    deps.logger.error('motivation sweep failed', {
-      operation: 'motivation.sweep',
-      error,
-    });
-    return 0;
-  }
-  let requested = 0;
-  for (const companionId of companionIds) {
-    try {
-      deps.runner.request(companionId);
-      requested += 1;
-    } catch (error) {
-      deps.logger.error('motivation sweep failed to request a companion', {
-        operation: 'motivation.sweep',
-        companionId,
-        error,
-      });
-    }
-  }
-  return requested;
+  return sweepCompanions(
+    () => deps.leads.companionsWithNewLeads(),
+    deps.runner,
+    deps.logger,
+    'motivation.sweep',
+  );
 }

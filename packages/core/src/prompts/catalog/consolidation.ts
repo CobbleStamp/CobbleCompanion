@@ -6,7 +6,7 @@
  * template voices it in the companion's identity and fences it.
  */
 
-import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../../ingestion/untrusted.js';
+import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../../text/untrusted.js';
 import type { PromptTemplate } from '../types.js';
 
 /** Identity that voices the memories, plus the pre-rendered numbered turn block. */

@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../../ingestion/untrusted.js';
+import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../../text/untrusted.js';
 import { affectSenseTemplate } from './affect-sense.js';
 import { autonomousNoteTemplate } from './autonomous-note.js';
 import { ingestionAnnounceTemplate } from './ingestion-announce.js';

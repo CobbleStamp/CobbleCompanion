@@ -10,7 +10,7 @@ import type { Logger } from '../logging.js';
 import { estimateUsage } from '../usage.js';
 import type { Paragraph } from './parser.js';
 import { parseBoundaries, segmentParagraphs } from './segmenter.js';
-import { MAX_INGESTION_PROMPT_CHARS, UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from './untrusted.js';
+import { MAX_INGESTION_PROMPT_CHARS, UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../text/untrusted.js';
 
 const silentLogger: Logger = {
   error: () => undefined,

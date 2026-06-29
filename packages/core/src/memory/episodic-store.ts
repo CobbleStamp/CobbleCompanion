@@ -17,6 +17,7 @@
 
 import { companions, episodes, messages, type Database } from '@cobble/db';
 import { and, count, desc, eq, gt, sql } from 'drizzle-orm';
+import { cosineDistance, ftsMatches, ftsRankDesc } from './sql-fragments.js';
 import { stripNul } from '../text/sanitize.js';
 import { reciprocalRankFusion } from './rrf.js';
 
@@ -212,21 +213,14 @@ export class DrizzleEpisodicMemoryStore implements EpisodicMemoryStore {
             .select(hitColumns)
             .from(episodes)
             .where(and(...filterClauses, sql`${episodes.embedding} IS NOT NULL`))
-            .orderBy(
-              sql`${episodes.embedding} <=> ${JSON.stringify([...params.queryEmbedding])}::vector`,
-            )
+            .orderBy(cosineDistance(episodes.embedding, params.queryEmbedding))
             .limit(params.topK);
 
     const lexicalRows: EpisodeHitRow[] = await this.db
       .select(hitColumns)
       .from(episodes)
-      .where(
-        and(
-          ...filterClauses,
-          sql`${episodes.fts} @@ plainto_tsquery('english', ${params.queryText})`,
-        ),
-      )
-      .orderBy(sql`ts_rank(${episodes.fts}, plainto_tsquery('english', ${params.queryText})) DESC`)
+      .where(and(...filterClauses, ftsMatches(episodes.fts, params.queryText)))
+      .orderBy(ftsRankDesc(episodes.fts, params.queryText))
       .limit(params.topK);
 
     return reciprocalRankFusion([vectorRows, lexicalRows], (row) => row.episodeId, params.topK).map(

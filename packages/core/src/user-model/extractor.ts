@@ -27,7 +27,7 @@ import { drainStream } from '../llm/drain.js';
 import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import { render, REPORT_USER_FACTS, userExtractTemplate } from '../prompts/index.js';
-import type { VitalityStore } from '../quota/vitality-store.js';
+import { meterSpend, type VitalityStore } from '../quota/vitality-store.js';
 import { createUsageAccumulator, meteredLlmGateway } from '../usage.js';
 
 /**
@@ -100,19 +100,11 @@ export async function captureUserFacts(
     // Bill best-effort for the tokens consumed — in `finally` so a mid-stream throw
     // still bills what was metered. The read happened regardless of what was reported;
     // a quota hiccup is our infra fault and must never void the turn (billing policy).
-    if (deps.quota && params.companionId) {
-      const total = usage.total().totalTokens;
-      if (total > 0) {
-        try {
-          await deps.quota.spend(params.companionId, total);
-        } catch (error) {
-          deps.logger.error('failed to record user-fact capture usage', {
-            operation: 'user-model.capture.bill',
-            companionId: params.companionId,
-            error,
-          });
-        }
-      }
+    if (params.companionId) {
+      await meterSpend(deps.quota, params.companionId, usage.total().totalTokens, deps.logger, {
+        message: 'failed to record user-fact capture usage',
+        operation: 'user-model.capture.bill',
+      });
     }
   }
 }

@@ -79,7 +79,7 @@ describe('sweepConsolidation error isolation', () => {
     expect(count).toBe(2);
     // The per-companion failure was logged with its id, not swallowed.
     expect(logger.error).toHaveBeenCalledWith(
-      'consolidation sweep failed to request a companion',
+      'sweep failed to request a companion',
       expect.objectContaining({ companionId: second, error: expect.any(Error) }),
     );
   });

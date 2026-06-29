@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { FakeLlmGateway } from '../llm/fake.js';
 import type { Logger } from '../logging.js';
 import { enrichSection, parseEnrichment } from './enricher.js';
-import { MAX_INGESTION_PROMPT_CHARS, UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from './untrusted.js';
+import { MAX_INGESTION_PROMPT_CHARS, UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../text/untrusted.js';
 
 const silentLogger: Logger = {
   error: () => undefined,

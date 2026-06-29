@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { TurnCtx } from '../harness/hooks.js';
-import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../ingestion/untrusted.js';
+import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../text/untrusted.js';
 import type { Logger } from '../logging.js';
 import { mcpToolName, mcpToolToTool } from './adapter.js';
 import { FakeMcpGateway } from './fake.js';

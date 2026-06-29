@@ -11,7 +11,7 @@
 import { createHash } from 'node:crypto';
 
 import type { ToolResult } from '../harness/hooks.js';
-import { stripSentinels, UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../ingestion/untrusted.js';
+import { stripSentinels, UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../text/untrusted.js';
 import { consoleLogger, type Logger } from '../logging.js';
 import { type Tool, toolErrorMessage } from '../tools/tool.js';
 import type { McpGateway, McpServerSpec, McpToolDef } from './gateway.js';

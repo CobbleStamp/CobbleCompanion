@@ -33,7 +33,7 @@ import type { Logger } from '../logging.js';
 import type { SectionRecord } from '../memory/semantic-store.js';
 import type { MemoryStore } from '../memory/store.js';
 import { autonomousNoteTemplate, render, type ReadSourceDigest } from '../prompts/index.js';
-import type { VitalityStore } from '../quota/vitality-store.js';
+import { meterSpend, type VitalityStore } from '../quota/vitality-store.js';
 import type { LeadStore } from '../tools/lead-store.js';
 import { createUsageAccumulator, meteredLlmGateway } from '../usage.js';
 import type { ProactiveOutcomeStore } from './reward-store.js';
@@ -322,17 +322,9 @@ async function composeReportNote(
   } finally {
     // Bill ENERGY in `finally` so a mid-stream throw still spends what was already
     // metered — otherwise the companion composes a partial note for free.
-    const total = usage.total().totalTokens;
-    if (total > 0) {
-      try {
-        await deps.energy.spend(companionId, total);
-      } catch (error) {
-        deps.logger.error('failed to record autonomous note energy spend', {
-          operation: 'motivation.autonomousBurst.bill',
-          companionId,
-          error,
-        });
-      }
-    }
+    await meterSpend(deps.energy, companionId, usage.total().totalTokens, deps.logger, {
+      message: 'failed to record autonomous note energy spend',
+      operation: 'motivation.autonomousBurst.bill',
+    });
   }
 }

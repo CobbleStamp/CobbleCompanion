@@ -17,7 +17,7 @@ import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import type { EpisodicMemoryStore } from '../memory/episodic-store.js';
 import { personaEvolveTemplate, render } from '../prompts/index.js';
-import type { VitalityStore } from '../quota/vitality-store.js';
+import { meterSpend, type VitalityStore } from '../quota/vitality-store.js';
 import { createUsageAccumulator, meteredLlmGateway } from '../usage.js';
 
 export interface PersonalityEvolverOptions {
@@ -78,7 +78,11 @@ export class LlmPersonalityEvolver implements PersonalityEvolver {
       const usage = createUsageAccumulator();
       const llm = meteredLlmGateway(this.options.llm, usage.sink);
       const text = await this.synthesize(llm, companion, episodes);
-      await this.debit(companionId, usage.total().totalTokens);
+      // Meter the synthesis tokens against the companion's stamina; best-effort (logging.md).
+      await meterSpend(this.options.quota, companionId, usage.total().totalTokens, logger, {
+        message: 'failed to record personality-evolution token usage',
+        operation: 'personality.evolve.debit',
+      });
       if (text.length === 0) {
         return; // unusable generation — keep the prior persona, retry later
       }
@@ -120,21 +124,5 @@ export class LlmPersonalityEvolver implements PersonalityEvolver {
       text += delta;
     }
     return text.trim().slice(0, MAX_PERSONA_CHARS);
-  }
-
-  /** Meter the synthesis tokens against the companion's stamina; best-effort (logging.md). */
-  private async debit(companionId: string, totalTokens: number): Promise<void> {
-    if (!this.options.quota || totalTokens <= 0) {
-      return;
-    }
-    try {
-      await this.options.quota.spend(companionId, totalTokens);
-    } catch (error) {
-      this.options.logger.error('failed to record personality-evolution token usage', {
-        operation: 'personality.evolve.debit',
-        companionId,
-        error,
-      });
-    }
   }
 }

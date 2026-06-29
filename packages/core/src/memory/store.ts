@@ -3,6 +3,16 @@ import { type Database, messages } from '@cobble/db';
 import { and, count, desc, eq, gt } from 'drizzle-orm';
 
 /**
+ * A real conversational turn — kind `'message'` (the default when unset), as
+ * opposed to a non-conversational marker row (proposal cards, attachment chips,
+ * tool-step rows). The single predicate every reader uses to keep prompts,
+ * retrieval, affect, and reaction inputs to actual dialogue.
+ */
+export function isConversational(message: { readonly kind?: string | null }): boolean {
+  return (message.kind ?? 'message') === 'message';
+}
+
+/**
  * Extras when appending a transcript row beyond the plain `(role, content)`:
  * `sourceId` links an upload's chip/acknowledgement; `kind` + `metadata` carry
  * the rich-conversation data (tool steps, proposals, grounding citations) so the

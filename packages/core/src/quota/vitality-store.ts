@@ -20,6 +20,7 @@
 
 import { type Database, companions } from '@cobble/db';
 import { eq, sql } from 'drizzle-orm';
+import type { Logger } from '../logging.js';
 
 /** Which half of a companion's vitality a store meters. */
 export type VitalityKind = 'stamina' | 'energy';
@@ -133,5 +134,38 @@ export class DrizzleVitalityStore implements VitalityStore {
     if (updated.length === 0) {
       throw new CompanionNotFoundError(companionId);
     }
+  }
+}
+
+/**
+ * Best-effort token metering against a vitality wallet (logging.md). Spends the
+ * run's tokens from `quota`, swallowing + logging any failure so a billing hiccup
+ * never fails the work the user already received. No-op when unmetered (`quota`
+ * absent) or nothing was spent (`totalTokens <= 0`).
+ *
+ * Single-sources the `debit` method that was copy-pasted, verbatim bar its log
+ * strings, across every metered background service (ingestion pipeline + note
+ * announcer, episodic consolidation, persona evolution, user-model reflection +
+ * synthesis). `accountId` is the wallet charged — the companion's own id on the
+ * default path, or a per-run override (e.g. the energy account) when present.
+ */
+export async function meterSpend(
+  quota: VitalityStore | undefined,
+  accountId: string,
+  totalTokens: number,
+  logger: Logger,
+  context: { readonly message: string; readonly operation: string },
+): Promise<void> {
+  if (!quota || totalTokens <= 0) {
+    return;
+  }
+  try {
+    await quota.spend(accountId, totalTokens);
+  } catch (error) {
+    logger.error(context.message, {
+      operation: context.operation,
+      accountId,
+      error,
+    });
   }
 }

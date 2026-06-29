@@ -3,8 +3,10 @@
 import { describe, expect, it } from 'vitest';
 import type { Logger } from '../logging.js';
 import type { LeadStore } from '../tools/lead-store.js';
-import { MotivationRunner, type MotivationTarget } from './engine-runner.js';
-import { sweepMotivation } from './engine-sweep.js';
+import { sweepMotivation, type MotivationSweepDeps } from './engine-sweep.js';
+
+/** The structural runner the sweep depends on — records each requested id. */
+type SweepRunner = MotivationSweepDeps['runner'];
 
 const silent: Logger = { error: () => {}, warn: () => {}, info: () => {} };
 
@@ -32,26 +34,23 @@ function leadsWith(ids: readonly string[]): LeadStore {
   } as unknown as LeadStore;
 }
 
-function recordingRunner(into: string[]): MotivationRunner {
-  const target: MotivationTarget = {
-    async tick(id) {
+function recordingRunner(into: string[]): SweepRunner {
+  return {
+    request(id: string): void {
       into.push(id);
     },
   };
-  return new MotivationRunner(target, silent);
 }
 
 describe('sweepMotivation', () => {
   it('requests a tick for each companion with unread leads', async () => {
     const ticked: string[] = [];
-    const runner = recordingRunner(ticked);
     const requested = await sweepMotivation({
       leads: leadsWith(['a', 'b', 'c']),
-      runner,
+      runner: recordingRunner(ticked),
       logger: silent,
     });
     expect(requested).toBe(3);
-    await runner.whenIdle();
     expect([...ticked].sort()).toEqual(['a', 'b', 'c']);
   });
 
@@ -59,14 +58,14 @@ describe('sweepMotivation', () => {
     const logger = capturingLogger();
     const requestedIds: string[] = [];
     // A runner whose request() throws for one companion but works for the others.
-    const flakyRunner = {
+    const flakyRunner: SweepRunner = {
       request(companionId: string): void {
         if (companionId === 'b') {
           throw new Error('request blew up for b');
         }
         requestedIds.push(companionId);
       },
-    } as unknown as MotivationRunner;
+    };
 
     const requested = await sweepMotivation({
       leads: leadsWith(['a', 'b', 'c']),
@@ -77,7 +76,7 @@ describe('sweepMotivation', () => {
     // 'b' threw and was skipped; 'a' and 'c' were still requested (loop continued).
     expect(requested).toBe(2);
     expect(requestedIds.sort()).toEqual(['a', 'c']);
-    expect(logger.errors).toContain('motivation sweep failed to request a companion');
+    expect(logger.errors).toContain('sweep failed to request a companion');
   });
 
   it('returns 0 when the worklist query fails (best-effort)', async () => {

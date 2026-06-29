@@ -14,7 +14,7 @@
  */
 
 import type { MessageRole } from '@cobble/shared';
-import { MAX_INGESTION_PROMPT_CHARS, stripSentinels } from '../ingestion/untrusted.js';
+import { MAX_INGESTION_PROMPT_CHARS, stripSentinels } from '../text/untrusted.js';
 import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
 import { consolidationTemplate, render } from '../prompts/index.js';

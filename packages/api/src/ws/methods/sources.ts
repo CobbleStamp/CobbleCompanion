@@ -3,9 +3,6 @@ import {
   ingestionPayloadBytes,
   parseUploadKey,
   type IngestionPayload,
-  type JobRecord,
-  type SectionRecord,
-  type SourceRecord,
 } from '@cobble/core';
 import {
   createFileSourceSchema,
@@ -16,7 +13,6 @@ import {
   uploadKindForFilename,
   type IngestionJobDto,
   type MessageDto,
-  type SectionDto,
   type SourceDto,
   type UploadSlotDto,
 } from '@cobble/shared';
@@ -29,6 +25,7 @@ import {
   titleFromFilename,
 } from '../../sources/file-format.js';
 import type { WsMethods } from '../dispatch.js';
+import { toJobDto, toSectionDto, toSourceDto } from './dto.js';
 import {
   BadParamsError,
   companionOf,
@@ -253,43 +250,5 @@ export function sourceMethods(deps: AppDeps): WsMethods {
       const jobs = await semantic.listJobs(companionId);
       return { jobs: jobs.map(toJobDto) };
     },
-  };
-}
-
-function toSourceDto(source: SourceRecord): SourceDto {
-  return {
-    id: source.id,
-    kind: source.kind,
-    title: source.title,
-    origin: source.origin,
-    byteSize: source.byteSize,
-    createdAt: source.createdAt,
-  };
-}
-
-function toJobDto(job: JobRecord): IngestionJobDto {
-  return {
-    id: job.id,
-    sourceId: job.sourceId,
-    status: job.status,
-    sectionsTotal: job.sectionsTotal,
-    sectionsDone: job.sectionsDone,
-    error: job.error,
-  };
-}
-
-function toSectionDto(section: SectionRecord): SectionDto {
-  return {
-    id: section.id,
-    sourceId: section.sourceId,
-    chapterTitle: section.chapterTitle,
-    topicTitle: section.topicTitle,
-    originalText: section.originalText,
-    contextHeader: section.contextHeader,
-    paraStart: section.paraStart,
-    paraEnd: section.paraEnd,
-    pageStart: section.pageStart,
-    pageEnd: section.pageEnd,
-    ord: section.ord,
   };
 }

@@ -16,7 +16,7 @@ import {
   stripSentinels,
   UNTRUSTED_CLOSE,
   UNTRUSTED_OPEN,
-} from '../ingestion/untrusted.js';
+} from '../text/untrusted.js';
 import type { EmbeddingGateway } from '../embedding/gateway.js';
 import type { Logger } from '../logging.js';
 import type { EpisodeSearchHit, EpisodicMemoryStore } from '../memory/episodic-store.js';

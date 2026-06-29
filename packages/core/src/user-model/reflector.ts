@@ -20,7 +20,7 @@ import type { IdentityStore } from '../identity/store.js';
 import { drainStream } from '../llm/drain.js';
 import type { LlmGateway } from '../llm/gateway.js';
 import type { Logger } from '../logging.js';
-import type { MemoryStore } from '../memory/store.js';
+import { isConversational, type MemoryStore } from '../memory/store.js';
 import {
   REPORT_RECONCILIATION,
   REPORT_USER_BELIEFS,
@@ -28,7 +28,7 @@ import {
   userBeliefsReconcileTemplate,
   userBeliefsReflectTemplate,
 } from '../prompts/index.js';
-import type { VitalityStore } from '../quota/vitality-store.js';
+import { meterSpend, type VitalityStore } from '../quota/vitality-store.js';
 import { createUsageAccumulator, meteredLlmGateway, type UsageSink } from '../usage.js';
 import { beliefPhrase } from './phrasing.js';
 import { isGatedSensitive } from './sensitive.js';
@@ -299,18 +299,10 @@ export class LlmUserModelReflector implements UserModelReflector {
 
   /** Meter the run's tokens against the companion's stamina; best-effort (logging.md). */
   private async debit(companionId: string, totalTokens: number): Promise<void> {
-    if (!this.options.quota || totalTokens <= 0) {
-      return;
-    }
-    try {
-      await this.options.quota.spend(companionId, totalTokens);
-    } catch (error) {
-      this.options.logger.error('failed to record user-model reflection token usage', {
-        operation: 'user-model.reflector.debit',
-        companionId,
-        error,
-      });
-    }
+    await meterSpend(this.options.quota, companionId, totalTokens, this.options.logger, {
+      message: 'failed to record user-model reflection token usage',
+      operation: 'user-model.reflector.debit',
+    });
   }
 }
 
@@ -319,7 +311,7 @@ function renderWindow(
   window: readonly { readonly role: string; readonly content: string; readonly kind?: string }[],
 ): string {
   return window
-    .filter((m) => (m.kind ?? 'message') === 'message')
+    .filter(isConversational)
     .map((m) => `${m.role}: ${m.content}`)
     .join('\n');
 }

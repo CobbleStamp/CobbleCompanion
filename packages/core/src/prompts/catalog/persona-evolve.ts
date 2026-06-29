@@ -6,7 +6,7 @@
  * template strips sentinels and fences them.
  */
 
-import { stripSentinels, UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../../ingestion/untrusted.js';
+import { stripSentinels, UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../../text/untrusted.js';
 import type { PromptTemplate } from '../types.js';
 
 /** Seed identity, the prior evolved persona (raw), and raw recent memory summaries. */
