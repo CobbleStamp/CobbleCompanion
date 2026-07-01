@@ -1080,6 +1080,13 @@ owned by `development-plan.md`.
 
 **Out of scope / future.**
 
+- **Missions (goal-driven long-running tasks)** — a user-assigned, terminating objective the
+  companion plans, executes in loops, and reports on for days/weeks (e.g. a price watch that wakes the
+  companion to analyze and report). Realized as an **exclusive mode** (the drive engine is suspended
+  while a mission is active) whose turns are ordinary input-driven loop ENTRYs — a scheduled trigger
+  arriving via a Discord mission channel, or the user. The deterministic polling lives **outside** the
+  companion in the shipped `Tools/scheduler` spine; the companion wakes only on events. Designed, not
+  built — full design in `plans/missions.md`.
 - **Proactivity reach** — unprompted conversation beyond the report note (tips, questions,
   check-ins) and a stronger sense of purpose/agenda; continuous work-while-away (needs push for an
   audience); a deeper contextual-bandit reinforcement policy (`companion-motivation.md`).
