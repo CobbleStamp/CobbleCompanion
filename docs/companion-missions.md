@@ -2,17 +2,26 @@
 
 > **Canonical source for the missions feature's _design and decisions_** — what a mission is,
 > why it is a distinct kind of motivation, how the companion is woken to pursue one, and the
-> design choices that shape it. A **mission** is an externally-assigned, persistent, terminating
-> objective the companion plans, pursues in event-driven turns, and reports on until told to stop.
-> Worked example throughout: _"monitor LITE; wake me on Discord if it drops below $810; meanwhile
-> track the news and report your findings and prediction."_
+> design choices that shape it. A **mission** is a **large, complex, long-running objective the
+> companion pursues as an autonomous agent** — it **plans** the approach, **researches**,
+> **executes** steps, **validates** the results against the goal, and **repeats** that loop across
+> many turns (for days or weeks) until the goal is met or it is told to stop. It is the class of
+> open-ended, self-directed task a general autonomous agent (e.g. [Manus](https://manus.im/)) takes
+> on — run _inside_ the companion, on its memory, its tools, and its room. Worked example
+> throughout: _"monitor LITE; wake me on Discord if it drops below $810; meanwhile track the news
+> and report your findings and prediction"_ — a monitoring-flavoured mission; the general capability
+> is any goal the companion can plan and iterate toward.
 >
 > **Status: built (Milestone 1), integration dry-run pending.** The Tools spine ships in the
 > `Tools` repo (`scheduler`, `scheduler-cli`, `ibkr-cli query`, `discord-notify`); the companion
 > half ships across `@cobble/db`, `@cobble/core`, `@cobble/api`, `@cobble/discord`, and
-> `@cobble/web`. What remains is a live end-to-end dry-run against a running scheduler + Discord
-> guild, and two deferred durability/lifecycle backstops (§11). Present tense below describes the
-> live design; §11 marks what is not yet wired.
+> `@cobble/web`. What ships is the **spine** of the loop (§1.1): the plan captured at creation, the
+> per-turn journal that carries state across iterations, and the event-driven reasoning turn with
+> tools. What **fully closes the loop autonomously** — validating each turn against the criteria to
+> decide _continue / replan / complete_ without a human — is the deferred trajectory (§11); today a
+> mission iterates per wake and the human closes it via `mission.stop`. Also remaining: a live
+> end-to-end dry-run and a durability backstop (§11). Present tense below describes the live design;
+> §11 marks what is not yet wired.
 >
 > **Each fact lives in one place.** This doc owns the **mission concept, the wake transport, the
 > mission-mode semantics, and the seams each piece touches.** It references (does not redefine) the
@@ -40,7 +49,7 @@ persistent, terminating objective with success criteria** — "what it was _told
 | Lifetime | Always present | Created → runs → stopped/complete |
 | Goal | None — a homeostatic need | Explicit objective + validation criteria |
 | Idle | A valid outcome | A failure to make progress |
-| Actions | Reads into own memory only | Reads + reports (outward) within its room |
+| Actions | Reads into own memory only | Plan → research → execute → validate → replan (an agentic loop) + report |
 | Cadence | Lazy tick / arbitration | Event-driven (a fired predicate) or you messaging |
 
 Two design consequences flow from this:
@@ -54,6 +63,39 @@ Two design consequences flow from this:
   by an input, whether that input is **you typing** or a **scheduled trigger** (§3). There is
   therefore **no separate "mission initiator"** to build: `MissionService` owns the mission's state
   and reasoning, and the agent loop it already runs does the rest.
+
+### 1.1 The mission loop — plan, research, execute, validate, repeat
+
+The heart of a mission is not the wake — it is an **iterative, goal-directed loop**. At creation the
+companion **plans**: it decomposes the goal into an approach and writes explicit
+`validation_criteria` — the test that says when the goal is met. Thereafter, each iteration (one
+`mission.advance` turn, §5.2) is a full agentic step: recall the plan and everything learned so far,
+**research/execute** with tools, **validate** the new results against the criteria, then **decide** —
+keep going, revise the plan, or declare the goal met — and record that decision so the next iteration
+builds on it. The loop repeats across many turns until it validates as complete or the user stops it.
+
+```mermaid
+flowchart LR
+    G([goal assigned]) --> P[plan: decompose + set<br/>validation criteria]
+    P --> A[one iteration<br/>mission.advance]
+    A --> R[research / execute<br/>with tools]
+    R --> V[validate results<br/>vs. criteria]
+    V --> D{goal met?}
+    D -- no, keep going / replan --> J[journal the decision]
+    J -.->|next wake or message| A
+    D -- yes --> C([complete])
+    A -.->|user| STOP([stop])
+```
+
+Two things make this loop cheap and durable rather than a runaway agent: the **cadence lives
+outside** the companion (§2 — the LLM runs only when an iteration is warranted, not in a hot spin),
+and the **state lives in a journal** (§4 — each turn recalls "what I concluded last time" instead of
+rescanning the transcript, giving genuine cross-day continuity).
+
+> **Build note.** Milestone 1 ships the loop's _spine_ — plan-at-creation, journal continuity, and
+> the per-iteration reasoning turn. The **validate → decide (continue / replan / complete)** control
+> currently leans on the human (`mission.stop`); making that decision _autonomously_ each turn is the
+> deferred trajectory (§11) that closes the loop end-to-end.
 
 ## 2. Design principle — push the cheap, deterministic work _out_
 
@@ -236,24 +278,29 @@ If activation fails after the job is armed, the tool **cancels the job** as comp
 narrow accepted crash window between arm and activate (a crash there could leave an armed job with no
 active mission); it is documented in the tool and accepted for v1.
 
-### 5.2 `mission.advance` — the wake turn
+### 5.2 `mission.advance` — one iteration of the loop
 
-Fired by a trigger _or_ you messaging — handled identically. The bridge calls the companion-scoped
-`mission.advance({ event })` WS method:
+`mission.advance` is a single turn of the §1.1 loop — recall → research/execute → validate → decide
+→ journal. Fired by a trigger _or_ you messaging — handled identically. The bridge calls the
+companion-scoped `mission.advance({ event })` WS method:
 
 1. **resolve the active mission.** If there is **none** — a stale/duplicate trigger, or one racing a
    just-issued `mission.stop` — the method **skips cheaply** (`{done:true, skipped:'no active
    mission'}`) rather than burning a stamina turn that would inject no context and journal nothing.
-2. **load mission context.** A dedicated **mission-retrieve arm** in the memory composition injects
-   `goal` + `plan` + recent `mission_journal` + the incoming `event` as grounding — zero extra
-   tokens beyond the turn itself.
-3. **reason.** Pull data (e.g. `ibkr-cli`, web fetch), analyze against the criteria, recompute the
-   prediction. In mission mode, effectful tools run **ungated** (§6).
-4. **report.** The turn's output is spoken in the embodied room (§7).
-5. **journal.** `withMissionJournal` taps the turn's `done` message and appends it to
-   `mission_journal` as findings (v1 report-as-findings). A superseded turn journals nothing — the
-   live turn on the new connection owns that write. The journal write is best-effort: a failure is
-   logged, never surfaced into the turn.
+2. **recall.** A dedicated **mission-retrieve arm** in the memory composition injects `goal` +
+   `plan` + recent `mission_journal` + the incoming `event` as grounding — so the iteration continues
+   from where the last one left off, at zero extra tokens beyond the turn itself.
+3. **research / execute.** Pull data and act with tools (e.g. `ibkr-cli`, web fetch), analyze against
+   the plan, recompute the prediction. In mission mode, effectful tools run **ungated** (§6).
+4. **validate & decide.** Weigh the new results against `validation_criteria` and decide whether to
+   keep going, revise the approach, or declare the goal met. _In Milestone 1 this judgment is
+   expressed in the turn's reasoning and report; it does not yet drive an automatic status transition
+   — the human closes the loop via `mission.stop` (§11)._
+5. **report.** The turn's output is spoken in the embodied room (§7).
+6. **journal.** `withMissionJournal` taps the turn's `done` message and appends it to
+   `mission_journal` as findings (v1 report-as-findings), so the next iteration recalls this
+   decision. A superseded turn journals nothing — the live turn on the new connection owns that
+   write. The journal write is best-effort: a failure is logged, never surfaced into the turn.
 
 `withMissionJournal` drives the harness generator manually (to tap `done`) but wraps it in
 `try/finally` that forwards an early `.return()` into the inner generator, so the harness's own
@@ -350,10 +397,13 @@ weakening it:
   Discord→companion hop (§10.4): on gateway (re)connect, fetch recent mission-channel messages and
   replay unprocessed triggers, deduped against a persisted processed-message cursor. Needs a new
   gateway `fetchRecentMessages` method.
-- **Auto-completion detection + per-turn re-arm** — v1 arms a **recurring** wake and ends via the
-  user's `mission.stop`. Detecting `validation_criteria` met (→ `complete`, cancel jobs, resume
-  drives) and re-arming a fire-once job per turn are the deferred path; `MissionService.pause` /
-  `resume` / `complete` / `fail` exist as scaffolding for it.
+- **Closing the loop autonomously (the validate → decide control, §1.1, §5.2 step 4)** — the biggest
+  gap from the north star. Today the companion _reasons about_ progress each turn but does not act on
+  it: v1 arms a **recurring** wake and ends via the user's `mission.stop`. The deferred path lets the
+  turn's own judgment drive the state machine — detecting `validation_criteria` met (→ `complete`,
+  cancel jobs, resume drives), revising the plan/predicate when the approach isn't working, and
+  re-arming a fire-once job per turn instead of a blanket recurring one. `MissionService.pause` /
+  `resume` / `complete` / `fail` exist as scaffolding for exactly this.
 - **The standing outward-grant** — until a mission uses a genuinely effectful outward tool (§7).
 - **Multiple concurrent missions** — would reintroduce explicit routing, solved then by **one
   channel per mission** (not a structured `mission_id`), so plain text still suffices.
