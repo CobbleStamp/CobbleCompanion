@@ -17,3 +17,13 @@ export {
   KEY_BYTES,
   type DecryptResult,
 } from './crypto.js';
+export {
+  DrizzleMissionStore,
+  DrizzleMissionJournalStore,
+  type MissionStore,
+  type MissionJournalStore,
+  type MissionRecord,
+  type MissionActivation,
+  type MissionJournalInput,
+  type MissionJournalRecord,
+} from './mission-store.js';

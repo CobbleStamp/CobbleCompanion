@@ -1206,6 +1206,93 @@ export const addReactionSchema = z.object({
 });
 export type AddReactionBody = z.infer<typeof addReactionSchema>;
 
+// --- Missions (goal-driven long-running tasks — docs/plans/companion-missions.md) ---
+
+/**
+ * Lifecycle of a mission (companion-missions.md §3.4). `draft` — planned, awaiting the
+ * user's start-approval; `active` — running, with the drive engine suspended and at most
+ * one active per companion (enforced by a partial unique index); `paused` — scheduler jobs
+ * paused, resumable; terminal: `complete` (validation criteria met), `stopped` (user ended),
+ * `failed`.
+ */
+export const missionStatusSchema = z.enum([
+  'draft',
+  'active',
+  'paused',
+  'complete',
+  'stopped',
+  'failed',
+]);
+export type MissionStatus = z.infer<typeof missionStatusSchema>;
+
+/**
+ * A scoped outward-action grant minted at mission creation (companion-missions.md §4).
+ * DEFERRED: no v1 mission uses an effectful outward tool, so the column exists for the
+ * type but is never populated yet. Defined here so `@cobble/db` can type the column.
+ */
+export interface MissionOutwardGrant {
+  readonly tool: string;
+  readonly target: string;
+  readonly rateLimitPerHour?: number;
+}
+
+/** A mission as projected to a surface (the settings/status view + the `mission.*` calls). */
+export interface MissionDto {
+  readonly id: string;
+  readonly goal: string;
+  /** The decomposed plan; null while still `draft`, before the planner fills it. */
+  readonly plan: string | null;
+  /** The success test the advance loop checks against; null until planned. */
+  readonly validationCriteria: string | null;
+  readonly status: MissionStatus;
+  /** Scheduler job ids registered for this mission (for re-arm / cancel). */
+  readonly jobIds: readonly string[];
+  /** Discord channel/DM id the mission reports into; null until set. */
+  readonly reportChannel: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+/**
+ * One append-only journal row — a single mission turn's outcome (companion-missions.md
+ * §3.4), giving cross-day continuity without rescanning the transcript. Content fields
+ * are nullable: a turn may reason without reaching a finding, prediction, or decision.
+ */
+export interface MissionJournalEntryDto {
+  readonly id: string;
+  readonly missionId: string;
+  /** The trigger event that woke this turn; null for a chat-initiated advance. */
+  readonly event: string | null;
+  readonly findings: string | null;
+  readonly prediction: string | null;
+  readonly decision: string | null;
+  readonly turnAt: string;
+}
+
+/**
+ * The parsed mission trigger (companion-missions.md §3.2): the event text left after the
+ * leading bot-mention is stripped from the channel post. v1 carries the event only —
+ * routing is by the companion's single active mission, so there is no `mission_id`.
+ */
+export interface TriggerEvent {
+  readonly event: string;
+}
+
+/** `mission.create` params — the goal the user assigns; the planner decomposes it. */
+export interface MissionCreateParams {
+  readonly goal: string;
+}
+
+/** `mission.pause` / `mission.stop` params — the mission to act on. */
+export interface MissionLifecycleParams {
+  readonly missionId: string;
+}
+
+/** `mission.advance` params — the event that woke the turn (a trigger, or the user). */
+export interface MissionAdvanceParams {
+  readonly event: string;
+}
+
 // --- Generic API envelope (patterns.md "API Response Format") ---
 
 export interface ApiError {

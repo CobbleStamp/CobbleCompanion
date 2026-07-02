@@ -12,6 +12,8 @@ import type {
   MessageKind,
   MessageMetadata,
   MessageRole,
+  MissionOutwardGrant,
+  MissionStatus,
   PersonalityKnobs,
   ProactivityDial,
   ProactiveReadSourceRef,
@@ -1067,9 +1069,89 @@ export const discordConfig = pgTable('discord_config', {
   // issued. Paired with `link_code_issued_at` for the ~15-min TTL.
   linkCode: text('link_code'),
   linkCodeIssuedAt: timestamp('link_code_issued_at', { withTimezone: true }),
+  // Mission wake (companion-missions.md §3.2). `trigger_bot_id` is the allowlisted
+  // trigger-SENDER bot id (the scheduler's discord-notify bot): a guild message is
+  // accepted as a mission trigger ONLY from this author AND in `mission_channel_id` —
+  // trust is the (author, channel) pair, never the message content. Both null until the
+  // mission wake is configured; the DM owner-lock is independent of these.
+  triggerBotId: text('trigger_bot_id'),
+  missionChannelId: text('mission_channel_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Missions (companion-missions.md) — an externally-assigned, persistent, terminating
+ * objective the companion pursues: it plans the goal, runs it in event-driven turns, and
+ * reports until told to stop. Distinct from drives (the intrinsic motivation engine);
+ * while a mission is `active` the drive engine is suspended. At most ONE active mission per
+ * companion (the partial unique index below), so a plain-text trigger routes to it without
+ * an explicit id.
+ */
+export const missions = pgTable(
+  'missions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    // Monotonic per-row ordinal — the stable creation order for listing, since several
+    // missions can share a created_at at sub-millisecond resolution (mirrors messages/leads).
+    seq: bigserial('seq', { mode: 'number' }).notNull(),
+    companionId: uuid('companion_id')
+      .notNull()
+      .references(() => companions.id, { onDelete: 'cascade' }),
+    // The assigned objective, verbatim as the user gave it.
+    goal: text('goal').notNull(),
+    // The planner's decomposition (steps/loops/cadence); null while `draft`.
+    plan: text('plan'),
+    // The success test the advance loop checks against; null until planned.
+    validationCriteria: text('validation_criteria'),
+    status: text('status').$type<MissionStatus>().notNull().default('draft'),
+    // The scheduler jobs registered for this mission (for re-arm / cancel on stop).
+    jobIds: jsonb('job_ids')
+      .$type<readonly string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    // The Discord channel/DM id the mission reports into; null until set at activation.
+    reportChannel: text('report_channel'),
+    // Scoped outward-action grant (companion-missions.md §4) — DEFERRED; no v1 mission
+    // populates it. Nullable jsonb so the column exists without forcing a value.
+    outwardGrant: jsonb('outward_grant').$type<MissionOutwardGrant>(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('missions_companion_status_idx').on(table.companionId, table.status),
+    // Enforce "one active mission at a time" at the DB level: at most one `active` row
+    // per companion, so a racing second activation conflicts instead of double-arming.
+    uniqueIndex('missions_one_active_per_companion_uniq')
+      .on(table.companionId)
+      .where(sql`status = 'active'`),
+  ],
+);
+
+/**
+ * Append-only mission journal (companion-missions.md §3.4) — one row per mission turn
+ * (findings, prediction, decision), so each trigger the companion recalls "what I
+ * concluded last time" without rescanning the whole transcript (cross-day continuity).
+ * Content fields are nullable: a turn may reason without concluding. `seq` gives a stable
+ * chronological order within a mission.
+ */
+export const missionJournal = pgTable(
+  'mission_journal',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    seq: bigserial('seq', { mode: 'number' }).notNull(),
+    missionId: uuid('mission_id')
+      .notNull()
+      .references(() => missions.id, { onDelete: 'cascade' }),
+    // The trigger event that woke this turn; null for a chat-initiated advance.
+    event: text('event'),
+    findings: text('findings'),
+    prediction: text('prediction'),
+    decision: text('decision'),
+    turnAt: timestamp('turn_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('mission_journal_mission_seq_idx').on(table.missionId, table.seq)],
+);
 
 export const schema = {
   users,
@@ -1093,4 +1175,6 @@ export const schema = {
   toolCatalog,
   equippedTools,
   discordConfig,
+  missions,
+  missionJournal,
 };
