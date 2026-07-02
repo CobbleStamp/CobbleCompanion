@@ -1115,8 +1115,6 @@ export const missions = pgTable(
       .$type<readonly string[]>()
       .notNull()
       .default(sql`'[]'::jsonb`),
-    // The Discord channel/DM id the mission reports into; null until set at activation.
-    reportChannel: text('report_channel'),
     // Scoped outward-action grant (companion-missions.md §4) — DEFERRED; no v1 mission
     // populates it. Nullable jsonb so the column exists without forcing a value.
     outwardGrant: jsonb('outward_grant').$type<MissionOutwardGrant>(),

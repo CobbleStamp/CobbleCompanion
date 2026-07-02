@@ -236,7 +236,6 @@ function toMissionDto(record: MissionRecord): MissionDto {
     validationCriteria: record.validationCriteria,
     status: record.status,
     jobIds: record.jobIds,
-    reportChannel: record.reportChannel,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
   };

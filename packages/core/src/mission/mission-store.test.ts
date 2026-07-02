@@ -30,7 +30,6 @@ describe('DrizzleMissionStore (PGlite)', () => {
     plan: 'poll LITE every 1s; wake on < 810',
     validationCriteria: 'user says stop',
     jobIds: ['job_1'],
-    reportChannel: 'chan_1',
   };
 
   it('creates a draft mission with empty jobs and null plan', async () => {
@@ -42,7 +41,6 @@ describe('DrizzleMissionStore (PGlite)', () => {
     expect(mission.plan).toBeNull();
     expect(mission.validationCriteria).toBeNull();
     expect(mission.jobIds).toEqual([]);
-    expect(mission.reportChannel).toBeNull();
   });
 
   it('activates a draft mission, applying the plan and going active', async () => {
@@ -54,7 +52,6 @@ describe('DrizzleMissionStore (PGlite)', () => {
     expect(active?.plan).toBe(activation.plan);
     expect(active?.validationCriteria).toBe(activation.validationCriteria);
     expect(active?.jobIds).toEqual(['job_1']);
-    expect(active?.reportChannel).toBe('chan_1');
   });
 
   it('activate is guarded to the draft state: a second activate is a no-op (null)', async () => {
@@ -110,16 +107,13 @@ describe('DrizzleMissionStore (PGlite)', () => {
     await expect(store.activate(two.id, activation)).rejects.toThrow();
   });
 
-  it('setStatus and setJobIds update in place', async () => {
+  it('setStatus updates in place', async () => {
     const companionId = await seedCompanion('g@example.com');
     const draft = await store.create(companionId, 'monitor LITE');
     await store.activate(draft.id, activation);
 
-    const paused = await store.setStatus(draft.id, 'paused');
-    expect(paused?.status).toBe('paused');
-
-    const rearmed = await store.setJobIds(draft.id, ['job_2', 'job_3']);
-    expect(rearmed?.jobIds).toEqual(['job_2', 'job_3']);
+    const stopped = await store.setStatus(draft.id, 'stopped');
+    expect(stopped?.status).toBe('stopped');
   });
 
   it('setStatus returns null for an unknown mission', async () => {

@@ -1,14 +1,16 @@
 /**
  * MissionService (companion-missions.md §3.4) — the lifecycle orchestration over the
  * mission stores that the WS methods (`mission.*`) and the advance path call. It owns the
- * status transitions (create → activate → pause/resume → stop/complete) and the append-only
- * journal; it does NOT run the planner or the advance turn (those are harness turns), and it
- * does NOT poke the drive engine — suspension is a query (`hasActive`), so leaving `active`
- * auto-resumes drives on the next motivation tick.
+ * status transitions (create → activate → stop) and the append-only journal; it does NOT
+ * run the planner or the advance turn (those are harness turns), and it does NOT poke the
+ * drive engine — suspension is a query (`hasActive`), so leaving `active` auto-resumes
+ * drives on the next motivation tick. The autonomous transitions the deferred
+ * validate→decide loop will need (pause/complete/fail, per-turn re-arm) are added with
+ * that milestone (companion-missions.md §11), not scaffolded here.
  *
  * Transition guards here are best-effort (read-then-set); the DB backstops the load-bearing
  * invariant (at most one `active` mission per companion) with a partial unique index, so a
- * racing double-activate/resume fails at the store, not silently.
+ * racing double-activate fails at the store, not silently.
  */
 
 import type { MissionStatus } from '@cobble/shared';
@@ -65,38 +67,11 @@ export class MissionService {
     return this.missions.activate(missionId, input);
   }
 
-  /** Pause a running mission (its scheduler jobs are paused separately). No-op if not active. */
-  async pause(missionId: string): Promise<MissionRecord | null> {
-    const mission = await this.missions.findById(missionId);
-    if (!mission || mission.status !== 'active') return null;
-    return this.missions.setStatus(missionId, 'paused');
-  }
-
-  /** Resume a paused mission. No-op unless paused; the one-active index guards concurrency. */
-  async resume(missionId: string): Promise<MissionRecord | null> {
-    const mission = await this.missions.findById(missionId);
-    if (!mission || mission.status !== 'paused') return null;
-    return this.missions.setStatus(missionId, 'active');
-  }
-
   /** Stop a mission (user-ended). No-op if already terminal; scheduler jobs cancelled separately. */
-  stop(missionId: string): Promise<MissionRecord | null> {
-    return this.transitionFromNonTerminal(missionId, 'stopped');
-  }
-
-  /** Mark a mission complete (validation criteria met). No-op if already terminal. */
-  complete(missionId: string): Promise<MissionRecord | null> {
-    return this.transitionFromNonTerminal(missionId, 'complete');
-  }
-
-  /** Mark a mission failed. No-op if already terminal. */
-  fail(missionId: string): Promise<MissionRecord | null> {
-    return this.transitionFromNonTerminal(missionId, 'failed');
-  }
-
-  /** Replace the registered scheduler job ids (on re-arm after an advance). */
-  setJobIds(missionId: string, jobIds: readonly string[]): Promise<MissionRecord | null> {
-    return this.missions.setJobIds(missionId, jobIds);
+  async stop(missionId: string): Promise<MissionRecord | null> {
+    const mission = await this.missions.findById(missionId);
+    if (!mission || TERMINAL.includes(mission.status)) return null;
+    return this.missions.setStatus(missionId, 'stopped');
   }
 
   /** Append one turn's outcome to the mission journal. */
@@ -110,14 +85,5 @@ export class MissionService {
     limit: number = DEFAULT_JOURNAL_RECALL,
   ): Promise<MissionJournalRecord[]> {
     return this.journal.recent(missionId, limit);
-  }
-
-  private async transitionFromNonTerminal(
-    missionId: string,
-    to: MissionStatus,
-  ): Promise<MissionRecord | null> {
-    const mission = await this.missions.findById(missionId);
-    if (!mission || TERMINAL.includes(mission.status)) return null;
-    return this.missions.setStatus(missionId, to);
   }
 }

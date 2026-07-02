@@ -22,7 +22,6 @@ export interface MissionRecord {
   readonly validationCriteria: string | null;
   readonly status: MissionStatus;
   readonly jobIds: readonly string[];
-  readonly reportChannel: string | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -32,7 +31,6 @@ export interface MissionActivation {
   readonly plan: string;
   readonly validationCriteria: string;
   readonly jobIds: readonly string[];
-  readonly reportChannel: string;
 }
 
 /** One appended mission-turn outcome (all content fields optional). */
@@ -61,7 +59,6 @@ interface MissionRow {
   readonly validationCriteria: string | null;
   readonly status: MissionStatus;
   readonly jobIds: readonly string[];
-  readonly reportChannel: string | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -88,7 +85,6 @@ function toMissionRecord(row: MissionRow): MissionRecord {
     validationCriteria: row.validationCriteria,
     status: row.status,
     jobIds: row.jobIds,
-    reportChannel: row.reportChannel,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -122,10 +118,8 @@ export interface MissionStore {
    * callers guard with {@link hasActive} first.
    */
   activate(id: string, input: MissionActivation): Promise<MissionRecord | null>;
-  /** Move a mission to a new lifecycle status (pause/resume/stop/complete/fail). */
+  /** Move a mission to a new lifecycle status (stop today; the §11 transitions later). */
   setStatus(id: string, status: MissionStatus): Promise<MissionRecord | null>;
-  /** Replace the registered scheduler job ids (on re-arm). */
-  setJobIds(id: string, jobIds: readonly string[]): Promise<MissionRecord | null>;
 }
 
 export class DrizzleMissionStore implements MissionStore {
@@ -170,7 +164,6 @@ export class DrizzleMissionStore implements MissionStore {
         plan: input.plan,
         validationCriteria: input.validationCriteria,
         jobIds: input.jobIds,
-        reportChannel: input.reportChannel,
         status: 'active',
         updatedAt: new Date(),
       })
@@ -183,15 +176,6 @@ export class DrizzleMissionStore implements MissionStore {
     const [row] = await this.db
       .update(missions)
       .set({ status, updatedAt: new Date() })
-      .where(eq(missions.id, id))
-      .returning();
-    return row ? toMissionRecord(row as MissionRow) : null;
-  }
-
-  async setJobIds(id: string, jobIds: readonly string[]): Promise<MissionRecord | null> {
-    const [row] = await this.db
-      .update(missions)
-      .set({ jobIds, updatedAt: new Date() })
       .where(eq(missions.id, id))
       .returning();
     return row ? toMissionRecord(row as MissionRow) : null;

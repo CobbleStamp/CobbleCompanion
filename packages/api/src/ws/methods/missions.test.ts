@@ -131,7 +131,6 @@ describe('missionMethods', () => {
       plan: 'p',
       validationCriteria: 'c',
       jobIds: ['job-a', 'job-b'],
-      reportChannel: 'ch',
     });
     const methods = missionMethods(deps());
 
@@ -244,7 +243,6 @@ describe('withMissionJournal', () => {
       plan: 'p',
       validationCriteria: 'c',
       jobIds: ['j'],
-      reportChannel: 'ch',
     });
     return active!.id;
   }

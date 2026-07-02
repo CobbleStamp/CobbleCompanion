@@ -43,7 +43,6 @@ describe('createMissionRetrieveContext', () => {
       plan: 'poll every 1s; wake on < 810',
       validationCriteria: 'user says stop',
       jobIds: ['j1'],
-      reportChannel: 'dm-1',
     });
     await service.recordJournal(draft.id, { findings: 'LITE at 815, steady' });
 
@@ -66,7 +65,6 @@ describe('createMissionRetrieveContext', () => {
       plan: 'p',
       validationCriteria: 'c',
       jobIds: ['j1'],
-      reportChannel: 'dm-1',
     });
     const arm = createMissionRetrieveContext(missions, journal);
     const result = await arm({ companionId, userContent: 'go' });

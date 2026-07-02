@@ -1267,10 +1267,8 @@ export interface MissionDto {
   /** The success test the advance loop checks against; null until planned. */
   readonly validationCriteria: string | null;
   readonly status: MissionStatus;
-  /** Scheduler job ids registered for this mission (for re-arm / cancel). */
+  /** Scheduler job ids registered for this mission (for cancel on stop). */
   readonly jobIds: readonly string[];
-  /** Discord channel/DM id the mission reports into; null until set. */
-  readonly reportChannel: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }

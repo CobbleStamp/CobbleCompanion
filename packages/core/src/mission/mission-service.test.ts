@@ -14,7 +14,6 @@ describe('MissionService', () => {
     plan: 'poll LITE; wake on < 810',
     validationCriteria: 'user says stop',
     jobIds: ['job_1'],
-    reportChannel: 'chan_1',
   };
 
   beforeEach(async () => {
@@ -43,28 +42,12 @@ describe('MissionService', () => {
     expect((await service.findActive(companionId))?.id).toBe(draft.id);
   });
 
-  it('pauses only an active mission and resumes only a paused one', async () => {
-    const draft = await service.createDraft(companionId, 'monitor LITE');
-    // Pause before active is a no-op.
-    expect(await service.pause(draft.id)).toBeNull();
-
-    await service.activate(draft.id, activation);
-    expect((await service.pause(draft.id))?.status).toBe('paused');
-    // Drive engine auto-resumes: no active mission while paused.
-    expect(await service.hasActive(companionId)).toBe(false);
-
-    // Resume from paused only.
-    expect((await service.resume(draft.id))?.status).toBe('active');
-    expect(await service.hasActive(companionId)).toBe(true);
-  });
-
-  it('stop/complete are no-ops once terminal', async () => {
+  it('stop is a no-op once terminal', async () => {
     const draft = await service.createDraft(companionId, 'monitor LITE');
     await service.activate(draft.id, activation);
 
     expect((await service.stop(draft.id))?.status).toBe('stopped');
-    // Already stopped (terminal): complete/stop no longer apply.
-    expect(await service.complete(draft.id)).toBeNull();
+    // Already stopped (terminal): a second stop no longer applies.
     expect(await service.stop(draft.id)).toBeNull();
     expect(await service.hasActive(companionId)).toBe(false);
   });
@@ -76,12 +59,5 @@ describe('MissionService', () => {
 
     const recent = await service.recentJournal(draft.id, 5);
     expect(recent.map((r) => r.event)).toEqual(['second', 'first']);
-  });
-
-  it('re-arms the scheduler job ids on an active mission', async () => {
-    const draft = await service.createDraft(companionId, 'monitor LITE');
-    await service.activate(draft.id, activation);
-    const rearmed = await service.setJobIds(draft.id, ['job_2']);
-    expect(rearmed?.jobIds).toEqual(['job_2']);
   });
 });

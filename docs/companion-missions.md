@@ -221,8 +221,9 @@ continuity are real rather than reconstructed. Data model (Postgres, per-compani
 list in `implementation.md`):
 
 - **`missions`** — `id`, `seq`, `companion_id`, `goal`, `plan`, `validation_criteria`, `status`,
-  `job_ids` (the scheduler jobs, for re-arm/cancel), `report_channel`, `outward_grant` (nullable,
-  deferred — §7), timestamps. A **partial unique index** on `(companion_id) WHERE status='active'`
+  `job_ids` (the scheduler jobs, for cancel on stop), `outward_grant` (nullable,
+  deferred — §7), timestamps. (There is no report-target column: the report is spoken in the
+  embodied room — the owner DM — §7.) A **partial unique index** on `(companion_id) WHERE status='active'`
   enforces one active mission per companion at the database level, so a racing second activation
   conflicts instead of double-arming.
 - **`mission_journal`** — append-only, one row per turn (`event`, `findings`, `prediction`,
@@ -238,17 +239,18 @@ stateDiagram-v2
     draft --> active: start_mission approved → arm jobs, suspend drives
     active --> stopped: mission.stop (cancel jobs, resume drives)
     active --> complete: criteria met (deferred — §11)
-    active --> failed: unrecoverable (scaffold — §11)
-    active --> paused: pause jobs (scaffold — §11)
+    active --> failed: unrecoverable (deferred — §11)
+    active --> paused: pause jobs (deferred — §11)
     paused --> active: resume
     stopped --> [*]
     complete --> [*]
     failed --> [*]
 ```
 
-The `complete` / `paused` / `failed` transitions and their `MissionService` methods exist as
-scaffolding but have **no caller yet** (§11): in v1 a mission is armed as a **recurring** wake and
-ends via the user's `mission.stop`.
+The `complete` / `paused` / `failed` transitions are part of the designed lifecycle (and of
+`missionStatusSchema`) but are **not implemented yet** — their `MissionService` methods are added
+with the autonomous validate→decide milestone (§11). In v1 a mission is armed as a **recurring**
+wake and ends via the user's `mission.stop`.
 
 ## 5. The two mission turns — create and advance
 
@@ -403,8 +405,9 @@ weakening it:
   it: v1 arms a **recurring** wake and ends via the user's `mission.stop`. The deferred path lets the
   turn's own judgment drive the state machine — detecting `validation_criteria` met (→ `complete`,
   cancel jobs, resume drives), revising the plan/predicate when the approach isn't working, and
-  re-arming a fire-once job per turn instead of a blanket recurring one. `MissionService.pause` /
-  `resume` / `complete` / `fail` exist as scaffolding for exactly this.
+  re-arming a fire-once job per turn instead of a blanket recurring one. The `MissionService`
+  transitions this needs (`pause` / `resume` / `complete` / `fail`, plus a job re-arm) are added
+  with this milestone — deliberately not scaffolded ahead of it.
 - **The standing outward-grant** — until a mission uses a genuinely effectful outward tool (§7).
 - **Multiple concurrent missions** — would reintroduce explicit routing, solved then by **one
   channel per mission** (not a structured `mission_id`), so plain text still suffices.

@@ -59,6 +59,21 @@ export interface StartMissionOptions {
 
 const RESULT_NAME = 'start_mission';
 
+/**
+ * Per-field cap inside the proposal summary. The card is the owner's ONE review of the plan
+ * before granting standing authorization, so plan + criteria must be visible — but the summary
+ * lands in a Discord embed description (4096), so long fields are trimmed, not spilled.
+ */
+const SUMMARY_FIELD_MAX = 300;
+
+/** Trim a summary field to {@link SUMMARY_FIELD_MAX}, whitespace collapsed, `…` when cut. */
+function summaryField(text: string): string {
+  const flat = text.replace(/\s+/gu, ' ').trim();
+  return flat.length <= SUMMARY_FIELD_MAX
+    ? flat
+    : `${flat.slice(0, SUMMARY_FIELD_MAX - 1).trimEnd()}…`;
+}
+
 /** Build the mission wake action argv: `discord-notify --channel <ch> --text "<@bot> {{message}}"`. */
 function wakeAction(target: MissionWakeTarget): readonly string[] {
   return [
@@ -109,10 +124,19 @@ export function createStartMissionTool(options: StartMissionOptions): Tool {
     effectful: true,
     proposalSummary(args): string {
       const goal = readStringArg(args, 'goal');
+      const plan = readStringArg(args, 'plan');
+      const validationCriteria = readStringArg(args, 'validationCriteria');
       const predicate = readStringArg(args, 'predicate');
       const every = readStringArg(args, 'every');
-      const head = goal ? `Start mission: ${goal}` : 'Start a mission';
-      return predicate && every ? `${head} — monitor \`${predicate}\` every ${every}` : head;
+      const head = goal ? `Start mission: ${summaryField(goal)}` : 'Start a mission';
+      // The card is the one up-front plan review (companion-missions.md §5.1): show what
+      // will be done and when it counts as complete, not just what is being watched.
+      const lines = [
+        predicate && every ? `${head} — monitor \`${predicate}\` every ${every}` : head,
+      ];
+      if (plan) lines.push(`Plan: ${summaryField(plan)}`);
+      if (validationCriteria) lines.push(`Done when: ${summaryField(validationCriteria)}`);
+      return lines.join('\n');
     },
     async run(rawArgs, ctx: TurnCtx): Promise<ToolResult> {
       const goal = readStringArg(rawArgs, 'goal');
@@ -164,7 +188,6 @@ export function createStartMissionTool(options: StartMissionOptions): Tool {
           plan,
           validationCriteria,
           jobIds: [jobId],
-          reportChannel: target.missionChannelId,
         });
         if (!activated) {
           // A fresh draft should always activate; if it didn't (a race lost the one-active

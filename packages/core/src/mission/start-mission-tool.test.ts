@@ -79,6 +79,39 @@ describe('createStartMissionTool', () => {
     expect(tool.proposalSummary?.(args)).toContain('ibkr-cli query LITE le 810');
   });
 
+  it('the proposal summary shows the plan and the success criteria (the plan review)', () => {
+    const tool = createStartMissionTool({
+      missions: service,
+      scheduler: fakeScheduler(),
+      wakeConfig: wakeConfigWith({ missionChannelId: 'ch', botUserId: 'bot' }),
+      logger: silent,
+    });
+
+    const summary = tool.proposalSummary!(args);
+
+    expect(summary).toContain('Plan: poll the quote; wake and reason when it breaks 810');
+    expect(summary).toContain('Done when: the user says stop');
+  });
+
+  it('truncates a long plan and criteria in the proposal summary', () => {
+    const tool = createStartMissionTool({
+      missions: service,
+      scheduler: fakeScheduler(),
+      wakeConfig: wakeConfigWith({ missionChannelId: 'ch', botUserId: 'bot' }),
+      logger: silent,
+    });
+
+    const summary = tool.proposalSummary!({
+      ...args,
+      plan: 'p'.repeat(1_000),
+      validationCriteria: 'c'.repeat(1_000),
+    });
+
+    expect(summary).toContain('…');
+    // Comfortably inside a Discord embed description (4096) with headroom for the header.
+    expect(summary.length).toBeLessThan(1_000);
+  });
+
   it('arms the wake job (mentioning the bot) and activates the mission on run', async () => {
     const scheduler = fakeScheduler();
     const tool = createStartMissionTool({
@@ -104,13 +137,12 @@ describe('createStartMissionTool', () => {
       '<@bot-42> {{message}}',
     ]);
 
-    // The mission is now active, records the job id + report channel, and suspends drives.
+    // The mission is now active, records the job id, and suspends drives.
     const active = await service.findActive(ctx.companionId);
     expect(active?.goal).toBe(args.goal);
     expect(active?.plan).toBe(args.plan);
     expect(active?.validationCriteria).toBe(args.validationCriteria);
     expect(active?.jobIds).toEqual(['job-1']);
-    expect(active?.reportChannel).toBe('mission-chan');
     expect(await service.hasActive(ctx.companionId)).toBe(true);
   });
 
@@ -120,7 +152,6 @@ describe('createStartMissionTool', () => {
       plan: 'p',
       validationCriteria: 'c',
       jobIds: ['old'],
-      reportChannel: 'ch',
     });
     const scheduler = fakeScheduler();
     const tool = createStartMissionTool({
