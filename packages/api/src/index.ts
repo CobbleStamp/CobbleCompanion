@@ -24,6 +24,9 @@ import {
   createLoggingAfterToolCall,
   createMemorySearchTool,
   createReactTool,
+  createMissionRetrieveContext,
+  createSchedulerCliScheduler,
+  createStartMissionTool,
   createProceduralRetrieveContext,
   createSemanticRetrieveContext,
   createUserModelRetrieveContext,
@@ -45,6 +48,8 @@ import {
   DrizzleFoodStore,
   DrizzleToolCallLog,
   DrizzleGrowthStore,
+  DrizzleMissionStore,
+  DrizzleMissionJournalStore,
   DrizzleUserModelStore,
   FakeEmbeddingGateway,
   FakeLlmGateway,
@@ -62,6 +67,7 @@ import {
   LlmPersonalityEvolver,
   LlmUserModelReflector,
   LlmUserPersonaSynthesizer,
+  MissionService,
   MotivationEngine,
   OpenRouterEmbeddingGateway,
   OpenRouterGateway,
@@ -80,6 +86,7 @@ import {
   makeReactionWorkRequester,
   type EmbeddingGateway,
   type LlmGateway,
+  type MissionWakeConfig,
 } from '@cobble/core';
 import { buildApp } from './app.js';
 import {
@@ -288,6 +295,29 @@ async function main(): Promise<void> {
   // absent when its claim lapses. The motivation engine reads it to decide whether
   // to self-initiate.
   const presence = new EmbodimentPresenceStore(db, config.wsClaimTtlMs, consoleLogger);
+
+  // Missions (companion-missions.md §3.4): the lifecycle/journal service, the scheduler-cli
+  // wake driver, and the wake-config adapter that reads the mission channel + the companion
+  // bot's own id from `discord_config`. Built before the tool list so `start_mission` (the
+  // one up-front approval) can join it, and before the gate/motivation/retrieve wiring below.
+  const discordConfigStore = new DrizzleDiscordConfigStore(db);
+  const missionStore = new DrizzleMissionStore(db);
+  const missionJournalStore = new DrizzleMissionJournalStore(db);
+  const missionService = new MissionService(missionStore, missionJournalStore);
+  const missionScheduler = createSchedulerCliScheduler({
+    sandbox: createSubprocessSandbox({ scratchDir: config.cliScratchDir, logger: consoleLogger }),
+    baseUrl: config.schedulerUrl,
+  });
+  const missionWakeConfig: MissionWakeConfig = {
+    forOwner: async (ownerId) => {
+      const cfg = await discordConfigStore.findByUserId(ownerId);
+      if (!cfg?.missionChannelId || !cfg.botUserId) {
+        return null;
+      }
+      return { missionChannelId: cfg.missionChannelId, botUserId: cfg.botUserId };
+    },
+  };
+
   const baseTools = [
     // web_fetch harvests outbound links into the reading list (the P4 substrate).
     createWebFetchTool({
@@ -306,6 +336,14 @@ async function main(): Promise<void> {
     // The companion's expressive emoji reaction (companion-reactions.md §5): free,
     // ungated, silent; binds to the message that triggered the turn.
     createReactTool({ reactions, eventBus, logger: consoleLogger }),
+    // start_mission (effectful): the one up-front approval that begins a mission — arms the
+    // scheduler wake, then creates + activates it (companion-missions.md §4).
+    createStartMissionTool({
+      missions: missionService,
+      scheduler: missionScheduler,
+      wakeConfig: missionWakeConfig,
+      logger: consoleLogger,
+    }),
   ];
   // Phases 9–10: runtime tool acquisition. Off unless MCP_SERVERS and/or
   // CLI_TOOLS_PATH is configured — then search_tools/load_tool join the native core
@@ -369,6 +407,10 @@ async function main(): Promise<void> {
       embeddingDimensions: config.embeddingDimensions,
       logger: consoleLogger,
     }),
+    // Missions (companion-missions.md §3.4): when the companion has an active mission, inject
+    // its goal/plan/criteria + recent journal so every turn is mission-aware with cross-day
+    // continuity. Grounding-only, zero tokens (pure DB reads); contributes nothing otherwise.
+    createMissionRetrieveContext(missionStore, missionJournalStore),
     createSemanticRetrieveContext({
       memory,
       semantic,
@@ -420,7 +462,9 @@ async function main(): Promise<void> {
     // callable next step. The gate keeps the native registry — MCP tools are
     // non-effectful and pass through it.
     ...(acquisitionWiring ? { resolveRegistry: acquisitionWiring.resolveRegistry } : {}),
-    beforeToolCall: createApprovalGate(proposals, tools, consoleLogger),
+    // The mission-mode bypass: while a mission is active it is the standing authorization, so
+    // effectful tools run ungated (companion-missions.md §4). Off outside a mission.
+    beforeToolCall: createApprovalGate(proposals, tools, consoleLogger, missionService),
     afterToolCall: createLoggingAfterToolCall(toolCallLog, consoleLogger),
     // The memory-retrieval hook (invariant #3): episodic + procedural + (MCP tool
     // hint) grounding arms, then the semantic arm which appends the recency window
@@ -497,6 +541,9 @@ async function main(): Promise<void> {
     rewards,
     // Phase 12: curiosity sources its topics from the user's Tier-2 interest beliefs.
     userModel,
+    // Drive-suspension gate (companion-missions.md §1): a companion on an active mission
+    // early-returns IDLE — the mission is its exclusive focus. Resumes when it leaves active.
+    missions: missionService,
     llm: llmGateway,
     model: config.ingestionModel,
     logger: consoleLogger,
@@ -569,7 +616,11 @@ async function main(): Promise<void> {
     affect: affectStore,
     growth,
     growthStore,
-    discordConfig: new DrizzleDiscordConfigStore(db),
+    discordConfig: discordConfigStore,
+    // Missions (companion-missions.md §5.2): the `mission.*` WS methods register only when both
+    // are present — a deployment always has them here, so missions are exposed.
+    missions: missionService,
+    missionScheduler,
     discordReconcile: createReconcileNotifier({
       url: config.discordReconcileUrl,
       logger: consoleLogger,
