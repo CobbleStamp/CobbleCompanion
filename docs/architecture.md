@@ -1085,8 +1085,11 @@ owned by `development-plan.md`.
   companion to analyze and report). Realized as an **exclusive mode** (the drive engine is suspended
   while a mission is active) whose turns are ordinary input-driven loop ENTRYs — a scheduled trigger
   arriving via a Discord mission channel, or the user. The deterministic polling lives **outside** the
-  companion in the shipped `Tools/scheduler` spine; the companion wakes only on events. Designed, not
-  built — full design in `plans/companion-missions.md`.
+  companion in the shipped `Tools/scheduler` spine; the companion wakes only on events. Built
+  (persistence, `MissionService`, the `start_mission` gate + `scheduler-cli` wake driver, the
+  `mission.*` WS methods, and the Discord intake) — the live end-to-end dry-run and the
+  reconnect-replay backstop remain; full design in `plans/companion-missions.md`, build status in
+  `plans/missions-implementation-plan.md` §6.1.
 - **Proactivity reach** — unprompted conversation beyond the report note (tips, questions,
   check-ins) and a stronger sense of purpose/agenda; continuous work-while-away (needs push for an
   audience); a deeper contextual-bandit reinforcement policy (`companion-motivation.md`).

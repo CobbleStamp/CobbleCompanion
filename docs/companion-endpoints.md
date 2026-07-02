@@ -312,6 +312,27 @@ The arrival-reaction decision stream (`companion-greeting.md`). It may stream a 
 cue then a `done` greeting, or close silently (`{ done: true }` with no chunks) when the
 gate decides to stay quiet.
 
+### 4.13 Missions
+
+Registered only when the server has a mission scheduler wired (`companion-missions.md` §5.2);
+absent otherwise (calls return `unknown_method`). `mission.create` / `mission.advance` produce
+a turn, so they stream and run through the serial chain (§7) like `messages.send`.
+
+| Method | Scope | Params | Result | Errors |
+|--------|-------|--------|--------|--------|
+| `mission.create` | companion · **stream** | `missionCreateSchema` `{ goal }` | `{ done: true }` | `bad_params`, `not_embodied`, `not_found`, `over_cap` |
+| `mission.advance` | companion · **stream** | `missionAdvanceSchema` `{ event }` | `{ done: true }` (or `{ done: true, skipped }` when no mission is active) | `bad_params`, `not_embodied`, `not_found`, `over_cap` |
+| `mission.list` | companion | — | `{ missions: MissionDto[] }` (newest first) | `not_embodied` |
+| `mission.stop` | companion | `missionLifecycleSchema` `{ missionId }` | `{ mission: MissionDto }` | `bad_params`, `not_embodied`, `not_found` |
+| `discord.config.setMissionWake` | user | `discordMissionWakeSchema` `{ triggerBotId, missionChannelId }` | `{ ok: true }` | `bad_params`, `conflict`, `not_found` |
+
+`mission.create` runs a planning turn that proposes the effectful `start_mission` (the one
+up-front approval, surfaced as a normal proposal card). `mission.advance` is the wake turn — the
+Discord bridge calls it on a trigger; it injects the active mission's goal/plan/journal, runs
+effectful tools ungated (the mission is the standing authorization), and journals the report.
+`discord.config.setMissionWake` records the allowlisted trigger-sender bot id + the shared
+mission channel (`companion-missions.md` §3.2); it is user-scoped and carries no embodiment.
+
 ---
 
 ## 5. Error codes
@@ -368,8 +389,8 @@ companion itself shows up live.
 
 ## 7. Streaming method protocol (`ChatStreamEvent`)
 
-The **stream**-marked methods (`messages.send`, `proposals.confirm`, `greeting.stream`)
-emit zero or more `WsStreamMessage` frames — each `stream` field is a `ChatStreamEvent`
+The **stream**-marked methods (`messages.send`, `proposals.confirm`, `greeting.stream`,
+`mission.create`, `mission.advance`) emit zero or more `WsStreamMessage` frames — each `stream` field is a `ChatStreamEvent`
 (discriminated on `type`, `contracts.ts`) — before the terminal `{ "result": { "done": true } }`.
 
 | `type` | Payload | Meaning |

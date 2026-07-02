@@ -187,6 +187,22 @@ becomes the mission wake by swapping `--user <you>` for `--channel <missionCh> -
 | 5 | **`api` wiring** (§5.2) | trigger → `mission.advance` over WS; `mission.*` methods reachable |
 | 6 | **Integration dry-run** | synthetic predicate fires immediately → companion summoned → reasons → reports in room → re-arms; then `stop` |
 
+### 6.1 Status (2026-07)
+
+**Shipped** (steps 1–5): `missions` + `mission_journal` schema and contracts (Phase 1); the Discord
+mission-wake intake — `GuildMessages` intent, trust gate, mention-parse, summon-if-dormant, and
+the companion bot's own id captured at ClientReady into `discord_config.bot_user_id` (Phase 2 +
+3b.3a); `MissionService` + the drive-suspension gate + the mission-mode gate bypass + the
+mission-retrieve arm (Phase 3); the `start_mission` effectful tool, the `scheduler-cli`-backed
+`MissionScheduler`, the `mission.*` WS methods (`create`/`advance`/`list`/`stop`), the
+`discord.config.setMissionWake` write path, and the full composition-root wiring (Phase 4).
+
+**Deferred (not built):** step 6 end-to-end dry-run against a live scheduler + Discord guild;
+fetch-recent-on-reconnect replay (§4.6, a durability backstop); auto-completion detection and
+per-turn re-arm (the mission is armed as a recurring job and ends via the user's `mission.stop`).
+The `MissionService.pause`/`resume`/`complete`/`fail` lifecycle methods exist but have no caller
+yet — scaffolding for the deferred completion path.
+
 ## 7. Testing strategy
 
 - **Tools** — none new. Regression-confirm `discord-notify --channel … --text "<@bot> …"` still posts
