@@ -8,6 +8,7 @@ import { episodeMethods } from './methods/episodes.js';
 import { inventoryMethods } from './methods/inventory.js';
 import { memoryMethods } from './methods/memory.js';
 import { messageMethods } from './methods/messages.js';
+import { missionMethods } from './methods/missions.js';
 import { presenceMethods } from './methods/presence.js';
 import { proposalMethods } from './methods/proposals.js';
 import { reactionMethods } from './methods/reactions.js';
@@ -50,6 +51,7 @@ export function buildWsMethods(deps: AppDeps): WsMethods {
     ...activityMethods(deps),
     ...vitalityMethods(deps),
     ...discordConfigMethods(deps),
+    ...missionMethods(deps),
     ...streamingMethods(deps),
   };
 }

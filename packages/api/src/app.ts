@@ -17,6 +17,8 @@ import type {
   LeadStore,
   Logger,
   MemoryStore,
+  MissionScheduler,
+  MissionService,
   PresenceStore,
   ProactiveActivityReader,
   ProactiveOutcomeStore,
@@ -140,6 +142,15 @@ export interface AppDeps {
    *  a `discord.config.*` write (companion-discord.md §2.1) — replaces the adapter's old
    *  poll. Absent/no-op when no reconcile URL is configured. */
   readonly discordReconcile?: (userId: string) => Promise<void>;
+  /**
+   * Mission lifecycle + journal orchestration (companion-missions.md §3.4). Optional: the
+   * `mission.*` WS methods register only when BOTH this and {@link missionScheduler} are
+   * present (the mission wake requires the scheduler-cli host), so a deployment without the
+   * scheduler simply doesn't expose missions rather than exposing broken ones.
+   */
+  readonly missions?: MissionService;
+  /** Arms/cancels the scheduler jobs that drive a mission's wake (companion-missions.md §1.1). */
+  readonly missionScheduler?: MissionScheduler;
   /** Authenticates every request that carries a credential: the composite routes a
    *  service caller (by its header) to the service verifier, else verifies the API's
    *  own session **access** token (auth/session-tokens.ts). */

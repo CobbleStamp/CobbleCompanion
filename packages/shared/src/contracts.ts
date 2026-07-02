@@ -1293,6 +1293,21 @@ export interface MissionAdvanceParams {
   readonly event: string;
 }
 
+/** `mission.create` params validator — the goal the planner decomposes. */
+export const missionCreateSchema = z.object({
+  goal: z.string().trim().min(1).max(2_000),
+});
+
+/** `mission.pause` / `mission.stop` params validator — which mission to act on. */
+export const missionLifecycleSchema = z.object({
+  missionId: z.string().uuid(),
+});
+
+/** `mission.advance` params validator — the event text that woke the turn. */
+export const missionAdvanceSchema = z.object({
+  event: z.string().trim().min(1).max(8_000),
+});
+
 // --- Generic API envelope (patterns.md "API Response Format") ---
 
 export interface ApiError {

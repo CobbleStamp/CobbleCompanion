@@ -1,0 +1,217 @@
+import type { Logger, MissionRecord, MissionScheduler, MissionService } from '@cobble/core';
+import {
+  missionAdvanceSchema,
+  missionCreateSchema,
+  missionLifecycleSchema,
+  type ChatStreamEvent,
+  type MissionDto,
+} from '@cobble/shared';
+import type { AppDeps } from '../../app.js';
+import { overCapGuard } from '../../quota-guard.js';
+import type { WsMethods } from '../dispatch.js';
+import { companionOf, NotFoundError, OverCapError, parseParams } from './helpers.js';
+import { emitAll, embodiedCompanion, leaseGuard, yieldRoom } from './turn-stream.js';
+
+/**
+ * The mission WS methods (companion-missions.md §3.4 / implementation-plan §5.2). Two are
+ * turn-producers — `mission.create` runs the planning turn that proposes `start_mission`, and
+ * `mission.advance` runs the wake turn (a trigger or the owner messaging) — so they go through
+ * the connection's serial chain (D2′) exactly like `messages.send`. `mission.list`/`mission.stop`
+ * are plain request/response over the tested {@link MissionService}.
+ *
+ * Registered ONLY when both a {@link MissionService} and a {@link MissionScheduler} are wired
+ * (a deployment without the scheduler-cli host doesn't expose missions), so every method below
+ * can assume both are present.
+ */
+export function missionMethods(deps: AppDeps): WsMethods {
+  const { missions, missionScheduler } = deps;
+  if (!missions || !missionScheduler) {
+    return {};
+  }
+  const { identity, embodiment, harness, quota, motivation, presence, logger } = deps;
+
+  return {
+    'mission.create': async (ctx, params) => {
+      const { goal } = parseParams(missionCreateSchema, params, 'a mission goal is required');
+      const {
+        id: companionId,
+        dto: companion,
+        connectionId,
+        claimSeq,
+      } = await embodiedCompanion({ identity, embodiment }, ctx);
+      presence.recordActivity(companionId, { connectionId, claimSeq });
+      const overCap = await overCapGuard(quota, companionId);
+      if (overCap) {
+        throw new OverCapError(overCap);
+      }
+      // A normal turn seeded with the goal: the model decomposes it and calls `start_mission`
+      // (effectful), which the approval gate holds as a proposal for the owner to confirm.
+      const superseded = await ctx.connection.runSerial(() =>
+        emitAll(
+          ctx,
+          harness.runTurn({
+            companion,
+            userContent: planningPrompt(goal),
+            ownerId: ctx.userId,
+            holdsLease: leaseGuard(embodiment, companionId, connectionId, claimSeq),
+          }),
+        ),
+      );
+      if (superseded) {
+        yieldRoom(ctx, companionId);
+      }
+      return { done: true };
+    },
+
+    'mission.advance': async (ctx, params) => {
+      const { event } = parseParams(missionAdvanceSchema, params, 'an event is required');
+      const {
+        id: companionId,
+        dto: companion,
+        connectionId,
+        claimSeq,
+      } = await embodiedCompanion({ identity, embodiment }, ctx);
+      presence.recordActivity(companionId, { connectionId, claimSeq });
+      const overCap = await overCapGuard(quota, companionId);
+      if (overCap) {
+        throw new OverCapError(overCap);
+      }
+      // The wake turn: the mission-retrieve arm injects goal/plan/journal + the gate's
+      // mission-mode bypass runs effectful tools ungated. The report is journaled as findings.
+      const superseded = await ctx.connection.runSerial(() =>
+        emitAll(
+          ctx,
+          withMissionJournal(
+            harness.runTurn({
+              companion,
+              userContent: event,
+              ownerId: ctx.userId,
+              holdsLease: leaseGuard(embodiment, companionId, connectionId, claimSeq),
+            }),
+            missions,
+            companionId,
+            event,
+            logger,
+          ),
+        ),
+      );
+      if (superseded) {
+        yieldRoom(ctx, companionId);
+      }
+      return { done: true };
+    },
+
+    'mission.list': async (ctx) => {
+      const companionId = await companionOf(embodiment, ctx);
+      const records = await missions.list(companionId);
+      return { missions: records.map(toMissionDto) };
+    },
+
+    'mission.stop': async (ctx, params) => {
+      const { missionId } = parseParams(missionLifecycleSchema, params, 'a mission id is required');
+      const companionId = await companionOf(embodiment, ctx);
+      const mission = await missions.get(missionId);
+      // Tenancy: only the embodied companion's own missions are actionable.
+      if (!mission || mission.companionId !== companionId) {
+        throw new NotFoundError('no such mission');
+      }
+      // Cancel the wake jobs first so no trigger fires after the mission is gone; a cancel
+      // failure is logged but never blocks the state transition (the mission still stops).
+      await cancelJobs(missionScheduler, mission.jobIds, logger, missionId);
+      const stopped = await missions.stop(missionId);
+      // Leaving `active` re-enables drives on the next tick; nudge so it happens promptly.
+      motivation.request(companionId);
+      return { mission: stopped ? toMissionDto(stopped) : toMissionDto(mission) };
+    },
+  };
+}
+
+/** The seed message for a `mission.create` planning turn. */
+function planningPrompt(goal: string): string {
+  return (
+    `I'd like you to take on a mission: "${goal}". Think about how you'd pursue it as a ` +
+    `long-running background task, then call the start_mission tool with a concrete plan, the ` +
+    `success criteria that tell you when it's complete, and the machine predicate + interval to ` +
+    `monitor. If this isn't a good fit for a background mission, say so instead of starting one.`
+  );
+}
+
+/**
+ * Forward a mission wake turn's stream, capturing the spoken report and appending it to the
+ * active mission's journal as `findings` (v1 report-as-findings, companion-missions.md §3.4).
+ * A superseded turn journals nothing — the live turn on the new connection owns that write.
+ * The journal write is best-effort: a failure is logged, never surfaced into the turn.
+ */
+export async function* withMissionJournal(
+  inner: AsyncGenerator<ChatStreamEvent, boolean>,
+  missions: MissionService,
+  companionId: string,
+  event: string,
+  logger: Logger,
+): AsyncGenerator<ChatStreamEvent, boolean> {
+  let report = '';
+  let next = await inner.next();
+  while (!next.done) {
+    const chunk = next.value;
+    if (chunk.type === 'done') {
+      report = chunk.message.content ?? report;
+    }
+    yield chunk;
+    next = await inner.next();
+  }
+  if (next.value === true) {
+    return true;
+  }
+  try {
+    const active = await missions.findActive(companionId);
+    if (active) {
+      await missions.recordJournal(active.id, {
+        event,
+        findings: report.trim().length > 0 ? report : null,
+      });
+    }
+  } catch (error) {
+    logger.error('mission advance failed to journal the turn', {
+      operation: 'mission.advance.journal',
+      companionId,
+      error,
+    });
+  }
+  return false;
+}
+
+/** Cancel every wake job for a stopped mission (best-effort, each logged on failure). */
+async function cancelJobs(
+  scheduler: MissionScheduler,
+  jobIds: readonly string[],
+  logger: Logger,
+  missionId: string,
+): Promise<void> {
+  for (const jobId of jobIds) {
+    try {
+      await scheduler.cancel(jobId);
+    } catch (error) {
+      logger.error('failed to cancel a mission wake job', {
+        operation: 'mission.stop.cancel',
+        missionId,
+        jobId,
+        error,
+      });
+    }
+  }
+}
+
+/** Project a stored mission record to the surface DTO (dates as ISO strings). */
+function toMissionDto(record: MissionRecord): MissionDto {
+  return {
+    id: record.id,
+    goal: record.goal,
+    plan: record.plan,
+    validationCriteria: record.validationCriteria,
+    status: record.status,
+    jobIds: record.jobIds,
+    reportChannel: record.reportChannel,
+    createdAt: record.createdAt.toISOString(),
+    updatedAt: record.updatedAt.toISOString(),
+  };
+}
