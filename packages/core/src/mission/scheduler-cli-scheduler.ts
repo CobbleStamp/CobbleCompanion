@@ -15,7 +15,7 @@
  */
 
 import type { CommandSandbox } from '../cli/sandbox.js';
-import type { MissionJobSpec, MissionScheduler } from './start-mission-tool.js';
+import type { MissionJobSpec, MissionScheduler } from './mission-scheduler.js';
 
 /** The scheduler is a stateless loopback client — one shared sandbox working dir is fine. */
 const SCHEDULER_TENANT = 'mission-scheduler';

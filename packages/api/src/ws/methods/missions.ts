@@ -1,9 +1,10 @@
 import {
-  isMissionTerminal,
+  reconcileMissionJobs,
+  routeMissionAdvance,
   type Logger,
   type MissionJournalRecord,
   type MissionRecord,
-  type MissionScheduler,
+  type MissionReconcileDeps,
   type MissionService,
 } from '@cobble/core';
 import {
@@ -39,6 +40,7 @@ export function missionMethods(deps: AppDeps): WsMethods {
     return {};
   }
   const { identity, embodiment, harness, quota, motivation, presence, logger } = deps;
+  const reconcileDeps: MissionReconcileDeps = { missions, scheduler: missionScheduler, logger };
 
   /** Resolve a mission by id, tenancy-checked to the embodied companion. */
   const ownMission = async (ctx: WsCallContext, missionId: string): Promise<MissionRecord> => {
@@ -63,47 +65,15 @@ export function missionMethods(deps: AppDeps): WsMethods {
         connectionId,
         claimSeq,
       } = await embodiedCompanion({ identity, embodiment }, ctx);
-      // Route by the NAMED mission (companion-missions.md §3.2): every wake carries the id
-      // its scheduler action was stamped with at arm time. Only that mission being `active`
-      // earns a turn; anything else is a stale/duplicate trigger and skips cheaply — no
-      // stamina burned, nothing journaled — with the stale firing doubling as the
-      // reconciliation point for its own wake jobs (§5.2 step 1).
-      const mission = await missions.get(missionId);
-      if (!mission || mission.companionId !== companionId) {
-        // Unknown id, or another companion's mission (don't leak which): nothing to advance,
-        // and no job record to reconcile against — log loudly so the stray job is findable.
-        logger.error('mission.advance for an unknown mission — skipping the turn', {
-          operation: 'mission.advance',
-          companionId,
-          missionId,
-        });
-        return { done: true, skipped: 'unknown mission' };
+      // Route by the NAMED mission (companion-missions.md §3.2): only this companion's active
+      // mission earns a turn; an unknown/foreign/non-active id skips cheaply (no stamina, no
+      // journal), reconciling its own stale wake jobs on the way out. The decision + the
+      // reconcile live in `@cobble/core` so this handler stays thin (architecture-rules R1).
+      const routing = await routeMissionAdvance(reconcileDeps, companionId, missionId);
+      if (routing.kind === 'skip') {
+        return { done: true, skipped: routing.reason };
       }
-      if (mission.status !== 'active') {
-        // The named mission is over (or never activated — a wake racing the arm→activate
-        // window; a draft's jobs are left alone, it is a mission mid-start). For a TERMINAL
-        // mission this wake IS the stale job that outlived it — a `mission.stop` whose
-        // scheduler cancel failed — so re-attempt exactly its cancels, or it fires every
-        // interval forever.
-        logger.info('mission.advance for a non-active mission — skipping the turn', {
-          operation: 'mission.advance',
-          companionId,
-          missionId,
-          status: mission.status,
-        });
-        if (isMissionTerminal(mission.status) && mission.jobIds.length > 0) {
-          const failed = await cancelJobs(missionScheduler, mission.jobIds, logger, mission.id);
-          await missions.setJobs(mission.id, failed);
-          logger.info('reconciled stale mission wake jobs after a skipped advance', {
-            operation: 'mission.advance.reconcile',
-            companionId,
-            missionId: mission.id,
-            cancelled: mission.jobIds.length - failed.length,
-            stillArmed: failed.length,
-          });
-        }
-        return { done: true, skipped: 'mission not active' };
-      }
+      const mission = routing.mission;
       presence.recordActivity(companionId, { connectionId, claimSeq });
       const overCap = await overCapGuard(quota, companionId);
       if (overCap) {
@@ -160,23 +130,10 @@ export function missionMethods(deps: AppDeps): WsMethods {
       const { missionId } = parseParams(missionLifecycleSchema, params, 'a mission id is required');
       // Tenancy: only the embodied companion's own missions are actionable.
       const mission = await ownMission(ctx, missionId);
-      // Cancel the wake jobs first so no trigger fires after the mission is gone; a cancel
-      // failure is logged but never blocks the state transition (the mission still stops).
-      // The jobs whose cancel FAILED stay recorded on the mission, so the next stale
-      // firing's reconciliation (`mission.advance` skip path) retries exactly those.
-      const failed = await cancelJobs(missionScheduler, mission.jobIds, logger, missionId);
-      try {
-        await missions.setJobs(missionId, failed);
-      } catch (error) {
-        // Bookkeeping only — never blocks the stop. The row keeps its pre-cancel job ids;
-        // ids already cancelled never fire again (harmless leftovers on a terminal row),
-        // and a still-armed one wakes the reconciliation, which reads the ids afresh.
-        logger.error('mission.stop failed to record the surviving wake jobs', {
-          operation: 'mission.stop',
-          missionId,
-          error,
-        });
-      }
+      // Cancel the wake jobs first so no trigger fires after the mission is gone; the shared
+      // reconcile keeps any failed cancel recorded (so a later stale firing retries it) and
+      // never throws — the mission still stops even if the scheduler or the write is down.
+      await reconcileMissionJobs(reconcileDeps, missionId, mission.jobIds);
       const stopped = await missions.stop(missionId);
       // Leaving `active` re-enables drives on the next tick; nudge so it happens promptly.
       motivation.request(mission.companionId);
@@ -241,34 +198,6 @@ export async function* withMissionJournal(
     });
   }
   return false;
-}
-
-/**
- * Cancel every wake job for a stopped mission (best-effort, each logged on failure).
- * Returns the job ids whose cancel FAILED — the caller persists those on the mission so
- * a later reconciliation retries them.
- */
-async function cancelJobs(
-  scheduler: MissionScheduler,
-  jobIds: readonly string[],
-  logger: Logger,
-  missionId: string,
-): Promise<readonly string[]> {
-  const failed: string[] = [];
-  for (const jobId of jobIds) {
-    try {
-      await scheduler.cancel(jobId);
-    } catch (error) {
-      failed.push(jobId);
-      logger.error('failed to cancel a mission wake job', {
-        operation: 'mission.stop.cancel',
-        missionId,
-        jobId,
-        error,
-      });
-    }
-  }
-  return failed;
 }
 
 /** Project a stored journal row to the surface DTO (dates as ISO strings). */

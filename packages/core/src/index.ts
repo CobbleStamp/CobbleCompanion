@@ -32,6 +32,13 @@ export {
   DEFAULT_JOURNAL_RECALL,
   isMissionTerminal,
 } from './mission/mission-service.js';
+export { type MissionJobSpec, type MissionScheduler } from './mission/mission-scheduler.js';
+export {
+  reconcileMissionJobs,
+  routeMissionAdvance,
+  type AdvanceRouting,
+  type MissionReconcileDeps,
+} from './mission/mission-reconcile.js';
 export {
   createMissionRetrieveContext,
   type MissionRetrieveOptions,
@@ -39,8 +46,6 @@ export {
 export {
   createStartMissionTool,
   type StartMissionOptions,
-  type MissionScheduler,
-  type MissionJobSpec,
   type MissionWakeConfig,
   type MissionWakeTarget,
 } from './mission/start-mission-tool.js';

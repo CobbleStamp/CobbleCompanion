@@ -16,30 +16,10 @@
 
 import type { ToolResult, TurnCtx } from '../harness/hooks.js';
 import { consoleLogger, type Logger } from '../logging.js';
+import type { MissionScheduler } from './mission-scheduler.js';
+import { reconcileMissionJobs } from './mission-reconcile.js';
 import type { MissionService } from './mission-service.js';
 import { readStringArg, type Tool, toolErrorMessage } from '../tools/tool.js';
-
-/** The scheduler wake job a mission arms: poll `predicate` every `every`, then run `action`. */
-export interface MissionJobSpec {
-  /** The poll predicate CLI, e.g. `ibkr-cli query LITE le 810` (companion-missions.md §1.1). */
-  readonly predicate: string;
-  /** The poll interval, e.g. `1s` / `5m` (the scheduler `--every` value). */
-  readonly every: string;
-  /**
-   * The action argv the scheduler runs when the predicate holds — carried as a pre-split
-   * argv (not a shell string) so there is no quoting/`{{message}}`-escaping hazard. The
-   * scheduler substitutes `{{message}}` per element (companion-missions.md §1.2).
-   */
-  readonly action: readonly string[];
-}
-
-/** Arms and cancels the scheduler jobs that drive a mission's wake (companion-missions.md §1.1). */
-export interface MissionScheduler {
-  /** Register a poll-until-condition job; resolves to the scheduler's job id. */
-  arm(spec: MissionJobSpec): Promise<string>;
-  /** Cancel a previously-armed job (compensation on a failed start, and on stop/complete). */
-  cancel(jobId: string): Promise<void>;
-}
 
 /** The mission-channel + companion-bot ids needed to build the wake action (§1.2). */
 export interface MissionWakeTarget {
@@ -204,35 +184,14 @@ export function createStartMissionTool(options: StartMissionOptions): Tool {
   }
 
   /**
-   * Compensation: cancel a wake job whose mission never activated (best-effort, logged).
-   * A cancel that itself fails is recorded on the draft via `setJobs` — only `activate`
-   * writes `jobIds` and it never ran, so without this write the armed job's id would exist
-   * nowhere and the stale-wake reconciliation (companion-missions.md §5.2 step 1) could
-   * never retry the cancel: the job would fire every interval forever.
+   * Compensation: cancel a wake job whose mission never activated. Delegates to the shared
+   * {@link reconcileMissionJobs} — cancel best-effort, and if the cancel fails record the job
+   * on the draft so the stale-wake reconciliation (companion-missions.md §5.2 step 1) retries
+   * it (only `activate` writes `jobIds` and it never ran, so without this the armed job's id
+   * would exist nowhere and the job would fire every interval forever).
    */
-  async function cancelOrphanedJob(
-    companionId: string,
-    draftId: string,
-    jobId: string,
-  ): Promise<void> {
-    try {
-      await scheduler.cancel(jobId);
-    } catch (cancelErr) {
-      logFailure('start_mission failed to cancel an orphaned wake job', {
-        companionId,
-        missionId: draftId,
-        jobId,
-        error: cancelErr,
-      });
-      await missions.setJobs(draftId, [jobId]).catch((setErr: unknown) => {
-        logFailure('start_mission failed to record the uncancelled wake job on the draft', {
-          companionId,
-          missionId: draftId,
-          jobId,
-          error: setErr,
-        });
-      });
-    }
+  async function cancelOrphanedJob(draftId: string, jobId: string): Promise<void> {
+    await reconcileMissionJobs({ missions, scheduler, logger }, draftId, [jobId]);
   }
 
   /**
@@ -302,7 +261,7 @@ export function createStartMissionTool(options: StartMissionOptions): Tool {
         jobIds: [jobId],
       });
       if (activated) return { ok: true, value: undefined };
-      await cancelOrphanedJob(ctx.companionId, draftId, jobId);
+      await cancelOrphanedJob(draftId, jobId);
       await stopDraft(ctx.companionId, draftId);
       return {
         ok: false,
@@ -315,7 +274,7 @@ export function createStartMissionTool(options: StartMissionOptions): Tool {
         jobId,
         error: err,
       });
-      await cancelOrphanedJob(ctx.companionId, draftId, jobId);
+      await cancelOrphanedJob(draftId, jobId);
       await stopDraft(ctx.companionId, draftId);
       return { ok: false, failure: error(`Error starting the mission: ${toolErrorMessage(err)}`) };
     }

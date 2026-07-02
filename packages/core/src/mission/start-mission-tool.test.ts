@@ -5,10 +5,9 @@ import type { TurnCtx } from '../harness/hooks.js';
 import type { Logger } from '../logging.js';
 import { MissionService } from './mission-service.js';
 import { DrizzleMissionJournalStore, DrizzleMissionStore } from './mission-store.js';
+import type { MissionJobSpec, MissionScheduler } from './mission-scheduler.js';
 import {
   createStartMissionTool,
-  type MissionJobSpec,
-  type MissionScheduler,
   type MissionWakeConfig,
   type MissionWakeTarget,
 } from './start-mission-tool.js';
@@ -247,6 +246,7 @@ describe('createStartMissionTool', () => {
         service.createDraft(companionId, goal),
       activate: async () => null,
       stop: (missionId: string) => service.stop(missionId),
+      setJobs: (missionId: string, jobIds: readonly string[]) => service.setJobs(missionId, jobIds),
     } as unknown as MissionService;
     const tool = createStartMissionTool({
       missions: failingMissions,
@@ -387,6 +387,7 @@ describe('createStartMissionTool', () => {
         throw new Error('db write failed');
       },
       stop: (missionId: string) => service.stop(missionId),
+      setJobs: (missionId: string, jobIds: readonly string[]) => service.setJobs(missionId, jobIds),
     } as unknown as MissionService;
     const tool = createStartMissionTool({
       missions: throwingMissions,
