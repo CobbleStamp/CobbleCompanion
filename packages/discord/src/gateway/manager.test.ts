@@ -57,6 +57,13 @@ class InMemoryConfigStore implements DiscordConfigStore {
     this.rows.set(userId, updated);
     return updated;
   }
+  async setBotUserId(userId: string, botUserId: string): Promise<DiscordConfigRecord | null> {
+    const row = this.rows.get(userId);
+    if (!row) return null;
+    const updated = { ...row, botUserId };
+    this.rows.set(userId, updated);
+    return updated;
+  }
   async delete(userId: string): Promise<void> {
     this.rows.delete(userId);
   }
@@ -76,6 +83,7 @@ function makeRecord(
     linkCodeIssuedAt: null,
     triggerBotId: null,
     missionChannelId: null,
+    botUserId: null,
     createdAt: new Date(0),
     updatedAt: new Date(0),
     ...overrides,
@@ -123,6 +131,33 @@ describe('GatewayManager', () => {
     expect(manager.size).toBe(2);
     expect(gateways.byToken('tokenA')?.started).toBe(true);
     expect(gateways.byToken('tokenB')?.started).toBe(true);
+  });
+
+  it('captures the bot user id into the config once a bot is ready', async () => {
+    const store = new InMemoryConfigStore();
+    store.set(makeRecord('u1', 'enc:tokenA'));
+    const { manager } = makeManager(store);
+
+    await manager.sync();
+
+    // The fake reports `bot-<token>` once started; the manager persists it.
+    expect((await store.findByUserId('u1'))?.botUserId).toBe('bot-tokenA');
+  });
+
+  it('does not tear down a bot when the bot user id is unavailable at start', async () => {
+    const store = new InMemoryConfigStore();
+    store.set(makeRecord('u1', 'enc:tokenA'));
+    // The gateway reports no id (as if the capture ran before the id was known).
+    const { manager, gateways } = makeManager(store, {}, (gateway) => {
+      gateway.forceNullBotId = true;
+    });
+
+    await manager.sync();
+
+    // Bot is up and serving; nothing was captured, but that never tears the bot down.
+    expect(manager.size).toBe(1);
+    expect(gateways.byToken('tokenA')?.started).toBe(true);
+    expect((await store.findByUserId('u1'))?.botUserId).toBeNull();
   });
 
   it('registers the global commands on each started bot', async () => {

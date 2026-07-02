@@ -49,6 +49,12 @@ export interface DiscordConfigRecord {
    */
   readonly triggerBotId: string | null;
   readonly missionChannelId: string | null;
+  /**
+   * The companion bot's OWN Discord user id (companion-missions.md §1.2), captured by the
+   * gateway at ClientReady. Core reads it to build the mission scheduler action
+   * (`<@botUserId> {{message}}`). Null until the bot first connects.
+   */
+  readonly botUserId: string | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -71,6 +77,7 @@ interface DiscordConfigRow {
   readonly linkCodeIssuedAt: Date | null;
   readonly triggerBotId: string | null;
   readonly missionChannelId: string | null;
+  readonly botUserId: string | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -85,6 +92,7 @@ function toRecord(row: DiscordConfigRow): DiscordConfigRecord {
     linkCodeIssuedAt: row.linkCodeIssuedAt,
     triggerBotId: row.triggerBotId,
     missionChannelId: row.missionChannelId,
+    botUserId: row.botUserId,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -111,6 +119,12 @@ export interface DiscordConfigStore {
     triggerBotId: string | null,
     missionChannelId: string | null,
   ): Promise<DiscordConfigRecord | null>;
+  /**
+   * Record the companion bot's own Discord user id, captured at ClientReady
+   * (companion-missions.md §1.2). Idempotent — the gateway writes it on every connect.
+   * Returns null if there's no config row for the user.
+   */
+  setBotUserId(userId: string, botUserId: string): Promise<DiscordConfigRecord | null>;
   delete(userId: string): Promise<void>;
 }
 
@@ -223,6 +237,15 @@ export class DrizzleDiscordConfigStore implements DiscordConfigStore {
     const [row] = await this.db
       .update(discordConfig)
       .set({ triggerBotId, missionChannelId, updatedAt: new Date() })
+      .where(eq(discordConfig.userId, userId))
+      .returning();
+    return row ? toRecord(row as DiscordConfigRow) : null;
+  }
+
+  async setBotUserId(userId: string, botUserId: string): Promise<DiscordConfigRecord | null> {
+    const [row] = await this.db
+      .update(discordConfig)
+      .set({ botUserId, updatedAt: new Date() })
       .where(eq(discordConfig.userId, userId))
       .returning();
     return row ? toRecord(row as DiscordConfigRow) : null;

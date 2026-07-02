@@ -28,6 +28,9 @@ class OneUserStore implements DiscordConfigStore {
   async configureMissionWake(): Promise<DiscordConfigRecord | null> {
     return this.recordValue;
   }
+  async setBotUserId(): Promise<DiscordConfigRecord | null> {
+    return this.recordValue;
+  }
   async delete(): Promise<void> {}
 }
 
@@ -70,6 +73,7 @@ describe('assembleService (manager → router → bridge → chat)', () => {
       linkCodeIssuedAt: null,
       triggerBotId: null,
       missionChannelId: null,
+      botUserId: null,
       createdAt: new Date(0),
       updatedAt: new Date(0),
     };
@@ -107,6 +111,7 @@ describe('assembleService (manager → router → bridge → chat)', () => {
       linkCodeIssuedAt: null,
       triggerBotId: null,
       missionChannelId: null,
+      botUserId: null,
       createdAt: new Date(0),
       updatedAt: new Date(0),
     };
@@ -138,6 +143,7 @@ describe('assembleService (manager → router → bridge → chat)', () => {
       linkCodeIssuedAt: null,
       triggerBotId: 'scheduler-bot',
       missionChannelId: 'mission-chan',
+      botUserId: null,
       createdAt: new Date(0),
       updatedAt: new Date(0),
     };
@@ -177,6 +183,7 @@ describe('assembleService (manager → router → bridge → chat)', () => {
       linkCodeIssuedAt: null,
       triggerBotId: 'scheduler-bot',
       missionChannelId: 'mission-chan',
+      botUserId: null,
       createdAt: new Date(0),
       updatedAt: new Date(0),
     };

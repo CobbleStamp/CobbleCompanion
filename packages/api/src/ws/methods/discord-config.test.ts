@@ -20,6 +20,7 @@ function record(overrides: Partial<DiscordConfigRecord> = {}): DiscordConfigReco
     linkCodeIssuedAt: new Date(0),
     triggerBotId: null,
     missionChannelId: null,
+    botUserId: null,
     createdAt: new Date(0),
     updatedAt: new Date(0),
     ...overrides,

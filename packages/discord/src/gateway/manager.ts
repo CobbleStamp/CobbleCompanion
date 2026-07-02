@@ -298,6 +298,7 @@ export class GatewayManager {
     try {
       await gateway.start();
       await gateway.registerCommands(this.opts.commands);
+      await this.captureBotUserId(config.userId, gateway);
     } catch (error) {
       this.opts.logger.error('discord gateway failed to start bot', {
         operation: 'discord.gateway.start',
@@ -306,6 +307,33 @@ export class GatewayManager {
       });
       this.bots.delete(config.userId);
       await this.safeStop(bot);
+    }
+  }
+
+  /**
+   * Persist the bot's own Discord user id, known once the gateway is ready
+   * (companion-missions.md §1.2) — core reads it to build the mission scheduler action.
+   * Best-effort and self-catching: the bot is already up and serving, so a missing id
+   * (not yet ready) or a write failure is logged and left for the next connect, never a
+   * reason to tear the bot down.
+   */
+  private async captureBotUserId(userId: string, gateway: DiscordGateway): Promise<void> {
+    const botUserId = gateway.botUserId();
+    if (botUserId === null) {
+      this.opts.logger.warn('discord gateway: bot user id unavailable at start; skipping', {
+        operation: 'discord.gateway.botUserId',
+        userId,
+      });
+      return;
+    }
+    try {
+      await this.opts.configStore.setBotUserId(userId, botUserId);
+    } catch (error) {
+      this.opts.logger.error('discord gateway: failed to persist bot user id', {
+        operation: 'discord.gateway.botUserId',
+        userId,
+        error,
+      });
     }
   }
 

@@ -1076,6 +1076,11 @@ export const discordConfig = pgTable('discord_config', {
   // mission wake is configured; the DM owner-lock is independent of these.
   triggerBotId: text('trigger_bot_id'),
   missionChannelId: text('mission_channel_id'),
+  // The companion bot's OWN Discord user id, captured by the gateway at ClientReady
+  // (companion-missions.md §1.2). The mission scheduler action mentions this bot
+  // (`<@bot_user_id> {{message}}`) so Discord delivers the trigger's `.content`; core
+  // reads it to build that action when arming a mission. Null until the bot first connects.
+  botUserId: text('bot_user_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

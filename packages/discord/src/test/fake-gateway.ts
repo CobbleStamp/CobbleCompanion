@@ -55,6 +55,16 @@ export class FakeGateway implements DiscordGateway {
     this.stopped = true;
   }
 
+  /** The bot user id this fake reports once started (defaults to `bot-<token>`). */
+  botIdValue: string | null = null;
+  /** Force botUserId() to report null even after start — the "not ready" capture path. */
+  forceNullBotId = false;
+
+  botUserId(): string | null {
+    if (!this.started || this.forceNullBotId) return null;
+    return this.botIdValue ?? `bot-${this.token}`;
+  }
+
   onDirectMessage(handler: (message: InboundDirectMessage) => void): void {
     this.dmHandler = handler;
   }

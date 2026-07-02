@@ -199,6 +199,38 @@ describe('DrizzleDiscordConfigStore (PGlite)', () => {
     expect(await store.configureMissionWake(userId, 'b', 'c')).toBeNull();
   });
 
+  it('captures the bot user id and preserves it across a token re-save', async () => {
+    const { userId, companionId } = await seedUserAndCompanion('botid@example.com');
+    await store.upsert({
+      userId,
+      encryptedBotToken: 'v1.a.b.c',
+      boundCompanionId: companionId,
+      linkCode: 'CODE',
+      linkCodeIssuedAt: new Date('2026-06-26T12:00:00Z'),
+    });
+    // Fresh config: the bot has not connected yet.
+    expect((await store.findByUserId(userId))?.botUserId).toBeNull();
+
+    // The gateway captures it at ClientReady.
+    const captured = await store.setBotUserId(userId, 'companion-bot-42');
+    expect(captured?.botUserId).toBe('companion-bot-42');
+
+    // A token re-save must not clear the captured id (upsert doesn't touch the column).
+    await store.upsert({
+      userId,
+      encryptedBotToken: 'v1.new',
+      boundCompanionId: companionId,
+      linkCode: 'NEW',
+      linkCodeIssuedAt: new Date('2026-06-26T13:00:00Z'),
+    });
+    expect((await store.findByUserId(userId))?.botUserId).toBe('companion-bot-42');
+  });
+
+  it('setBotUserId returns null for a user with no config', async () => {
+    const { userId } = await seedUserAndCompanion('nobotid@example.com');
+    expect(await store.setBotUserId(userId, 'x')).toBeNull();
+  });
+
   it('deletes a config', async () => {
     const { userId, companionId } = await seedUserAndCompanion('d@example.com');
     await store.upsert({

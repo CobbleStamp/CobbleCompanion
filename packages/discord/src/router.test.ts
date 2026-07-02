@@ -46,6 +46,10 @@ class OneUserStore implements DiscordConfigStore {
     this.record = { ...this.record, triggerBotId, missionChannelId };
     return this.record;
   }
+  async setBotUserId(_userId: string, botUserId: string): Promise<DiscordConfigRecord | null> {
+    this.record = { ...this.record, botUserId };
+    return this.record;
+  }
   async delete(): Promise<void> {}
 }
 
@@ -59,6 +63,7 @@ function record(overrides: Partial<DiscordConfigRecord> = {}): DiscordConfigReco
     linkCodeIssuedAt: null,
     triggerBotId: null,
     missionChannelId: null,
+    botUserId: null,
     createdAt: new Date(0),
     updatedAt: new Date(0),
     ...overrides,

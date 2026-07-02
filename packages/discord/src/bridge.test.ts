@@ -76,6 +76,7 @@ function record(): DiscordConfigRecord {
     linkCodeIssuedAt: null,
     triggerBotId: null,
     missionChannelId: null,
+    botUserId: null,
     createdAt: new Date(0),
     updatedAt: new Date(0),
   };
@@ -89,6 +90,7 @@ const configStore: DiscordConfigStore = {
   reissueLinkCode: async () => record(),
   bindOwner: async () => true,
   configureMissionWake: async () => record(),
+  setBotUserId: async () => record(),
   delete: async () => {},
 };
 
@@ -440,6 +442,7 @@ describe('CompanionBridge — mission trigger', () => {
         linkCodeIssuedAt: null,
         triggerBotId: null,
         missionChannelId: null,
+        botUserId: null,
         createdAt: new Date(0),
         updatedAt: new Date(0),
       }),
@@ -450,6 +453,7 @@ describe('CompanionBridge — mission trigger', () => {
       reissueLinkCode: async () => null,
       bindOwner: async () => false,
       configureMissionWake: async () => null,
+      setBotUserId: async () => null,
       delete: async () => {},
     };
     const h = makeBridge({ overrides: { configStore: unlinkedStore } });

@@ -100,6 +100,12 @@ export interface DiscordGateway {
   start(): Promise<void>;
   /** Disconnect and release resources. Safe to call more than once. */
   stop(): Promise<void>;
+  /**
+   * The bot's OWN Discord user id, known once {@link start} has resolved (ClientReady).
+   * The manager persists it to `discord_config` so core can build the mission scheduler
+   * action that @-mentions this bot (companion-missions.md §1.2). Null before ready.
+   */
+  botUserId(): string | null;
   /** Register the inbound-DM handler. Set before {@link start}. */
   onDirectMessage(handler: (message: InboundDirectMessage) => void): void;
   /** Register the inbound guild-message handler (the mission wake). Set before {@link start}. */

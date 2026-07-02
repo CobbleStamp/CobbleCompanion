@@ -145,6 +145,10 @@ class DiscordJsGateway implements DiscordGateway {
     await this.client.destroy();
   }
 
+  botUserId(): string | null {
+    return this.client.user?.id ?? null;
+  }
+
   onDirectMessage(handler: (message: InboundDirectMessage) => void): void {
     this.dmHandler = handler;
   }

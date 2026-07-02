@@ -1,0 +1,1 @@
+ALTER TABLE "discord_config" ADD COLUMN "bot_user_id" text;
