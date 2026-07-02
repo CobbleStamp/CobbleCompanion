@@ -104,6 +104,15 @@ export interface CompanionBridgeOptions {
   readonly logger: Logger;
 }
 
+/** Input to {@link CompanionBridge.establishEmbodiment} / `openEmbodiment`. */
+interface EstablishEmbodimentInput {
+  readonly userId: string;
+  readonly companionId: string;
+  readonly encryptedBotToken: string;
+  readonly channelId: string;
+  readonly greet: boolean;
+}
+
 interface ActiveEmbodiment {
   readonly companionId: string;
   readonly connection: CompanionConnection;
@@ -122,6 +131,9 @@ const DORMANT_NOTICE = 'I’m not here right now — `/summon` to bring me into 
 
 export class CompanionBridge {
   private readonly active = new Map<string, ActiveEmbodiment>();
+  /** Per-user establish in flight — later establishes queue behind it (see
+   *  {@link establishEmbodiment}). */
+  private readonly establishing = new Map<string, Promise<ActiveEmbodiment | null>>();
 
   constructor(private readonly opts: CompanionBridgeOptions) {}
 
@@ -298,19 +310,43 @@ export class CompanionBridge {
   }
 
   /**
+   * Serialized entry to {@link openEmbodiment}: at most one connect per user is in
+   * flight. A caller that lands while another establish is mid-connect (two mission
+   * triggers firing faster than the WS handshake, a trigger racing `/summon`) waits
+   * for it and then reuses the registered embodiment instead of dialing a second
+   * connection — whose claim would supersede the first, and whose late supersede
+   * event would in turn tear the second down (the thrash this serialization exists
+   * to prevent).
+   */
+  private async establishEmbodiment(
+    input: EstablishEmbodimentInput,
+  ): Promise<ActiveEmbodiment | null> {
+    const prior = this.establishing.get(input.userId);
+    const attempt = (async (): Promise<ActiveEmbodiment | null> => {
+      // Wait for the in-flight establish to settle; its outcome is read from `active`
+      // (registered → reuse it; failed → this caller retries with its own connection).
+      await prior?.catch(() => undefined);
+      return this.active.get(input.userId) ?? (await this.openEmbodiment(input));
+    })();
+    this.establishing.set(input.userId, attempt);
+    try {
+      return await attempt;
+    } finally {
+      if (this.establishing.get(input.userId) === attempt) {
+        this.establishing.delete(input.userId);
+      }
+    }
+  }
+
+  /**
    * Open an embodiment connection, claim the room, register it, and start the background
    * loop — the shared core of `/summon` (with the arrival greeting) and a mission trigger
    * (`greet: false`, companion-missions.md §3.3). Returns the registered embodiment, or null
    * if the claim failed or the room was superseded before registration (both logged; the
-   * caller decides how to surface it). Never streams a user-facing reply itself.
+   * caller decides how to surface it). Never streams a user-facing reply itself. Callers
+   * go through {@link establishEmbodiment} — one connect per user at a time.
    */
-  private async establishEmbodiment(input: {
-    userId: string;
-    companionId: string;
-    encryptedBotToken: string;
-    channelId: string;
-    greet: boolean;
-  }): Promise<ActiveEmbodiment | null> {
+  private async openEmbodiment(input: EstablishEmbodimentInput): Promise<ActiveEmbodiment | null> {
     const { userId, companionId, encryptedBotToken, channelId, greet } = input;
     const connection = this.opts.connectionFactory({ userId, companionId, encryptedBotToken });
     // The takeover handler is armed before connect() resolves, but the embodiment is only
@@ -320,7 +356,10 @@ export class CompanionBridge {
     let supersededDuringConnect = false;
     connection.onSuperseded(() => {
       if (this.active.has(userId)) {
-        void this.handleSuperseded(userId);
+        // Teardown is identity-guarded: it no-ops unless the registered embodiment is
+        // this very connection, so a late event from an already-replaced connection
+        // cannot kill its successor.
+        void this.handleSuperseded(userId, connection);
       } else {
         supersededDuringConnect = true;
       }
@@ -330,7 +369,7 @@ export class CompanionBridge {
     // — the guard makes a pre-registration fire a no-op.
     connection.onClosed(() => {
       if (this.active.has(userId)) {
-        void this.handleClosed(userId);
+        void this.handleClosed(userId, connection);
       }
     });
     try {
@@ -419,9 +458,10 @@ export class CompanionBridge {
   }
 
   /** The room was claimed elsewhere (newer wins): tear down and point the owner back. */
-  private handleSuperseded(userId: string): Promise<void> {
+  private handleSuperseded(userId: string, connection: CompanionConnection): Promise<void> {
     return this.teardown(
       userId,
+      connection,
       'I’ve stepped over to the web — `/summon` to bring me back here.',
       'discord.bridge.supersede',
     );
@@ -429,9 +469,10 @@ export class CompanionBridge {
 
   /** The socket dropped unexpectedly (bounce / timeout / 1006): tear down so the next
    * `/summon` reconnects instead of finding a phantom embodiment over a dead socket. */
-  private handleClosed(userId: string): Promise<void> {
+  private handleClosed(userId: string, connection: CompanionConnection): Promise<void> {
     return this.teardown(
       userId,
+      connection,
       'I lost the connection — `/summon` to bring me back here.',
       'discord.bridge.closed',
     );
@@ -439,12 +480,19 @@ export class CompanionBridge {
 
   /**
    * Common embodiment teardown: drop it from `active`, abort the proactive loop, close
-   * the connection, and DM the owner the given notice. Idempotent — a second call for
-   * the same user (e.g. supersession and close racing) finds nothing and no-ops.
+   * the connection, and DM the owner the given notice. Identity-guarded and idempotent:
+   * it no-ops unless the registered embodiment is exactly `connection` — so a second
+   * call for the same user (supersession and close racing) finds nothing, and a stale
+   * event from a torn-down connection cannot tear down a successor embodiment.
    */
-  private async teardown(userId: string, notice: string, operation: string): Promise<void> {
+  private async teardown(
+    userId: string,
+    connection: CompanionConnection,
+    notice: string,
+    operation: string,
+  ): Promise<void> {
     const embodiment = this.active.get(userId);
-    if (!embodiment) return;
+    if (!embodiment || embodiment.connection !== connection) return;
     this.active.delete(userId);
     embodiment.abort.abort();
     this.safeClose(embodiment.connection);

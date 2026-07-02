@@ -23,10 +23,14 @@ class FakeConnection implements CompanionConnection {
   /** When true, fire the takeover the instant the lease is granted — before the
    * bridge registers the embodiment (the connect→register race). */
   supersedeOnConnect = false;
+  /** When set, connect() parks on this gate before granting the lease — drives the
+   * slow-handshake races (two establishes overlapping in the connect window). */
+  connectGate: Promise<void> | null = null;
   private supersededHandler: () => void = () => {};
   private closedHandler: () => void = () => {};
 
   async connect(): Promise<void> {
+    if (this.connectGate) await this.connectGate;
     if (this.outcome === 'superseded') throw new SupersededError();
     this.connected = true;
     if (this.supersedeOnConnect) this.supersededHandler();
@@ -166,6 +170,8 @@ function makeBridge(
   opts: {
     outcome?: 'ok' | 'superseded';
     supersedeOnConnect?: boolean;
+    /** Configure each connection as the factory mints it (e.g. arm a connect gate). */
+    onConnection?: (connection: FakeConnection) => void;
     overrides?: Partial<CompanionBridgeOptions>;
   } = {},
 ): Harness {
@@ -182,6 +188,7 @@ function makeBridge(
       const connection = new FakeConnection();
       connection.outcome = outcome;
       connection.supersedeOnConnect = opts.supersedeOnConnect ?? false;
+      opts.onConnection?.(connection);
       connections.push(connection);
       return connection;
     },
@@ -463,6 +470,79 @@ describe('CompanionBridge — mission trigger', () => {
     expect(h.bridge.isSummoned('u1')).toBe(false);
     expect(h.advances).toHaveLength(0);
     expect(h.openedDms).toHaveLength(0);
+  });
+});
+
+/** Flush pending microtasks (and one macrotask turn) so in-flight async chains advance. */
+const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
+describe('CompanionBridge — embodiment races', () => {
+  it('ignores a late supersede from a torn-down connection (successor stays live)', async () => {
+    const h = makeBridge();
+    await h.bridge.handleOwnerCommand(cmdCtx('summon').ctx);
+    const first = h.connections[0]!;
+    first.triggerClosed(); // socket drops → teardown
+    await Promise.resolve();
+    await h.bridge.handleOwnerCommand(cmdCtx('summon').ctx); // re-summon → connection #2
+    expect(h.bridge.isSummoned('u1')).toBe(true);
+    h.notices.length = 0;
+
+    // A late supersede event arrives from the already-torn-down first connection.
+    first.triggerSuperseded();
+    await Promise.resolve();
+
+    // The successor embodiment must survive: no teardown, no spurious "stepped over" DM.
+    expect(h.bridge.isSummoned('u1')).toBe(true);
+    expect(h.connections[1]?.closed).toBe(false);
+    expect(h.notices).toHaveLength(0);
+  });
+
+  it('serializes two triggers under a slow connect: one connection, both advance', async () => {
+    const gates: Array<() => void> = [];
+    const h = makeBridge({
+      onConnection: (connection) => {
+        connection.connectGate = new Promise((resolve) => gates.push(resolve));
+      },
+    });
+
+    // Two trigger firings faster than the WS handshake (an `--every 1s` job whose
+    // connect takes longer than its interval).
+    const first = h.bridge.handleTrigger('u1', 'tick 1');
+    const second = h.bridge.handleTrigger('u1', 'tick 2');
+    await tick(); // both past their dormant checks; the first parked in connect()
+    // The second establish must queue behind the first, not dial a second connection
+    // (whose claim would supersede — and whose event would tear down — the first).
+    expect(gates).toHaveLength(1);
+    for (const release of gates) release();
+    await Promise.all([first, second]);
+
+    expect(h.connections).toHaveLength(1);
+    expect(h.bridge.isSummoned('u1')).toBe(true);
+    expect(h.advances).toHaveLength(2);
+    expect(h.advances.every((a) => a.connection === h.connections[0])).toBe(true);
+    expect(h.notices).toHaveLength(0); // no teardown thrash, no spurious DM
+  });
+
+  it('a /summon racing a trigger reuses the in-flight embodiment (no second dial)', async () => {
+    const gates: Array<() => void> = [];
+    const h = makeBridge({
+      onConnection: (connection) => {
+        connection.connectGate = new Promise((resolve) => gates.push(resolve));
+      },
+    });
+
+    const trigger = h.bridge.handleTrigger('u1', 'threshold crossed');
+    await tick(); // the trigger's connect is in flight
+    const { ctx, replies } = cmdCtx('summon');
+    const summon = h.bridge.handleOwnerCommand(ctx);
+    await tick();
+    for (const release of gates) release();
+    await Promise.all([trigger, summon]);
+
+    expect(h.connections).toHaveLength(1);
+    expect(h.bridge.isSummoned('u1')).toBe(true);
+    expect(h.advances).toHaveLength(1);
+    expect(replies[0]).toContain('here');
   });
 });
 
