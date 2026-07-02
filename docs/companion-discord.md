@@ -201,15 +201,20 @@ Read-only views map directly onto existing WS methods (no new endpoints):
 | `/budget`           | `budget.get`                                                         | stamina/energy wallets                                                |
 | `/feed`             | `food.get` → `feed`                                                  | pantry, then apply a food                                             |
 | `/reading`          | `leads.list`                                                         | reading list (harvested leads)                                        |
+| `/mission [stop]`   | `mission.list` + `mission.journal` / `mission.stop`                  | mission plan + progress; `action:stop` ends it (`companion-missions.md` §5.3) |
 
 The read-only views (`/memory`…`/reading`) call **companion-scoped** methods, which
 require the connection to hold the live embodiment claim (`requireEmbodiment`,
 `deliver-scalability.md` §5.2). They therefore run over the **summoned** connection —
 a view run while **Dormant** is refused with the same _"summon first"_ prompt as chat
 (§4), since opening a side connection just to answer a view would itself claim the
-room and supersede the active surface. `/recall` and `/episodes <query>` spend on the
-search embedding, so an empty stamina wallet surfaces as the `/feed` nudge; `/feed`
-with no argument shows the pantry and with `ration`/`spark`/`treat` applies a food.
+room and supersede the active surface. The **one exception is `/mission`**: it
+**summons-if-dormant** exactly like a trigger wake (greet-less, force-claims —
+disruptive by design), because the mission kill switch must work even after a worker
+restart with wake jobs still armed (`companion-missions.md` §5.3). `/recall` and
+`/episodes <query>` spend on the search embedding, so an empty stamina wallet surfaces
+as the `/feed` nudge; `/feed` with no argument shows the pantry and with
+`ration`/`spark`/`treat` applies a food.
 
 Views render as **Discord Markdown** (headings, bullets, code spans), not embeds: the
 adapter's gateway seam sends string content, which keeps it decoupled from

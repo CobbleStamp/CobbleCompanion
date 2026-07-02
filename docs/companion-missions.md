@@ -19,7 +19,8 @@
 > per-turn journal that carries state across iterations, and the event-driven reasoning turn with
 > tools. What **fully closes the loop autonomously** — validating each turn against the criteria to
 > decide _continue / replan / complete_ without a human — is the deferred trajectory (§11); today a
-> mission iterates per wake and the human closes it via `mission.stop`. Also remaining: a live
+> mission iterates per wake and the human closes it via `/mission action:stop` (§5.3). Also
+> remaining: a live
 > end-to-end dry-run and a durability backstop (§11). Present tense below describes the live design;
 > §11 marks what is not yet wired.
 >
@@ -94,7 +95,7 @@ rescanning the transcript, giving genuine cross-day continuity).
 
 > **Build note.** Milestone 1 ships the loop's _spine_ — plan-at-creation, journal continuity, and
 > the per-iteration reasoning turn. The **validate → decide (continue / replan / complete)** control
-> currently leans on the human (`mission.stop`); making that decision _autonomously_ each turn is the
+> currently leans on the human (`/mission action:stop`, §5.3); making that decision _autonomously_ each turn is the
 > deferred trajectory (§11) that closes the loop end-to-end.
 
 ## 2. Design principle — push the cheap, deterministic work _out_
@@ -250,13 +251,14 @@ stateDiagram-v2
 The `complete` / `paused` / `failed` transitions are part of the designed lifecycle (and of
 `missionStatusSchema`) but are **not implemented yet** — their `MissionService` methods are added
 with the autonomous validate→decide milestone (§11). In v1 a mission is armed as a **recurring**
-wake and ends via the user's `mission.stop`.
+wake and ends via the user's `/mission action:stop` (§5.3).
 
-## 5. The two mission turns — create and advance
+## 5. Mission operations — create, advance, inspect & stop
 
-Both are ordinary agent-loop turns run over the connection's serial chain: creation *is* a
-`messages.send` chat turn, and `mission.advance` is its own WS method seeded with the wake event.
-The WS-method contracts are owned by `companion-endpoints.md` §4.13.
+Creation and advance are ordinary agent-loop turns run over the connection's serial chain:
+creation *is* a `messages.send` chat turn, and `mission.advance` is its own WS method seeded with
+the wake event. Inspect & stop (§5.3) are plain request/response management calls, surfaced as the
+`/mission` Discord command. The WS-method contracts are owned by `companion-endpoints.md` §4.13.
 
 ### 5.1 Creating a mission — plan, approve, activate (a chat turn)
 
@@ -298,7 +300,7 @@ companion-scoped `mission.advance({ event })` WS method:
 4. **validate & decide.** Weigh the new results against `validation_criteria` and decide whether to
    keep going, revise the approach, or declare the goal met. _In Milestone 1 this judgment is
    expressed in the turn's reasoning and report; it does not yet drive an automatic status transition
-   — the human closes the loop via `mission.stop` (§11)._
+   — the human closes the loop via `/mission action:stop` (§5.3, §11)._
 5. **report.** The turn's output is spoken in the embodied room (§7).
 6. **journal.** `withMissionJournal` taps the turn's `done` message and appends it to
    `mission_journal` as findings (v1 report-as-findings), so the next iteration recalls this
@@ -309,6 +311,28 @@ companion-scoped `mission.advance({ event })` WS method:
 `try/finally` that forwards an early `.return()` into the inner generator, so the harness's own
 `finally` — trace end, token debit, in-flight LLM-stream teardown — always runs, matching the
 guarantee a plain `yield*` would give.
+
+### 5.3 `/mission` — inspect the plan & progress, stop
+
+Observability and the off-switch live in **one Discord command**, in the room the mission lives in:
+
+- **`/mission`** renders the **active** mission (falling back to the most recent one, headed with
+  its status, as a review of a finished run): goal, plan, success criteria, and the last **3**
+  `mission_journal` turns (`time — event`, then what the turn concluded), ending with the stop
+  hint. Backed by `mission.list` + `mission.journal` (`companion-endpoints.md` §4.13).
+- **`/mission action:stop`** ends the **active** mission only (never a draft or a finished one):
+  cancels its scheduler wake jobs, sets `stopped`, and nudges the motivation engine so drives
+  resume promptly. Backed by `mission.stop`.
+- Approval-time observability is the **proposal card itself**: `start_mission`'s summary shows the
+  goal, the monitored predicate + interval, the **plan**, and the **success criteria** (fields
+  trimmed to fit the embed), so the one up-front approval is a genuine plan review (§5.1).
+
+Unlike the other read-only views, `/mission` **summons-if-dormant** — a greet-less embodiment
+established exactly like a trigger wake (§3.4: force-claims, supersedes another surface,
+disruptive by design). The kill switch must work in the worst state: a worker restart leaves the
+companion dormant while the mission is still `active` and its wake jobs still armed. If the summon
+itself fails, the command replies with guidance instead of failing silently. While already
+embodied it runs over the live connection with no re-summon.
 
 ## 6. Mission mode — exclusivity, drive suspension, gate bypass
 
@@ -369,7 +393,7 @@ weakening it:
 | `Tools/ibkr-cli` | `query` predicate (`{status,message}`) | ✅ shipped |
 | `Tools/discord-notify` | action CLI — **is the mission wake too**, unchanged | ✅ shipped |
 | `@cobble/db` | `discord_config` += `trigger_bot_id` / `mission_channel_id` / `bot_user_id`; `missions` + `mission_journal` tables; the one-active partial unique index | ✅ |
-| `@cobble/discord` | `GuildMessages` intent; guild trigger path (trust gate, mention-parse, trigger-only authority); programmatic summon; `bot_user_id` capture at ClientReady | ✅ |
+| `@cobble/discord` | `GuildMessages` intent; guild trigger path (trust gate, mention-parse, trigger-only authority); programmatic summon; `bot_user_id` capture at ClientReady; the `/mission` inspect/stop command (summon-if-dormant, §5.3) | ✅ |
 | `@cobble/core` | `MissionService` + stores; the `start_mission` effectful tool; the `scheduler-cli`-backed `MissionScheduler`; the mission-retrieve arm; the drive-suspension gate; the propose→approve mission-mode bypass | ✅ |
 | `@cobble/api` | `mission.advance` / `list` / `journal` / `stop` WS methods; `discord.config.setMissionWake`; `SCHEDULER_URL` config; full composition-root wiring | ✅ |
 | `@cobble/shared` | mission + trigger + mission-wake contracts | ✅ |
@@ -394,7 +418,7 @@ weakening it:
 ## 11. Deferred / beyond Milestone 1
 
 - **Live end-to-end dry-run** against a running scheduler + Discord guild (a synthetic
-  immediately-firing predicate → summon → reason → report → re-fire → `mission.stop`). The unit and
+  immediately-firing predicate → summon → reason → report → re-fire → `/mission action:stop`). The unit and
   integration coverage is green; only the live wiring smoke-test is outstanding.
 - **fetch-recent-on-reconnect replay** — the durability backstop for the non-durable
   Discord→companion hop (§10.4): on gateway (re)connect, fetch recent mission-channel messages and
@@ -402,7 +426,7 @@ weakening it:
   gateway `fetchRecentMessages` method.
 - **Closing the loop autonomously (the validate → decide control, §1.1, §5.2 step 4)** — the biggest
   gap from the north star. Today the companion _reasons about_ progress each turn but does not act on
-  it: v1 arms a **recurring** wake and ends via the user's `mission.stop`. The deferred path lets the
+  it: v1 arms a **recurring** wake and ends via the user's `/mission action:stop` (§5.3). The deferred path lets the
   turn's own judgment drive the state machine — detecting `validation_criteria` met (→ `complete`,
   cancel jobs, resume drives), revising the plan/predicate when the approach isn't working, and
   re-arming a fire-once job per turn instead of a blanket recurring one. The `MissionService`
