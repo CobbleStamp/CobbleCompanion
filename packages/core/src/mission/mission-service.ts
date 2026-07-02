@@ -1,0 +1,123 @@
+/**
+ * MissionService (companion-missions.md §3.4) — the lifecycle orchestration over the
+ * mission stores that the WS methods (`mission.*`) and the advance path call. It owns the
+ * status transitions (create → activate → pause/resume → stop/complete) and the append-only
+ * journal; it does NOT run the planner or the advance turn (those are harness turns), and it
+ * does NOT poke the drive engine — suspension is a query (`hasActive`), so leaving `active`
+ * auto-resumes drives on the next motivation tick.
+ *
+ * Transition guards here are best-effort (read-then-set); the DB backstops the load-bearing
+ * invariant (at most one `active` mission per companion) with a partial unique index, so a
+ * racing double-activate/resume fails at the store, not silently.
+ */
+
+import type { MissionStatus } from '@cobble/shared';
+import type {
+  MissionActivation,
+  MissionJournalInput,
+  MissionJournalRecord,
+  MissionJournalStore,
+  MissionRecord,
+  MissionStore,
+} from './mission-store.js';
+
+/** How many recent journal rows the advance turn recalls for continuity (§3.4). */
+export const DEFAULT_JOURNAL_RECALL = 10;
+
+/** A lifecycle status a mission can no longer move out of. */
+const TERMINAL: readonly MissionStatus[] = ['complete', 'stopped', 'failed'];
+
+export class MissionService {
+  constructor(
+    private readonly missions: MissionStore,
+    private readonly journal: MissionJournalStore,
+  ) {}
+
+  /** Create a `draft` mission from an assigned goal (the planner fills plan/criteria/jobs). */
+  createDraft(companionId: string, goal: string): Promise<MissionRecord> {
+    return this.missions.create(companionId, goal);
+  }
+
+  list(companionId: string): Promise<MissionRecord[]> {
+    return this.missions.listByCompanion(companionId);
+  }
+
+  get(missionId: string): Promise<MissionRecord | null> {
+    return this.missions.findById(missionId);
+  }
+
+  /** The companion's single `active` mission (the trigger-routing target), or null. */
+  findActive(companionId: string): Promise<MissionRecord | null> {
+    return this.missions.findActive(companionId);
+  }
+
+  /** Whether the drive engine should be suspended for this companion (§1). */
+  hasActive(companionId: string): Promise<boolean> {
+    return this.missions.hasActive(companionId);
+  }
+
+  /**
+   * Approve + activate a `draft` mission (draft-guarded at the store). Rejects at the DB if
+   * another mission is already `active` for the companion (the one-active index); callers
+   * guard with {@link hasActive} first.
+   */
+  activate(missionId: string, input: MissionActivation): Promise<MissionRecord | null> {
+    return this.missions.activate(missionId, input);
+  }
+
+  /** Pause a running mission (its scheduler jobs are paused separately). No-op if not active. */
+  async pause(missionId: string): Promise<MissionRecord | null> {
+    const mission = await this.missions.findById(missionId);
+    if (!mission || mission.status !== 'active') return null;
+    return this.missions.setStatus(missionId, 'paused');
+  }
+
+  /** Resume a paused mission. No-op unless paused; the one-active index guards concurrency. */
+  async resume(missionId: string): Promise<MissionRecord | null> {
+    const mission = await this.missions.findById(missionId);
+    if (!mission || mission.status !== 'paused') return null;
+    return this.missions.setStatus(missionId, 'active');
+  }
+
+  /** Stop a mission (user-ended). No-op if already terminal; scheduler jobs cancelled separately. */
+  stop(missionId: string): Promise<MissionRecord | null> {
+    return this.transitionFromNonTerminal(missionId, 'stopped');
+  }
+
+  /** Mark a mission complete (validation criteria met). No-op if already terminal. */
+  complete(missionId: string): Promise<MissionRecord | null> {
+    return this.transitionFromNonTerminal(missionId, 'complete');
+  }
+
+  /** Mark a mission failed. No-op if already terminal. */
+  fail(missionId: string): Promise<MissionRecord | null> {
+    return this.transitionFromNonTerminal(missionId, 'failed');
+  }
+
+  /** Replace the registered scheduler job ids (on re-arm after an advance). */
+  setJobIds(missionId: string, jobIds: readonly string[]): Promise<MissionRecord | null> {
+    return this.missions.setJobIds(missionId, jobIds);
+  }
+
+  /** Append one turn's outcome to the mission journal. */
+  recordJournal(missionId: string, input: MissionJournalInput): Promise<MissionJournalRecord> {
+    return this.journal.append(missionId, input);
+  }
+
+  /** The most-recent journal rows for a mission, newest first (advance-turn continuity). */
+  recentJournal(
+    missionId: string,
+    limit: number = DEFAULT_JOURNAL_RECALL,
+  ): Promise<MissionJournalRecord[]> {
+    return this.journal.recent(missionId, limit);
+  }
+
+  private async transitionFromNonTerminal(
+    missionId: string,
+    to: MissionStatus,
+  ): Promise<MissionRecord | null> {
+    const mission = await this.missions.findById(missionId);
+    if (!mission || TERMINAL.includes(mission.status)) return null;
+    return this.missions.setStatus(missionId, to);
+  }
+}

@@ -27,6 +27,7 @@ export {
   type MissionJournalInput,
   type MissionJournalRecord,
 } from './mission/mission-store.js';
+export { MissionService, DEFAULT_JOURNAL_RECALL } from './mission/mission-service.js';
 export {
   DrizzleProceduralStore,
   type ProceduralStore,
