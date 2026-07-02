@@ -19,10 +19,12 @@ export function createApprovalGate(
   registry: ToolRegistry,
   logger: Logger = consoleLogger,
   /**
-   * Mission-mode bypass (companion-missions.md §4). When present and the companion has an
-   * `active` mission, effectful tools run UNGATED — the mission is itself the standing
-   * authorization the user granted at start (`start_mission`, the one up-front approval), so
-   * no per-call approval is required while it runs. Omitted = every effectful call is gated
+   * Mission-mode bypass (companion-missions.md §6). When present, effectful tools run
+   * UNGATED — but ONLY inside a mission turn (`ctx.origin === 'mission'`, a
+   * `mission.advance` wake) AND while the companion's mission is still `active`: the
+   * mission is the standing authorization the user granted at start (`start_mission`,
+   * the one up-front approval), scoped to the turns its wake drives. Ordinary chat run
+   * while a mission is active stays fully gated. Omitted = every effectful call is gated
    * (the pre-missions behaviour). A narrow interface keeps the coupling to the one check.
    */
   missions?: { hasActive(companionId: string): Promise<boolean> },
@@ -34,10 +36,13 @@ export function createApprovalGate(
     if (!tool || !tool.effectful) {
       return call;
     }
-    // Under an active mission, the propose→approve gate is suspended for effectful calls
-    // (the mission is the grant). One cheap indexed read, only on an effectful call.
-    if (missions && (await missions.hasActive(ctx.companionId))) {
-      logger.info('effectful tool call allowed ungated under an active mission', {
+    // Inside a mission turn, the propose→approve gate is suspended for effectful calls
+    // (the mission is the grant, scoped to the turns its wake drives). The `hasActive`
+    // re-read — one cheap indexed read, only on an effectful call in a mission turn —
+    // closes the stop-mid-turn race: a mission stopped while its advance turn is in
+    // flight re-gates that turn's next effectful call.
+    if (ctx.origin === 'mission' && missions && (await missions.hasActive(ctx.companionId))) {
+      logger.info('effectful tool call allowed ungated inside a mission turn', {
         operation: 'gate.beforeToolCall',
         companionId: ctx.companionId,
         tool: call.name,

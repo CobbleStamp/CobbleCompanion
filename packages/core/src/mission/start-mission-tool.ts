@@ -8,8 +8,9 @@
  * trigger's content is delivered, §1.2), creates the mission, and activates it — which suspends
  * the drive engine (an `active` mission is a query the motivation tick early-returns on).
  *
- * The mission is then the standing authorization: from here on effectful tools run ungated
- * (the gate's mission-mode bypass), so this is the ONLY approval the mission ever asks for.
+ * The mission is then the standing authorization: effectful tools run ungated inside its
+ * `mission.advance` wake turns (the gate's turn-scoped mission-mode bypass — ordinary chat
+ * stays gated), so this is the ONLY approval the mission ever asks for.
  */
 
 import type { ToolResult, TurnCtx } from '../harness/hooks.js';

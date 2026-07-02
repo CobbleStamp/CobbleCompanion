@@ -462,8 +462,9 @@ async function main(): Promise<void> {
     // callable next step. The gate keeps the native registry — MCP tools are
     // non-effectful and pass through it.
     ...(acquisitionWiring ? { resolveRegistry: acquisitionWiring.resolveRegistry } : {}),
-    // The mission-mode bypass: while a mission is active it is the standing authorization, so
-    // effectful tools run ungated (companion-missions.md §4). Off outside a mission.
+    // The turn-scoped mission-mode bypass: effectful tools run ungated only inside a
+    // mission.advance turn (origin='mission') while the mission is active
+    // (companion-missions.md §6). Chat stays gated even mid-mission.
     beforeToolCall: createApprovalGate(proposals, tools, consoleLogger, missionService),
     afterToolCall: createLoggingAfterToolCall(toolCallLog, consoleLogger),
     // The memory-retrieval hook (invariant #3): episodic + procedural + (MCP tool

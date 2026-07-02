@@ -342,11 +342,15 @@ While a mission is `active`, the companion is in **mission mode**, which changes
   (`MotivationEngine.tick`): if the companion has an `active` mission → return idle. Drives resume
   on the next tick once the mission leaves `active` (`mission.stop` nudges the engine so this
   happens promptly). Ordinary chat is unaffected — it does not run through this engine.
-- **Propose→approve bypass.** While a mission is active, effectful tools run **ungated**: the single
+- **Propose→approve bypass — turn-scoped.** Inside a **mission turn** (a `mission.advance` wake,
+  marked `origin: 'mission'` on the turn context), effectful tools run **ungated**: the single
   `start_mission` approval is the **standing authorization** for the mission's work, so the gate
-  does not re-prompt on each tool call inside a mission turn. This is intentional and off outside a
-  mission. (v1 missions are read-only end-to-end, so no genuinely outward/effectful tool is exercised
-  under the bypass yet — §7.)
+  does not re-prompt on each tool call the wake drives. The bypass is scoped to the **turn**, not
+  the companion: **ordinary chat run while a mission is active stays fully gated** (e.g.
+  `ingest_source` memory writes still raise an approval card mid-mission). The gate also re-reads
+  `hasActive` per effectful call, so a `/mission action:stop` racing an in-flight advance turn
+  re-gates that turn's next effectful call. (v1 missions are read-only end-to-end, so no genuinely
+  outward/effectful tool is exercised under the bypass yet — §7.)
 
 ## 7. Reporting & outward actions (no v1 grant)
 

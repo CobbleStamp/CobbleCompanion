@@ -41,6 +41,14 @@ export interface TurnCtx {
   /** The companion's owner — tools scope tenant state and bill tokens to it (P3). */
   readonly ownerId: string;
   /**
+   * What kind of entry seeded this turn. `mission` = a `mission.advance` wake turn — the
+   * only origin the approval gate's mission-mode bypass honors (companion-missions.md §6):
+   * the mission's standing authorization covers the turns its wake drives, never ordinary
+   * chat run while a mission happens to be active. Absent = `chat` (greeting, proactive,
+   * and post-approval turns included), which is always gated.
+   */
+  readonly origin?: 'chat' | 'mission';
+  /**
    * The id of the user message that triggered this turn — the message the
    * companion's `react` action attaches its emoji to (companion-reactions.md §5).
    * Absent on a proactive turn (no triggering user message), where reacting is a

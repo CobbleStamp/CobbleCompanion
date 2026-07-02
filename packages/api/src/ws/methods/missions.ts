@@ -75,8 +75,9 @@ export function missionMethods(deps: AppDeps): WsMethods {
       if (overCap) {
         throw new OverCapError(overCap);
       }
-      // The wake turn: the mission-retrieve arm injects goal/plan/journal + the gate's
-      // mission-mode bypass runs effectful tools ungated. The report is journaled as findings.
+      // The wake turn: the mission-retrieve arm injects goal/plan/journal, and
+      // `origin: 'mission'` is what the gate's turn-scoped mission-mode bypass keys on —
+      // effectful tools run ungated in THIS turn only. The report is journaled as findings.
       const superseded = await ctx.connection.runSerial(() =>
         emitAll(
           ctx,
@@ -86,6 +87,7 @@ export function missionMethods(deps: AppDeps): WsMethods {
               userContent: event,
               ownerId: ctx.userId,
               holdsLease: leaseGuard(embodiment, companionId, connectionId, claimSeq),
+              origin: 'mission',
             }),
             missions,
             active.id,

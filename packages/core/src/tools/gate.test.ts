@@ -132,9 +132,9 @@ describe('createApprovalGate', () => {
     expect(isBlock(await gate(aCall('mystery'), ctx))).toBe(false);
   });
 
-  it('lets an effectful call run UNGATED while a mission is active (mission-mode bypass)', async () => {
-    // companion-missions.md §4: the active mission is the standing authorization, so no
-    // per-call approval is required — the effectful call passes and no proposal is enqueued.
+  it('lets an effectful call run UNGATED in a mission turn with an active mission', async () => {
+    // companion-missions.md §6: the active mission is the standing authorization, but ONLY
+    // for the turns the mission wake drives (origin=mission) — the call passes ungated.
     const proposals = fakeProposals();
     const gate = createApprovalGate(
       proposals,
@@ -142,12 +142,30 @@ describe('createApprovalGate', () => {
       silentLogger,
       { hasActive: async () => true },
     );
-    const result = await gate(aCall('ibkr_query', { symbol: 'LITE' }), ctx);
+    const missionCtx: TurnCtx = { ...ctx, origin: 'mission' };
+    const result = await gate(aCall('ibkr_query', { symbol: 'LITE' }), missionCtx);
     expect(isBlock(result)).toBe(false);
     expect(proposals.created).toEqual([]);
   });
 
-  it('still gates an effectful call when there is no active mission', async () => {
+  it('still gates an ordinary chat turn while a mission is active (bypass is turn-scoped)', async () => {
+    // The bypass never widens to the whole companion: chatting mid-mission keeps the full
+    // propose→approve flow for effectful calls (e.g. ingest_source memory writes).
+    const proposals = fakeProposals();
+    const gate = createApprovalGate(
+      proposals,
+      new ToolRegistry([tool('ingest_source', true, 'Read it into memory')]),
+      silentLogger,
+      { hasActive: async () => true },
+    );
+    const result = await gate(aCall('ingest_source', { url: 'https://x.dev' }), ctx);
+    expect(isBlock(result)).toBe(true);
+    expect(proposals.created).toHaveLength(1);
+  });
+
+  it('re-gates a mission turn once the mission is no longer active (stop mid-turn)', async () => {
+    // /mission action:stop racing an in-flight advance turn: the standing authorization is
+    // gone, so the very next effectful call in that turn goes back through the gate.
     const proposals = fakeProposals();
     const gate = createApprovalGate(
       proposals,
@@ -155,7 +173,8 @@ describe('createApprovalGate', () => {
       silentLogger,
       { hasActive: async () => false },
     );
-    const result = await gate(aCall('ingest_source', { url: 'https://x.dev' }), ctx);
+    const missionCtx: TurnCtx = { ...ctx, origin: 'mission' };
+    const result = await gate(aCall('ingest_source', { url: 'https://x.dev' }), missionCtx);
     expect(isBlock(result)).toBe(true);
     expect(proposals.created).toHaveLength(1);
   });

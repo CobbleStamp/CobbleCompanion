@@ -329,8 +329,9 @@ method: the owner states the goal in an ordinary chat turn and the model propose
 | `discord.config.setMissionWake` | user | `discordMissionWakeSchema` `{ triggerBotId, missionChannelId }` | `{ ok: true }` | `bad_params`, `conflict`, `not_found` |
 
 `mission.advance` is the wake turn — the Discord bridge calls it on a trigger; it injects the
-active mission's goal/plan/journal, runs effectful tools ungated (the mission is the standing
-authorization), and journals the report. `mission.journal` is the progress view: the recent
+active mission's goal/plan/journal, runs effectful tools ungated **within this turn only** (the
+mission is the standing authorization, keyed on the turn's `origin: 'mission'`; ordinary chat
+stays gated while a mission runs), and journals the report. `mission.journal` is the progress view: the recent
 journal rows for one of the embodied companion's missions (tenancy-checked).
 `discord.config.setMissionWake` records the allowlisted trigger-sender bot id + the shared
 mission channel (`companion-missions.md` §3.2); it is user-scoped and carries no embodiment.
