@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { missionJournal, missions, type Database } from '@cobble/db';
 import type { MissionStatus } from '@cobble/shared';
 
@@ -121,11 +121,18 @@ export interface MissionStore {
   /** Move a mission to a new lifecycle status (stop today; the §11 transitions later). */
   setStatus(id: string, status: MissionStatus): Promise<MissionRecord | null>;
   /**
-   * Replace the mission's armed-job list — after a cancel pass, only the jobs whose
-   * cancel FAILED remain, so a later reconciliation retries exactly those (never a
-   * job the scheduler already dropped).
+   * Settle a cancel pass on the armed-job list, atomically: remove every id in `cancelled`
+   * and ensure every id in `failed` is present, computed from the row's CURRENT `job_ids`
+   * (not a value the caller read earlier). Two reconciliations racing on the same mission —
+   * two stale wakes, or a wake racing `mission.stop` — therefore COMPOSE (each removes what
+   * it cancelled) instead of one clobbering the other with a stale snapshot. `cancelled` and
+   * `failed` are disjoint (a job is one or the other); the result is deduplicated.
    */
-  setJobs(id: string, jobIds: readonly string[]): Promise<MissionRecord | null>;
+  reconcileJobs(
+    id: string,
+    cancelled: readonly string[],
+    failed: readonly string[],
+  ): Promise<MissionRecord | null>;
 }
 
 export class DrizzleMissionStore implements MissionStore {
@@ -187,10 +194,31 @@ export class DrizzleMissionStore implements MissionStore {
     return row ? toMissionRecord(row as MissionRow) : null;
   }
 
-  async setJobs(id: string, jobIds: readonly string[]): Promise<MissionRecord | null> {
+  async reconcileJobs(
+    id: string,
+    cancelled: readonly string[],
+    failed: readonly string[],
+  ): Promise<MissionRecord | null> {
+    const cancelledJson = JSON.stringify([...cancelled]);
+    const failedJson = JSON.stringify([...failed]);
+    // new job_ids = (current elements NOT in `cancelled`) ∪ `failed`, computed from the
+    // row's own `job_ids` inside the UPDATE so it reflects the value AT WRITE TIME, never a
+    // caller's stale read. `jsonb_exists(arr, elem)` is the array-membership test; UNION
+    // deduplicates (a `failed` id already present collapses to one).
+    const nextJobIds = sql`(
+      SELECT COALESCE(jsonb_agg(elem), '[]'::jsonb)
+      FROM (
+        SELECT elem
+        FROM jsonb_array_elements_text(${missions.jobIds}) AS elem
+        WHERE NOT jsonb_exists(${cancelledJson}::jsonb, elem)
+        UNION
+        SELECT elem
+        FROM jsonb_array_elements_text(${failedJson}::jsonb) AS elem
+      ) AS merged
+    )`;
     const [row] = await this.db
       .update(missions)
-      .set({ jobIds: [...jobIds], updatedAt: new Date() })
+      .set({ jobIds: nextJobIds, updatedAt: new Date() })
       .where(eq(missions.id, id))
       .returning();
     return row ? toMissionRecord(row as MissionRow) : null;

@@ -246,7 +246,8 @@ describe('createStartMissionTool', () => {
         service.createDraft(companionId, goal),
       activate: async () => null,
       stop: (missionId: string) => service.stop(missionId),
-      setJobs: (missionId: string, jobIds: readonly string[]) => service.setJobs(missionId, jobIds),
+      reconcileJobs: (missionId: string, cancelled: readonly string[], failed: readonly string[]) =>
+        service.reconcileJobs(missionId, cancelled, failed),
     } as unknown as MissionService;
     const tool = createStartMissionTool({
       missions: failingMissions,
@@ -326,7 +327,8 @@ describe('createStartMissionTool', () => {
         service.createDraft(companionId, goal),
       activate: async () => null,
       stop: (missionId: string) => service.stop(missionId),
-      setJobs: (missionId: string, jobIds: readonly string[]) => service.setJobs(missionId, jobIds),
+      reconcileJobs: (missionId: string, cancelled: readonly string[], failed: readonly string[]) =>
+        service.reconcileJobs(missionId, cancelled, failed),
     } as unknown as MissionService;
     const tool = createStartMissionTool({
       missions: racingMissions,
@@ -359,7 +361,7 @@ describe('createStartMissionTool', () => {
         service.createDraft(companionId, goal),
       activate: async () => null,
       stop: (missionId: string) => service.stop(missionId),
-      setJobs: async () => {
+      reconcileJobs: async () => {
         throw new Error('db write failed');
       },
     } as unknown as MissionService;
@@ -387,7 +389,8 @@ describe('createStartMissionTool', () => {
         throw new Error('db write failed');
       },
       stop: (missionId: string) => service.stop(missionId),
-      setJobs: (missionId: string, jobIds: readonly string[]) => service.setJobs(missionId, jobIds),
+      reconcileJobs: (missionId: string, cancelled: readonly string[], failed: readonly string[]) =>
+        service.reconcileJobs(missionId, cancelled, failed),
     } as unknown as MissionService;
     const tool = createStartMissionTool({
       missions: throwingMissions,

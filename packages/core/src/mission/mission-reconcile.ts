@@ -25,24 +25,27 @@ export interface MissionReconcileDeps {
 }
 
 /**
- * Cancel a mission's wake jobs (best-effort, each failure logged) and persist the survivors —
- * the ids whose cancel FAILED — back onto the mission, so a later reconciliation retries
- * exactly those and nothing else. Returns the still-armed ids.
+ * Cancel a mission's wake jobs (best-effort, each failure logged) and settle the armed-job
+ * list — drop the ids whose cancel SUCCEEDED, keep the ones that FAILED — so a later
+ * reconciliation retries exactly the survivors and nothing else. Returns the still-armed ids.
  *
- * Both the cancels and the `setJobs` write are best-effort: a failed cancel is recorded so it
- * can be retried; a failed `setJobs` is logged and swallowed (the row keeps its prior ids, and
- * the next wake reconciles afresh) — reconciliation must never throw out into its caller and
- * block a stop or a compensation.
+ * Both halves are best-effort: a failed cancel is recorded so it can be retried; a failed
+ * write is logged and swallowed (the row keeps its prior ids, and the next wake reconciles
+ * afresh) — reconciliation must never throw out into its caller and block a stop or a
+ * compensation. The write is a race-safe delta ({@link MissionService.reconcileJobs}), so two
+ * reconciliations of the same mission compose instead of clobbering.
  */
 export async function reconcileMissionJobs(
   deps: MissionReconcileDeps,
   missionId: string,
   jobIds: readonly string[],
 ): Promise<readonly string[]> {
+  const cancelled: string[] = [];
   const failed: string[] = [];
   for (const jobId of jobIds) {
     try {
       await deps.scheduler.cancel(jobId);
+      cancelled.push(jobId);
     } catch (error) {
       failed.push(jobId);
       deps.logger.error('failed to cancel a mission wake job', {
@@ -53,14 +56,16 @@ export async function reconcileMissionJobs(
       });
     }
   }
-  try {
-    await deps.missions.setJobs(missionId, failed);
-  } catch (error) {
-    deps.logger.error('failed to record the surviving wake jobs after a cancel pass', {
-      operation: 'mission.reconcile.record',
-      missionId,
-      error,
-    });
+  if (cancelled.length > 0 || failed.length > 0) {
+    try {
+      await deps.missions.reconcileJobs(missionId, cancelled, failed);
+    } catch (error) {
+      deps.logger.error('failed to settle the wake-job list after a cancel pass', {
+        operation: 'mission.reconcile.record',
+        missionId,
+        error,
+      });
+    }
   }
   return failed;
 }

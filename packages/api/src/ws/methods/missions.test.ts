@@ -172,11 +172,11 @@ describe('missionMethods', () => {
   });
 
   it('mission.stop still stops the mission when recording the surviving jobs fails', async () => {
-    // The setJobs write is bookkeeping between the cancels and the state transition —
+    // The reconcile write is bookkeeping between the cancels and the state transition —
     // a transient DB failure there must not leave the mission active with dead jobs.
     const draft = await service.createDraft(companionId, 'monitor');
     await service.activate(draft.id, { plan: 'p', validationCriteria: 'c', jobIds: ['job-a'] });
-    vi.spyOn(service, 'setJobs').mockRejectedValue(new Error('db write failed'));
+    vi.spyOn(service, 'reconcileJobs').mockRejectedValue(new Error('db write failed'));
     const methods = missionMethods(deps());
 
     const result = (await methods['mission.stop']!(ctx, { missionId: draft.id })) as {

@@ -84,11 +84,17 @@ export class MissionService {
   }
 
   /**
-   * Record which wake jobs are STILL armed after a cancel pass (the failed cancels),
-   * so a later stale-trigger reconciliation retries exactly those and nothing else.
+   * Settle a cancel pass on a mission's armed-job list, atomically: drop the ids whose
+   * cancel succeeded (`cancelled`) and keep/record the ones that failed (`failed`), so a
+   * later stale-trigger reconciliation retries exactly the survivors. Race-safe — see
+   * {@link MissionStore.reconcileJobs}.
    */
-  setJobs(missionId: string, jobIds: readonly string[]): Promise<MissionRecord | null> {
-    return this.missions.setJobs(missionId, jobIds);
+  reconcileJobs(
+    missionId: string,
+    cancelled: readonly string[],
+    failed: readonly string[],
+  ): Promise<MissionRecord | null> {
+    return this.missions.reconcileJobs(missionId, cancelled, failed);
   }
 
   /** Append one turn's outcome to the mission journal. */

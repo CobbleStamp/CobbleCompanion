@@ -102,13 +102,13 @@ describe('reconcileMissionJobs', () => {
     expect((await service.get(draft.id))?.jobIds).toEqual(['armed-1']);
   });
 
-  it('never throws when the setJobs write fails — the caller (stop/compensation) proceeds', async () => {
+  it('never throws when the settle write fails — the caller (stop/compensation) proceeds', async () => {
     const missionId = await stoppedMissionWithJobs(['job-a']);
     const brokenWrite = new MissionService(
       new DrizzleMissionStore(db),
       new DrizzleMissionJournalStore(db),
     );
-    brokenWrite.setJobs = async () => {
+    brokenWrite.reconcileJobs = async () => {
       throw new Error('db write failed');
     };
 

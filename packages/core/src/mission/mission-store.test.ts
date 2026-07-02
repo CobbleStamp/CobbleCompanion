@@ -120,20 +120,55 @@ describe('DrizzleMissionStore (PGlite)', () => {
     expect(await store.setStatus('00000000-0000-0000-0000-000000000000', 'stopped')).toBeNull();
   });
 
-  it('setJobs replaces the armed-job list (the post-cancel survivors)', async () => {
+  it('reconcileJobs drops the cancelled ids and keeps the failed ones', async () => {
     const companionId = await seedCompanion('i@example.com');
     const draft = await store.create(companionId, 'monitor LITE');
     await store.activate(draft.id, { ...activation, jobIds: ['job_1', 'job_2'] });
 
-    const updated = await store.setJobs(draft.id, ['job_2']);
+    // job_1 cancelled, job_2 failed → only the survivor (job_2) remains.
+    const updated = await store.reconcileJobs(draft.id, ['job_1'], ['job_2']);
     expect(updated?.jobIds).toEqual(['job_2']);
 
-    const cleared = await store.setJobs(draft.id, []);
+    // The survivor's cancel then succeeds → the list clears.
+    const cleared = await store.reconcileJobs(draft.id, ['job_2'], []);
     expect(cleared?.jobIds).toEqual([]);
   });
 
-  it('setJobs returns null for an unknown mission', async () => {
-    expect(await store.setJobs('00000000-0000-0000-0000-000000000000', [])).toBeNull();
+  it('reconcileJobs adds a failed id that was not yet tracked (start_mission compensation)', async () => {
+    // The draft never activated, so its job_ids is still []; a failed cancel of the
+    // just-armed job must land on the row so a later reconciliation can retry it.
+    const companionId = await seedCompanion('j@example.com');
+    const draft = await store.create(companionId, 'starting up');
+
+    const recorded = await store.reconcileJobs(draft.id, [], ['armed_1']);
+    expect(recorded?.jobIds).toEqual(['armed_1']);
+  });
+
+  it('reconcileJobs composes when two passes settle disjoint ids (no clobber)', async () => {
+    // Two concurrent stale wakes each cancel a different job. Even reading the same
+    // starting snapshot, the atomic per-row delta leaves neither job resurrected.
+    const companionId = await seedCompanion('k@example.com');
+    const draft = await store.create(companionId, 'monitor');
+    await store.activate(draft.id, { ...activation, jobIds: ['job_a', 'job_b'] });
+
+    await store.reconcileJobs(draft.id, ['job_a'], []);
+    const after = await store.reconcileJobs(draft.id, ['job_b'], []);
+
+    expect(after?.jobIds).toEqual([]);
+  });
+
+  it('reconcileJobs deduplicates a failed id already present', async () => {
+    const companionId = await seedCompanion('l@example.com');
+    const draft = await store.create(companionId, 'monitor');
+    await store.activate(draft.id, { ...activation, jobIds: ['job_1'] });
+
+    // job_1's cancel failed again — it stays, and is not duplicated.
+    const updated = await store.reconcileJobs(draft.id, [], ['job_1']);
+    expect(updated?.jobIds).toEqual(['job_1']);
+  });
+
+  it('reconcileJobs returns null for an unknown mission', async () => {
+    expect(await store.reconcileJobs('00000000-0000-0000-0000-000000000000', [], [])).toBeNull();
   });
 
   it('lists a companion missions newest first', async () => {
