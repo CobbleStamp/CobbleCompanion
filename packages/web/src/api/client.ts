@@ -464,6 +464,19 @@ export async function regenerateDiscordLink(): Promise<DiscordConfigViewDto> {
   return discord;
 }
 
+/** Set the mission wake: the trigger-sender bot id + the shared mission channel id. */
+export async function saveDiscordMissionWake(
+  triggerBotId: string,
+  missionChannelId: string,
+): Promise<DiscordConfigViewDto> {
+  const { discord } = await wsClient.call<{ discord: DiscordConfigViewDto }>(
+    'discord.config.setMissionWake',
+    { triggerBotId, missionChannelId },
+    null,
+  );
+  return discord;
+}
+
 /** Remove the bot config entirely (the service stops that bot on the reconcile trigger). */
 export async function deleteDiscordConfig(): Promise<void> {
   await wsClient.call('discord.config.delete', undefined, null);

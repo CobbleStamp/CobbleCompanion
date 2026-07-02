@@ -38,6 +38,11 @@ function toView(record: DiscordConfigRecord | null): DiscordConfigViewDto {
     ownerLinked,
     // Show the code only while it's still actionable (owner not yet linked).
     linkCode: ownerLinked ? null : record.linkCode,
+    missionWake: {
+      triggerBotId: record.triggerBotId,
+      missionChannelId: record.missionChannelId,
+      botUserIdCaptured: record.botUserId !== null,
+    },
   };
 }
 
@@ -110,7 +115,7 @@ export function discordConfigMethods(deps: AppDeps): WsMethods {
         missionChannelId,
       );
       if (!record) throw new NotFoundError('no Discord config to configure');
-      return { ok: true };
+      return { discord: toView(record) };
     },
 
     'discord.config.delete': async (ctx) => {

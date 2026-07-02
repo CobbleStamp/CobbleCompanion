@@ -109,7 +109,7 @@ describe('discordConfigMethods — mission wake', () => {
     });
 
     expect(spy).toHaveBeenCalledWith('user-1', '111', '222');
-    expect(result).toEqual({ ok: true });
+    expect(result).toHaveProperty('discord.configured', true);
   });
 
   it('rejects non-numeric ids (bad_params before touching the store)', async () => {

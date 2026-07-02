@@ -1009,6 +1009,17 @@ export interface DiscordConfigViewDto {
   readonly boundCompanionId: string | null;
   readonly ownerLinked: boolean;
   readonly linkCode: string | null;
+  /**
+   * The mission wake settings (companion-missions.md §3.2), present once a bot is configured.
+   * `triggerBotId` + `missionChannelId` are set by the owner; `botUserIdCaptured` reflects
+   * whether the companion bot's own id has been captured yet (it is, once the bot connects) —
+   * all three must be set before a mission can be armed.
+   */
+  readonly missionWake?: {
+    readonly triggerBotId: string | null;
+    readonly missionChannelId: string | null;
+    readonly botUserIdCaptured: boolean;
+  };
 }
 
 // --- Provenance (Phase 1 grounded recall, docs/companion-memory.md) ---

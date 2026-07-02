@@ -13,6 +13,7 @@ import {
   listCompanions,
   regenerateDiscordLink,
   saveDiscordConfig,
+  saveDiscordMissionWake,
 } from '../api/client.js';
 import { Discord } from './Discord.js';
 
@@ -32,6 +33,7 @@ vi.mock('../api/client.js', () => ({
   saveDiscordConfig: vi.fn(),
   regenerateDiscordLink: vi.fn(),
   deleteDiscordConfig: vi.fn(() => Promise.resolve()),
+  saveDiscordMissionWake: vi.fn(),
   listCompanions: vi.fn(() => Promise.resolve([companion])),
 }));
 
@@ -99,6 +101,36 @@ describe('Discord settings panel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Regenerate code' }));
     await waitFor(() => expect(regenerateDiscordLink).toHaveBeenCalled());
     expect(await screen.findByText(/NEWCODE9/)).toBeTruthy();
+  });
+
+  it('saves the mission wake ids and prefills them from config', async () => {
+    vi.mocked(getDiscordConfig).mockResolvedValue({
+      configured: true,
+      boundCompanionId: 'companion-1',
+      ownerLinked: true,
+      linkCode: null,
+      missionWake: { triggerBotId: '111', missionChannelId: null, botUserIdCaptured: false },
+    });
+    vi.mocked(saveDiscordMissionWake).mockResolvedValue({
+      configured: true,
+      boundCompanionId: 'companion-1',
+      ownerLinked: true,
+      linkCode: null,
+      missionWake: { triggerBotId: '111', missionChannelId: '222', botUserIdCaptured: false },
+    });
+    renderPanel();
+
+    // The existing trigger bot id is prefilled from config.
+    const trigger = (await screen.findByLabelText('Trigger bot user id')) as HTMLInputElement;
+    expect(trigger.value).toBe('111');
+    // Save is disabled until both ids are valid digit strings.
+    const save = screen.getByRole('button', { name: 'Save mission wake' });
+    expect((save as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.change(screen.getByLabelText('Mission channel id'), { target: { value: '222' } });
+    fireEvent.click(save);
+
+    await waitFor(() => expect(saveDiscordMissionWake).toHaveBeenCalledWith('111', '222'));
   });
 
   it('disconnects the bot', async () => {
