@@ -40,6 +40,11 @@ export interface SchedulerCliOptions {
  * tokenizer keeps it as ONE argv element (the `--text "<@bot> {{message}}"` case); other
  * elements pass bare. Our elements never contain a double quote (flags, a numeric channel id,
  * `<@id> {{message}}`); a stray one would corrupt tokenization, so it's rejected loudly.
+ *
+ * Verified against Tools/scheduler-cli (a quote-grouping tokenizer that only splits/unquotes —
+ * no glob/var expansion, no subshell) and Tools/scheduler runner.go `substituteMessage`, which
+ * does a per-element `strings.ReplaceAll("{{message}}", msg)` — so the mention + placeholder
+ * survive as one element and the message lands spliced after the mention.
  */
 export function serializeAction(action: readonly string[]): string {
   return action

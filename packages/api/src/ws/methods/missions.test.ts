@@ -198,7 +198,7 @@ describe('withMissionJournal', () => {
     const events = [{ type: 'token', value: 'LITE ' } as ChatStreamEvent, doneEvent('LITE at 808')];
 
     const forwarded: ChatStreamEvent[] = [];
-    const gen = withMissionJournal(streamOf(events), service, companionId, 'LITE is 808', silent);
+    const gen = withMissionJournal(streamOf(events), service, missionId, 'LITE is 808', silent);
     let next = await gen.next();
     while (!next.done) {
       forwarded.push(next.value);
@@ -218,7 +218,7 @@ describe('withMissionJournal', () => {
     const gen = withMissionJournal(
       streamOf([doneEvent('x')], true),
       service,
-      companionId,
+      missionId,
       'e',
       silent,
     );
@@ -229,13 +229,25 @@ describe('withMissionJournal', () => {
     expect(await service.recentJournal(missionId, 10)).toHaveLength(0);
   });
 
-  it('journals nothing when there is no active mission', async () => {
-    const gen = withMissionJournal(streamOf([doneEvent('x')]), service, companionId, 'e', silent);
-    let next = await gen.next();
-    while (!next.done) next = await gen.next();
+  it('forwards an early return() into the inner generator (harness finally always runs)', async () => {
+    const missionId = await activeMission();
+    let innerFinalized = false;
+    async function* inner(): AsyncGenerator<ChatStreamEvent, boolean> {
+      try {
+        yield { type: 'token', value: 'LITE ' } as ChatStreamEvent;
+        yield doneEvent('unreached');
+        return false;
+      } finally {
+        // Stands in for the harness generator's finally (trace end, token debit, teardown).
+        innerFinalized = true;
+      }
+    }
+    const gen = withMissionJournal(inner(), service, missionId, 'e', silent);
+    await gen.next(); // consume the first token — the inner generator is suspended mid-stream
+    await gen.return(false); // the consumer (emitAll) aborts on a client disconnect/throw
 
-    expect(next.value).toBe(false);
-    // No active mission → no row anywhere (findActive returns null).
-    expect(await service.findActive(companionId)).toBeNull();
+    expect(innerFinalized).toBe(true);
+    // Aborted before a `done` → nothing journaled.
+    expect(await service.recentJournal(missionId, 10)).toHaveLength(0);
   });
 });

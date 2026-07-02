@@ -126,8 +126,12 @@ export function createStartMissionTool(options: StartMissionOptions): Tool {
         );
       }
 
-      // One active mission per companion (companion-missions.md §3): refuse before arming or
-      // creating anything, so a second start can't orphan a scheduler job at the DB's unique index.
+      // One active mission per companion (companion-missions.md §3): refuse up front so the
+      // common case never arms a job it can't activate. This is best-effort (the DB unique
+      // index is the real backstop, caught at `activate` below with job-cancel compensation).
+      // Residual gap: a crash in the window between `arm` and `activate` leaves the armed job
+      // with no owning record — accepted for v1 (no durable outbox); `mission.stop` + the
+      // scheduler's own job listing are the manual reconciliation path.
       if (await options.missions.hasActive(ctx.companionId)) {
         return error('Error: this companion is already on an active mission — stop it first.');
       }

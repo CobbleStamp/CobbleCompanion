@@ -71,6 +71,18 @@ export function missionMethods(deps: AppDeps): WsMethods {
         connectionId,
         claimSeq,
       } = await embodiedCompanion({ identity, embodiment }, ctx);
+      // Route to the single active mission (companion-missions.md §4). If there is none — a
+      // stale/duplicate trigger, or one racing a just-issued `mission.stop` — do NOT burn a
+      // stamina turn: the mission-retrieve arm would inject no context, the gate bypass would
+      // be off, and nothing would be journaled. Skip cheaply instead.
+      const active = await missions.findActive(companionId);
+      if (!active) {
+        logger.info('mission.advance with no active mission — skipping the turn', {
+          operation: 'mission.advance',
+          companionId,
+        });
+        return { done: true, skipped: 'no active mission' };
+      }
       presence.recordActivity(companionId, { connectionId, claimSeq });
       const overCap = await overCapGuard(quota, companionId);
       if (overCap) {
@@ -89,13 +101,16 @@ export function missionMethods(deps: AppDeps): WsMethods {
               holdsLease: leaseGuard(embodiment, companionId, connectionId, claimSeq),
             }),
             missions,
-            companionId,
+            active.id,
             event,
             logger,
           ),
         ),
       );
       if (superseded) {
+        // The turn stood down mid-loop; nothing journaled. NOTE: a trigger-driven advance has
+        // no client that re-runs it, so the wake event is dropped here — consistent with the
+        // deferred reconnect-replay backstop (companion-missions.md §3.2, §5.4).
         yieldRoom(ctx, companionId);
       }
       return { done: true };
@@ -138,42 +153,56 @@ function planningPrompt(goal: string): string {
 
 /**
  * Forward a mission wake turn's stream, capturing the spoken report and appending it to the
- * active mission's journal as `findings` (v1 report-as-findings, companion-missions.md §3.4).
- * A superseded turn journals nothing — the live turn on the new connection owns that write.
+ * mission's journal as `findings` (v1 report-as-findings, companion-missions.md §3.4). A
+ * superseded turn journals nothing — the live turn on the new connection owns that write.
  * The journal write is best-effort: a failure is logged, never surfaced into the turn.
+ *
+ * `missionId` is resolved by the caller (the active mission at turn start), so a mission that
+ * changes status mid-turn still journals against the mission that was actually advanced.
+ *
+ * The manual drive (rather than `yield*`) is what lets us tap the `done` report; the
+ * `try/finally` forwards an early `.return()` from the consumer (`emitAll` on a client abort)
+ * into `inner`, so the harness generator's own `finally` — trace end, token debit, in-flight
+ * LLM stream teardown — always runs, matching the delegation guarantee `yield*` would give.
  */
 export async function* withMissionJournal(
   inner: AsyncGenerator<ChatStreamEvent, boolean>,
   missions: MissionService,
-  companionId: string,
+  missionId: string,
   event: string,
   logger: Logger,
 ): AsyncGenerator<ChatStreamEvent, boolean> {
   let report = '';
-  let next = await inner.next();
-  while (!next.done) {
-    const chunk = next.value;
-    if (chunk.type === 'done') {
-      report = chunk.message.content ?? report;
+  let superseded = false;
+  try {
+    let next = await inner.next();
+    while (!next.done) {
+      const chunk = next.value;
+      if (chunk.type === 'done') {
+        report = chunk.message.content;
+      }
+      yield chunk;
+      next = await inner.next();
     }
-    yield chunk;
-    next = await inner.next();
+    superseded = next.value === true;
+  } finally {
+    // No-op once `inner` is already done; on an early abort it forwards the return so the
+    // harness generator's `finally` runs. Best-effort — teardown must never throw out of here.
+    await inner.return(false).catch(() => undefined);
   }
-  if (next.value === true) {
+  // A superseded turn stood down without a completed reply — journal nothing.
+  if (superseded) {
     return true;
   }
   try {
-    const active = await missions.findActive(companionId);
-    if (active) {
-      await missions.recordJournal(active.id, {
-        event,
-        findings: report.trim().length > 0 ? report : null,
-      });
-    }
+    await missions.recordJournal(missionId, {
+      event,
+      findings: report.trim().length > 0 ? report : null,
+    });
   } catch (error) {
     logger.error('mission advance failed to journal the turn', {
       operation: 'mission.advance.journal',
-      companionId,
+      missionId,
       error,
     });
   }
