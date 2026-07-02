@@ -33,6 +33,14 @@ export {
   type MissionRetrieveOptions,
 } from './mission/mission-retrieve.js';
 export {
+  createStartMissionTool,
+  type StartMissionOptions,
+  type MissionScheduler,
+  type MissionJobSpec,
+  type MissionWakeConfig,
+  type MissionWakeTarget,
+} from './mission/start-mission-tool.js';
+export {
   DrizzleProceduralStore,
   type ProceduralStore,
   type ProcedureRecord,
