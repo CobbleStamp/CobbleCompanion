@@ -13,7 +13,7 @@ import { companionOf, NotFoundError, OverCapError, parseParams } from './helpers
 import { emitAll, embodiedCompanion, leaseGuard, yieldRoom } from './turn-stream.js';
 
 /**
- * The mission WS methods (companion-missions.md §3.4 / implementation-plan §5.2). Two are
+ * The mission WS methods (companion-missions.md §3.4, §5.2). Two are
  * turn-producers — `mission.create` runs the planning turn that proposes `start_mission`, and
  * `mission.advance` runs the wake turn (a trigger or the owner messaging) — so they go through
  * the connection's serial chain (D2′) exactly like `messages.send`. `mission.list`/`mission.stop`

@@ -1228,7 +1228,7 @@ export const addReactionSchema = z.object({
 });
 export type AddReactionBody = z.infer<typeof addReactionSchema>;
 
-// --- Missions (goal-driven long-running tasks — docs/plans/companion-missions.md) ---
+// --- Missions (goal-driven long-running tasks — docs/companion-missions.md) ---
 
 /**
  * Lifecycle of a mission (companion-missions.md §3.4). `draft` — planned, awaiting the

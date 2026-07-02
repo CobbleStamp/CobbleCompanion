@@ -1088,8 +1088,8 @@ owned by `development-plan.md`.
   companion in the shipped `Tools/scheduler` spine; the companion wakes only on events. Built
   (persistence, `MissionService`, the `start_mission` gate + `scheduler-cli` wake driver, the
   `mission.*` WS methods, and the Discord intake) — the live end-to-end dry-run and the
-  reconnect-replay backstop remain; full design in `plans/companion-missions.md`, build status in
-  `plans/missions-implementation-plan.md` §6.1.
+  reconnect-replay backstop remain; full design and build status in `companion-missions.md`
+  (deferred items in §11).
 - **Proactivity reach** — unprompted conversation beyond the report note (tips, questions,
   check-ins) and a stronger sense of purpose/agenda; continuous work-while-away (needs push for an
   audience); a deeper contextual-bandit reinforcement policy (`companion-motivation.md`).
