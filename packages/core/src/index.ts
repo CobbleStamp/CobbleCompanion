@@ -29,6 +29,10 @@ export {
 } from './mission/mission-store.js';
 export { MissionService, DEFAULT_JOURNAL_RECALL } from './mission/mission-service.js';
 export {
+  createMissionRetrieveContext,
+  type MissionRetrieveOptions,
+} from './mission/mission-retrieve.js';
+export {
   DrizzleProceduralStore,
   type ProceduralStore,
   type ProcedureRecord,

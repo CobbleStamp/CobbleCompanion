@@ -18,12 +18,30 @@ export function createApprovalGate(
   proposals: ProposalStore,
   registry: ToolRegistry,
   logger: Logger = consoleLogger,
+  /**
+   * Mission-mode bypass (companion-missions.md §4). When present and the companion has an
+   * `active` mission, effectful tools run UNGATED — the mission is itself the standing
+   * authorization the user granted at start (`start_mission`, the one up-front approval), so
+   * no per-call approval is required while it runs. Omitted = every effectful call is gated
+   * (the pre-missions behaviour). A narrow interface keeps the coupling to the one check.
+   */
+  missions?: { hasActive(companionId: string): Promise<boolean> },
 ): BeforeToolCall {
   return async (call, ctx) => {
     const tool = registry.get(call.name);
     // Read-only tools run freely; an unknown tool also passes (dispatch turns it
     // into an error result the model sees — never a silent block).
     if (!tool || !tool.effectful) {
+      return call;
+    }
+    // Under an active mission, the propose→approve gate is suspended for effectful calls
+    // (the mission is the grant). One cheap indexed read, only on an effectful call.
+    if (missions && (await missions.hasActive(ctx.companionId))) {
+      logger.info('effectful tool call allowed ungated under an active mission', {
+        operation: 'gate.beforeToolCall',
+        companionId: ctx.companionId,
+        tool: call.name,
+      });
       return call;
     }
     const summary = tool.proposalSummary ? tool.proposalSummary(call.args) : `Run "${call.name}"`;

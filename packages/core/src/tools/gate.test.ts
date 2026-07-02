@@ -132,6 +132,34 @@ describe('createApprovalGate', () => {
     expect(isBlock(await gate(aCall('mystery'), ctx))).toBe(false);
   });
 
+  it('lets an effectful call run UNGATED while a mission is active (mission-mode bypass)', async () => {
+    // companion-missions.md §4: the active mission is the standing authorization, so no
+    // per-call approval is required — the effectful call passes and no proposal is enqueued.
+    const proposals = fakeProposals();
+    const gate = createApprovalGate(
+      proposals,
+      new ToolRegistry([tool('ibkr_query', true, 'Query IBKR')]),
+      silentLogger,
+      { hasActive: async () => true },
+    );
+    const result = await gate(aCall('ibkr_query', { symbol: 'LITE' }), ctx);
+    expect(isBlock(result)).toBe(false);
+    expect(proposals.created).toEqual([]);
+  });
+
+  it('still gates an effectful call when there is no active mission', async () => {
+    const proposals = fakeProposals();
+    const gate = createApprovalGate(
+      proposals,
+      new ToolRegistry([tool('ingest_source', true, 'Read it into memory')]),
+      silentLogger,
+      { hasActive: async () => false },
+    );
+    const result = await gate(aCall('ingest_source', { url: 'https://x.dev' }), ctx);
+    expect(isBlock(result)).toBe(true);
+    expect(proposals.created).toHaveLength(1);
+  });
+
   it('passes an MCP-adapted tool through without proposing (whitelist is the gate)', async () => {
     // Contract lock (companion-tools.md §6): MCP tools are `effectful: false`, so
     // the developer whitelist — not propose→approve — gates them. A future change
