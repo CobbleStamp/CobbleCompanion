@@ -120,6 +120,12 @@ export interface MissionStore {
   activate(id: string, input: MissionActivation): Promise<MissionRecord | null>;
   /** Move a mission to a new lifecycle status (stop today; the §11 transitions later). */
   setStatus(id: string, status: MissionStatus): Promise<MissionRecord | null>;
+  /**
+   * Replace the mission's armed-job list — after a cancel pass, only the jobs whose
+   * cancel FAILED remain, so a later reconciliation retries exactly those (never a
+   * job the scheduler already dropped).
+   */
+  setJobs(id: string, jobIds: readonly string[]): Promise<MissionRecord | null>;
 }
 
 export class DrizzleMissionStore implements MissionStore {
@@ -176,6 +182,15 @@ export class DrizzleMissionStore implements MissionStore {
     const [row] = await this.db
       .update(missions)
       .set({ status, updatedAt: new Date() })
+      .where(eq(missions.id, id))
+      .returning();
+    return row ? toMissionRecord(row as MissionRow) : null;
+  }
+
+  async setJobs(id: string, jobIds: readonly string[]): Promise<MissionRecord | null> {
+    const [row] = await this.db
+      .update(missions)
+      .set({ jobIds: [...jobIds], updatedAt: new Date() })
       .where(eq(missions.id, id))
       .returning();
     return row ? toMissionRecord(row as MissionRow) : null;

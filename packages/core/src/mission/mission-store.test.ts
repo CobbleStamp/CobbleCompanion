@@ -120,6 +120,22 @@ describe('DrizzleMissionStore (PGlite)', () => {
     expect(await store.setStatus('00000000-0000-0000-0000-000000000000', 'stopped')).toBeNull();
   });
 
+  it('setJobs replaces the armed-job list (the post-cancel survivors)', async () => {
+    const companionId = await seedCompanion('i@example.com');
+    const draft = await store.create(companionId, 'monitor LITE');
+    await store.activate(draft.id, { ...activation, jobIds: ['job_1', 'job_2'] });
+
+    const updated = await store.setJobs(draft.id, ['job_2']);
+    expect(updated?.jobIds).toEqual(['job_2']);
+
+    const cleared = await store.setJobs(draft.id, []);
+    expect(cleared?.jobIds).toEqual([]);
+  });
+
+  it('setJobs returns null for an unknown mission', async () => {
+    expect(await store.setJobs('00000000-0000-0000-0000-000000000000', [])).toBeNull();
+  });
+
   it('lists a companion missions newest first', async () => {
     const companionId = await seedCompanion('h@example.com');
     const one = await store.create(companionId, 'one');

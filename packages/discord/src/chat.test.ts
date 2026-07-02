@@ -26,7 +26,7 @@ function connectionFrom(events: ChatStreamEvent[], throwError?: unknown): Compan
       for (const event of events) yield event;
       if (throwError) throw throwError;
     },
-    async *callStream(): AsyncIterable<ChatStreamEvent> {
+    async *callStream(): AsyncGenerator<ChatStreamEvent, undefined> {
       // Not used in chat tests (chat() is the streaming path here).
     },
     async *greeting(): AsyncIterable<ChatStreamEvent> {},

@@ -226,6 +226,29 @@ describe('WsTransport demux', () => {
     ]);
   });
 
+  it('returns the terminal result as the stream generator’s return value', async () => {
+    // The skip flag of a stale mission.advance rides the terminal result — a consumer
+    // that `yield*`s the stream must see it (a plain `for await` ignores it by design).
+    const { transport, socket } = await connectedTransport();
+    const chunks: unknown[] = [];
+    let terminal: unknown;
+    const drain = (async () => {
+      const stream = transport.callStream('mission.advance', { event: 'tick' });
+      let next = await stream.next();
+      while (!next.done) {
+        chunks.push(next.value);
+        next = await stream.next();
+      }
+      terminal = next.value;
+    })();
+    const id = socket().idOf(0);
+    socket().emit({ id, stream: { type: 'composing' } });
+    socket().emit({ id, result: { done: true, skipped: 'no active mission' } });
+    await drain;
+    expect(chunks).toEqual([{ type: 'composing' }]);
+    expect(terminal).toEqual({ done: true, skipped: 'no active mission' });
+  });
+
   it('fails the stream with WsCallError on an error envelope mid-stream', async () => {
     const { transport, socket } = await connectedTransport();
     const drain = (async () => {

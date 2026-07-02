@@ -1,3 +1,4 @@
+import type { ChatStreamEvent } from '@cobble/shared';
 import { describe, expect, it } from 'vitest';
 import { createCompanionConnectionFactory } from './connection.js';
 import type { Logger } from './gateway/types.js';
@@ -181,6 +182,49 @@ describe('createCompanionConnectionFactory', () => {
     ac.abort();
     await consume;
     expect(received).toEqual(['auto-1', 'auto-2']);
+  });
+
+  it('forwards the method terminal result as the stream return value (the skip flag)', async () => {
+    const { factory, socket } = captureFactory();
+    const make = createCompanionConnectionFactory({
+      wsBaseUrl: 'wss://home.example',
+      acquireToken: async () => 'tok',
+      decryptToken: () => 'tok',
+      socketFactory: factory,
+      logger: silent,
+    });
+    const connection = make({ userId: 'u1', companionId: 'c-9', encryptedBotToken: 'enc' });
+    const connecting = connection.connect();
+    await tick();
+    socket().fire('open');
+    socket().emit({ event: 'embodiment.ready', data: {} });
+    await connecting;
+
+    // Consume the way handleAdvance does: `yield*` returns the terminal result. This pins
+    // recordingStream's manual pump forwarding `next.value` — a rewrite to `for await`
+    // would silently lose it and disable teardown-on-skip with every other test green.
+    const stream = connection.callStream('mission.advance', { missionId: 'm-1', event: 'tick' });
+    let result: unknown;
+    const contents: string[] = [];
+    const consume = (async () => {
+      async function* capture(): AsyncGenerator<ChatStreamEvent, void> {
+        result = yield* stream;
+      }
+      for await (const chunk of capture()) {
+        if (chunk.type === 'done') contents.push(chunk.message.content);
+      }
+    })();
+    await tick(); // the mission.advance request (r1) is sent
+
+    socket().emit({
+      id: 'r1',
+      stream: { type: 'done', message: { id: 'rep-1', role: 'assistant', content: 'stale' } },
+    });
+    socket().emit({ id: 'r1', result: { done: true, skipped: 'mission not active' } });
+    await consume;
+
+    expect(contents).toEqual(['stale']);
+    expect(result).toEqual({ done: true, skipped: 'mission not active' });
   });
 
   it('ends the events() loop when the socket drops (no abort needed)', async () => {

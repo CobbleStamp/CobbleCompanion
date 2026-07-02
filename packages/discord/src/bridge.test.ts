@@ -15,6 +15,9 @@ import { SupersededError } from './ws-client.js';
 
 const silent: Logger = { error: () => {}, warn: () => {}, info: () => {} };
 
+/** The mission id every test trigger names (parsed from the wake by the router). */
+const MISSION_ID = '0f4c10ac-9a3e-4b21-8c53-2f6f14be7a90';
+
 /** A connection whose connect outcome and supersession the test drives by hand. */
 class FakeConnection implements CompanionConnection {
   connected = false;
@@ -44,7 +47,7 @@ class FakeConnection implements CompanionConnection {
   async *chat(): AsyncIterable<never> {
     // Not exercised here; the chat renderer is tested in chat.test.ts.
   }
-  async *callStream(): AsyncIterable<never> {
+  async *callStream(): AsyncGenerator<never, undefined> {
     // Not exercised here; the proposal renderer is tested in proposals.test.ts.
   }
   async *greeting(): AsyncIterable<never> {
@@ -162,7 +165,12 @@ interface Harness {
   chats: DirectMessageContext[];
   readOnly: Array<{ ctx: SlashCommandContext; connection: CompanionConnection }>;
   proposalActions: Array<{ ctx: ProposalActionContext; connection: CompanionConnection }>;
-  advances: Array<{ connection: CompanionConnection; event: string; userId: string }>;
+  advances: Array<{
+    connection: CompanionConnection;
+    missionId: string;
+    event: string;
+    userId: string;
+  }>;
   openedDms: Array<{ userId: string; discordUserId: string }>;
 }
 
@@ -170,6 +178,8 @@ function makeBridge(
   opts: {
     outcome?: 'ok' | 'superseded';
     supersedeOnConnect?: boolean;
+    /** What the mission-advance hook reports back (default: the mission ran). */
+    advanceSkipped?: boolean;
     /** Configure each connection as the factory mints it (e.g. arm a connect gate). */
     onConnection?: (connection: FakeConnection) => void;
     overrides?: Partial<CompanionBridgeOptions>;
@@ -209,8 +219,9 @@ function makeBridge(
     onProposalAction: (ctx, connection) => {
       proposalActions.push({ ctx, connection });
     },
-    onMissionAdvance: (connection, _post, event, userId) => {
-      advances.push({ connection, event, userId });
+    onMissionAdvance: async (connection, _post, missionId, event, userId) => {
+      advances.push({ connection, missionId, event, userId });
+      return { skipped: opts.advanceSkipped ?? false };
     },
     logger: silent,
     ...opts.overrides,
@@ -414,12 +425,13 @@ describe('CompanionBridge — mission trigger', () => {
   it('summons-if-dormant, opens the owner DM, and advances the mission', async () => {
     const h = makeBridge();
 
-    await h.bridge.handleTrigger('u1', 'LITE is 808');
+    await h.bridge.handleTrigger('u1', MISSION_ID, 'LITE is 808');
 
     expect(h.openedDms).toEqual([{ userId: 'u1', discordUserId: 'owner-123' }]);
     expect(h.bridge.isSummoned('u1')).toBe(true);
     expect(h.connections).toHaveLength(1);
     expect(h.advances).toHaveLength(1);
+    expect(h.advances[0]?.missionId).toBe(MISSION_ID);
     expect(h.advances[0]?.event).toBe('LITE is 808');
   });
 
@@ -429,13 +441,37 @@ describe('CompanionBridge — mission trigger', () => {
     await h.bridge.handleOwnerCommand(ctx);
     expect(h.connections).toHaveLength(1);
 
-    await h.bridge.handleTrigger('u1', 'threshold crossed');
+    await h.bridge.handleTrigger('u1', MISSION_ID, 'threshold crossed');
 
     // No new connection opened, no owner DM re-opened — reused the live embodiment.
     expect(h.connections).toHaveLength(1);
     expect(h.openedDms).toHaveLength(0);
     expect(h.advances).toHaveLength(1);
     expect(h.advances[0]?.event).toBe('threshold crossed');
+  });
+
+  it('tears down a trigger-opened embodiment silently when the advance was skipped', async () => {
+    // A stale trigger (the mission is gone — e.g. a wake job whose cancel failed at
+    // mission.stop): the summon it caused is undone, with no DM chatter.
+    const h = makeBridge({ advanceSkipped: true });
+
+    await h.bridge.handleTrigger('u1', MISSION_ID, 'LITE is 808');
+
+    expect(h.advances).toHaveLength(1); // the server was asked (it owns the validity check)
+    expect(h.bridge.isSummoned('u1')).toBe(false); // …but the claim was not kept
+    expect(h.connections[0]?.closed).toBe(true);
+    expect(h.notices).toHaveLength(0); // silent: the owner never asked for this embodiment
+  });
+
+  it('keeps a user-summoned embodiment when a stale trigger is skipped over it', async () => {
+    const h = makeBridge({ advanceSkipped: true });
+    await h.bridge.handleOwnerCommand(cmdCtx('summon').ctx);
+
+    await h.bridge.handleTrigger('u1', MISSION_ID, 'LITE is 808');
+
+    expect(h.advances).toHaveLength(1);
+    expect(h.bridge.isSummoned('u1')).toBe(true); // the owner's summon is theirs to keep
+    expect(h.connections[0]?.closed).toBe(false);
   });
 
   it('drops a trigger for an unlinked user (no owner DM to report into)', async () => {
@@ -465,7 +501,7 @@ describe('CompanionBridge — mission trigger', () => {
     };
     const h = makeBridge({ overrides: { configStore: unlinkedStore } });
 
-    await h.bridge.handleTrigger('u1', 'event');
+    await h.bridge.handleTrigger('u1', MISSION_ID, 'event');
 
     expect(h.bridge.isSummoned('u1')).toBe(false);
     expect(h.advances).toHaveLength(0);
@@ -507,8 +543,8 @@ describe('CompanionBridge — embodiment races', () => {
 
     // Two trigger firings faster than the WS handshake (an `--every 1s` job whose
     // connect takes longer than its interval).
-    const first = h.bridge.handleTrigger('u1', 'tick 1');
-    const second = h.bridge.handleTrigger('u1', 'tick 2');
+    const first = h.bridge.handleTrigger('u1', MISSION_ID, 'tick 1');
+    const second = h.bridge.handleTrigger('u1', MISSION_ID, 'tick 2');
     await tick(); // both past their dormant checks; the first parked in connect()
     // The second establish must queue behind the first, not dial a second connection
     // (whose claim would supersede — and whose event would tear down — the first).
@@ -531,7 +567,7 @@ describe('CompanionBridge — embodiment races', () => {
       },
     });
 
-    const trigger = h.bridge.handleTrigger('u1', 'threshold crossed');
+    const trigger = h.bridge.handleTrigger('u1', MISSION_ID, 'threshold crossed');
     await tick(); // the trigger's connect is in flight
     const { ctx, replies } = cmdCtx('summon');
     const summon = h.bridge.handleOwnerCommand(ctx);

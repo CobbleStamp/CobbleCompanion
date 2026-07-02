@@ -29,6 +29,15 @@ export const DEFAULT_JOURNAL_RECALL = 10;
 /** A lifecycle status a mission can no longer move out of. */
 const TERMINAL: readonly MissionStatus[] = ['complete', 'stopped', 'failed'];
 
+/**
+ * Whether a mission is in a terminal status — one it can never leave. A wake job found
+ * armed on a terminal mission is stale by definition (safe to cancel); one on a `draft`
+ * is a mission mid-start (arm→activate window) and must be left alone.
+ */
+export function isMissionTerminal(status: MissionStatus): boolean {
+  return TERMINAL.includes(status);
+}
+
 export class MissionService {
   constructor(
     private readonly missions: MissionStore,
@@ -72,6 +81,14 @@ export class MissionService {
     const mission = await this.missions.findById(missionId);
     if (!mission || TERMINAL.includes(mission.status)) return null;
     return this.missions.setStatus(missionId, 'stopped');
+  }
+
+  /**
+   * Record which wake jobs are STILL armed after a cancel pass (the failed cancels),
+   * so a later stale-trigger reconciliation retries exactly those and nothing else.
+   */
+  setJobs(missionId: string, jobIds: readonly string[]): Promise<MissionRecord | null> {
+    return this.missions.setJobs(missionId, jobIds);
   }
 
   /** Append one turn's outcome to the mission journal. */

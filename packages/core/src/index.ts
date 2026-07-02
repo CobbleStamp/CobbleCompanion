@@ -27,7 +27,11 @@ export {
   type MissionJournalInput,
   type MissionJournalRecord,
 } from './mission/mission-store.js';
-export { MissionService, DEFAULT_JOURNAL_RECALL } from './mission/mission-service.js';
+export {
+  MissionService,
+  DEFAULT_JOURNAL_RECALL,
+  isMissionTerminal,
+} from './mission/mission-service.js';
 export {
   createMissionRetrieveContext,
   type MissionRetrieveOptions,

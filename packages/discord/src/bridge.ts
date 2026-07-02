@@ -34,8 +34,13 @@ export interface CompanionConnection {
   onClosed(handler: () => void): void;
   /** Run a chat turn (`messages.send`), yielding the stream until it ends/throws. */
   chat(content: string): AsyncIterable<ChatStreamEvent>;
-  /** Invoke a streaming WS method (the post-approval turn — `proposals.confirm`). */
-  callStream(method: string, params?: unknown): AsyncIterable<ChatStreamEvent>;
+  /**
+   * Invoke a streaming WS method (the post-approval turn — `proposals.confirm`; the
+   * mission wake — `mission.advance`). The method's terminal result is the generator's
+   * RETURN value (capturable with `yield*`), so a caller can read the outcome — e.g.
+   * `mission.advance`'s skip flag — beyond the streamed chunks.
+   */
+  callStream(method: string, params?: unknown): AsyncGenerator<ChatStreamEvent, unknown>;
   /** Stream the arrival greeting (`greeting.stream`) on summon (T12). */
   greeting(): AsyncIterable<ChatStreamEvent>;
   /** The live companion event stream (autonomous messages — T12), until `signal` aborts. */
@@ -71,13 +76,16 @@ export interface CompanionBridgeOptions {
    * Run one mission advance turn over the live connection (companion-missions.md §3.4),
    * forwarding the turn's spoken output to `post` (the embodied room's DM). Injected —
    * mirrors {@link onChat} — so the bridge stays decoupled from the WS method wiring.
+   * Reports whether the server SKIPPED the turn (the named mission is gone — a stale trigger),
+   * so the bridge can undo a summon the trigger caused for nothing.
    */
   readonly onMissionAdvance: (
     connection: CompanionConnection,
     post: (content: string) => Promise<void>,
+    missionId: string,
     event: string,
     userId: string,
-  ) => void | Promise<void>;
+  ) => Promise<MissionAdvanceOutcome>;
   /** Handle an owner DM while embodied (the chat turn — T9). */
   readonly onChat: (
     ctx: DirectMessageContext,
@@ -102,6 +110,12 @@ export interface CompanionBridgeOptions {
     connection: CompanionConnection,
   ) => void | Promise<void>;
   readonly logger: Logger;
+}
+
+/** How a mission advance turn ended, as far as the bridge needs to know. */
+export interface MissionAdvanceOutcome {
+  /** True when the server skipped the wake — no active mission (a stale trigger). */
+  readonly skipped: boolean;
 }
 
 /** Input to {@link CompanionBridge.establishEmbodiment} / `openEmbodiment`. */
@@ -220,15 +234,21 @@ export class CompanionBridge {
 
   /**
    * Trigger hook (mission wake, companion-missions.md §3.2–§3.3): summon-if-dormant, then
-   * advance the mission. Disruptive by design — establishing embodiment supersedes whatever
+   * advance the named mission. Disruptive by design — establishing embodiment supersedes whatever
    * surface the companion was on. If already embodied, advance over the live connection with
    * no re-summon. Drops (logged) when the user is unlinked (no owner DM to report into) or
    * the connection can't be established.
+   *
+   * A trigger only carries weight while its mission is live: when the server skips the
+   * advance (no active mission — a stale job the reconciliation is cancelling), a summon
+   * this trigger caused is undone silently, so a stray firing never leaves the companion
+   * squatting on a room it superseded for nothing. An embodiment the USER opened (a prior
+   * `/summon`) is theirs and stays.
    */
-  async handleTrigger(userId: string, event: string): Promise<void> {
+  async handleTrigger(userId: string, missionId: string, event: string): Promise<void> {
     const existing = this.active.get(userId);
     if (existing) {
-      await this.advance(userId, existing, event);
+      await this.advance(userId, existing, missionId, event);
       return;
     }
     const config = await this.opts.configStore.findByUserId(userId);
@@ -263,7 +283,16 @@ export class CompanionBridge {
       greet: false,
     });
     if (!embodiment) return; // establishEmbodiment logged the reason (fail / superseded).
-    await this.advance(userId, embodiment, event);
+    const outcome = await this.advance(userId, embodiment, missionId, event);
+    if (outcome.skipped) {
+      // The mission is gone — this trigger summoned the companion for nothing. Leave the
+      // room silently (no DM notice: the owner never asked for this embodiment).
+      this.opts.logger.info('discord trigger was stale; tearing down the embodiment it opened', {
+        operation: 'discord.bridge.trigger',
+        userId,
+      });
+      await this.teardown(userId, embodiment.connection, null, 'discord.bridge.trigger');
+    }
   }
 
   isSummoned(userId: string): boolean {
@@ -438,15 +467,16 @@ export class CompanionBridge {
     );
   }
 
-  /** Advance the mission over the live connection, forwarding output to the owner's DM. */
+  /** Advance the named mission over the live connection, forwarding output to the owner's DM. */
   private async advance(
     userId: string,
     embodiment: ActiveEmbodiment,
+    missionId: string,
     event: string,
-  ): Promise<void> {
+  ): Promise<MissionAdvanceOutcome> {
     const post = (content: string): Promise<void> =>
       this.opts.notify(userId, embodiment.channelId, content);
-    await this.opts.onMissionAdvance(embodiment.connection, post, event, userId);
+    return this.opts.onMissionAdvance(embodiment.connection, post, missionId, event, userId);
   }
 
   private async status(ctx: SlashCommandContext): Promise<void> {
@@ -480,15 +510,17 @@ export class CompanionBridge {
 
   /**
    * Common embodiment teardown: drop it from `active`, abort the proactive loop, close
-   * the connection, and DM the owner the given notice. Identity-guarded and idempotent:
-   * it no-ops unless the registered embodiment is exactly `connection` — so a second
-   * call for the same user (supersession and close racing) finds nothing, and a stale
-   * event from a torn-down connection cannot tear down a successor embodiment.
+   * the connection, and DM the owner the given notice (`null` = silent — a teardown the
+   * owner shouldn't hear about, like undoing a stale trigger's summon). Identity-guarded
+   * and idempotent: it no-ops unless the registered embodiment is exactly `connection` —
+   * so a second call for the same user (supersession and close racing) finds nothing,
+   * and a stale event from a torn-down connection cannot tear down a successor
+   * embodiment.
    */
   private async teardown(
     userId: string,
     connection: CompanionConnection,
-    notice: string,
+    notice: string | null,
     operation: string,
   ): Promise<void> {
     const embodiment = this.active.get(userId);
@@ -496,6 +528,7 @@ export class CompanionBridge {
     this.active.delete(userId);
     embodiment.abort.abort();
     this.safeClose(embodiment.connection);
+    if (notice === null) return;
     try {
       await this.opts.notify(userId, embodiment.channelId, notice);
     } catch (error) {

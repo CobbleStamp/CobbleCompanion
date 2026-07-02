@@ -105,8 +105,8 @@ export function assembleService(parts: AssembleServiceParts): AssembledService {
     onChat: (ctx, connection) => handleChat(ctx, connection, logger),
     onReadOnlyCommand: (ctx, connection) => handleReadOnlyCommand(ctx, connection, logger),
     onProposalAction: (ctx, connection) => handleProposalAction(ctx, connection, logger),
-    onMissionAdvance: (connection, post, event, userId) =>
-      handleAdvance(connection, post, event, logger, userId),
+    onMissionAdvance: (connection, post, missionId, event, userId) =>
+      handleAdvance(connection, post, missionId, event, logger, userId),
     logger,
   });
 
@@ -114,7 +114,7 @@ export function assembleService(parts: AssembleServiceParts): AssembledService {
     configStore: parts.configStore,
     onOwnerMessage: (ctx) => bridge.handleOwnerMessage(ctx),
     onOwnerCommand: (ctx) => bridge.handleOwnerCommand(ctx),
-    onTrigger: (userId, event) => bridge.handleTrigger(userId, event),
+    onTrigger: (userId, missionId, event) => bridge.handleTrigger(userId, missionId, event),
     logger,
   });
 

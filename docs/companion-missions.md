@@ -139,12 +139,12 @@ sequenceDiagram
         PRED-->>SCH: { status, message }
     end
     SCH->>DN: run action with {{message}} substituted
-    DN->>CH: post "<@companionBot> LITE is 808.10 — −3.1%"
+    DN->>CH: post "<@companionBot> mission:<missionId> LITE is 808.10 — −3.1%"
     CH->>GW: guild message event (GuildMessages intent)
     GW->>GW: trust gate: author == trigger_bot_id AND channel == mission_channel_id
-    GW->>BR: onTrigger(parsed event)
+    GW->>BR: onTrigger(missionId, event)
     BR->>BR: summon if dormant (supersedes web — accepted)
-    BR->>BR: mission.advance({ event }) — ordinary user-loop turn (stamina-billed)
+    BR->>BR: mission.advance({ missionId, event }) — ordinary user-loop turn (stamina-billed)
     BR->>ROOM: report spoken in the room (ungated)
     BR->>BR: append mission_journal · wake job stays armed (recurring)
 ```
@@ -173,25 +173,38 @@ complete — the mission wake reuses the shipped `discord-notify` with no change
   ```
   schedule run --every 1s \
     --predicate "ibkr-cli query LITE le 810" \
-    --action    "discord-notify --channel <missionCh> --text <@companionBotId> {{message}}"
+    --action    "discord-notify --channel <missionCh> --text <@companionBotId> mission:<missionId> {{message}}"
   ```
 
-### 3.2 The wire format — plain text, mention-prefixed
+### 3.2 The wire format — plain text, mention-prefixed, mission-tagged
 
 The message `content` posted to the mission channel is **exactly**:
 
 ```
-<@COMPANIONBOTID> LITE is 808.10 — −3.1% on the session
+<@COMPANIONBOTID> mission:0f4c10ac-9a3e-4b21-8c53-2f6f14be7a90 LITE is 808.10 — −3.1% on the session
 ```
 
-- A single user-mention of the companion bot, a space, then the **event text** (the predicate's
-  `message` verbatim). Core strips the leading mention token(s); the remainder **is** the event.
-- **Plain text, not JSON.** v1 carries the event only — no `mission_id` in the payload. Routing is
-  by the **single active mission** (§6). Plain text means no `{{message}}` escaping hazard.
+- A single user-mention of the companion bot, the **mission tag** (`mission:<missionId>` — the
+  `missions` row UUID, stamped into the scheduler action at arm time by `start_mission`), then the
+  **event text** (the predicate's `message` verbatim). Core strips the leading mention token(s),
+  reads the tag, and the remainder **is** the event.
+- **Every wake names its mission.** The tag is how the companion knows what the notification is
+  for: `mission.advance` routes and validates by that id — never by guessing at "the" active
+  mission — so a stale wake reconciles exactly its own mission's jobs (§5.2 step 1), and a wake
+  from an old mission can never advance a newer one. A message without a valid tag (or with no
+  event after it) is **not a mission wake**: the router logs and drops it, never summons.
+- **The job id does NOT ride the payload** — it cannot: the scheduler mints it as `arm`'s return
+  value, after the action text is frozen (the scheduler's `{{job_id}}` substitution token is
+  deferred, §11). The mission record's `job_ids` carries it: naming the mission names its job(s).
+- **No untagged fallback (format cut).** A wake job armed before the tag existed posts
+  `<@bot> <event>` with no `mission:` tag; the router drops every such firing, so its mission
+  never advances **and never reconciles** (reconciliation runs inside `mission.advance`, which an
+  untagged wake never reaches). Deploying across this format change means stopping any pre-tag
+  mission and cancelling its jobs by hand (`schedule cancel`).
+- **Plain text, not JSON** — no `{{message}}` escaping hazard.
 - The mention is load-bearing twice: (a) Discord delivers the full `.content` for a message that
   mentions the bot **without** the privileged `MessageContent` intent; (b) it is a human-visible
-  "for you" marker in the channel. Multi-mission later routes by **channel** (one mission channel
-  per mission), so plain text scales without a structured payload.
+  "for you" marker in the channel.
 
 ### 3.3 Trust vs. routing vs. content
 
@@ -201,8 +214,8 @@ Three concerns are kept strictly separate — the crux of the security design (�
   `mission_channel_id`. Both are stored on the per-user `discord_config` row. Trust is the
   **(author, channel) pair — never the message content** (anyone in the channel could type the same
   words).
-- **Routing** = the accepted event is routed to the companion's **single `active` mission**. No
-  `mission_id` is carried in v1.
+- **Routing** = the accepted event is routed to the mission the wake **names** (the `mission:<id>`
+  tag, §3.2), and advances it only if that mission is still `active`.
 - **Content-readability** = the @-mention delivers the full `.content` without the privileged
   `MessageContent` intent.
 
@@ -215,6 +228,16 @@ mission's duration, so subsequent triggers and reports are immediate with no re-
 supersede/fencing machinery already handles a mid-turn takeover
 (`plans/embodiment-handoff-fencing.md`), so there is no new race.
 
+**A wake is only honored while the mission it names is still valid.** The bridge cannot check
+validity before claiming (the mission methods are companion-scoped — the claim *is* how it asks),
+so the server's `mission.advance` is the authoritative check: the named mission (§3.2) not
+`active` → the turn is **skipped** and that mission's stray wake jobs are **reconciled** (§5.2
+step 1). The skip flag rides the method's terminal result back to the bridge, which then
+**silently tears down an embodiment this trigger opened** (an embodiment the owner summoned
+stays — it is theirs). Net effect: a stale trigger — e.g. a wake job whose cancel failed at
+`mission.stop` — disrupts at most once, posts nothing into the owner DM, and cancels itself
+instead of firing every interval forever.
+
 ## 4. State — `MissionService`, `missions`, `mission_journal`
 
 Mission state is **first-class**, not transcript-only, so `list`/`stop`/status and cross-day
@@ -222,7 +245,8 @@ continuity are real rather than reconstructed. Data model (Postgres, per-compani
 list in `implementation.md`):
 
 - **`missions`** — `id`, `seq`, `companion_id`, `goal`, `plan`, `validation_criteria`, `status`,
-  `job_ids` (the scheduler jobs, for cancel on stop), `outward_grant` (nullable,
+  `job_ids` (the scheduler jobs still **armed** — emptied as cancels succeed at stop; a failed
+  cancel stays listed for the stale-wake retry, §5.2 step 1), `outward_grant` (nullable,
   deferred — §7), timestamps. (There is no report-target column: the report is spoken in the
   embodied room — the owner DM — §7.) A **partial unique index** on `(companion_id) WHERE status='active'`
   enforces one active mission per companion at the database level, so a racing second activation
@@ -250,7 +274,7 @@ stateDiagram-v2
 
 The `complete` / `paused` / `failed` transitions are part of the designed lifecycle (and of
 `missionStatusSchema`) but are **not implemented yet** — their `MissionService` methods are added
-with the autonomous validate→decide milestone (§11). In v1 a mission is armed as a **recurring**
+with the autonomous validate→decide milestone (§11). In Milestone 1 a mission is armed as a **recurring**
 wake and ends via the user's `/mission action:stop` (§5.3).
 
 ## 5. Mission operations — create, advance, inspect & stop
@@ -274,24 +298,36 @@ token-spending, standing-authorized task.
 On confirm, the `start_mission` tool body:
 
 1. reads the mission wake config (`trigger_bot_id`, `mission_channel_id`, the captured `bot_user_id`);
-2. **arms the scheduler job** via the `scheduler-cli`-backed `MissionScheduler`, with the action set
-   to `discord-notify --channel <missionCh> --text "<@botUserId> {{message}}"`;
-3. **creates** the mission draft and **activates** it (records `job_ids`, `status=active`), which
-   **suspends the drive engine**.
+2. **creates** the mission draft — first, because the wake action must carry the mission's id (§3.2)
+   and the id doesn't exist until the row does;
+3. **arms the scheduler job** via the `scheduler-cli`-backed `MissionScheduler`, with the action set
+   to `discord-notify --channel <missionCh> --text "<@botUserId> mission:<missionId> {{message}}"`;
+4. **activates** the draft (records `job_ids`, `status=active`), which **suspends the drive engine**.
 
-If activation fails after the job is armed, the tool **cancels the job** as compensation. There is a
-narrow accepted crash window between arm and activate (a crash there could leave an armed job with no
-active mission); it is documented in the tool and accepted for v1.
+Compensation on failure: a failed **arm** stops the draft (no phantom); a failed **activate**
+cancels the armed job AND stops the draft — and if that cancel itself fails, the job id is
+recorded on the draft's `job_ids` before the stop, so the stale wake's reconciliation (§5.2
+step 1) retries exactly that cancel (only `activate` writes `job_ids`; without this the armed
+job's id would exist nowhere). There is a narrow accepted crash window between arm and
+activate (a crash there could leave an armed job with a `draft` mission); it is documented in the
+tool and accepted for Milestone 1 — such a wake skips at `mission.advance` (`draft` ≠ `active`) without
+cancelling, since a draft's job may be a mission mid-start.
 
 ### 5.2 `mission.advance` — one iteration of the loop
 
 `mission.advance` is a single turn of the §1.1 loop — recall → research/execute → validate → decide
 → journal. Fired by a trigger _or_ you messaging — handled identically. The bridge calls the
-companion-scoped `mission.advance({ event })` WS method:
+companion-scoped `mission.advance({ missionId, event })` WS method:
 
-1. **resolve the active mission.** If there is **none** — a stale/duplicate trigger, or one racing a
-   just-issued `mission.stop` — the method **skips cheaply** (`{done:true, skipped:'no active
-   mission'}`) rather than burning a stamina turn that would inject no context and journal nothing.
+1. **resolve the NAMED mission** (`missionId` from the wake's `mission:` tag, §3.2) and verify it
+   is this companion's and still `active`. Anything else — a stale/duplicate trigger, one racing a
+   just-issued `mission.stop`, an unknown id — **skips cheaply** (`{done:true, skipped:…}`) rather
+   than burning a stamina turn that would inject no context and journal nothing. A skip on a
+   **terminal** mission is also the **reconciliation point**: jobs still recorded in its `job_ids`
+   are what produced this wake — a `mission.stop` whose scheduler cancel failed — so the skip
+   **re-attempts exactly those cancels** (best-effort, logged) and persists the survivors, and the
+   stray job stops firing instead of waking the companion every interval forever (§3.4). A `draft`
+   mission's jobs are left alone (a mission mid-start, §5.1).
 2. **recall.** A dedicated **mission-retrieve arm** in the memory composition injects `goal` +
    `plan` + recent `mission_journal` + the incoming `event` as grounding — so the iteration continues
    from where the last one left off, at zero extra tokens beyond the turn itself.
@@ -303,7 +339,7 @@ companion-scoped `mission.advance({ event })` WS method:
    — the human closes the loop via `/mission action:stop` (§5.3, §11)._
 5. **report.** The turn's output is spoken in the embodied room (§7).
 6. **journal.** `withMissionJournal` taps the turn's `done` message and appends it to
-   `mission_journal` as findings (v1 report-as-findings), so the next iteration recalls this
+   `mission_journal` as findings (report-as-findings, Milestone 1), so the next iteration recalls this
    decision. A superseded turn journals nothing — the live turn on the new connection owns that
    write. The journal write is best-effort: a failure is logged, never surfaced into the turn.
 
@@ -322,7 +358,9 @@ Observability and the off-switch live in **one Discord command**, in the room th
   hint. Backed by `mission.list` + `mission.journal` (`companion-endpoints.md` §4.13).
 - **`/mission action:stop`** ends the **active** mission only (never a draft or a finished one):
   cancels its scheduler wake jobs, sets `stopped`, and nudges the motivation engine so drives
-  resume promptly. Backed by `mission.stop`.
+  resume promptly. Backed by `mission.stop`. The cancel is best-effort (a failure never blocks the
+  stop), but a job whose cancel **failed stays recorded** in `job_ids` — the next stale wake's
+  reconciliation (§5.2 step 1) retries exactly those.
 - Approval-time observability is the **proposal card itself**: `start_mission`'s summary shows the
   goal, the monitored predicate + interval, the **plan**, and the **success criteria** (fields
   trimmed to fit the embed), so the one up-front approval is a genuine plan review (§5.1).
@@ -349,10 +387,10 @@ While a mission is `active`, the companion is in **mission mode**, which changes
   the companion: **ordinary chat run while a mission is active stays fully gated** (e.g.
   `ingest_source` memory writes still raise an approval card mid-mission). The gate also re-reads
   `hasActive` per effectful call, so a `/mission action:stop` racing an in-flight advance turn
-  re-gates that turn's next effectful call. (v1 missions are read-only end-to-end, so no genuinely
+  re-gates that turn's next effectful call. (Milestone 1 missions are read-only end-to-end, so no genuinely
   outward/effectful tool is exercised under the bypass yet — §7.)
 
-## 7. Reporting & outward actions (no v1 grant)
+## 7. Reporting & outward actions (no standing grant in Milestone 1)
 
 **Reporting is the companion _speaking in its embodied room_ — not a gated tool call.** A mission
 turn's report is just its output, which the bridge posts to its room exactly like a normal reply or
@@ -360,12 +398,12 @@ a proactive DM. No `beforeToolCall`, no gate, no grant. The **report target** is
 (the embodied room) by default — zero new code, ungated. Vitality rides along: the report can
 include the stamina line so a weeks-long run stays topped up.
 
-A v1 mission is **read-only** end to end (`ibkr-cli` read-only + web fetch + speak), so there is **no
+A Milestone 1 mission is **read-only** end to end (`ibkr-cli` read-only + web fetch + speak), so there is **no
 effectful outward tool for a grant to authorize.** The **standing grant is defined but deferred**:
 when a future mission uses a genuinely outward tool (place an order, send email, post where it is not
 embodied), mission creation would mint a scoped grant `{ tool, target, rate-limit }`, and the gate
 would allow _origin=mission ∧ within-grant_ without per-call approval, revoked on stop. The
-`outward_grant` column exists for this; no v1 mission populates it.
+`outward_grant` column exists for this; no Milestone 1 mission populates it.
 
 ## 8. Trust & security — a deliberately narrow non-owner input
 
@@ -430,15 +468,16 @@ weakening it:
   gateway `fetchRecentMessages` method.
 - **Closing the loop autonomously (the validate → decide control, §1.1, §5.2 step 4)** — the biggest
   gap from the north star. Today the companion _reasons about_ progress each turn but does not act on
-  it: v1 arms a **recurring** wake and ends via the user's `/mission action:stop` (§5.3). The deferred path lets the
+  it: Milestone 1 arms a **recurring** wake and ends via the user's `/mission action:stop` (§5.3). The deferred path lets the
   turn's own judgment drive the state machine — detecting `validation_criteria` met (→ `complete`,
   cancel jobs, resume drives), revising the plan/predicate when the approach isn't working, and
   re-arming a fire-once job per turn instead of a blanket recurring one. The `MissionService`
   transitions this needs (`pause` / `resume` / `complete` / `fail`, plus a job re-arm) are added
   with this milestone — deliberately not scaffolded ahead of it.
 - **The standing outward-grant** — until a mission uses a genuinely effectful outward tool (§7).
-- **Multiple concurrent missions** — would reintroduce explicit routing, solved then by **one
-  channel per mission** (not a structured `mission_id`), so plain text still suffices.
+- **Multiple concurrent missions** — routing is already solved (every wake names its mission via
+  the `mission:` tag, §3.2); the blocker is the **one-active-per-companion** invariant that drive
+  suspension and mission-mode exclusivity (§6) are built on.
 - **Richer scheduler payload** (`{{status}}` / `{{job_id}}` tokens) and **richer cron schedules**.
 - **Deeper reasoning half** — continuous news-ingest (CPI/PCE/Fed/earnings) and swing-prediction
   depth for the worked example.

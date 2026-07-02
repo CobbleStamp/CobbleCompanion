@@ -33,9 +33,10 @@ export interface RouterOptions {
   /**
    * Handle a mission trigger that passed the trust gate (companion-missions.md §3.2) — a
    * SEPARATE authority from the owner: a trigger sender may only fire a mission advance,
-   * never chat/summon/commands. The bridge summons-if-dormant and advances the mission.
+   * never chat/summon/commands. The bridge summons-if-dormant and advances the NAMED
+   * mission (every wake carries its mission id).
    */
-  readonly onTrigger: (userId: string, event: string) => void | Promise<void>;
+  readonly onTrigger: (userId: string, missionId: string, event: string) => void | Promise<void>;
   /** Injectable clock (ms) for deterministic TTL tests; defaults to wall clock. */
   readonly now?: () => number;
   readonly logger: Logger;
@@ -95,15 +96,21 @@ export class BotRouter {
       });
       return;
     }
-    const event = parseTriggerEvent(ctx.message.content);
-    if (event === null) {
-      this.opts.logger.info('discord: dropping empty mission trigger (no event after mention)', {
-        operation: 'discord.router.trigger',
-        userId: ctx.userId,
-      });
+    const trigger = parseTriggerEvent(ctx.message.content);
+    if (trigger === null) {
+      // Not a well-formed mission wake: no `mission:<id>` tag, or no event text after it.
+      // Every wake names its mission (the tag is stamped at arm time) — a message that
+      // doesn't cannot be routed, so it is dropped loudly, never advanced on a guess.
+      this.opts.logger.error(
+        'discord: dropping mission trigger without a valid mission tag or event',
+        {
+          operation: 'discord.router.trigger',
+          userId: ctx.userId,
+        },
+      );
       return;
     }
-    await this.opts.onTrigger(ctx.userId, event);
+    await this.opts.onTrigger(ctx.userId, trigger.missionId, trigger.event);
   }
 
   /** Route an inbound slash command: `/link` is handled here; the rest pass the lock. */

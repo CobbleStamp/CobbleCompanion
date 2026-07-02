@@ -322,16 +322,23 @@ method: the owner states the goal in an ordinary chat turn and the model propose
 
 | Method | Scope | Params | Result | Errors |
 |--------|-------|--------|--------|--------|
-| `mission.advance` | companion · **stream** | `missionAdvanceSchema` `{ event }` | `{ done: true }` (or `{ done: true, skipped }` when no mission is active) | `bad_params`, `not_embodied`, `not_found`, `over_cap` |
+| `mission.advance` | companion · **stream** | `missionAdvanceSchema` `{ missionId, event }` | `{ done: true }` (or `{ done: true, skipped }` when the named mission is unknown or not active) | `bad_params`, `not_embodied`, `not_found`, `over_cap` |
 | `mission.list` | companion | — | `{ missions: MissionDto[] }` (newest first) | `not_embodied` |
 | `mission.journal` | companion | `missionJournalSchema` `{ missionId, limit? }` | `{ entries: MissionJournalEntryDto[] }` (newest first; default limit 10, max 50) | `bad_params`, `not_embodied`, `not_found` |
 | `mission.stop` | companion | `missionLifecycleSchema` `{ missionId }` | `{ mission: MissionDto }` | `bad_params`, `not_embodied`, `not_found` |
 | `discord.config.setMissionWake` | user | `discordMissionWakeSchema` `{ triggerBotId, missionChannelId }` | `{ ok: true }` | `bad_params`, `conflict`, `not_found` |
 
-`mission.advance` is the wake turn — the Discord bridge calls it on a trigger; it injects the
-active mission's goal/plan/journal, runs effectful tools ungated **within this turn only** (the
-mission is the standing authorization, keyed on the turn's `origin: 'mission'`; ordinary chat
-stays gated while a mission runs), and journals the report. `mission.journal` is the progress view: the recent
+`mission.advance` is the wake turn — the Discord bridge calls it on a trigger, passing the
+`missionId` the wake was tagged with at arm time (`companion-missions.md` §3.2); the server
+advances that mission only if it is the embodied companion's and still `active`, injecting its
+goal/plan/journal, running effectful tools ungated **within this turn only** (the mission is the
+standing authorization, keyed on the turn's `origin: 'mission'`; ordinary chat stays gated while
+a mission runs), and journaling the report. Its terminal result validates with
+`missionAdvanceResultSchema` (`contracts.ts`): `skipped` set means the named mission is unknown
+or no longer active (a stale trigger) — the turn emitted no stream frames, and for a terminal
+mission the server also re-attempted the cancel of its still-armed wake jobs
+(`companion-missions.md` §5.2 step 1). A consumer should render a skipped advance as silence.
+`mission.journal` is the progress view: the recent
 journal rows for one of the embodied companion's missions (tenancy-checked).
 `discord.config.setMissionWake` records the allowlisted trigger-sender bot id + the shared
 mission channel (`companion-missions.md` §3.2); it is user-scoped and carries no embodiment.
@@ -395,6 +402,9 @@ companion itself shows up live.
 The **stream**-marked methods (`messages.send`, `proposals.confirm`, `greeting.stream`,
 `mission.advance`) emit zero or more `WsStreamMessage` frames — each `stream` field is a `ChatStreamEvent`
 (discriminated on `type`, `contracts.ts`) — before the terminal `{ "result": { "done": true } }`.
+In the shared client transport (`WsTransport.callStream`) that terminal result is the stream
+generator's **return value**: invisible to a plain `for await`, capturable with `yield*` — how a
+consumer reads a method outcome that carries more than `done` (e.g. `mission.advance`'s skip flag).
 
 | `type` | Payload | Meaning |
 |--------|---------|---------|

@@ -49,7 +49,7 @@ function fakeConnectionFactory(reply: string): CompanionConnectionFactory {
         message: { role: 'assistant', content: reply } as unknown as MessageDto,
       };
     },
-    async *callStream(): AsyncIterable<ChatStreamEvent> {
+    async *callStream(): AsyncGenerator<ChatStreamEvent, undefined> {
       // The mission advance path (`mission.advance`): emit one done event so the report
       // is forwarded to the owner DM, letting the trigger chain be asserted end to end.
       yield {
@@ -158,12 +158,13 @@ describe('assembleService (manager → router → bridge → chat)', () => {
     await service.start();
     const bot = gateways.byToken('tokenA');
 
-    // The scheduler posts a trigger into the mission channel, @-mentioning the bot.
+    // The scheduler posts a trigger into the mission channel, @-mentioning the bot and
+    // naming the mission the wake was armed for (companion-missions.md §3.2).
     bot!.receiveGuildMessage({
       authorId: 'scheduler-bot',
       channelId: 'mission-chan',
       messageId: 'm1',
-      content: '<@111> LITE is 808',
+      content: '<@111> mission:0f4c10ac-9a3e-4b21-8c53-2f6f14be7a90 LITE is 808',
     });
     await flush();
 

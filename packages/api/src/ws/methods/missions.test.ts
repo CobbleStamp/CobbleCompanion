@@ -23,15 +23,18 @@ import { missionMethods, withMissionJournal } from './missions.js';
 
 const silent: Logger = { error: () => undefined, warn: () => undefined, info: () => undefined };
 
-/** A scheduler fake that records cancellations. */
-function fakeScheduler(): MissionScheduler & { cancelled: string[] } {
+/** A scheduler fake that records cancellations; ids in `failOn` refuse to cancel. */
+function fakeScheduler(): MissionScheduler & { cancelled: string[]; failOn: Set<string> } {
   const cancelled: string[] = [];
+  const failOn = new Set<string>();
   return {
     cancelled,
+    failOn,
     async arm() {
       return 'job';
     },
     async cancel(jobId) {
+      if (failOn.has(jobId)) throw new Error(`cancel refused: ${jobId}`);
       cancelled.push(jobId);
     },
   };
@@ -87,6 +90,7 @@ describe('missionMethods', () => {
     return {
       missions: service,
       missionScheduler: scheduler,
+      identity: { getCompanion: async () => ({ id: companionId }) },
       embodiment: { holds: async () => true },
       motivation: { request: motivationRequest },
       logger: silent,
@@ -135,13 +139,145 @@ describe('missionMethods', () => {
     const methods = missionMethods(deps());
 
     const result = (await methods['mission.stop']!(ctx, { missionId: draft.id })) as {
-      mission: { status: string };
+      mission: { status: string; jobIds: string[] };
     };
 
     expect(scheduler.cancelled).toEqual(['job-a', 'job-b']);
     expect(result.mission.status).toBe('stopped');
+    // Every cancel succeeded → no job stays recorded as armed.
+    expect(result.mission.jobIds).toEqual([]);
     expect(await service.hasActive(companionId)).toBe(false);
     expect(motivationRequest).toHaveBeenCalledWith(companionId);
+  });
+
+  it('mission.stop keeps a failed cancel recorded so a later reconciliation retries it', async () => {
+    const draft = await service.createDraft(companionId, 'monitor');
+    await service.activate(draft.id, {
+      plan: 'p',
+      validationCriteria: 'c',
+      jobIds: ['job-a', 'job-b'],
+    });
+    scheduler.failOn.add('job-a');
+    const methods = missionMethods(deps());
+
+    const result = (await methods['mission.stop']!(ctx, { missionId: draft.id })) as {
+      mission: { status: string; jobIds: string[] };
+    };
+
+    // The stop still lands (best-effort cancel never blocks it)…
+    expect(result.mission.status).toBe('stopped');
+    expect(scheduler.cancelled).toEqual(['job-b']);
+    // …but the job whose cancel failed stays recorded as armed.
+    expect(result.mission.jobIds).toEqual(['job-a']);
+  });
+
+  it('mission.stop still stops the mission when recording the surviving jobs fails', async () => {
+    // The setJobs write is bookkeeping between the cancels and the state transition —
+    // a transient DB failure there must not leave the mission active with dead jobs.
+    const draft = await service.createDraft(companionId, 'monitor');
+    await service.activate(draft.id, { plan: 'p', validationCriteria: 'c', jobIds: ['job-a'] });
+    vi.spyOn(service, 'setJobs').mockRejectedValue(new Error('db write failed'));
+    const methods = missionMethods(deps());
+
+    const result = (await methods['mission.stop']!(ctx, { missionId: draft.id })) as {
+      mission: { status: string };
+    };
+
+    expect(scheduler.cancelled).toEqual(['job-a']);
+    expect(result.mission.status).toBe('stopped');
+    expect(await service.hasActive(companionId)).toBe(false);
+  });
+
+  it('mission.advance for a stopped mission skips the turn and cancels its stale wake jobs', async () => {
+    // A stopped mission still holding wake jobs — a mission.stop whose scheduler cancel
+    // failed. Its recurring job keeps firing; the stale wake must reconcile, not spam.
+    const draft = await service.createDraft(companionId, 'monitor');
+    await service.activate(draft.id, {
+      plan: 'p',
+      validationCriteria: 'c',
+      jobIds: ['job-a', 'job-b'],
+    });
+    await service.stop(draft.id); // the service stop alone leaves both jobs recorded
+    scheduler.failOn.add('job-b');
+    const methods = missionMethods(deps());
+
+    const result = await methods['mission.advance']!(ctx, {
+      missionId: draft.id,
+      event: 'stale tick',
+    });
+
+    expect(result).toEqual({ done: true, skipped: 'mission not active' });
+    // The reconciliation cancelled what it could and kept the survivor for the next retry.
+    expect(scheduler.cancelled).toEqual(['job-a']);
+    const record = await service.get(draft.id);
+    expect(record?.jobIds).toEqual(['job-b']);
+  });
+
+  it('mission.advance reconciles only the NAMED mission, never a sibling’s jobs', async () => {
+    // Two stopped missions with armed jobs; the wake names the first — the second's
+    // jobs are not touched (reconciliation is by identity, not a companion-wide sweep).
+    const first = await service.createDraft(companionId, 'first');
+    await service.activate(first.id, { plan: 'p', validationCriteria: 'c', jobIds: ['job-1'] });
+    await service.stop(first.id);
+    const second = await service.createDraft(companionId, 'second');
+    await service.activate(second.id, { plan: 'p', validationCriteria: 'c', jobIds: ['job-2'] });
+    await service.stop(second.id);
+    const methods = missionMethods(deps());
+
+    await methods['mission.advance']!(ctx, { missionId: first.id, event: 'stale tick' });
+
+    expect(scheduler.cancelled).toEqual(['job-1']);
+    expect((await service.get(first.id))?.jobIds).toEqual([]);
+    expect((await service.get(second.id))?.jobIds).toEqual(['job-2']);
+  });
+
+  it('mission.advance for a draft mission skips WITHOUT cancelling (arm→activate window)', async () => {
+    // A wake racing start_mission between arm and activate finds the mission still
+    // `draft` — cancelling then would kill the mission mid-start.
+    const draft = await service.createDraft(companionId, 'starting up');
+    const methods = missionMethods(deps());
+
+    const result = await methods['mission.advance']!(ctx, {
+      missionId: draft.id,
+      event: 'early tick',
+    });
+
+    expect(result).toEqual({ done: true, skipped: 'mission not active' });
+    expect(scheduler.cancelled).toEqual([]);
+  });
+
+  it('mission.advance for an unknown mission id skips the turn', async () => {
+    const methods = missionMethods(deps());
+
+    const result = await methods['mission.advance']!(ctx, {
+      missionId: '00000000-0000-4000-8000-000000000000',
+      event: 'ghost tick',
+    });
+
+    expect(result).toEqual({ done: true, skipped: 'unknown mission' });
+    expect(scheduler.cancelled).toEqual([]);
+  });
+
+  it('mission.advance refuses to act on another companion’s mission (tenancy)', async () => {
+    const [other] = await db.insert(users).values({ email: 'x@example.com' }).returning();
+    const [otherCompanion] = await db
+      .insert(companions)
+      .values({ ownerId: other!.id, name: 'Fen', form: 'cat', temperament: 'aloof' })
+      .returning();
+    const foreign = await service.createDraft(otherCompanion!.id, 'not yours');
+    await service.activate(foreign.id, { plan: 'p', validationCriteria: 'c', jobIds: ['job-f'] });
+    await service.stop(foreign.id);
+    const methods = missionMethods(deps());
+
+    const result = await methods['mission.advance']!(ctx, {
+      missionId: foreign.id,
+      event: 'cross-tenant tick',
+    });
+
+    // Reported exactly like an unknown id (no leak), and the foreign jobs are untouched.
+    expect(result).toEqual({ done: true, skipped: 'unknown mission' });
+    expect(scheduler.cancelled).toEqual([]);
+    expect((await service.get(foreign.id))?.jobIds).toEqual(['job-f']);
   });
 
   it('mission.journal returns the recent entries as DTOs, newest first', async () => {

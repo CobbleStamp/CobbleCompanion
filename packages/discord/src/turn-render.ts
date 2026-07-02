@@ -33,12 +33,23 @@ export interface TurnSurface {
   sendProposal(card: ProposalCard): Promise<void>;
 }
 
+/** Per-call rendering knobs (see {@link renderTurnStream}). */
+export interface RenderTurnOptions {
+  /**
+   * Post the "nothing to add" fallback when the turn produced no output (default true).
+   * An interactive turn (the owner asked something) owes a reply; a background turn (a
+   * mission wake) does not — an empty background turn should be silence, not chatter.
+   */
+  readonly emptyFallback?: boolean;
+}
+
 /** Consume a turn stream and render it to {@link TurnSurface} as a single reply (+ cards). */
 export async function renderTurnStream(
   stream: AsyncIterable<ChatStreamEvent>,
   surface: TurnSurface,
   logger: Logger,
   log: { readonly operation: string; readonly userId: string },
+  options: RenderTurnOptions = {},
 ): Promise<void> {
   let finalContent: string | null = null;
   let errorText: string | null = null;
@@ -87,8 +98,9 @@ export async function renderTurnStream(
     await surface.reply(finalContent);
     return;
   }
-  // Otherwise the proposal card(s) ARE the message; only fall back when there were none.
-  if (cardedSummaries.size === 0) {
+  // Otherwise the proposal card(s) ARE the message; only fall back when there were none
+  // (and the caller expects a reply at all — background turns render silence instead).
+  if (cardedSummaries.size === 0 && (options.emptyFallback ?? true)) {
     await surface.reply(EMPTY_REPLY);
   }
 }

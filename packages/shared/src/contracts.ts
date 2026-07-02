@@ -1249,8 +1249,9 @@ export type MissionStatus = z.infer<typeof missionStatusSchema>;
 
 /**
  * A scoped outward-action grant minted at mission creation (companion-missions.md §4).
- * DEFERRED: no v1 mission uses an effectful outward tool, so the column exists for the
- * type but is never populated yet. Defined here so `@cobble/db` can type the column.
+ * Nothing populates it yet — missions are read-only end to end, so the column exists for
+ * the type only (the deferred standing outward-grant, companion-missions.md §11). Defined
+ * here so `@cobble/db` can type the column.
  */
 export interface MissionOutwardGrant {
   readonly tool: string;
@@ -1294,10 +1295,30 @@ export const missionLifecycleSchema = z.object({
   missionId: z.string().uuid(),
 });
 
-/** `mission.advance` params validator — the event text that woke the turn. */
+/**
+ * `mission.advance` params validator — which mission the wake is for, plus the event
+ * text that woke it. Every wake names its mission (the id is stamped into the scheduler
+ * action at arm time, companion-missions.md §3.2), so the server routes and validates
+ * by identity — never by guessing at "the" active mission.
+ */
 export const missionAdvanceSchema = z.object({
+  missionId: z.string().uuid(),
   event: z.string().trim().min(1).max(8_000),
 });
+
+/**
+ * `mission.advance` terminal-result validator — what the streaming call resolves with.
+ * `skipped` is set (with the reason) when the wake found no active mission — a stale
+ * trigger — so the surface can stay silent instead of rendering an empty turn
+ * (companion-missions.md §3.2).
+ */
+export const missionAdvanceResultSchema = z.object({
+  done: z.literal(true),
+  skipped: z.string().optional(),
+});
+
+/** The parsed `mission.advance` terminal result (see {@link missionAdvanceResultSchema}). */
+export type MissionAdvanceResult = z.infer<typeof missionAdvanceResultSchema>;
 
 /**
  * `mission.journal` params validator — the progress view (companion-missions.md §4):

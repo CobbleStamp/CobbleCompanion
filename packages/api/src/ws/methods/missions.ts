@@ -1,9 +1,10 @@
-import type {
-  Logger,
-  MissionJournalRecord,
-  MissionRecord,
-  MissionScheduler,
-  MissionService,
+import {
+  isMissionTerminal,
+  type Logger,
+  type MissionJournalRecord,
+  type MissionRecord,
+  type MissionScheduler,
+  type MissionService,
 } from '@cobble/core';
 import {
   missionAdvanceSchema,
@@ -51,24 +52,57 @@ export function missionMethods(deps: AppDeps): WsMethods {
 
   return {
     'mission.advance': async (ctx, params) => {
-      const { event } = parseParams(missionAdvanceSchema, params, 'an event is required');
+      const { missionId, event } = parseParams(
+        missionAdvanceSchema,
+        params,
+        'a mission id and an event are required',
+      );
       const {
         id: companionId,
         dto: companion,
         connectionId,
         claimSeq,
       } = await embodiedCompanion({ identity, embodiment }, ctx);
-      // Route to the single active mission (companion-missions.md §4). If there is none — a
-      // stale/duplicate trigger, or one racing a just-issued `mission.stop` — do NOT burn a
-      // stamina turn: the mission-retrieve arm would inject no context, the gate bypass would
-      // be off, and nothing would be journaled. Skip cheaply instead.
-      const active = await missions.findActive(companionId);
-      if (!active) {
-        logger.info('mission.advance with no active mission — skipping the turn', {
+      // Route by the NAMED mission (companion-missions.md §3.2): every wake carries the id
+      // its scheduler action was stamped with at arm time. Only that mission being `active`
+      // earns a turn; anything else is a stale/duplicate trigger and skips cheaply — no
+      // stamina burned, nothing journaled — with the stale firing doubling as the
+      // reconciliation point for its own wake jobs (§5.2 step 1).
+      const mission = await missions.get(missionId);
+      if (!mission || mission.companionId !== companionId) {
+        // Unknown id, or another companion's mission (don't leak which): nothing to advance,
+        // and no job record to reconcile against — log loudly so the stray job is findable.
+        logger.error('mission.advance for an unknown mission — skipping the turn', {
           operation: 'mission.advance',
           companionId,
+          missionId,
         });
-        return { done: true, skipped: 'no active mission' };
+        return { done: true, skipped: 'unknown mission' };
+      }
+      if (mission.status !== 'active') {
+        // The named mission is over (or never activated — a wake racing the arm→activate
+        // window; a draft's jobs are left alone, it is a mission mid-start). For a TERMINAL
+        // mission this wake IS the stale job that outlived it — a `mission.stop` whose
+        // scheduler cancel failed — so re-attempt exactly its cancels, or it fires every
+        // interval forever.
+        logger.info('mission.advance for a non-active mission — skipping the turn', {
+          operation: 'mission.advance',
+          companionId,
+          missionId,
+          status: mission.status,
+        });
+        if (isMissionTerminal(mission.status) && mission.jobIds.length > 0) {
+          const failed = await cancelJobs(missionScheduler, mission.jobIds, logger, mission.id);
+          await missions.setJobs(mission.id, failed);
+          logger.info('reconciled stale mission wake jobs after a skipped advance', {
+            operation: 'mission.advance.reconcile',
+            companionId,
+            missionId: mission.id,
+            cancelled: mission.jobIds.length - failed.length,
+            stillArmed: failed.length,
+          });
+        }
+        return { done: true, skipped: 'mission not active' };
       }
       presence.recordActivity(companionId, { connectionId, claimSeq });
       const overCap = await overCapGuard(quota, companionId);
@@ -90,7 +124,7 @@ export function missionMethods(deps: AppDeps): WsMethods {
               origin: 'mission',
             }),
             missions,
-            active.id,
+            mission.id,
             event,
             logger,
           ),
@@ -128,7 +162,21 @@ export function missionMethods(deps: AppDeps): WsMethods {
       const mission = await ownMission(ctx, missionId);
       // Cancel the wake jobs first so no trigger fires after the mission is gone; a cancel
       // failure is logged but never blocks the state transition (the mission still stops).
-      await cancelJobs(missionScheduler, mission.jobIds, logger, missionId);
+      // The jobs whose cancel FAILED stay recorded on the mission, so the next stale
+      // firing's reconciliation (`mission.advance` skip path) retries exactly those.
+      const failed = await cancelJobs(missionScheduler, mission.jobIds, logger, missionId);
+      try {
+        await missions.setJobs(missionId, failed);
+      } catch (error) {
+        // Bookkeeping only — never blocks the stop. The row keeps its pre-cancel job ids;
+        // ids already cancelled never fire again (harmless leftovers on a terminal row),
+        // and a still-armed one wakes the reconciliation, which reads the ids afresh.
+        logger.error('mission.stop failed to record the surviving wake jobs', {
+          operation: 'mission.stop',
+          missionId,
+          error,
+        });
+      }
       const stopped = await missions.stop(missionId);
       // Leaving `active` re-enables drives on the next tick; nudge so it happens promptly.
       motivation.request(mission.companionId);
@@ -139,7 +187,7 @@ export function missionMethods(deps: AppDeps): WsMethods {
 
 /**
  * Forward a mission wake turn's stream, capturing the spoken report and appending it to the
- * mission's journal as `findings` (v1 report-as-findings, companion-missions.md §3.4). A
+ * mission's journal as `findings` (report-as-findings, companion-missions.md §3.4). A
  * superseded turn journals nothing — the live turn on the new connection owns that write.
  * The journal write is best-effort: a failure is logged, never surfaced into the turn.
  *
@@ -195,17 +243,23 @@ export async function* withMissionJournal(
   return false;
 }
 
-/** Cancel every wake job for a stopped mission (best-effort, each logged on failure). */
+/**
+ * Cancel every wake job for a stopped mission (best-effort, each logged on failure).
+ * Returns the job ids whose cancel FAILED — the caller persists those on the mission so
+ * a later reconciliation retries them.
+ */
 async function cancelJobs(
   scheduler: MissionScheduler,
   jobIds: readonly string[],
   logger: Logger,
   missionId: string,
-): Promise<void> {
+): Promise<readonly string[]> {
+  const failed: string[] = [];
   for (const jobId of jobIds) {
     try {
       await scheduler.cancel(jobId);
     } catch (error) {
+      failed.push(jobId);
       logger.error('failed to cancel a mission wake job', {
         operation: 'mission.stop.cancel',
         missionId,
@@ -214,6 +268,7 @@ async function cancelJobs(
       });
     }
   }
+  return failed;
 }
 
 /** Project a stored journal row to the surface DTO (dates as ISO strings). */
