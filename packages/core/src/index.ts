@@ -41,6 +41,11 @@ export {
   type MissionWakeTarget,
 } from './mission/start-mission-tool.js';
 export {
+  createSchedulerCliScheduler,
+  serializeAction,
+  type SchedulerCliOptions,
+} from './mission/scheduler-cli-scheduler.js';
+export {
   DrizzleProceduralStore,
   type ProceduralStore,
   type ProcedureRecord,
