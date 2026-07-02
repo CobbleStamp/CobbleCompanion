@@ -4,7 +4,11 @@ import {
   keyFromBase64,
   type DiscordConfigRecord,
 } from '@cobble/db';
-import { discordConfigSetSchema, type DiscordConfigViewDto } from '@cobble/shared';
+import {
+  discordConfigSetSchema,
+  discordMissionWakeSchema,
+  type DiscordConfigViewDto,
+} from '@cobble/shared';
 import type { AppDeps } from '../../app.js';
 import type { WsMethods } from '../dispatch.js';
 import { ConflictError, NotFoundError, parseParams } from './helpers.js';
@@ -89,6 +93,24 @@ export function discordConfigMethods(deps: AppDeps): WsMethods {
       );
       if (!record) throw new NotFoundError('no Discord config to relink');
       return { discord: toView(record) };
+    },
+
+    'discord.config.setMissionWake': async (ctx, params) => {
+      if (!encryptionKey()) throw new ConflictError(NOT_CONFIGURED);
+      const { triggerBotId, missionChannelId } = parseParams(
+        discordMissionWakeSchema,
+        params,
+        'a trigger bot id and a mission channel id are required',
+      );
+      // Independent of the token/owner-lock path — configuring the wake never re-links the bot
+      // (companion-missions.md §3.2). The router reads these on demand, so no gateway restart.
+      const record = await discordConfig.configureMissionWake(
+        ctx.userId,
+        triggerBotId,
+        missionChannelId,
+      );
+      if (!record) throw new NotFoundError('no Discord config to configure');
+      return { ok: true };
     },
 
     'discord.config.delete': async (ctx) => {

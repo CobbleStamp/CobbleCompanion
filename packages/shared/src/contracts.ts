@@ -989,6 +989,17 @@ export const discordConfigSetSchema = z.object({
 export type DiscordConfigSetBody = z.infer<typeof discordConfigSetSchema>;
 
 /**
+ * `discord.config.setMissionWake` params (companion-missions.md §3.2): the allowlisted
+ * trigger-sender bot id (the scheduler's discord-notify bot) and the shared mission channel.
+ * Both are Discord snowflakes — digit strings; trust is this (author, channel) pair.
+ */
+export const discordMissionWakeSchema = z.object({
+  triggerBotId: z.string().regex(/^\d+$/u, 'a Discord user id (digits) is required'),
+  missionChannelId: z.string().regex(/^\d+$/u, 'a Discord channel id (digits) is required'),
+});
+export type DiscordMissionWakeBody = z.infer<typeof discordMissionWakeSchema>;
+
+/**
  * The Discord config as shown in settings (`discord.config.get`). Never carries the
  * bot token. `linkCode` is present only while a code is outstanding (the owner hasn't
  * linked yet); it's null once the owner is bound.

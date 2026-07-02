@@ -35,6 +35,7 @@ function makeDeps(reconcile: (userId: string) => Promise<void>): AppDeps {
       upsert: async () => record(),
       reissueLinkCode: async () => record(),
       bindOwner: async () => true,
+      configureMissionWake: async () => record(),
       delete: async () => {},
     },
     identity: { getCompanion: async () => ({ id: 'c1' }) },
@@ -72,5 +73,73 @@ describe('discordConfigMethods — reconcile trigger', () => {
     await methods['discord.config.regenerateLink']!(ctx, {});
 
     expect(reconcile).not.toHaveBeenCalled();
+  });
+});
+
+describe('discordConfigMethods — mission wake', () => {
+  function makeWakeDeps(
+    configureMissionWake: (
+      userId: string,
+      triggerBotId: string | null,
+      missionChannelId: string | null,
+    ) => Promise<DiscordConfigRecord | null>,
+    discordTokenKey = Buffer.alloc(32, 7).toString('base64'),
+  ): AppDeps {
+    return {
+      discordConfig: {
+        findByUserId: async () => record(),
+        list: async () => [record()],
+        upsert: async () => record(),
+        reissueLinkCode: async () => record(),
+        bindOwner: async () => true,
+        configureMissionWake,
+        delete: async () => {},
+      },
+      config: { discordTokenKey },
+    } as unknown as AppDeps;
+  }
+
+  it('persists the trigger bot id + mission channel id', async () => {
+    const spy = vi.fn(async () => record());
+    const methods = discordConfigMethods(makeWakeDeps(spy));
+
+    const result = await methods['discord.config.setMissionWake']!(ctx, {
+      triggerBotId: '111',
+      missionChannelId: '222',
+    });
+
+    expect(spy).toHaveBeenCalledWith('user-1', '111', '222');
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('rejects non-numeric ids (bad_params before touching the store)', async () => {
+    const spy = vi.fn(async () => record());
+    const methods = discordConfigMethods(makeWakeDeps(spy));
+
+    await expect(
+      methods['discord.config.setMissionWake']!(ctx, {
+        triggerBotId: 'not-a-snowflake',
+        missionChannelId: '222',
+      }),
+    ).rejects.toThrow();
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('is a conflict when Discord is not configured on the server (no key)', async () => {
+    const spy = vi.fn(async () => record());
+    const methods = discordConfigMethods(makeWakeDeps(spy, ''));
+
+    await expect(
+      methods['discord.config.setMissionWake']!(ctx, { triggerBotId: '1', missionChannelId: '2' }),
+    ).rejects.toThrow(/not available/);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('is a not-found when the user has no Discord config row', async () => {
+    const methods = discordConfigMethods(makeWakeDeps(async () => null));
+
+    await expect(
+      methods['discord.config.setMissionWake']!(ctx, { triggerBotId: '1', missionChannelId: '2' }),
+    ).rejects.toThrow(/no Discord config/);
   });
 });
