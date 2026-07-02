@@ -929,4 +929,4 @@ Owned here (single-source). Each is assigned a decision point:
 - **Missions (goal-driven long-running tasks)** — a cross-repo workstream (the shipped
   `Tools/scheduler` spine + an unbuilt companion half: a Discord trigger intake + `MissionService`).
   It is a new *mode* layered on the loop, not a web-PoC phase; design and phasing are owned by
-  `plans/missions.md`.
+  `plans/companion-missions.md`.

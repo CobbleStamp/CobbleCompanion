@@ -11,15 +11,16 @@
 > - ✅ **Shipped (`Tools`):** `scheduler` (single-instance, loopback REST, poll-until-condition),
 >   `scheduler-cli` (binary `schedule`), `ibkr-cli query` (the `{status,message}` predicate),
 >   `discord-notify` (action CLI). See `Tools/scheduler/docs/`.
-> - ⬜ **To build (`Tools`):** `companion-trigger` (the action CLI that posts the wake).
+> - ✅ **Tools side complete — no new binary.** The mission wake **reuses `discord-notify` as-is**
+>   (decision 2026-07). See §3.1.
 > - ⬜ **Not started (companion):** the Discord **trigger intake**, `MissionService`, the
 >   `mission.*` / `mission.advance` WS methods, the `missions` schema.
 >
 > **Finalized decisions:**
-> 1. **Wake transport = a Discord *channel* message + summon.** The scheduler's action posts a
->    structured trigger into a shared **mission channel**; the companion's always-on bot receives it
->    (§3.2). *Not* an inbound HTTP endpoint (an earlier draft's plan), and *not* a DM (bots can't DM
->    bots).
+> 1. **Wake transport = a Discord *channel* message + summon.** The scheduler's `discord-notify`
+>    action posts a plain-text trigger (a bot @-mention + the event text) into a shared **mission
+>    channel**; the companion's always-on bot receives it (§3.2). *Not* an inbound HTTP endpoint (an
+>    earlier draft's plan), and *not* a DM (bots can't DM bots).
 > 2. **The trigger runs as an ordinary user-loop turn — no separate "mission Initiator."** User input
 >    and a scheduled trigger are the *same kind* of input to the one agent loop; only the source
 >    differs (decision 5 unifies them).
@@ -99,18 +100,18 @@ Same economics as the ingestion pipeline (read everything, emit almost nothing, 
                                    │  on a notify decision, run the job's ACTION cli
                                    ├──────────────────────────────┐
                                    ▼ (mission wake)                ▼ (alert-only milestone)
-                         companion-trigger                 discord-notify --user <you>
-                         (posts JSON to mission channel,           │ bot DM
-                          @-mentions the companion bot)            ▼
+              discord-notify --channel <missionCh>        discord-notify --user <you>
+                 --text "<@companionBot> {{message}}"             │ bot DM
+                         (same binary, plain-text post)           ▼
   ═════════════════════════════════│═══════════════════    your DM (no companion)
-  DISCORD  #mission-channel  ◀──────┘  <@companionBot> { "mission_id": …, "event": … }
+  DISCORD  #mission-channel  ◀──────┘  <@companionBot> LITE is 808.10 — −3.1% on the session
                                    │  (both the scheduler bot and the user's companion bot are here)
   ═════════════════════════════════▼════════════════════════════════════════════════
   COMPANION  (packages/discord + core)
    always-on bot gateway receives the channel msg
      → allowlisted-sender check (trust) + mission_id (routing)
      → summon if not embodied  (supersedes web — accepted)
-     → mission.advance({ mission_id, event })  ── ordinary user-loop turn, stamina-billed
+     → mission.advance({ event })  ── ordinary user-loop turn, stamina-billed
         → MissionService: load goal/plan/journal + event → reason (tools) → report in room
         → append to journal · re-arm or complete
                                    │
@@ -118,10 +119,11 @@ Same economics as the ingestion pipeline (read everything, emit almost nothing, 
                          report spoken in the embodied room (your DM by default) — ungated
 ```
 
-### 3.1 Tools side — the scheduler (shipped) + `companion-trigger` (to build)
+### 3.1 Tools side — the scheduler (shipped) + `discord-notify` as the action (shipped)
 
 Poll-until-condition, not a standing watch: a job **terminates on first `status:true`**, so there is
-no edge-trigger/cooldown problem. Canonical docs: `Tools/scheduler/docs/`.
+no edge-trigger/cooldown problem. Canonical docs: `Tools/scheduler/docs/`. **The Tools side is
+complete: the mission wake needs no new binary — it reuses the shipped `discord-notify`.**
 
 - **`scheduler`** (shipped) — single-instance loopback REST service; API + poll loop + embedded
   SQLite in one process. A **job** = predicate CLI + interval + action CLI + recurrence bounds. Each
@@ -133,25 +135,27 @@ no edge-trigger/cooldown problem. Canonical docs: `Tools/scheduler/docs/`.
   `list` / `get` / `cancel` / `pause` / `resume`.
 - **`ibkr-cli query`** (shipped) — the predicate; `query LITE le 810` prints `{status,message}`; the
   CLI authors the human-meaningful `message`.
-- **`companion-trigger`** (⬜ to build) — the mission's **action CLI**. It assembles a **structured
-  JSON** payload from *separate* args and posts it to the mission channel, @-mentioning the companion
-  bot. Separate args (not template interpolation) so the predicate's message — passed as one safe
-  `{{message}}` argv element — is JSON-encoded correctly rather than string-spliced into a JSON
-  template. Registered by the companion as the job's action:
+- **`discord-notify`** (shipped) — the mission's **action CLI, unchanged**. The companion registers it
+  as the job's action with the companion bot @-mentioned and `{{message}}` spliced in as **plain
+  text** (no structured JSON, so no `{{message}}` escaping hazard; v1 carries the event only and
+  routes by the single active mission — see §3.2). Registered by the companion as:
   ```
   schedule run --every 1s \
     --predicate "ibkr-cli query LITE le 810" \
-    --action    "companion-trigger --channel <missionCh> --mention <companionBotId> \
-                 --mission m_3f9c --event {{message}}"
+    --action    "discord-notify --channel <missionCh> --text <@companionBotId> {{message}}"
   ```
+  *(Decision 2026-07: plain text + the mention is sufficient for v1's single active mission, so
+  `discord-notify` covers the wake with zero new Tools code — no dedicated wake binary and no
+  structured JSON payload. Multi-mission later routes by one channel per mission, not by a structured
+  `mission_id`.)*
 
 ### 3.2 The wake transport — Discord channel + summon
 
-The scheduler's `companion-trigger` posts to a **shared mission channel** that both the **scheduler
-bot** and the **user's companion bot** are members of. The companion's bot gateway is **always on**
-(one bot per user, PR #26), so it receives the channel message regardless of embodiment. Three
-companion-side changes make the shipped Discord surface accept it — none a platform blocker, all in
-`packages/discord`:
+The scheduler's `discord-notify` action posts to a **shared mission channel** that both the
+**scheduler bot** and the **user's companion bot** are members of. The companion's bot gateway is
+**always on** (one bot per user, PR #26), so it receives the channel message regardless of embodiment.
+Three companion-side changes make the shipped Discord surface accept it — none a platform blocker, all
+in `packages/discord`:
 
 1. **Add the `GuildMessages` intent** (`discord-js-gateway.ts`) — without it Discord delivers **no**
    channel-message events to the bot (a mention does not override this).
@@ -172,19 +176,21 @@ companion-side changes make the shipped Discord surface accept it — none a pla
 
 **Trust vs. routing vs. content:**
 - **Trust** = `author.id` is the allowlisted trigger bot **and** it's the mission channel — stored in
-  the per-user `discord_config` row. *Not* the mention/`mission_id` in the message (anyone in the
-  channel could type those).
-- **Routing** = the `mission_id` field selects the mission (the companion could also infer it from
-  the per-user bot connection; `mission_id` makes it explicit and future-proofs multiple missions).
+  the per-user `discord_config` row. *Not* the message content (anyone in the channel could type it).
+- **Routing** = the companion routes the event to its **single `active` mission** (one at a time,
+  §1). No `mission_id` is carried in v1. Future multi-mission routes by **channel** — one mission
+  channel per mission (`mission_channel_id` on the mission record), so plain text still suffices.
 - **Content-readability** = the message @-mentions the **companion bot**, which delivers full
   `.content` without the privileged `MessageContent` intent. (Alternatively, enable `MessageContent`.)
 
-**Trigger payload** — `<@companionBot>` + a JSON body the companion strips-and-parses:
-```json
-{ "mission_id": "m_3f9c", "event": "LITE is 808.10 — −3.1% on the session" }
+**Trigger payload** — `<@companionBot>` + the event text as **plain text** (the companion strips the
+leading mention; the remainder is the event):
 ```
-v1 fields: `mission_id` (route) + `event` (what the predicate saw). Deferred (need the scheduler to
-expose `{{status}}` / `{{job_id}}` tokens): `status`, `job_id`, `fired_at`.
+<@companionBot> LITE is 808.10 — −3.1% on the session
+```
+v1 carries the `event` only (the predicate's `message` verbatim). Plain text, not JSON — so there is
+no `{{message}}` escaping hazard. Deferred (need the scheduler to expose `{{status}}` / `{{job_id}}`
+tokens, and would reintroduce a structured payload): `status`, `job_id`, `fired_at`.
 
 **Durability gap (accepted, with a v1 mitigation).** Scheduler→Discord is durable, but
 Discord→companion is **not**: if the companion worker is down when the message posts, Discord does not
@@ -217,10 +223,12 @@ trigger path needs the same logic callable programmatically — a small refactor
 the goal into `plan` + `validation_criteria` + the scheduler job(s) + the report target, then shows
 that plan to the user as a **proposal** (reuse propose→approve — a start-gate for a long-running,
 token-spending task). On approval the service: registers the job(s) via `scheduler-cli` (action =
-`companion-trigger …`), records `job_ids`, sets `status=active`, and **suspends the drive engine**.
+`discord-notify --channel <missionCh> --text "<@companionBot> {{message}}"`), records `job_ids`, sets
+`status=active`, and **suspends the drive engine**.
 
 **The mission turn (on-input).** Fired by a trigger *or* you messaging — handled identically. The
-bridge calls a companion-scoped **`mission.advance({ mission_id, event })`** WS method; the harness:
+bridge calls a companion-scoped **`mission.advance({ event })`** WS method (routed to the single
+`active` mission); the harness:
 1. **loads mission context** — a new memory-retrieval arm (invariant #3) injects `goal` + `plan` +
    recent `mission_journal` + the incoming `event`;
 2. **reasons** — pulls news (`ibkr-cli`, web fetch), analyzes against the criteria, recomputes the
@@ -276,8 +284,7 @@ mission triggers it.
 |---|---|---|
 | `Tools/scheduler` + `scheduler-cli` | poll-until-condition service + thin client | ✅ shipped |
 | `Tools/ibkr-cli` | `query` predicate (`{status,message}`) | ✅ shipped |
-| `Tools/discord-notify` | action CLI (DM/channel) — used by the alert-only milestone | ✅ shipped |
-| `Tools/companion-trigger` | **new** action CLI: assemble JSON from args, @-mention the bot, post to the mission channel | ⬜ |
+| `Tools/discord-notify` | action CLI (DM/channel) — **is the mission wake too**: `--channel <missionCh> --text "<@bot> {{message}}"` | ✅ shipped, no change |
 | `packages/discord` | `GuildMessages` intent; guild trigger path (allowlisted sender, trigger-only authority); programmatic `summon`; fetch-recent-on-reconnect | ⬜ |
 | `packages/db` | `discord_config` += `trigger_bot_id` + `mission_channel_id`; `missions` + `mission_journal` tables | ⬜ |
 | `packages/core` | `MissionService` (record, planner, `mission.advance` handler, mission-context memory arm, lifecycle); **drive-engine suspension gate** | ⬜ |
@@ -290,18 +297,21 @@ mission triggers it.
 → you're DMed when LITE crosses the threshold. No companion code. Proves the Tools spine end-to-end.
 
 **Milestone 1 — the mission (the real goal):** *monitor LITE, wake the companion on the threshold,
-have it reason and report, keep monitoring until stopped.*
-1. **`Tools`:** build **`companion-trigger`**.
-2. **`packages/discord`:** `GuildMessages` intent + guild trigger path + programmatic summon +
-   fetch-recent-on-reconnect.
-3. **`packages/db` + `packages/shared`:** `missions`/`mission_journal` schema, `discord_config`
+have it reason and report, keep monitoring until stopped.* **No Tools work — all companion:**
+1. **`packages/discord`:** `GuildMessages` intent + guild trigger path (allowlisted sender,
+   trigger-only authority) + programmatic summon + fetch-recent-on-reconnect.
+2. **`packages/db` + `packages/shared`:** `missions`/`mission_journal` schema, `discord_config`
    additions, contracts.
-4. **`packages/core`/`packages/api` — `MissionService`:** planner + start-approval; `mission.advance`
+3. **`packages/core`/`packages/api` — `MissionService`:** planner + start-approval; `mission.advance`
    (load → reason → report → re-arm); `create`/`list`/`stop`; drive suspension; vitality in reports.
+
+See `plans/missions-implementation-plan.md` for the step-by-step build plan and verification gates.
 
 **Deferred:** the continuous news-ingest + CPI/PCE/Fed/earnings + swing-prediction depth (the fuzzy,
 larger half); a dedicated mission budget; the standing outward-grant (until an effectful-tool
-mission); the scheduler `{{status}}`/`{{job_id}}` tokens; richer cron schedules.
+mission); the scheduler `{{status}}`/`{{job_id}}` tokens; richer cron schedules; **multiple concurrent
+missions** (which would reintroduce explicit `mission_id` routing — solved then by one channel per
+mission).
 
 > **Self-paced cadence needs no new mechanism.** A mission that should wake on its *own clock* (e.g.
 > "review the news every 6 h") just registers a **recurring scheduler job** whose predicate always
@@ -315,6 +325,6 @@ mission); the scheduler `{{status}}`/`{{job_id}}` tokens; richer cron schedules.
 - Agent loop, propose→approve, vitality wallets — `architecture.md` §4.1, §4.4, §4.8
 - Embodiment fencing / supersede — `companion-discord.md` §4, `plans/embodiment-handoff-fencing.md`
 - Drive-based motivation (what missions suspend) — `companion-motivation.md`
-- Tool acquisition (how `scheduler-cli` / `ibkr-cli` / `companion-trigger` plug in) — `companion-tools.md`
+- Tool acquisition (how `scheduler-cli` / `ibkr-cli` / `discord-notify` plug in) — `companion-tools.md`
 - Shipped scheduler (poll-until-condition, `{status,message}`, trust) — `Tools/scheduler/docs/`;
   predicate — `Tools/ibkr-cli/docs/api-reference.md` (`query` mode)
