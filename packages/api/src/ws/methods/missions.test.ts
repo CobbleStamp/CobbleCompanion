@@ -1,6 +1,7 @@
 /**
  * The mission WS methods (companion-missions.md §3.4). Covers the request/response methods
- * (`mission.list` / `mission.stop`) over a real MissionService on an in-memory DB + fakes, the
+ * (`mission.list` / `mission.journal` / `mission.stop`) over a real MissionService on an
+ * in-memory DB + fakes, the
  * registration guard (missions register only when both the service and scheduler are wired), and
  * the `withMissionJournal` wrapper that appends the wake turn's report to the journal.
  */
@@ -101,7 +102,7 @@ describe('missionMethods', () => {
   it('registers the mission methods when both are wired', () => {
     expect(Object.keys(missionMethods(deps())).sort()).toEqual([
       'mission.advance',
-      'mission.create',
+      'mission.journal',
       'mission.list',
       'mission.stop',
     ]);
@@ -142,6 +143,61 @@ describe('missionMethods', () => {
     expect(result.mission.status).toBe('stopped');
     expect(await service.hasActive(companionId)).toBe(false);
     expect(motivationRequest).toHaveBeenCalledWith(companionId);
+  });
+
+  it('mission.journal returns the recent entries as DTOs, newest first', async () => {
+    const draft = await service.createDraft(companionId, 'monitor');
+    await service.recordJournal(draft.id, { event: 'first wake', findings: 'baseline set' });
+    await service.recordJournal(draft.id, { event: 'second wake', findings: 'drifting down' });
+    const methods = missionMethods(deps());
+
+    const result = (await methods['mission.journal']!(ctx, { missionId: draft.id })) as {
+      entries: { event: string | null; findings: string | null; turnAt: string }[];
+    };
+
+    expect(result.entries).toHaveLength(2);
+    expect(result.entries[0]!.event).toBe('second wake');
+    expect(result.entries[0]!.findings).toBe('drifting down');
+    expect(result.entries[1]!.event).toBe('first wake');
+    // Dates are projected as ISO strings.
+    expect(typeof result.entries[0]!.turnAt).toBe('string');
+  });
+
+  it('mission.journal respects the limit param', async () => {
+    const draft = await service.createDraft(companionId, 'monitor');
+    await service.recordJournal(draft.id, { findings: 'one' });
+    await service.recordJournal(draft.id, { findings: 'two' });
+    await service.recordJournal(draft.id, { findings: 'three' });
+    const methods = missionMethods(deps());
+
+    const result = (await methods['mission.journal']!(ctx, {
+      missionId: draft.id,
+      limit: 2,
+    })) as { entries: { findings: string | null }[] };
+
+    expect(result.entries.map((entry) => entry.findings)).toEqual(['three', 'two']);
+  });
+
+  it('mission.journal refuses a mission that belongs to another companion (tenancy)', async () => {
+    const [other] = await db.insert(users).values({ email: 'j@example.com' }).returning();
+    const [otherCompanion] = await db
+      .insert(companions)
+      .values({ ownerId: other!.id, name: 'Fen', form: 'cat', temperament: 'aloof' })
+      .returning();
+    const foreign = await service.createDraft(otherCompanion!.id, 'not yours');
+    await service.recordJournal(foreign.id, { findings: 'secret' });
+    const methods = missionMethods(deps());
+
+    await expect(methods['mission.journal']!(ctx, { missionId: foreign.id })).rejects.toThrow(
+      /no such mission/,
+    );
+  });
+
+  it('mission.journal rejects an unknown mission id', async () => {
+    const methods = missionMethods(deps());
+    await expect(
+      methods['mission.journal']!(ctx, { missionId: '00000000-0000-4000-8000-000000000000' }),
+    ).rejects.toThrow(/no such mission/);
   });
 
   it('mission.stop refuses a mission that belongs to another companion (tenancy)', async () => {

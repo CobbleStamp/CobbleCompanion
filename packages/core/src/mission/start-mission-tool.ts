@@ -1,7 +1,7 @@
 /**
  * The `start_mission` tool (effectful) — the single up-front approval that begins a mission
- * (companion-missions.md §4, §5.1). A `mission.create(goal)` planning turn
- * decomposes the goal and calls this tool with the plan + the machine predicate that drives the
+ * (companion-missions.md §4, §5.1). The owner states a goal in an ordinary chat turn; the model
+ * decomposes it and calls this tool with the plan + the machine predicate that drives the
  * wake; the shipped propose→approve gate (`tools/gate.ts`) holds it as a pending proposal and
  * EXITs the loop, so the owner confirms it in the Discord proposal card. On confirm the tool body
  * runs once: it arms the scheduler wake job (whose action @-mentions the companion bot so the

@@ -234,7 +234,7 @@ list in `implementation.md`):
 
 ```mermaid
 stateDiagram-v2
-    [*] --> draft: mission.create (planning turn)
+    [*] --> draft: chat planning turn (start_mission)
     draft --> active: start_mission approved → arm jobs, suspend drives
     active --> stopped: mission.stop (cancel jobs, resume drives)
     active --> complete: criteria met (deferred — §11)
@@ -252,13 +252,14 @@ ends via the user's `mission.stop`.
 
 ## 5. The two mission turns — create and advance
 
-Both entry points are ordinary agent-loop turns run over the connection's serial chain, exactly like
-`messages.send`; only the seed input differs. The WS-method contracts are owned by
-`companion-endpoints.md` §4.13.
+Both are ordinary agent-loop turns run over the connection's serial chain: creation *is* a
+`messages.send` chat turn, and `mission.advance` is its own WS method seeded with the wake event.
+The WS-method contracts are owned by `companion-endpoints.md` §4.13.
 
-### 5.1 `mission.create` — plan, approve, activate
+### 5.1 Creating a mission — plan, approve, activate (a chat turn)
 
-`mission.create(goal)` runs a **normal planning turn** seeded with the goal. The model decomposes it
+The owner states the goal **in ordinary chat** (`messages.send`) — there is no separate create
+method. That turn is the planning turn: the model decomposes the goal
 into a `plan` + `validation_criteria` + the scheduler job(s) + the report target, then calls the
 effectful **`start_mission`** tool. Because that tool is `effectful`, the shipped propose→approve
 gate (`architecture.md` §4.4) holds it as a **proposal** and exits the loop — the plan surfaces to
@@ -368,7 +369,7 @@ weakening it:
 | `@cobble/db` | `discord_config` += `trigger_bot_id` / `mission_channel_id` / `bot_user_id`; `missions` + `mission_journal` tables; the one-active partial unique index | ✅ |
 | `@cobble/discord` | `GuildMessages` intent; guild trigger path (trust gate, mention-parse, trigger-only authority); programmatic summon; `bot_user_id` capture at ClientReady | ✅ |
 | `@cobble/core` | `MissionService` + stores; the `start_mission` effectful tool; the `scheduler-cli`-backed `MissionScheduler`; the mission-retrieve arm; the drive-suspension gate; the propose→approve mission-mode bypass | ✅ |
-| `@cobble/api` | `mission.create` / `advance` / `list` / `stop` WS methods; `discord.config.setMissionWake`; `SCHEDULER_URL` config; full composition-root wiring | ✅ |
+| `@cobble/api` | `mission.advance` / `list` / `journal` / `stop` WS methods; `discord.config.setMissionWake`; `SCHEDULER_URL` config; full composition-root wiring | ✅ |
 | `@cobble/shared` | mission + trigger + mission-wake contracts | ✅ |
 | `@cobble/web` | a Missions section in the Discord settings panel (trigger-bot id + mission-channel id, readiness indicator) | ✅ |
 

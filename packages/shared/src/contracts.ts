@@ -1291,36 +1291,7 @@ export interface MissionJournalEntryDto {
   readonly turnAt: string;
 }
 
-/**
- * The parsed mission trigger (companion-missions.md §3.2): the event text left after the
- * leading bot-mention is stripped from the channel post. v1 carries the event only —
- * routing is by the companion's single active mission, so there is no `mission_id`.
- */
-export interface TriggerEvent {
-  readonly event: string;
-}
-
-/** `mission.create` params — the goal the user assigns; the planner decomposes it. */
-export interface MissionCreateParams {
-  readonly goal: string;
-}
-
-/** `mission.pause` / `mission.stop` params — the mission to act on. */
-export interface MissionLifecycleParams {
-  readonly missionId: string;
-}
-
-/** `mission.advance` params — the event that woke the turn (a trigger, or the user). */
-export interface MissionAdvanceParams {
-  readonly event: string;
-}
-
-/** `mission.create` params validator — the goal the planner decomposes. */
-export const missionCreateSchema = z.object({
-  goal: z.string().trim().min(1).max(2_000),
-});
-
-/** `mission.pause` / `mission.stop` params validator — which mission to act on. */
+/** `mission.stop` params validator — which mission to act on. */
 export const missionLifecycleSchema = z.object({
   missionId: z.string().uuid(),
 });
@@ -1328,6 +1299,15 @@ export const missionLifecycleSchema = z.object({
 /** `mission.advance` params validator — the event text that woke the turn. */
 export const missionAdvanceSchema = z.object({
   event: z.string().trim().min(1).max(8_000),
+});
+
+/**
+ * `mission.journal` params validator — the progress view (companion-missions.md §4):
+ * the most-recent journal rows for one of the companion's missions, newest first.
+ */
+export const missionJournalSchema = z.object({
+  missionId: z.string().uuid(),
+  limit: z.number().int().min(1).max(50).optional(),
 });
 
 // --- Generic API envelope (patterns.md "API Response Format") ---

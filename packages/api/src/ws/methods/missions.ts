@@ -1,23 +1,32 @@
-import type { Logger, MissionRecord, MissionScheduler, MissionService } from '@cobble/core';
+import type {
+  Logger,
+  MissionJournalRecord,
+  MissionRecord,
+  MissionScheduler,
+  MissionService,
+} from '@cobble/core';
 import {
   missionAdvanceSchema,
-  missionCreateSchema,
+  missionJournalSchema,
   missionLifecycleSchema,
   type ChatStreamEvent,
   type MissionDto,
+  type MissionJournalEntryDto,
 } from '@cobble/shared';
 import type { AppDeps } from '../../app.js';
 import { overCapGuard } from '../../quota-guard.js';
-import type { WsMethods } from '../dispatch.js';
+import type { WsCallContext, WsMethods } from '../dispatch.js';
 import { companionOf, NotFoundError, OverCapError, parseParams } from './helpers.js';
 import { emitAll, embodiedCompanion, leaseGuard, yieldRoom } from './turn-stream.js';
 
 /**
- * The mission WS methods (companion-missions.md §3.4, §5.2). Two are
- * turn-producers — `mission.create` runs the planning turn that proposes `start_mission`, and
- * `mission.advance` runs the wake turn (a trigger or the owner messaging) — so they go through
- * the connection's serial chain (D2′) exactly like `messages.send`. `mission.list`/`mission.stop`
- * are plain request/response over the tested {@link MissionService}.
+ * The mission WS methods (companion-missions.md §3.4, §5.2). One is a turn-producer —
+ * `mission.advance` runs the wake turn (a trigger or the owner messaging) — so it goes through
+ * the connection's serial chain (D2′) exactly like `messages.send`. (Mission *creation* is
+ * chat-initiated: the owner states the goal in an ordinary turn and the model proposes the
+ * effectful `start_mission` — there is no separate create method.) `mission.list` /
+ * `mission.journal` / `mission.stop` are plain request/response over the tested
+ * {@link MissionService}.
  *
  * Registered ONLY when both a {@link MissionService} and a {@link MissionScheduler} are wired
  * (a deployment without the scheduler-cli host doesn't expose missions), so every method below
@@ -30,39 +39,17 @@ export function missionMethods(deps: AppDeps): WsMethods {
   }
   const { identity, embodiment, harness, quota, motivation, presence, logger } = deps;
 
-  return {
-    'mission.create': async (ctx, params) => {
-      const { goal } = parseParams(missionCreateSchema, params, 'a mission goal is required');
-      const {
-        id: companionId,
-        dto: companion,
-        connectionId,
-        claimSeq,
-      } = await embodiedCompanion({ identity, embodiment }, ctx);
-      presence.recordActivity(companionId, { connectionId, claimSeq });
-      const overCap = await overCapGuard(quota, companionId);
-      if (overCap) {
-        throw new OverCapError(overCap);
-      }
-      // A normal turn seeded with the goal: the model decomposes it and calls `start_mission`
-      // (effectful), which the approval gate holds as a proposal for the owner to confirm.
-      const superseded = await ctx.connection.runSerial(() =>
-        emitAll(
-          ctx,
-          harness.runTurn({
-            companion,
-            userContent: planningPrompt(goal),
-            ownerId: ctx.userId,
-            holdsLease: leaseGuard(embodiment, companionId, connectionId, claimSeq),
-          }),
-        ),
-      );
-      if (superseded) {
-        yieldRoom(ctx, companionId);
-      }
-      return { done: true };
-    },
+  /** Resolve a mission by id, tenancy-checked to the embodied companion. */
+  const ownMission = async (ctx: WsCallContext, missionId: string): Promise<MissionRecord> => {
+    const companionId = await companionOf(embodiment, ctx);
+    const mission = await missions.get(missionId);
+    if (!mission || mission.companionId !== companionId) {
+      throw new NotFoundError('no such mission');
+    }
+    return mission;
+  };
 
+  return {
     'mission.advance': async (ctx, params) => {
       const { event } = parseParams(missionAdvanceSchema, params, 'an event is required');
       const {
@@ -122,33 +109,30 @@ export function missionMethods(deps: AppDeps): WsMethods {
       return { missions: records.map(toMissionDto) };
     },
 
+    'mission.journal': async (ctx, params) => {
+      const { missionId, limit } = parseParams(
+        missionJournalSchema,
+        params,
+        'a mission id is required',
+      );
+      const mission = await ownMission(ctx, missionId);
+      const entries = await missions.recentJournal(mission.id, limit);
+      return { entries: entries.map(toJournalEntryDto) };
+    },
+
     'mission.stop': async (ctx, params) => {
       const { missionId } = parseParams(missionLifecycleSchema, params, 'a mission id is required');
-      const companionId = await companionOf(embodiment, ctx);
-      const mission = await missions.get(missionId);
       // Tenancy: only the embodied companion's own missions are actionable.
-      if (!mission || mission.companionId !== companionId) {
-        throw new NotFoundError('no such mission');
-      }
+      const mission = await ownMission(ctx, missionId);
       // Cancel the wake jobs first so no trigger fires after the mission is gone; a cancel
       // failure is logged but never blocks the state transition (the mission still stops).
       await cancelJobs(missionScheduler, mission.jobIds, logger, missionId);
       const stopped = await missions.stop(missionId);
       // Leaving `active` re-enables drives on the next tick; nudge so it happens promptly.
-      motivation.request(companionId);
+      motivation.request(mission.companionId);
       return { mission: stopped ? toMissionDto(stopped) : toMissionDto(mission) };
     },
   };
-}
-
-/** The seed message for a `mission.create` planning turn. */
-function planningPrompt(goal: string): string {
-  return (
-    `I'd like you to take on a mission: "${goal}". Think about how you'd pursue it as a ` +
-    `long-running background task, then call the start_mission tool with a concrete plan, the ` +
-    `success criteria that tell you when it's complete, and the machine predicate + interval to ` +
-    `monitor. If this isn't a good fit for a background mission, say so instead of starting one.`
-  );
 }
 
 /**
@@ -228,6 +212,19 @@ async function cancelJobs(
       });
     }
   }
+}
+
+/** Project a stored journal row to the surface DTO (dates as ISO strings). */
+function toJournalEntryDto(record: MissionJournalRecord): MissionJournalEntryDto {
+  return {
+    id: record.id,
+    missionId: record.missionId,
+    event: record.event,
+    findings: record.findings,
+    prediction: record.prediction,
+    decision: record.decision,
+    turnAt: record.turnAt.toISOString(),
+  };
 }
 
 /** Project a stored mission record to the surface DTO (dates as ISO strings). */
