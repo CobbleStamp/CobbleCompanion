@@ -1,6 +1,8 @@
 import type {
   Citation,
   EpisodeDto,
+  MissionDto,
+  MissionJournalEntryDto,
   FeedResultDto,
   GrowthDto,
   LeadDto,
@@ -18,6 +20,8 @@ import {
   renderFed,
   renderGrowth,
   renderMemory,
+  renderMission,
+  renderMissionStopped,
   renderPantry,
   renderReading,
   renderRecall,
@@ -241,5 +245,78 @@ describe('clampToDiscordLimit', () => {
     const out = clampToDiscordLimit(long);
     expect(out.length).toBeLessThanOrEqual(DISCORD_MESSAGE_LIMIT);
     expect(out.endsWith('…')).toBe(true);
+  });
+});
+
+describe('renderMission', () => {
+  const mission: MissionDto = {
+    id: 'm1',
+    goal: 'monitor LITE and warn on a drop below $810',
+    plan: 'poll the quote each wake; scan news for the driver; report move + outlook',
+    validationCriteria: 'LITE closes below $810 and the drop is reported',
+    status: 'active',
+    jobIds: ['job-1'],
+    createdAt: '2026-06-28T09:00:00.000Z',
+    updatedAt: '2026-07-01T14:02:00.000Z',
+  };
+  const entry: MissionJournalEntryDto = {
+    id: 'e1',
+    missionId: 'm1',
+    event: 'LITE is 809.40 — −3.2% on the session',
+    findings: 'Broke through 810 on the Fed minutes; volume 2.1× average.',
+    prediction: null,
+    decision: null,
+    turnAt: '2026-07-01T14:02:00.000Z',
+  };
+
+  it('renders goal, plan, criteria, and the journal timeline for an active mission', () => {
+    const out = renderMission(mission, [entry]);
+    expect(out).toContain('Mission — active since 2026-06-28');
+    expect(out).toContain('**Goal:** monitor LITE and warn on a drop below $810');
+    expect(out).toContain('**Plan:** poll the quote each wake');
+    expect(out).toContain('**Done when:** LITE closes below $810');
+    expect(out).toContain('2026-07-01 14:02');
+    expect(out).toContain('LITE is 809.40');
+    expect(out).toContain('> Broke through 810 on the Fed minutes');
+    expect(out).toContain('`/mission action:stop`');
+  });
+
+  it('says the watch is armed when an active mission has no turns yet', () => {
+    const out = renderMission(mission, []);
+    expect(out).toContain('no turns yet');
+  });
+
+  it('heads a non-active mission with its status and drops the stop hint', () => {
+    const stopped = { ...mission, status: 'stopped' as const };
+    const out = renderMission(stopped, [entry]);
+    expect(out).toContain('Mission — stopped 2026-07-01');
+    expect(out).toContain('(most recent)');
+    expect(out).not.toContain('action:stop');
+  });
+
+  it('marks an entry with no conclusion and truncates long fields', () => {
+    const bare: MissionJournalEntryDto = { ...entry, findings: null };
+    const long = { ...mission, plan: 'p'.repeat(2_000) };
+    const out = renderMission(long, [bare]);
+    expect(out).toContain('(no conclusion recorded)');
+    expect(out.length).toBeLessThan(1_200);
+  });
+});
+
+describe('renderMissionStopped', () => {
+  it('confirms the stop with the goal and the cancelled job count', () => {
+    const out = renderMissionStopped({
+      id: 'm1',
+      goal: 'monitor LITE and warn on a drop below $810',
+      plan: 'p',
+      validationCriteria: 'c',
+      status: 'stopped',
+      jobIds: ['job-1'],
+      createdAt: '2026-06-28T09:00:00.000Z',
+      updatedAt: '2026-07-02T10:00:00.000Z',
+    });
+    expect(out).toContain('Mission stopped');
+    expect(out).toContain('monitor LITE');
+    expect(out).toContain('1 wake job');
   });
 });

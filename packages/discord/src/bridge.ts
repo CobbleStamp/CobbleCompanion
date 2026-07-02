@@ -115,6 +115,7 @@ interface ActiveEmbodiment {
 
 export const SUMMON_COMMAND = 'summon';
 export const STATUS_COMMAND = 'status';
+export const MISSION_COMMAND = 'mission';
 
 /** Shown when the owner chats or runs a view while the companion is dormant. */
 const DORMANT_NOTICE = 'I’m not here right now — `/summon` to bring me into this chat.';
@@ -137,17 +138,53 @@ export class CompanionBridge {
   /**
    * Router hook (owner command): `/summon` + `/status` here; the rest are read-only
    * views. The views are companion-scoped (they need the live claim), so a read-only
-   * command while dormant is refused with the same "summon first" prompt as chat.
+   * command while dormant is refused with the same "summon first" prompt as chat —
+   * EXCEPT `/mission` (companion-missions.md §5.3): the mission kill switch must work
+   * even when the companion is dormant (e.g. after a worker restart with jobs still
+   * armed), so it summons first, exactly like a trigger.
    */
   async handleOwnerCommand(ctx: SlashCommandContext): Promise<void> {
     if (ctx.command.name === SUMMON_COMMAND) return this.summon(ctx);
     if (ctx.command.name === STATUS_COMMAND) return this.status(ctx);
-    const embodiment = this.active.get(ctx.userId);
+    let embodiment = this.active.get(ctx.userId) ?? null;
+    if (!embodiment && ctx.command.name === MISSION_COMMAND) {
+      embodiment = await this.summonForMissionCommand(ctx);
+      if (!embodiment) return; // summonForMissionCommand already replied
+    }
     if (!embodiment) {
       await ctx.reply(DORMANT_NOTICE);
       return;
     }
     return this.opts.onReadOnlyCommand(ctx, embodiment.connection);
+  }
+
+  /**
+   * Summon for a dormant `/mission` command: a greet-less embodiment in the command's
+   * channel, like a trigger wake (force-claims — supersedes another surface by design,
+   * §3.4). On failure it replies with guidance and returns null; the view itself is
+   * then the only reply on success, so there is no "I'm here" chatter.
+   */
+  private async summonForMissionCommand(
+    ctx: SlashCommandContext,
+  ): Promise<ActiveEmbodiment | null> {
+    const config = await this.opts.configStore.findByUserId(ctx.userId);
+    if (!config) {
+      await ctx.reply(
+        'I’m not set up here yet — add a bot token in your CobbleCompanion settings.',
+      );
+      return null;
+    }
+    const embodiment = await this.establishEmbodiment({
+      userId: ctx.userId,
+      companionId: config.boundCompanionId,
+      encryptedBotToken: config.encryptedBotToken,
+      channelId: ctx.command.channelId,
+      greet: false,
+    });
+    if (!embodiment) {
+      await ctx.reply('I couldn’t come back to check — try `/summon`, then `/mission` again.');
+    }
+    return embodiment;
   }
 
   /**

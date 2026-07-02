@@ -465,3 +465,57 @@ describe('CompanionBridge — mission trigger', () => {
     expect(h.openedDms).toHaveLength(0);
   });
 });
+
+describe('CompanionBridge — /mission summon-if-dormant', () => {
+  it('summons (without the arrival greeting reply) and dispatches while dormant', async () => {
+    const h = makeBridge();
+    const { ctx, replies } = cmdCtx('mission');
+
+    await h.bridge.handleOwnerCommand(ctx);
+
+    // The kill switch works from dormant: a fresh embodiment is claimed…
+    expect(h.connections[0]?.connected).toBe(true);
+    expect(h.bridge.isSummoned('u1')).toBe(true);
+    // …and the command goes straight to the read-only handler over it.
+    expect(h.readOnly).toHaveLength(1);
+    expect(h.readOnly[0]!.ctx.command.name).toBe('mission');
+    expect(h.readOnly[0]!.connection).toBe(h.connections[0]);
+    // No "I'm here" summon reply — the view itself is the reply.
+    expect(replies).toEqual([]);
+  });
+
+  it('uses the live connection with no re-summon when already embodied', async () => {
+    const h = makeBridge();
+    await h.bridge.handleOwnerCommand(cmdCtx('summon').ctx);
+    const { ctx } = cmdCtx('mission');
+
+    await h.bridge.handleOwnerCommand(ctx);
+
+    expect(h.connections).toHaveLength(1);
+    expect(h.readOnly).toHaveLength(1);
+  });
+
+  it('replies with guidance when the dormant summon fails', async () => {
+    const h = makeBridge({ outcome: 'superseded' });
+    const { ctx, replies } = cmdCtx('mission');
+
+    await h.bridge.handleOwnerCommand(ctx);
+
+    expect(h.readOnly).toEqual([]);
+    expect(replies[0]).toContain('/summon');
+  });
+
+  it('points an unconfigured user at settings instead of summoning', async () => {
+    const h = makeBridge({
+      overrides: {
+        configStore: { ...configStore, findByUserId: async () => null },
+      },
+    });
+    const { ctx, replies } = cmdCtx('mission');
+
+    await h.bridge.handleOwnerCommand(ctx);
+
+    expect(h.connections).toEqual([]);
+    expect(replies[0]).toContain('settings');
+  });
+});
