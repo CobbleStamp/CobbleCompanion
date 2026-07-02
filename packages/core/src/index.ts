@@ -18,6 +18,16 @@ export {
 export { createApprovalGate, createLoggingAfterToolCall } from './tools/gate.js';
 export { DrizzleLeadStore, type LeadRecord, type LeadStore } from './tools/lead-store.js';
 export {
+  DrizzleMissionStore,
+  DrizzleMissionJournalStore,
+  type MissionStore,
+  type MissionJournalStore,
+  type MissionRecord,
+  type MissionActivation,
+  type MissionJournalInput,
+  type MissionJournalRecord,
+} from './mission/mission-store.js';
+export {
   DrizzleProceduralStore,
   type ProceduralStore,
   type ProcedureRecord,

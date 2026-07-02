@@ -1,14 +1,12 @@
 import { and, desc, eq } from 'drizzle-orm';
+import { missionJournal, missions, type Database } from '@cobble/db';
 import type { MissionStatus } from '@cobble/shared';
-import type { Database } from './client.js';
-import { missionJournal, missions } from './schema.js';
 
 /**
  * Data access for `missions` + `mission_journal` (companion-missions.md §3.4). Lives in
- * `@cobble/db` — the shared data layer — so `@cobble/core` (the `MissionService`) and any
- * tooling use it without importing each other. The mission concept, planner, and advance
- * loop live in core; this module owns only durable persistence and the atomic lifecycle
- * transitions.
+ * `@cobble/core` alongside the other domain stores (leads, proposals, memory), importing the
+ * table definitions from `@cobble/db`. The mission concept, planner, and advance loop live in
+ * core; this module owns only durable persistence and the atomic lifecycle transitions.
  *
  * "One active mission per companion" is enforced at the DB level by a partial unique index
  * (`missions_one_active_per_companion_uniq`); {@link MissionStore.activate} relies on it as

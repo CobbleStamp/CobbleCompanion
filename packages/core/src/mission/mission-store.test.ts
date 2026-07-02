@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { type Database } from './client.js';
+import { companions, users, type Database } from '@cobble/db';
+import { createTestDatabase } from '@cobble/db/testing';
 import { DrizzleMissionJournalStore, DrizzleMissionStore } from './mission-store.js';
-import { companions, users } from './schema.js';
-import { createTestDatabase } from './testing.js';
 
 describe('DrizzleMissionStore (PGlite)', () => {
   let db: Database;

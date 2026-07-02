@@ -214,6 +214,54 @@ describe('MotivationEngine.tick', () => {
     expect(await rewards.list(companionId, 10)).toHaveLength(2);
   });
 
+  it('suspends the drive engine while a mission is active (companion-missions.md §1)', async () => {
+    // Plenty of fresh leads — a move WOULD be chosen if the mission gate were absent.
+    await seedLeads(4);
+    const suspended = new MotivationEngine({
+      identity,
+      presence,
+      energy,
+      leads,
+      semantic,
+      pipeline: new FakeReadPipeline(semantic),
+      memory,
+      rewards,
+      llm: new FakeLlmGateway(['unused']),
+      model: 'fake-model',
+      missions: { hasActive: async () => true },
+      logger: silent,
+    });
+
+    const result = await suspended.tick(companionId);
+
+    expect(result.initiated).toBe(false);
+    expect(result.move).toBeNull();
+    expect(await usedEnergy()).toBe(0); // suspended before any spend
+    expect(await assistantNotes()).toHaveLength(0);
+  });
+
+  it('does not suspend when the companion has no active mission', async () => {
+    await seedLeads(4);
+    const notSuspended = new MotivationEngine({
+      identity,
+      presence,
+      energy,
+      leads,
+      semantic,
+      pipeline: new FakeReadPipeline(semantic),
+      memory,
+      rewards,
+      llm: new FakeLlmGateway(['Read ', 'three things.']),
+      model: 'fake-model',
+      missions: { hasActive: async () => false },
+      logger: silent,
+    });
+
+    const result = await notSuspended.tick(companionId);
+
+    expect(result.initiated).toBe(true);
+  });
+
   it('attributes a curiosity burst to the user’s top interest belief (Phase 12)', async () => {
     const companion = await identity.getCompanionById(companionId);
     const userModel = new DrizzleUserModelStore(db);

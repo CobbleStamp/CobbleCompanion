@@ -50,6 +50,14 @@ export interface MotivationEngineDeps {
   readonly llm: LlmGateway;
   /** Cheap model for the report note (reuse the ingestion model). */
   readonly model: string;
+  /**
+   * Mission gate (companion-missions.md §1, §3.4). When present and the companion has an
+   * `active` mission, the drive engine is SUSPENDED — a paid mission is never preempted by
+   * curiosity and never pollutes the learned drive weights. Omitted = no mission gating
+   * (the pre-missions behaviour). A narrow interface (not the full store) keeps the coupling
+   * to just the one cheap check.
+   */
+  readonly missions?: { hasActive(companionId: string): Promise<boolean> };
   readonly logger: Logger;
 }
 
@@ -95,6 +103,18 @@ export class MotivationEngine {
     try {
       const companion = await identity.getCompanionById(companionId);
       if (!companion) {
+        return IDLE;
+      }
+
+      // Mission gate (companion-missions.md §1): while a mission is `active`, the drive
+      // engine is suspended and this companion stays idle — the mission serves via the
+      // input-driven advance loop, not proactive initiation. A single cheap indexed read,
+      // like the sensing below, so a suspended tick stays free.
+      if (this.deps.missions && (await this.deps.missions.hasActive(companionId))) {
+        logger.info('motivation tick suspended; an active mission holds the companion', {
+          operation: 'motivation.tick',
+          companionId,
+        });
         return IDLE;
       }
 
