@@ -74,6 +74,8 @@ function record(): DiscordConfigRecord {
     ownerDiscordUserId: 'owner-123',
     linkCode: null,
     linkCodeIssuedAt: null,
+    triggerBotId: null,
+    missionChannelId: null,
     createdAt: new Date(0),
     updatedAt: new Date(0),
   };
@@ -86,6 +88,7 @@ const configStore: DiscordConfigStore = {
   upsert: async () => record(),
   reissueLinkCode: async () => record(),
   bindOwner: async () => true,
+  configureMissionWake: async () => record(),
   delete: async () => {},
 };
 
@@ -153,6 +156,8 @@ interface Harness {
   chats: DirectMessageContext[];
   readOnly: Array<{ ctx: SlashCommandContext; connection: CompanionConnection }>;
   proposalActions: Array<{ ctx: ProposalActionContext; connection: CompanionConnection }>;
+  advances: Array<{ connection: CompanionConnection; event: string; userId: string }>;
+  openedDms: Array<{ userId: string; discordUserId: string }>;
 }
 
 function makeBridge(
@@ -168,6 +173,8 @@ function makeBridge(
   const chats: DirectMessageContext[] = [];
   const readOnly: Harness['readOnly'] = [];
   const proposalActions: Harness['proposalActions'] = [];
+  const advances: Harness['advances'] = [];
+  const openedDms: Harness['openedDms'] = [];
   const bridge = new CompanionBridge({
     connectionFactory: () => {
       const connection = new FakeConnection();
@@ -180,6 +187,10 @@ function makeBridge(
     notify: async (userId, channelId, content) => {
       notices.push({ userId, channelId, content });
     },
+    openOwnerDm: async (userId, discordUserId) => {
+      openedDms.push({ userId, discordUserId });
+      return `dm:${discordUserId}`;
+    },
     onChat: (ctx) => {
       chats.push(ctx);
     },
@@ -189,10 +200,13 @@ function makeBridge(
     onProposalAction: (ctx, connection) => {
       proposalActions.push({ ctx, connection });
     },
+    onMissionAdvance: (connection, _post, event, userId) => {
+      advances.push({ connection, event, userId });
+    },
     logger: silent,
     ...opts.overrides,
   });
-  return { bridge, connections, notices, chats, readOnly, proposalActions };
+  return { bridge, connections, notices, chats, readOnly, proposalActions, advances, openedDms };
 }
 
 describe('CompanionBridge — summon', () => {
@@ -384,5 +398,66 @@ describe('CompanionBridge — read-only views', () => {
     expect(h.readOnly[0]?.ctx.command.name).toBe('memory');
     // The summoned connection is handed to the view (so it can call companion-scoped methods).
     expect(h.readOnly[0]?.connection).toBe(h.connections[0]);
+  });
+});
+
+describe('CompanionBridge — mission trigger', () => {
+  it('summons-if-dormant, opens the owner DM, and advances the mission', async () => {
+    const h = makeBridge();
+
+    await h.bridge.handleTrigger('u1', 'LITE is 808');
+
+    expect(h.openedDms).toEqual([{ userId: 'u1', discordUserId: 'owner-123' }]);
+    expect(h.bridge.isSummoned('u1')).toBe(true);
+    expect(h.connections).toHaveLength(1);
+    expect(h.advances).toHaveLength(1);
+    expect(h.advances[0]?.event).toBe('LITE is 808');
+  });
+
+  it('advances over the live connection when already embodied (no re-summon)', async () => {
+    const h = makeBridge();
+    const { ctx } = cmdCtx('summon');
+    await h.bridge.handleOwnerCommand(ctx);
+    expect(h.connections).toHaveLength(1);
+
+    await h.bridge.handleTrigger('u1', 'threshold crossed');
+
+    // No new connection opened, no owner DM re-opened — reused the live embodiment.
+    expect(h.connections).toHaveLength(1);
+    expect(h.openedDms).toHaveLength(0);
+    expect(h.advances).toHaveLength(1);
+    expect(h.advances[0]?.event).toBe('threshold crossed');
+  });
+
+  it('drops a trigger for an unlinked user (no owner DM to report into)', async () => {
+    const unlinkedStore: DiscordConfigStore = {
+      findByUserId: async () => ({
+        userId: 'u1',
+        encryptedBotToken: 'v1.a.b.c',
+        boundCompanionId: 'companion-u1',
+        ownerDiscordUserId: null,
+        linkCode: null,
+        linkCodeIssuedAt: null,
+        triggerBotId: null,
+        missionChannelId: null,
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+      }),
+      list: async () => [],
+      upsert: async () => {
+        throw new Error('unused');
+      },
+      reissueLinkCode: async () => null,
+      bindOwner: async () => false,
+      configureMissionWake: async () => null,
+      delete: async () => {},
+    };
+    const h = makeBridge({ overrides: { configStore: unlinkedStore } });
+
+    await h.bridge.handleTrigger('u1', 'event');
+
+    expect(h.bridge.isSummoned('u1')).toBe(false);
+    expect(h.advances).toHaveLength(0);
+    expect(h.openedDms).toHaveLength(0);
   });
 });

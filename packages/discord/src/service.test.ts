@@ -25,6 +25,9 @@ class OneUserStore implements DiscordConfigStore {
   async bindOwner(): Promise<boolean> {
     return true;
   }
+  async configureMissionWake(): Promise<DiscordConfigRecord | null> {
+    return this.recordValue;
+  }
   async delete(): Promise<void> {}
 }
 
@@ -44,7 +47,12 @@ function fakeConnectionFactory(reply: string): CompanionConnectionFactory {
       };
     },
     async *callStream(): AsyncIterable<ChatStreamEvent> {
-      // Not used in this test (chat() is the streaming path).
+      // The mission advance path (`mission.advance`): emit one done event so the report
+      // is forwarded to the owner DM, letting the trigger chain be asserted end to end.
+      yield {
+        type: 'done',
+        message: { role: 'assistant', content: `report: ${reply}` } as unknown as MessageDto,
+      };
     },
     async *greeting(): AsyncIterable<ChatStreamEvent> {},
     async *events(): AsyncIterable<never> {},
@@ -60,6 +68,8 @@ describe('assembleService (manager → router → bridge → chat)', () => {
       ownerDiscordUserId: 'owner-1',
       linkCode: null,
       linkCodeIssuedAt: null,
+      triggerBotId: null,
+      missionChannelId: null,
       createdAt: new Date(0),
       updatedAt: new Date(0),
     };
@@ -95,6 +105,8 @@ describe('assembleService (manager → router → bridge → chat)', () => {
       ownerDiscordUserId: 'owner-1',
       linkCode: null,
       linkCodeIssuedAt: null,
+      triggerBotId: null,
+      missionChannelId: null,
       createdAt: new Date(0),
       updatedAt: new Date(0),
     };
@@ -112,6 +124,82 @@ describe('assembleService (manager → router → bridge → chat)', () => {
     bot!.receiveDirectMessage({ authorId: 'intruder', channelId: 'dm-1', content: 'let me in' });
     await flush();
 
+    expect(bot?.sent).toHaveLength(0);
+    await service.stop();
+  });
+
+  it('drives a mission trigger from the channel through summon to an advance report', async () => {
+    const config: DiscordConfigRecord = {
+      userId: 'u1',
+      encryptedBotToken: 'enc:tokenA',
+      boundCompanionId: 'companion-u1',
+      ownerDiscordUserId: 'owner-1',
+      linkCode: null,
+      linkCodeIssuedAt: null,
+      triggerBotId: 'scheduler-bot',
+      missionChannelId: 'mission-chan',
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    };
+    const gateways = fakeGatewayFactory();
+    const service = assembleService({
+      configStore: new OneUserStore(config),
+      gatewayFactory: gateways.factory,
+      connectionFactory: fakeConnectionFactory('LITE holding above 810'),
+      decryptToken: (e) => e.replace(/^enc:/, ''),
+      logger: silent,
+    });
+    await service.start();
+    const bot = gateways.byToken('tokenA');
+
+    // The scheduler posts a trigger into the mission channel, @-mentioning the bot.
+    bot!.receiveGuildMessage({
+      authorId: 'scheduler-bot',
+      channelId: 'mission-chan',
+      messageId: 'm1',
+      content: '<@111> LITE is 808',
+    });
+    await flush();
+
+    // Summon-if-dormant opened the owner DM, and the advance report reached it.
+    expect(bot?.openedDms).toContain('owner-1');
+    expect(bot?.sent.some((m) => m.content === 'report: LITE holding above 810')).toBe(true);
+    await service.stop();
+  });
+
+  it('ignores a guild message in the wrong channel (no summon, no advance)', async () => {
+    const config: DiscordConfigRecord = {
+      userId: 'u1',
+      encryptedBotToken: 'enc:tokenA',
+      boundCompanionId: 'companion-u1',
+      ownerDiscordUserId: 'owner-1',
+      linkCode: null,
+      linkCodeIssuedAt: null,
+      triggerBotId: 'scheduler-bot',
+      missionChannelId: 'mission-chan',
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    };
+    const gateways = fakeGatewayFactory();
+    const service = assembleService({
+      configStore: new OneUserStore(config),
+      gatewayFactory: gateways.factory,
+      connectionFactory: fakeConnectionFactory('should not happen'),
+      decryptToken: (e) => e.replace(/^enc:/, ''),
+      logger: silent,
+    });
+    await service.start();
+    const bot = gateways.byToken('tokenA');
+
+    bot!.receiveGuildMessage({
+      authorId: 'scheduler-bot',
+      channelId: 'some-other-channel',
+      messageId: 'm1',
+      content: '<@111> wrong room',
+    });
+    await flush();
+
+    expect(bot?.openedDms).toHaveLength(0);
     expect(bot?.sent).toHaveLength(0);
     await service.stop();
   });

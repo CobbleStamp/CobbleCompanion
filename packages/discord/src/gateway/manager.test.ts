@@ -5,6 +5,7 @@ import {
   GatewayManager,
   type DirectMessageContext,
   type GatewayManagerOptions,
+  type GuildMessageContext,
   type ProposalActionContext,
   type SlashCommandContext,
 } from './manager.js';
@@ -45,6 +46,17 @@ class InMemoryConfigStore implements DiscordConfigStore {
   async bindOwner(): Promise<boolean> {
     return true;
   }
+  async configureMissionWake(
+    userId: string,
+    triggerBotId: string | null,
+    missionChannelId: string | null,
+  ): Promise<DiscordConfigRecord | null> {
+    const row = this.rows.get(userId);
+    if (!row) return null;
+    const updated = { ...row, triggerBotId, missionChannelId };
+    this.rows.set(userId, updated);
+    return updated;
+  }
   async delete(userId: string): Promise<void> {
     this.rows.delete(userId);
   }
@@ -62,6 +74,8 @@ function makeRecord(
     ownerDiscordUserId: null,
     linkCode: null,
     linkCodeIssuedAt: null,
+    triggerBotId: null,
+    missionChannelId: null,
     createdAt: new Date(0),
     updatedAt: new Date(0),
     ...overrides,
@@ -79,6 +93,7 @@ function makeManager(
 ) {
   const gateways = fakeGatewayFactory(onCreate);
   const received: DirectMessageContext[] = [];
+  const guildMessages: GuildMessageContext[] = [];
   const commands: SlashCommandContext[] = [];
   const proposalActions: ProposalActionContext[] = [];
   const manager = new GatewayManager({
@@ -86,13 +101,14 @@ function makeManager(
     gatewayFactory: gateways.factory,
     decryptToken,
     onDirectMessage: (ctx) => received.push(ctx),
+    onGuildMessage: (ctx) => guildMessages.push(ctx),
     onSlashCommand: (ctx) => commands.push(ctx),
     onProposalAction: (ctx) => proposalActions.push(ctx),
     commands: [{ name: 'summon', description: 'Bring the companion here' }],
     logger: silent,
     ...overrides,
   });
-  return { manager, gateways, received, commands, proposalActions };
+  return { manager, gateways, received, guildMessages, commands, proposalActions };
 }
 
 describe('GatewayManager', () => {
@@ -136,6 +152,25 @@ describe('GatewayManager', () => {
     expect(received).toHaveLength(1);
     expect(received[0]?.userId).toBe('u1');
     expect(received[0]?.message.content).toBe('hello cobble');
+  });
+
+  it('routes an inbound guild message to onGuildMessage tagged with the owning user', async () => {
+    const store = new InMemoryConfigStore();
+    store.set(makeRecord('u1', 'enc:tokenA'));
+    const { manager, gateways, guildMessages } = makeManager(store);
+    await manager.sync();
+
+    gateways.byToken('tokenA')!.receiveGuildMessage({
+      authorId: 'scheduler-bot',
+      channelId: 'mission-channel',
+      messageId: 'm1',
+      content: '<@111> LITE is 808',
+    });
+
+    expect(guildMessages).toHaveLength(1);
+    expect(guildMessages[0]?.userId).toBe('u1');
+    expect(guildMessages[0]?.message.channelId).toBe('mission-channel');
+    expect(guildMessages[0]?.message.content).toBe('<@111> LITE is 808');
   });
 
   it('restarts a bot when its token changes', async () => {

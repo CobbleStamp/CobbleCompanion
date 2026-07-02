@@ -8,6 +8,7 @@ import type {
   DiscordGateway,
   DiscordGatewayFactory,
   InboundDirectMessage,
+  InboundGuildMessage,
   InboundProposalAction,
   InboundSlashCommand,
   ProposalCard,
@@ -33,7 +34,10 @@ export class FakeGateway implements DiscordGateway {
   readonly sent: SentMessage[] = [];
   readonly sentProposals: SentProposal[] = [];
   readonly typingChannels: string[] = [];
+  /** DM channels the fake "opened" (discordUserId → returned channel id), for assertions. */
+  readonly openedDms: string[] = [];
   private dmHandler: ((message: InboundDirectMessage) => void) | null = null;
+  private guildHandler: ((message: InboundGuildMessage) => void) | null = null;
   private commandHandler: ((command: InboundSlashCommand) => void) | null = null;
   private proposalHandler: ((action: InboundProposalAction) => void) | null = null;
 
@@ -55,6 +59,10 @@ export class FakeGateway implements DiscordGateway {
     this.dmHandler = handler;
   }
 
+  onGuildMessage(handler: (message: InboundGuildMessage) => void): void {
+    this.guildHandler = handler;
+  }
+
   onSlashCommand(handler: (command: InboundSlashCommand) => void): void {
     this.commandHandler = handler;
   }
@@ -65,6 +73,11 @@ export class FakeGateway implements DiscordGateway {
 
   async sendDirectMessage(channelId: string, content: string): Promise<void> {
     this.sent.push({ channelId, content });
+  }
+
+  async openDmChannel(discordUserId: string): Promise<string | null> {
+    this.openedDms.push(discordUserId);
+    return `dm:${discordUserId}`;
   }
 
   async sendTyping(channelId: string): Promise<void> {
@@ -93,6 +106,11 @@ export class FakeGateway implements DiscordGateway {
   /** Simulate Discord delivering a DM to this bot. */
   receiveDirectMessage(message: InboundDirectMessage): void {
     this.dmHandler?.(message);
+  }
+
+  /** Simulate Discord delivering a guild (channel) message — a mission trigger. */
+  receiveGuildMessage(message: InboundGuildMessage): void {
+    this.guildHandler?.(message);
   }
 
   /**

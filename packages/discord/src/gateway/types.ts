@@ -22,6 +22,23 @@ export interface InboundDirectMessage {
   readonly content: string;
 }
 
+/**
+ * An inbound Discord GUILD (channel) message — the mission wake path (companion-missions.md
+ * §3.2). Unlike a DM, the author may be a bot (the scheduler's trigger sender IS a bot), so
+ * the gateway does not filter bot authors here; the router applies the trust gate (author id
+ * === the allowlisted trigger bot AND channel === the mission channel). The gateway drops
+ * only the companion bot's OWN messages before emitting this.
+ */
+export interface InboundGuildMessage {
+  /** Discord user id of the author (checked against the allowlisted trigger bot downstream). */
+  readonly authorId: string;
+  /** The channel id (checked against the configured mission channel downstream). */
+  readonly channelId: string;
+  /** Discord message id (stable id for future replay/dedup). */
+  readonly messageId: string;
+  readonly content: string;
+}
+
 /** A global slash command to register on the bot (DM-context enabled). */
 export interface SlashCommandSpec {
   readonly name: string;
@@ -85,12 +102,21 @@ export interface DiscordGateway {
   stop(): Promise<void>;
   /** Register the inbound-DM handler. Set before {@link start}. */
   onDirectMessage(handler: (message: InboundDirectMessage) => void): void;
+  /** Register the inbound guild-message handler (the mission wake). Set before {@link start}. */
+  onGuildMessage(handler: (message: InboundGuildMessage) => void): void;
   /** Register the inbound slash-command handler. Set before {@link start}. */
   onSlashCommand(handler: (command: InboundSlashCommand) => void): void;
   /** Register the inbound proposal-button handler. Set before {@link start}. */
   onProposalAction(handler: (action: InboundProposalAction) => void): void;
   /** Send a message to a DM channel (a reply, a proactive note, a chat turn). */
   sendDirectMessage(channelId: string, content: string): Promise<void>;
+  /**
+   * Open (or fetch) the DM channel to a Discord user and return its channel id, so a
+   * trigger-summoned embodiment (no interaction in hand) has a channel to report/notice
+   * into (companion-missions.md §4 — reports ride the owner's DM). Returns null if the
+   * channel can't be opened (logged); the caller drops the trigger.
+   */
+  openDmChannel(discordUserId: string): Promise<string | null>;
   /** Show the "typing…" indicator in a DM channel (the composing cue). */
   sendTyping(channelId: string): Promise<void>;
   /** Post a proposal embed with Confirm/Reject buttons to a DM channel. */

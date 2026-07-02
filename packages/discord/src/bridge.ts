@@ -61,6 +61,23 @@ export interface CompanionBridgeOptions {
   readonly configStore: DiscordConfigStore;
   /** Send a DM to a user's bot channel — for async notices (e.g. supersession). */
   readonly notify: (userId: string, channelId: string, content: string) => Promise<void>;
+  /**
+   * Open (or fetch) the owner's DM channel for a trigger-summoned embodiment that has no
+   * interaction channel in hand (companion-missions.md §4 — reports ride the owner's DM).
+   * Wired to the gateway (via the manager). Returns null if it can't be opened.
+   */
+  readonly openOwnerDm: (userId: string, discordUserId: string) => Promise<string | null>;
+  /**
+   * Run one mission advance turn over the live connection (companion-missions.md §3.4),
+   * forwarding the turn's spoken output to `post` (the embodied room's DM). Injected —
+   * mirrors {@link onChat} — so the bridge stays decoupled from the WS method wiring.
+   */
+  readonly onMissionAdvance: (
+    connection: CompanionConnection,
+    post: (content: string) => Promise<void>,
+    event: string,
+    userId: string,
+  ) => void | Promise<void>;
   /** Handle an owner DM while embodied (the chat turn — T9). */
   readonly onChat: (
     ctx: DirectMessageContext,
@@ -152,6 +169,54 @@ export class CompanionBridge {
     await this.opts.onProposalAction(ctx, embodiment.connection);
   }
 
+  /**
+   * Trigger hook (mission wake, companion-missions.md §3.2–§3.3): summon-if-dormant, then
+   * advance the mission. Disruptive by design — establishing embodiment supersedes whatever
+   * surface the companion was on. If already embodied, advance over the live connection with
+   * no re-summon. Drops (logged) when the user is unlinked (no owner DM to report into) or
+   * the connection can't be established.
+   */
+  async handleTrigger(userId: string, event: string): Promise<void> {
+    const existing = this.active.get(userId);
+    if (existing) {
+      await this.advance(userId, existing, event);
+      return;
+    }
+    const config = await this.opts.configStore.findByUserId(userId);
+    if (!config) {
+      this.opts.logger.info('discord trigger for a user with no config; dropping', {
+        operation: 'discord.bridge.trigger',
+        userId,
+      });
+      return;
+    }
+    if (!config.ownerDiscordUserId) {
+      // Not linked yet — there is no owner DM to report the mission into; drop.
+      this.opts.logger.info('discord trigger before /link; no owner DM to report into', {
+        operation: 'discord.bridge.trigger',
+        userId,
+      });
+      return;
+    }
+    const channelId = await this.opts.openOwnerDm(userId, config.ownerDiscordUserId);
+    if (channelId === null) {
+      this.opts.logger.error('discord trigger could not open the owner DM channel', {
+        operation: 'discord.bridge.trigger',
+        userId,
+      });
+      return;
+    }
+    const embodiment = await this.establishEmbodiment({
+      userId,
+      companionId: config.boundCompanionId,
+      encryptedBotToken: config.encryptedBotToken,
+      channelId,
+      greet: false,
+    });
+    if (!embodiment) return; // establishEmbodiment logged the reason (fail / superseded).
+    await this.advance(userId, embodiment, event);
+  }
+
   isSummoned(userId: string): boolean {
     return this.active.has(userId);
   }
@@ -179,20 +244,46 @@ export class CompanionBridge {
       );
       return;
     }
-    const companionId = config.boundCompanionId;
-    const connection = this.opts.connectionFactory({
+    const embodiment = await this.establishEmbodiment({
       userId: ctx.userId,
-      companionId,
+      companionId: config.boundCompanionId,
       encryptedBotToken: config.encryptedBotToken,
+      channelId: ctx.command.channelId,
+      greet: true,
     });
-    // The takeover handler is armed before connect() resolves, but the embodiment is
-    // only registered in `active` afterwards. A supersession landing in that gap would
-    // find nothing in `active` and be silently dropped — so until we register, record
-    // it in a flag and reconcile below instead of routing through handleSuperseded.
+    if (!embodiment) {
+      await ctx.reply(
+        'I couldn’t come here — I seem to be active somewhere else. Try `/summon` again.',
+      );
+      return;
+    }
+    await ctx.reply('I’m here. ✨');
+  }
+
+  /**
+   * Open an embodiment connection, claim the room, register it, and start the background
+   * loop — the shared core of `/summon` (with the arrival greeting) and a mission trigger
+   * (`greet: false`, companion-missions.md §3.3). Returns the registered embodiment, or null
+   * if the claim failed or the room was superseded before registration (both logged; the
+   * caller decides how to surface it). Never streams a user-facing reply itself.
+   */
+  private async establishEmbodiment(input: {
+    userId: string;
+    companionId: string;
+    encryptedBotToken: string;
+    channelId: string;
+    greet: boolean;
+  }): Promise<ActiveEmbodiment | null> {
+    const { userId, companionId, encryptedBotToken, channelId, greet } = input;
+    const connection = this.opts.connectionFactory({ userId, companionId, encryptedBotToken });
+    // The takeover handler is armed before connect() resolves, but the embodiment is only
+    // registered in `active` afterwards. A supersession landing in that gap would find
+    // nothing in `active` and be silently dropped — so until we register, record it in a
+    // flag and reconcile below instead of routing through handleSuperseded.
     let supersededDuringConnect = false;
     connection.onSuperseded(() => {
-      if (this.active.has(ctx.userId)) {
-        void this.handleSuperseded(ctx.userId);
+      if (this.active.has(userId)) {
+        void this.handleSuperseded(userId);
       } else {
         supersededDuringConnect = true;
       }
@@ -201,65 +292,67 @@ export class CompanionBridge {
     // below), so this only needs to reconcile a drop on an already-registered embodiment
     // — the guard makes a pre-registration fire a no-op.
     connection.onClosed(() => {
-      if (this.active.has(ctx.userId)) {
-        void this.handleClosed(ctx.userId);
+      if (this.active.has(userId)) {
+        void this.handleClosed(userId);
       }
     });
     try {
       await connection.connect();
     } catch (error) {
       // Most likely a supersession before the lease was granted (active elsewhere).
-      this.opts.logger.info('discord summon did not claim the companion', {
-        operation: 'discord.bridge.summon',
-        userId: ctx.userId,
+      this.opts.logger.info('discord embodiment did not claim the companion', {
+        operation: 'discord.bridge.embody',
+        userId,
         error,
       });
-      await ctx.reply(
-        'I couldn’t come here — I seem to be active somewhere else. Try `/summon` again.',
-      );
-      return;
+      return null;
     }
     if (supersededDuringConnect) {
       // Claimed elsewhere between connect() resolving and registration: tear down the
-      // now-dead connection rather than storing a phantom embodiment and lying "I’m here".
-      this.opts.logger.info('discord summon superseded before registration', {
-        operation: 'discord.bridge.summon',
-        userId: ctx.userId,
+      // now-dead connection rather than storing a phantom embodiment.
+      this.opts.logger.info('discord embodiment superseded before registration', {
+        operation: 'discord.bridge.embody',
+        userId,
       });
       this.safeClose(connection);
-      await ctx.reply(
-        'I couldn’t come here — I seem to be active somewhere else. Try `/summon` again.',
-      );
-      return;
+      return null;
     }
     const embodiment: ActiveEmbodiment = {
       companionId,
       connection,
-      channelId: ctx.command.channelId,
+      channelId,
       abort: new AbortController(),
     };
-    this.active.set(ctx.userId, embodiment);
-    await ctx.reply('I’m here. ✨');
-    // Stream the arrival greeting, then forward autonomous messages until torn down.
-    // Fire-and-forget: a rejection here would otherwise become an unhandled promise
-    // rejection, so funnel it into the structured logger for debugging and audit.
-    void this.runBackground(ctx.userId, embodiment).catch((error: unknown) => {
+    this.active.set(userId, embodiment);
+    // Run the background loop until torn down. Fire-and-forget: a rejection here would
+    // otherwise become an unhandled promise rejection, so funnel it into the logger.
+    void this.runBackground(userId, embodiment, greet).catch((error: unknown) => {
       this.opts.logger.error('discord background embodiment loop failed', {
         operation: 'discord.bridge.runBackground',
-        userId: ctx.userId,
+        userId,
         error,
       });
     });
+    return embodiment;
   }
 
-  /** Greet on arrival, then run the proactive forward loop (companion-discord.md §8). */
-  private async runBackground(userId: string, embodiment: ActiveEmbodiment): Promise<void> {
+  /**
+   * Optionally greet on arrival (a `/summon`, not a mission trigger), then run the proactive
+   * forward loop (companion-discord.md §8) so autonomous messages reach the room.
+   */
+  private async runBackground(
+    userId: string,
+    embodiment: ActiveEmbodiment,
+    greet: boolean,
+  ): Promise<void> {
     const post = (content: string): Promise<void> =>
       this.opts.notify(userId, embodiment.channelId, content);
-    await streamGreeting(embodiment.connection, post, this.opts.logger, {
-      operation: 'discord.greeting',
-      userId,
-    });
+    if (greet) {
+      await streamGreeting(embodiment.connection, post, this.opts.logger, {
+        operation: 'discord.greeting',
+        userId,
+      });
+    }
     await runProactiveLoop(
       embodiment.connection,
       post,
@@ -267,6 +360,17 @@ export class CompanionBridge {
       { operation: 'discord.proactive', userId },
       embodiment.abort.signal,
     );
+  }
+
+  /** Advance the mission over the live connection, forwarding output to the owner's DM. */
+  private async advance(
+    userId: string,
+    embodiment: ActiveEmbodiment,
+    event: string,
+  ): Promise<void> {
+    const post = (content: string): Promise<void> =>
+      this.opts.notify(userId, embodiment.channelId, content);
+    await this.opts.onMissionAdvance(embodiment.connection, post, event, userId);
   }
 
   private async status(ctx: SlashCommandContext): Promise<void> {

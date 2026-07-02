@@ -29,6 +29,7 @@ import type {
   DiscordGateway,
   DiscordGatewayFactory,
   InboundDirectMessage,
+  InboundGuildMessage,
   InboundProposalAction,
   InboundSlashCommand,
   Logger,
@@ -49,6 +50,7 @@ export function createDiscordJsGatewayFactory(logger: Logger): DiscordGatewayFac
 class DiscordJsGateway implements DiscordGateway {
   private readonly client: Client;
   private dmHandler: ((message: InboundDirectMessage) => void) | null = null;
+  private guildHandler: ((message: InboundGuildMessage) => void) | null = null;
   private commandHandler: ((command: InboundSlashCommand) => void) | null = null;
   private proposalHandler: ((action: InboundProposalAction) => void) | null = null;
 
@@ -56,13 +58,35 @@ class DiscordJsGateway implements DiscordGateway {
     private readonly botToken: string,
     private readonly logger: Logger,
   ) {
+    // `GuildMessages` is required to receive channel-message events at all (the mission
+    // wake, companion-missions.md §3.2); without it Discord delivers none. `MessageContent`
+    // stays for DMs — and it also lets the guild path read `.content` for a message that
+    // @-mentions the bot (which the trigger always does), so no extra privileged intent.
     this.client = new Client({
-      intents: [GatewayIntentBits.DirectMessages, GatewayIntentBits.MessageContent],
+      intents: [
+        GatewayIntentBits.DirectMessages,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent,
+      ],
       partials: [Partials.Channel, Partials.Message],
     });
     this.client.on(Events.MessageCreate, (message: Message) => {
-      // DMs only, never the bot's own messages.
-      if (message.author.bot || message.guildId) return;
+      // Never react to the bot's own messages (in a DM or the mission channel).
+      if (message.author.id === this.client.user?.id) return;
+      if (message.guildId) {
+        // A guild (channel) message — the mission wake. The author MAY be a bot (the
+        // trigger sender is one), so we do NOT filter bot authors here; the router applies
+        // the trust gate (allowlisted sender + configured mission channel).
+        this.guildHandler?.({
+          authorId: message.author.id,
+          channelId: message.channelId,
+          messageId: message.id,
+          content: message.content,
+        });
+        return;
+      }
+      // A DM: never from another bot (the owner lock + bots-can't-DM-bots).
+      if (message.author.bot) return;
       this.dmHandler?.({
         authorId: message.author.id,
         channelId: message.channelId,
@@ -125,6 +149,10 @@ class DiscordJsGateway implements DiscordGateway {
     this.dmHandler = handler;
   }
 
+  onGuildMessage(handler: (message: InboundGuildMessage) => void): void {
+    this.guildHandler = handler;
+  }
+
   onSlashCommand(handler: (command: InboundSlashCommand) => void): void {
     this.commandHandler = handler;
   }
@@ -165,6 +193,21 @@ class DiscordJsGateway implements DiscordGateway {
         operation: 'discord.send',
         channelId,
       });
+    }
+  }
+
+  async openDmChannel(discordUserId: string): Promise<string | null> {
+    try {
+      const user = await this.client.users.fetch(discordUserId);
+      const dm = await user.createDM();
+      return dm.id;
+    } catch (error) {
+      this.logger.error('discord openDmChannel: could not open a DM to the user', {
+        operation: 'discord.openDmChannel',
+        discordUserId,
+        error,
+      });
+      return null;
     }
   }
 

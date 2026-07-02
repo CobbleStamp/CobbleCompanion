@@ -14,6 +14,7 @@ import {
   keyFromBase64,
   type DiscordConfigStore,
 } from '@cobble/db';
+import { handleAdvance } from './advance.js';
 import { CompanionBridge, type CompanionConnectionFactory } from './bridge.js';
 import { handleChat } from './chat.js';
 import { COMMAND_SPECS } from './commands.js';
@@ -74,6 +75,15 @@ export function assembleService(parts: AssembleServiceParts): AssembledService {
         });
       });
     },
+    onGuildMessage: (ctx) => {
+      router.handleGuildTrigger(ctx).catch((error) => {
+        logger.error('discord service: guild-trigger handling failed', {
+          operation: 'discord.service.trigger',
+          userId: ctx.userId,
+          error,
+        });
+      });
+    },
     onProposalAction: (ctx) => {
       bridge.handleProposalAction(ctx).catch((error) => {
         logger.error('discord service: proposal action failed', {
@@ -91,9 +101,12 @@ export function assembleService(parts: AssembleServiceParts): AssembledService {
     connectionFactory: parts.connectionFactory,
     configStore: parts.configStore,
     notify: (userId, channelId, content) => manager.sendDirectMessage(userId, channelId, content),
+    openOwnerDm: (userId, discordUserId) => manager.openDmChannel(userId, discordUserId),
     onChat: (ctx, connection) => handleChat(ctx, connection, logger),
     onReadOnlyCommand: (ctx, connection) => handleReadOnlyCommand(ctx, connection, logger),
     onProposalAction: (ctx, connection) => handleProposalAction(ctx, connection, logger),
+    onMissionAdvance: (connection, post, event, userId) =>
+      handleAdvance(connection, post, event, logger, userId),
     logger,
   });
 
@@ -101,6 +114,7 @@ export function assembleService(parts: AssembleServiceParts): AssembledService {
     configStore: parts.configStore,
     onOwnerMessage: (ctx) => bridge.handleOwnerMessage(ctx),
     onOwnerCommand: (ctx) => bridge.handleOwnerCommand(ctx),
+    onTrigger: (userId, event) => bridge.handleTrigger(userId, event),
     logger,
   });
 

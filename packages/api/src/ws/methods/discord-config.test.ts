@@ -18,6 +18,8 @@ function record(overrides: Partial<DiscordConfigRecord> = {}): DiscordConfigReco
     ownerDiscordUserId: null,
     linkCode: 'ABCD2345',
     linkCodeIssuedAt: new Date(0),
+    triggerBotId: null,
+    missionChannelId: null,
     createdAt: new Date(0),
     updatedAt: new Date(0),
     ...overrides,

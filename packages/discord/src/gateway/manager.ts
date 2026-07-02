@@ -14,6 +14,7 @@ import type {
   DiscordGateway,
   DiscordGatewayFactory,
   InboundDirectMessage,
+  InboundGuildMessage,
   InboundProposalAction,
   InboundSlashCommand,
   Logger,
@@ -32,6 +33,17 @@ export interface DirectMessageContext {
   typing(): Promise<void>;
   /** Post a proposal embed + Confirm/Reject buttons in the same DM channel. */
   sendProposal(card: ProposalCard): Promise<void>;
+}
+
+/**
+ * An inbound guild (channel) message, tagged with the user whose bot received it — the
+ * mission wake (companion-missions.md §3.2). The router applies the trust gate; the manager
+ * only tags it. No reply/typing surface: a trigger is not answered in-channel; the mission
+ * turn's output rides the owner's DM (§4).
+ */
+export interface GuildMessageContext {
+  readonly userId: string;
+  readonly message: InboundGuildMessage;
 }
 
 /** An inbound proposal button click, tagged with the owning user. */
@@ -66,6 +78,8 @@ export interface GatewayManagerOptions {
   readonly decryptToken: (encryptedBotToken: string) => string | null;
   /** Inbound-DM sink — the bridge/router owns lock/summon/chat handling. */
   readonly onDirectMessage: (ctx: DirectMessageContext) => void;
+  /** Inbound guild-message sink — the router owns the trigger trust gate + parse (mission wake). */
+  readonly onGuildMessage: (ctx: GuildMessageContext) => void;
   /** Inbound slash-command sink — the router owns lock + `/link`/summon/commands. */
   readonly onSlashCommand: (ctx: SlashCommandContext) => void;
   /** Inbound proposal-button sink — the bridge owns the owner lock + confirm/reject. */
@@ -124,6 +138,24 @@ export class GatewayManager {
       return;
     }
     await bot.gateway.sendDirectMessage(channelId, content);
+  }
+
+  /**
+   * Open (or fetch) the DM channel to a Discord user through a user's bot, for a
+   * trigger-summoned embodiment that has no interaction channel in hand
+   * (companion-missions.md §4). Returns null if that user's bot isn't running or the DM
+   * can't be opened (both logged).
+   */
+  async openDmChannel(userId: string, discordUserId: string): Promise<string | null> {
+    const bot = this.bots.get(userId);
+    if (!bot) {
+      this.opts.logger.error('discord openDmChannel: no running bot for user', {
+        operation: 'discord.gateway.openDm',
+        userId,
+      });
+      return null;
+    }
+    return bot.gateway.openDmChannel(discordUserId);
   }
 
   /**
@@ -233,6 +265,9 @@ export class GatewayManager {
         typing: () => gateway.sendTyping(message.channelId),
         sendProposal: (card) => gateway.sendProposal(message.channelId, card),
       });
+    });
+    gateway.onGuildMessage((message) => {
+      this.opts.onGuildMessage({ userId: config.userId, message });
     });
     gateway.onSlashCommand((command) => {
       this.opts.onSlashCommand({
