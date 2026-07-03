@@ -22,7 +22,7 @@ import { companionOf, NotFoundError, OverCapError, parseParams } from './helpers
 import { emitAll, embodiedCompanion, leaseGuard, yieldRoom } from './turn-stream.js';
 
 /**
- * The mission WS methods (companion-missions.md §3.4, §5.2). One is a turn-producer —
+ * The mission WS methods (companion-missions.md §5.2, §5.3). One is a turn-producer —
  * `mission.advance` runs the wake turn (a trigger or the owner messaging) — so it goes through
  * the connection's serial chain (D2′) exactly like `messages.send`. (Mission *creation* is
  * chat-initiated: the owner states the goal in an ordinary turn and the model proposes the
@@ -80,8 +80,9 @@ export function missionMethods(deps: AppDeps): WsMethods {
         throw new OverCapError(overCap);
       }
       // The wake turn: the mission-retrieve arm injects goal/plan/journal, and
-      // `origin: 'mission'` is what the gate's turn-scoped mission-mode bypass keys on —
-      // effectful tools run ungated in THIS turn only. The report is journaled as findings.
+      // `origin: 'mission'` + `missionId` are what the gate's turn-scoped mission-mode
+      // bypass keys on — effectful tools run ungated in THIS turn only, and only while
+      // THIS mission stays active (a stop of it re-gates the turn). Journaled as findings.
       const superseded = await ctx.connection.runSerial(() =>
         emitAll(
           ctx,
@@ -92,6 +93,7 @@ export function missionMethods(deps: AppDeps): WsMethods {
               ownerId: ctx.userId,
               holdsLease: leaseGuard(embodiment, companionId, connectionId, claimSeq),
               origin: 'mission',
+              missionId: mission.id,
             }),
             missions,
             mission.id,
@@ -103,7 +105,7 @@ export function missionMethods(deps: AppDeps): WsMethods {
       if (superseded) {
         // The turn stood down mid-loop; nothing journaled. NOTE: a trigger-driven advance has
         // no client that re-runs it, so the wake event is dropped here — consistent with the
-        // deferred reconnect-replay backstop (companion-missions.md §3.2, §5.4).
+        // deferred reconnect-replay backstop (companion-missions.md §3.2, §11).
         yieldRoom(ctx, companionId);
       }
       return { done: true };
@@ -144,7 +146,7 @@ export function missionMethods(deps: AppDeps): WsMethods {
 
 /**
  * Forward a mission wake turn's stream, capturing the spoken report and appending it to the
- * mission's journal as `findings` (report-as-findings, companion-missions.md §3.4). A
+ * mission's journal as `findings` (report-as-findings, companion-missions.md §5.2). A
  * superseded turn journals nothing — the live turn on the new connection owns that write.
  * The journal write is best-effort: a failure is logged, never surfaced into the turn.
  *

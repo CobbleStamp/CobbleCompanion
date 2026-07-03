@@ -68,6 +68,14 @@ export class MissionService {
   }
 
   /**
+   * Whether THIS specific mission is still `active` — the approval gate's mission-mode
+   * bypass re-reads it per effectful call, keyed on the mission driving the turn (§6).
+   */
+  isActive(missionId: string): Promise<boolean> {
+    return this.missions.isActive(missionId);
+  }
+
+  /**
    * Approve + activate a `draft` mission (draft-guarded at the store). Rejects at the DB if
    * another mission is already `active` for the companion (the one-active index); callers
    * guard with {@link hasActive} first.

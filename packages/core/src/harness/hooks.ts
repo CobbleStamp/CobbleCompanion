@@ -49,6 +49,14 @@ export interface TurnCtx {
    */
   readonly origin?: 'chat' | 'mission';
   /**
+   * The id of the mission whose `mission.advance` wake drives this turn — set only on a
+   * `mission` origin. The approval gate's mission-mode bypass re-checks THIS mission (not
+   * "any active mission for the companion"): a stop of the very mission driving the turn
+   * must re-gate its next effectful call, even if another mission for the same companion
+   * started in the meantime (companion-missions.md §6). Absent on chat turns.
+   */
+  readonly missionId?: string;
+  /**
    * The id of the user message that triggered this turn — the message the
    * companion's `react` action attaches its emoji to (companion-reactions.md §5).
    * Absent on a proactive turn (no triggering user message), where reacting is a

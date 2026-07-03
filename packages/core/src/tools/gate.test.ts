@@ -140,9 +140,9 @@ describe('createApprovalGate', () => {
       proposals,
       new ToolRegistry([tool('ibkr_query', true, 'Query IBKR')]),
       silentLogger,
-      { hasActive: async () => true },
+      { isActive: async (id) => id === 'm1' },
     );
-    const missionCtx: TurnCtx = { ...ctx, origin: 'mission' };
+    const missionCtx: TurnCtx = { ...ctx, origin: 'mission', missionId: 'm1' };
     const result = await gate(aCall('ibkr_query', { symbol: 'LITE' }), missionCtx);
     expect(isBlock(result)).toBe(false);
     expect(proposals.created).toEqual([]);
@@ -156,7 +156,7 @@ describe('createApprovalGate', () => {
       proposals,
       new ToolRegistry([tool('ingest_source', true, 'Read it into memory')]),
       silentLogger,
-      { hasActive: async () => true },
+      { isActive: async () => true },
     );
     const result = await gate(aCall('ingest_source', { url: 'https://x.dev' }), ctx);
     expect(isBlock(result)).toBe(true);
@@ -171,9 +171,27 @@ describe('createApprovalGate', () => {
       proposals,
       new ToolRegistry([tool('ingest_source', true, 'Read it into memory')]),
       silentLogger,
-      { hasActive: async () => false },
+      { isActive: async () => false },
     );
-    const missionCtx: TurnCtx = { ...ctx, origin: 'mission' };
+    const missionCtx: TurnCtx = { ...ctx, origin: 'mission', missionId: 'm1' };
+    const result = await gate(aCall('ingest_source', { url: 'https://x.dev' }), missionCtx);
+    expect(isBlock(result)).toBe(true);
+    expect(proposals.created).toHaveLength(1);
+  });
+
+  it('re-gates the stopped mission even while ANOTHER mission is active (no borrowing)', async () => {
+    // The stop-mid-turn race with a concurrent start: mission m1 drives this turn but was
+    // stopped; a different mission m2 for the same companion is active. Keying on the turn's
+    // OWN mission (m1), not "any active mission", the call re-gates — it can't borrow m2's
+    // grant. This is the failure the per-mission check (companion-missions.md §6) closes.
+    const proposals = fakeProposals();
+    const gate = createApprovalGate(
+      proposals,
+      new ToolRegistry([tool('ingest_source', true, 'Read it into memory')]),
+      silentLogger,
+      { isActive: async (id) => id === 'm2' },
+    );
+    const missionCtx: TurnCtx = { ...ctx, origin: 'mission', missionId: 'm1' };
     const result = await gate(aCall('ingest_source', { url: 'https://x.dev' }), missionCtx);
     expect(isBlock(result)).toBe(true);
     expect(proposals.created).toHaveLength(1);

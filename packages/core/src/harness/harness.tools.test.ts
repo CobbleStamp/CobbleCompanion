@@ -202,14 +202,17 @@ describe('Harness inner loop (P3 tools)', () => {
     expect(gateway.calls).toHaveLength(1); // exited; no second model turn
   });
 
-  it("passes the turn's origin through to beforeToolCall (the mission-bypass key)", async () => {
+  it("passes the turn's origin + missionId through to beforeToolCall (the mission-bypass key)", async () => {
     // The gate's mission-mode bypass is turn-scoped (companion-missions.md §6): it keys on
-    // ctx.origin === 'mission', which only a mission.advance wake turn sets. A chat turn
-    // leaves it unset.
+    // ctx.origin === 'mission' AND ctx.missionId (the mission driving the turn), which only a
+    // mission.advance wake turn sets. A chat turn leaves both unset.
     const tool = recordingTool('ingest_source', true, 'ingested');
-    const origins: Array<'chat' | 'mission' | undefined> = [];
+    const seen: Array<{
+      origin: 'chat' | 'mission' | undefined;
+      missionId: string | undefined;
+    }> = [];
     const gate = async (c: HookToolCall, ctx: TurnCtx): Promise<HookToolCall | Block> => {
-      origins.push(ctx.origin);
+      seen.push({ origin: ctx.origin, missionId: ctx.missionId });
       return c;
     };
     const gateway = new FakeLlmGateway([
@@ -228,11 +231,20 @@ describe('Harness inner loop (P3 tools)', () => {
     });
 
     await collect(
-      harness.runTurn({ companion, userContent: 'wake', ownerId: 'u1', origin: 'mission' }),
+      harness.runTurn({
+        companion,
+        userContent: 'wake',
+        ownerId: 'u1',
+        origin: 'mission',
+        missionId: 'm1',
+      }),
     );
     await collect(harness.runTurn({ companion, userContent: 'chat', ownerId: 'u1' }));
 
-    expect(origins).toEqual(['mission', undefined]);
+    expect(seen).toEqual([
+      { origin: 'mission', missionId: 'm1' },
+      { origin: undefined, missionId: undefined },
+    ]);
   });
 
   it('holds every effectful call in a turn as its own proposal (no dropped calls)', async () => {

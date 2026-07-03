@@ -1,5 +1,5 @@
 /**
- * The mission WS methods (companion-missions.md §3.4). Covers the request/response methods
+ * The mission WS methods (companion-missions.md §5.2, §5.3). Covers the request/response methods
  * (`mission.list` / `mission.journal` / `mission.stop`) over a real MissionService on an
  * in-memory DB + fakes, the
  * registration guard (missions register only when both the service and scheduler are wired), and

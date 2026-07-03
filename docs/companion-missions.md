@@ -386,8 +386,11 @@ While a mission is `active`, the companion is in **mission mode**, which changes
   does not re-prompt on each tool call the wake drives. The bypass is scoped to the **turn**, not
   the companion: **ordinary chat run while a mission is active stays fully gated** (e.g.
   `ingest_source` memory writes still raise an approval card mid-mission). The gate also re-reads
-  `hasActive` per effectful call, so a `/mission action:stop` racing an in-flight advance turn
-  re-gates that turn's next effectful call. (Milestone 1 missions are read-only end-to-end, so no genuinely
+  the status of **the turn's own mission** (`isActive(ctx.missionId)`) per effectful call — keyed on
+  the mission driving the turn, not "any active mission for the companion" — so a `/mission
+  action:stop` racing an in-flight advance turn re-gates that turn's next effectful call **even if a
+  second mission for the same companion started in the same window** (the turn cannot borrow the
+  newcomer's grant). (Milestone 1 missions are read-only end-to-end, so no genuinely
   outward/effectful tool is exercised under the bypass yet — §7.)
 
 ## 7. Reporting & outward actions (no standing grant in Milestone 1)

@@ -110,6 +110,12 @@ export interface MissionStore {
   findActive(companionId: string): Promise<MissionRecord | null>;
   /** Cheap existence check for the drive-suspension gate (companion-missions.md §3.4). */
   hasActive(companionId: string): Promise<boolean>;
+  /**
+   * Whether THIS specific mission is currently `active` — the approval gate's mission-mode
+   * bypass re-reads it per effectful call to close the stop-mid-turn race, keyed on the
+   * mission driving the turn rather than the companion (companion-missions.md §6).
+   */
+  isActive(missionId: string): Promise<boolean>;
   listByCompanion(companionId: string): Promise<MissionRecord[]>;
   /**
    * Approve + activate a `draft` mission: apply the plan and go `active`. Guarded to the
@@ -159,6 +165,15 @@ export class DrizzleMissionStore implements MissionStore {
 
   async hasActive(companionId: string): Promise<boolean> {
     return (await this.findActive(companionId)) !== null;
+  }
+
+  async isActive(missionId: string): Promise<boolean> {
+    const [row] = await this.db
+      .select({ id: missions.id })
+      .from(missions)
+      .where(and(eq(missions.id, missionId), eq(missions.status, 'active')))
+      .limit(1);
+    return row !== undefined;
   }
 
   async listByCompanion(companionId: string): Promise<MissionRecord[]> {
