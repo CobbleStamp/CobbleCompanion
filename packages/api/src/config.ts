@@ -148,7 +148,7 @@ export interface AppConfig {
   readonly cliScratchDir: string;
   /**
    * Base URL of the loopback scheduler service (Tools/scheduler) that drives mission wakes
-   * (companion-missions.md §1.1). `start_mission` shells `scheduler-cli` against this; default
+   * (companion-missions.md §3.1). `start_mission` shells `scheduler-cli` against this; default
    * is the scheduler's own loopback default.
    */
   readonly schedulerUrl: string;

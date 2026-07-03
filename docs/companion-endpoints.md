@@ -315,7 +315,7 @@ gate decides to stay quiet.
 ### 4.13 Missions
 
 The four `mission.*` methods are registered only when the server has **both** a mission service
-and a mission scheduler wired (`companion-missions.md` §9); absent otherwise (calls return
+and a mission scheduler wired (both in `companion-missions.md` §9's component map); absent otherwise (calls return
 `unknown_method`) — a deployment without the scheduler-cli host doesn't expose missions rather
 than exposing broken ones. `discord.config.setMissionWake` (the last row) is **not** in that
 group: it is a `discord.config.*` write, always registered, and returns `conflict` (not

@@ -149,7 +149,7 @@ export interface AppDeps {
    * scheduler simply doesn't expose missions rather than exposing broken ones.
    */
   readonly missions?: MissionService;
-  /** Arms/cancels the scheduler jobs that drive a mission's wake (companion-missions.md §1.1). */
+  /** Arms/cancels the scheduler jobs that drive a mission's wake (companion-missions.md §3.1). */
   readonly missionScheduler?: MissionScheduler;
   /** Authenticates every request that carries a credential: the composite routes a
    *  service caller (by its header) to the service verifier, else verifies the API's
