@@ -73,6 +73,20 @@ export function assembleService(parts: AssembleServiceParts): AssembledService {
           userId: ctx.userId,
           error,
         });
+        // The interaction was deferred before dispatch (discord-js-gateway.ts §InteractionCreate),
+        // so a rejected handler leaves the owner on a perpetual "thinking…" spinner unless we
+        // discharge that reply obligation. Edit the deferred interaction with an error notice
+        // (`ctx.reply` becomes an editReply). If that send itself fails there is nothing further
+        // we can do, so log it and drop.
+        ctx
+          .reply('Something went wrong handling that command. Please try again.')
+          .catch((replyError: unknown) => {
+            logger.error('discord service: failed to send command-error reply', {
+              operation: 'discord.service.command',
+              userId: ctx.userId,
+              error: replyError,
+            });
+          });
       });
     },
     onGuildMessage: (ctx) => {

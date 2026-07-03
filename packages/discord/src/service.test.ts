@@ -174,6 +174,47 @@ describe('assembleService (manager → router → bridge → chat)', () => {
     await service.stop();
   });
 
+  it('edits the deferred interaction with an error when command handling throws', async () => {
+    const config: DiscordConfigRecord = {
+      userId: 'u1',
+      encryptedBotToken: 'enc:tokenA',
+      boundCompanionId: 'companion-u1',
+      ownerDiscordUserId: 'owner-1',
+      linkCode: null,
+      linkCodeIssuedAt: null,
+      triggerBotId: null,
+      missionChannelId: null,
+      botUserId: null,
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    };
+    // A store whose read faults — the transient DB failure the router hits at
+    // handleSlashCommand's `findByUserId` (router.ts). The interaction is already
+    // deferred, so a silent catch would strand the owner on a "thinking…" spinner.
+    const faultingStore = new OneUserStore(config);
+    faultingStore.findByUserId = async (): Promise<DiscordConfigRecord | null> => {
+      throw new Error('transient DB fault');
+    };
+    const gateways = fakeGatewayFactory();
+    const service = assembleService({
+      configStore: faultingStore,
+      gatewayFactory: gateways.factory,
+      connectionFactory: fakeConnectionFactory('should not happen'),
+      decryptToken: (e) => e.replace(/^enc:/, ''),
+      logger: silent,
+    });
+    await service.start();
+    const bot = gateways.byToken('tokenA');
+
+    const replies = bot!.receiveSlashCommand({ name: 'summon', userId: 'owner-1' });
+    await flush();
+
+    // The deferral was discharged with a user-facing error rather than left hanging.
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toContain('Something went wrong');
+    await service.stop();
+  });
+
   it('ignores a guild message in the wrong channel (no summon, no advance)', async () => {
     const config: DiscordConfigRecord = {
       userId: 'u1',
