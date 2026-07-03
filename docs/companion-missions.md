@@ -203,8 +203,9 @@ The message `content` posted to the mission channel is **exactly**:
   mission and cancelling its jobs by hand (`schedule cancel`).
 - **Plain text, not JSON** — no `{{message}}` escaping hazard.
 - The mention is load-bearing twice: (a) Discord delivers the full `.content` for a message that
-  mentions the bot **without** the privileged `MessageContent` intent; (b) it is a human-visible
-  "for you" marker in the channel.
+  mentions the bot **without requiring** the privileged `MessageContent` intent — so the guild
+  wake path does not depend on it (the intent is nonetheless enabled on the client for the DM
+  path, §8); (b) it is a human-visible "for you" marker in the channel.
 
 ### 3.3 Trust vs. routing vs. content
 
@@ -216,8 +217,8 @@ Three concerns are kept strictly separate — the crux of the security design (�
   words).
 - **Routing** = the accepted event is routed to the mission the wake **names** (the `mission:<id>`
   tag, §3.2), and advances it only if that mission is still `active`.
-- **Content-readability** = the @-mention delivers the full `.content` without the privileged
-  `MessageContent` intent.
+- **Content-readability** = the @-mention delivers the full `.content` without *requiring* the
+  privileged `MessageContent` intent for the guild wake path.
 
 ### 3.4 Summon-if-dormant
 
@@ -422,9 +423,13 @@ weakening it:
   only from `trigger_bot_id` **and** in `mission_channel_id`; both are stored on the per-user
   `discord_config` row and read on demand. Everything else in the channel is dropped. The DM
   owner-lock path is untouched.
-- **Intent scope.** The gateway enables the `GuildMessages` intent (without it Discord delivers no
-  channel messages) but **not** the privileged `MessageContent` intent — the @-mention (§3.2)
-  already unlocks content for our one message shape.
+- **Intent scope.** The gateway (`discord-js-gateway.ts`) enables `DirectMessages`, `GuildMessages`
+  (without it Discord delivers no channel messages), and the privileged `MessageContent` intent.
+  `MessageContent` is **not required for the guild wake path** — the @-mention (§3.2) already unlocks
+  content for our one message shape — but it **is** enabled for the DM path and must therefore stay
+  toggled on in the Discord Developer Portal, or the client's identify is rejected (close code 4014)
+  and the surface fails to boot. Tightening the guild path to drop `MessageContent` entirely is a
+  possible follow-up, but requires verifying DM `.content` still populates without it.
 - **The token stays out of the companion.** The scheduler's own bot token
   (`SCHEDULER_DISCORD_BOT_TOKEN`) lives in the **scheduler process's environment only**; it is never
   a CobbleCompanion config value and never exposed to the companion. The only mission config the
