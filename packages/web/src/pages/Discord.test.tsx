@@ -104,33 +104,42 @@ describe('Discord settings panel', () => {
   });
 
   it('saves the mission wake ids and prefills them from config', async () => {
+    // Discord snowflakes are 17–20 digit strings (matches discordMissionWakeSchema).
+    const triggerId = '111111111111111111';
+    const channelId = '222222222222222222';
     vi.mocked(getDiscordConfig).mockResolvedValue({
       configured: true,
       boundCompanionId: 'companion-1',
       ownerLinked: true,
       linkCode: null,
-      missionWake: { triggerBotId: '111', missionChannelId: null, botUserIdCaptured: false },
+      missionWake: { triggerBotId: triggerId, missionChannelId: null, botUserIdCaptured: false },
     });
     vi.mocked(saveDiscordMissionWake).mockResolvedValue({
       configured: true,
       boundCompanionId: 'companion-1',
       ownerLinked: true,
       linkCode: null,
-      missionWake: { triggerBotId: '111', missionChannelId: '222', botUserIdCaptured: false },
+      missionWake: {
+        triggerBotId: triggerId,
+        missionChannelId: channelId,
+        botUserIdCaptured: false,
+      },
     });
     renderPanel();
 
     // The existing trigger bot id is prefilled from config.
     const trigger = (await screen.findByLabelText('Trigger bot user id')) as HTMLInputElement;
-    expect(trigger.value).toBe('111');
-    // Save is disabled until both ids are valid digit strings.
+    expect(trigger.value).toBe(triggerId);
+    // Save is disabled until both ids are valid snowflakes.
     const save = screen.getByRole('button', { name: 'Save mission wake' });
     expect((save as HTMLButtonElement).disabled).toBe(true);
 
-    fireEvent.change(screen.getByLabelText('Mission channel id'), { target: { value: '222' } });
+    fireEvent.change(screen.getByLabelText('Mission channel id'), {
+      target: { value: channelId },
+    });
     fireEvent.click(save);
 
-    await waitFor(() => expect(saveDiscordMissionWake).toHaveBeenCalledWith('111', '222'));
+    await waitFor(() => expect(saveDiscordMissionWake).toHaveBeenCalledWith(triggerId, channelId));
   });
 
   it('disconnects the bot', async () => {

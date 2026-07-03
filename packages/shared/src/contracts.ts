@@ -991,11 +991,15 @@ export type DiscordConfigSetBody = z.infer<typeof discordConfigSetSchema>;
 /**
  * `discord.config.setMissionWake` params (companion-missions.md §3.2): the allowlisted
  * trigger-sender bot id (the scheduler's discord-notify bot) and the shared mission channel.
- * Both are Discord snowflakes — digit strings; trust is this (author, channel) pair.
+ * Both are Discord snowflakes — 17–20 digit strings; trust is this (author, channel) pair.
+ * The length bound rejects a typo'd/truncated id up front: an id that can't be a real
+ * snowflake would silently never match the wake's (author, channel) check and disable it.
  */
 export const discordMissionWakeSchema = z.object({
-  triggerBotId: z.string().regex(/^\d+$/u, 'a Discord user id (digits) is required'),
-  missionChannelId: z.string().regex(/^\d+$/u, 'a Discord channel id (digits) is required'),
+  triggerBotId: z.string().regex(/^\d{17,20}$/u, 'a Discord user id (17–20 digits) is required'),
+  missionChannelId: z
+    .string()
+    .regex(/^\d{17,20}$/u, 'a Discord channel id (17–20 digits) is required'),
 });
 export type DiscordMissionWakeBody = z.infer<typeof discordMissionWakeSchema>;
 

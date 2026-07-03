@@ -194,8 +194,10 @@ function MissionWakeSection({
     setMissionChannelId(wake?.missionChannelId ?? '');
   }, [wake?.triggerBotId, wake?.missionChannelId]);
 
-  const digits = /^\d+$/u;
-  const valid = digits.test(triggerBotId.trim()) && digits.test(missionChannelId.trim());
+  // A Discord snowflake is a 17–20 digit string; matches discordMissionWakeSchema so the
+  // Save button never submits an id the server will reject.
+  const snowflake = /^\d{17,20}$/u;
+  const valid = snowflake.test(triggerBotId.trim()) && snowflake.test(missionChannelId.trim());
   const configured =
     (wake?.triggerBotId ?? null) !== null && (wake?.missionChannelId ?? null) !== null;
 

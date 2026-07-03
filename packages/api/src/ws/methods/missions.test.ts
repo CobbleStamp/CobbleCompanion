@@ -188,6 +188,37 @@ describe('missionMethods', () => {
     expect(await service.hasActive(companionId)).toBe(false);
   });
 
+  it('mission.stop on a draft is a no-op (active-only) — no status flip, no cancel', async () => {
+    // A draft is a mission mid-start (arm→activate window): its armed job isn't in `jobIds`
+    // yet, so flipping it to `stopped` here would strand that job. Stop leaves it untouched.
+    const draft = await service.createDraft(companionId, 'monitor');
+    const methods = missionMethods(deps());
+
+    const result = (await methods['mission.stop']!(ctx, { missionId: draft.id })) as {
+      mission: { status: string };
+    };
+
+    expect(result.mission.status).toBe('draft');
+    expect(scheduler.cancelled).toEqual([]);
+    expect(motivationRequest).not.toHaveBeenCalled();
+    expect((await service.get(draft.id))?.status).toBe('draft');
+  });
+
+  it('mission.stop on an already-terminal mission reports its terminal status, not a stale active', async () => {
+    const draft = await service.createDraft(companionId, 'monitor');
+    await service.activate(draft.id, { plan: 'p', validationCriteria: 'c', jobIds: ['job-a'] });
+    await service.stop(draft.id); // already stopped by a prior call
+    const methods = missionMethods(deps());
+
+    const result = (await methods['mission.stop']!(ctx, { missionId: draft.id })) as {
+      mission: { status: string };
+    };
+
+    // The idempotent second stop must not re-run the cancel pass nor report `active`.
+    expect(result.mission.status).toBe('stopped');
+    expect(scheduler.cancelled).toEqual([]);
+  });
+
   it('mission.advance for a stopped mission skips the turn and cancels its stale wake jobs', async () => {
     // A stopped mission still holding wake jobs — a mission.stop whose scheduler cancel
     // failed. Its recurring job keeps firing; the stale wake must reconcile, not spam.

@@ -132,6 +132,13 @@ export function missionMethods(deps: AppDeps): WsMethods {
       const { missionId } = parseParams(missionLifecycleSchema, params, 'a mission id is required');
       // Tenancy: only the embodied companion's own missions are actionable.
       const mission = await ownMission(ctx, missionId);
+      // Stop is active-only (companion-missions.md §5.3): a `draft` is a mission mid-start
+      // (arm→activate window) whose armed job isn't in `jobIds` yet — stopping it here would
+      // flip its status without cancelling that job, and a terminal mission is already stopped.
+      // Either way it's a no-op that returns the mission's current state unchanged.
+      if (mission.status !== 'active') {
+        return { mission: toMissionDto(mission) };
+      }
       // Cancel the wake jobs first so no trigger fires after the mission is gone; the shared
       // reconcile keeps any failed cancel recorded (so a later stale firing retries it) and
       // never throws — the mission still stops even if the scheduler or the write is down.
@@ -139,7 +146,11 @@ export function missionMethods(deps: AppDeps): WsMethods {
       const stopped = await missions.stop(missionId);
       // Leaving `active` re-enables drives on the next tick; nudge so it happens promptly.
       motivation.request(mission.companionId);
-      return { mission: stopped ? toMissionDto(stopped) : toMissionDto(mission) };
+      // `stop` returns null only when the mission raced to terminal between our read and the
+      // write; re-fetch so the reply reports the true (terminal) status, never a stale `active`
+      // snapshot. If even the re-read is gone (deleted), fall back to the pre-stop record.
+      const current = stopped ?? (await missions.get(missionId)) ?? mission;
+      return { mission: toMissionDto(current) };
     },
   };
 }
