@@ -314,8 +314,10 @@ gate decides to stay quiet.
 
 ### 4.13 Missions
 
-Registered only when the server has a mission scheduler wired (`companion-missions.md` §5.2);
-absent otherwise (calls return `unknown_method`). `mission.advance` produces a turn, so it
+Registered only when the server has **both** a mission service and a mission scheduler wired
+(`companion-missions.md` §9); absent otherwise (calls return `unknown_method`) — a deployment
+without the scheduler-cli host doesn't expose missions rather than exposing broken ones.
+`mission.advance` produces a turn, so it
 streams and runs through the serial chain (§7) like `messages.send`. Mission *creation* has no
 method: the owner states the goal in an ordinary chat turn and the model proposes the effectful
 `start_mission` (the one up-front approval, surfaced as a normal proposal card).
@@ -423,7 +425,7 @@ Notes:
 - These per-turn `ChatStreamEvent`s (request-scoped, by `id`) are distinct from the durable
   `companion` push events (§6, no `id`): the same row may arrive both as a stream `done`
   and, to *other* connected rooms, as a `companion` `message` event. Dedupe by id.
-- All three streaming methods run through the connection's **serial chain** — a companion
+- All four streaming methods run through the connection's **serial chain** — a companion
   never runs two agent loops at once (D2′). A turn force-claimed mid-stream stops, the
   server pushes `embodiment.superseded` and closes `4002`, and the call still resolves
   `{ done: true }`.

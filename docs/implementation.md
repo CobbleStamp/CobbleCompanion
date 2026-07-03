@@ -762,18 +762,69 @@ Neither side imports the other or `@cobble/core`.
 | `owner_discord_user_id`     | text, nullable                      | the owner's Discord id, bound once via `/link`; null until linked (the bot answers no one)                    |
 | `link_code`                 | text, nullable                      | single-use 8-char `/link` code (no-look-alike alphabet); cleared on a successful link                         |
 | `link_code_issued_at`       | timestamptz, nullable               | issued-at for the ~15-min code TTL                                                                            |
+| `trigger_bot_id`            | text, nullable                      | mission wake (`companion-missions.md` §3.2): the allowlisted trigger-**sender** bot id. A guild message is a valid trigger only from this author **and** in `mission_channel_id` — trust is the (author, channel) pair, never content. Set by `discord.config.setMissionWake`  |
+| `mission_channel_id`        | text, nullable                      | mission wake: the shared mission channel both bots belong to; paired with `trigger_bot_id` for the trust gate                                                 |
+| `bot_user_id`               | text, nullable                      | the companion bot's **own** Discord user id, captured by the gateway at `ClientReady`; core reads it to build the wake action (`<@bot_user_id> {{message}}`). Null until the bot first connects |
 | `created_at` / `updated_at` | timestamptz                         | a (re)save resets the owner + re-issues the code                                                              |
+
+### `missions` & `mission_journal` — goal-driven long-running tasks
+
+Owned by `@cobble/core` (`DrizzleMissionStore` / `DrizzleMissionJournalStore`), per-companion.
+A **mission** is an externally-assigned, terminating objective the companion plans, runs in
+event-driven turns, and reports on until stopped (design: `companion-missions.md`). Distinct
+from drives: while a mission is `active` the motivation engine is suspended, and effectful tools
+run ungated inside its wake turns. At most **one active mission per companion**, enforced by a
+partial unique index so a racing second activation conflicts instead of double-arming.
+
+`missions`:
+
+| Field                       | Type                                        | Notes                                                                                                     |
+| --------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `id`                        | uuid (PK)                                    | mission id                                                                                                |
+| `seq`                       | bigserial                                    | monotonic per-row ordinal — the stable newest-first listing order (a shared `created_at` is possible)     |
+| `companion_id`              | uuid (FK → `companions.id`, cascade)         | the owning companion                                                                                      |
+| `goal`                      | text                                         | the assigned objective, verbatim                                                                          |
+| `plan`                      | text, nullable                               | the planner's decomposition; null while `draft`                                                           |
+| `validation_criteria`       | text, nullable                               | the success test the advance loop checks against; null until planned                                      |
+| `status`                    | text (`MissionStatus`), default `'draft'`    | `draft` → `active` → `stopped`. `paused`/`complete`/`failed` exist in the enum but are not yet transitioned to (`companion-missions.md` §11) |
+| `job_ids`                   | jsonb (`string[]`), default `[]`             | the scheduler wake jobs (for cancel on stop)                                                              |
+| `outward_grant`             | jsonb, nullable                              | scoped outward-action grant — **deferred** (`companion-missions.md` §7); no v1 mission populates it        |
+| `created_at` / `updated_at` | timestamptz                                  |                                                                                                           |
+
+Indexes: `missions_companion_status_idx (companion_id, status)`; partial-unique
+`missions_one_active_per_companion_uniq (companion_id) WHERE status = 'active'`. There is **no
+report-target column** — a mission's report is spoken in the embodied room (the owner DM),
+not routed to a stored channel (`companion-missions.md` §7).
+
+`mission_journal` — append-only, one row per mission turn, giving cross-day continuity ("what I
+concluded last time") without rescanning the transcript:
+
+| Field         | Type                                 | Notes                                                       |
+| ------------- | ------------------------------------ | ----------------------------------------------------------- |
+| `id`          | uuid (PK)                             | row id                                                      |
+| `seq`         | bigserial                             | stable chronological order within a mission                 |
+| `mission_id`  | uuid (FK → `missions.id`, cascade)    | the owning mission                                          |
+| `event`       | text, nullable                        | the trigger event that woke the turn; null for a chat advance |
+| `findings`    | text, nullable                        | what the turn concluded (v1: the report is stored here)     |
+| `prediction`  | text, nullable                        | the turn's prediction, if any                               |
+| `decision`    | text, nullable                        | the turn's continue/replan/complete decision, if any        |
+| `turn_at`     | timestamptz                           | when the turn ran                                           |
+
+Index: `mission_journal_mission_seq_idx (mission_id, seq)`. Content fields are nullable — a turn
+may reason without reaching a finding, prediction, or decision.
 
 ### Migrations & versioning
 
 The schema is **code-first** in `db/src/schema.ts`; `pnpm db:generate` (Drizzle Kit) diffs it
 against the recorded snapshot and emits a timestamped SQL migration under `db/migrations/`, tracked
-by the `meta/` journal. `pnpm db:migrate` applies pending migrations in order. During the PoC the
-history is kept as a **single squashed baseline** (`0000_*.sql`) rather than an accreting chain;
-once schema changes ship against a live database, new migrations append forward-only. Two tests
-guard the contract — a **journal** test (the recorded migrations match the schema) and a **replay**
-test (applying the migrations from empty reproduces the expected schema), so a schema change that
-forgot its migration fails CI rather than drifting.
+by the `meta/` journal. `pnpm db:migrate` applies pending migrations in order. The history began as
+a **squashed baseline** (`0000_*.sql`) and now appends **forward-only** as schema changes ship —
+the missions feature added `0002` (missions + mission_journal tables, the one-active index, and the
+`discord_config` trigger/channel columns), `0003` (`discord_config.bot_user_id`), and `0004`
+(dropping the unused `missions.report_channel` column). Two tests guard the contract — a **journal**
+test (the recorded migrations match the schema) and a **replay** test (applying the migrations from
+empty reproduces the expected schema), so a schema change that forgot its migration fails CI rather
+than drifting.
 
 ## 2. Harness & Agent-Loop Internals
 

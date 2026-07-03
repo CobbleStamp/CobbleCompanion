@@ -300,14 +300,16 @@ external_id)` user (`packages/core/src/identity/store.ts`, `ensureUserByClaim`),
 - **No secrets in logs.** Errors are logged with operation + `userId`/`companionId` context, never the
   token or service secret (per the repo logging rule).
 
+> **Now shipped: mission trigger intake (goal-driven tasks).** The surface is the **wake path**
+> for missions — the `GuildMessages` intent + a **guild-message trigger path** that accepts a
+> message **only** from an allowlisted trigger sender (a scheduler bot) in a configured **mission
+> channel**, routed as a **trigger-only authority** (distinct from the owner lock, which is
+> untouched), then **summons programmatically** to process it. This is the one place the surface
+> takes a non-owner input, deliberately narrow. See §6 (the `/mission` command) and
+> `companion-missions.md` §3, §8.
+
 ## 10. Beyond the PoC
 
-- **Mission trigger intake (goal-driven tasks)** — a designed extension that turns the surface into
-  the **wake path** for missions: add the `GuildMessages` intent + a **guild-message trigger path**
-  that accepts a message **only** from an allowlisted trigger sender (a scheduler bot) in a configured
-  **mission channel**, routed as a **trigger-only authority** (distinct from the owner lock, which is
-  untouched), then **summons programmatically** to process it. This is the one place the surface gains
-  a non-owner input, deliberately narrow. Full design → `companion-missions.md` §3.2, §8.
 - **Server/guild channels** — DM-only for now; channels raise "who is speaking" in multi-person rooms.
 - **Allowlist beyond the owner** — authorize additional Discord user IDs.
 - **Live token streaming** via message edits (rejected for the PoC: edit rate limits, janky UX).
