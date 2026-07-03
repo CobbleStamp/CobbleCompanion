@@ -11,7 +11,9 @@
  *  - `--predicate` / `--action` are shell-tokenized (quotes group), and the runner substitutes
  *    `{{message}}` inside each resulting argv element — so the action's `--text` value is kept as
  *    one quoted element (`"<@bot> {{message}}"`) and the mention rides in front of the message.
- *  - `schedule cancel <id>` returns 204 with no stdout (exit 0).
+ *  - `schedule cancel <id>` returns 204 with no stdout (exit 0); an unknown id prints
+ *    `{ category: 'not_found', … }` and exits non-zero. `cancel` is idempotent — it treats
+ *    `not_found` as success (the job is already gone), so callers never re-record a dead id.
  */
 
 import type { CommandSandbox } from '../cli/sandbox.js';
@@ -100,9 +102,18 @@ export function createSchedulerCliScheduler(options: SchedulerCliOptions): Missi
 
     async cancel(jobId: string): Promise<void> {
       const { output, ok } = await run(['cancel', jobId]);
-      if (!ok) {
-        throw new Error(`scheduler cancel failed: ${schedulerMessage(output)}`);
+      if (ok) {
+        return;
       }
+      // Cancel is idempotent: a `not_found` result means the job is already gone, so
+      // its post-condition ("this job is no longer armed") is met — resolve rather than
+      // throw. Reporting it as a failure would make `reconcileMissionJobs` re-record the
+      // dead id as still-armed and it would never drain from a mission's `job_ids`. Any
+      // other category (scheduler down, bad request) is a real failure the caller retries.
+      if (schedulerCategory(output) === 'not_found') {
+        return;
+      }
+      throw new Error(`scheduler cancel failed: ${schedulerMessage(output)}`);
     },
   };
 }
@@ -112,6 +123,16 @@ function parseJobId(output: string): string | null {
   try {
     const parsed = JSON.parse(output.trim()) as { id?: unknown };
     return typeof parsed.id === 'string' && parsed.id.length > 0 ? parsed.id : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Pull scheduler-cli's `{ category, … }` error discriminant (e.g. `not_found`), or null. */
+function schedulerCategory(output: string): string | null {
+  try {
+    const parsed = JSON.parse(output.trim()) as { category?: unknown };
+    return typeof parsed.category === 'string' ? parsed.category : null;
   } catch {
     return null;
   }

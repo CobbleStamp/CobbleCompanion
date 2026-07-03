@@ -102,15 +102,25 @@ describe('createSchedulerCliScheduler', () => {
     expect(seen?.argv).toEqual(['cancel', 'job_abc', '--base-url', 'http://x']);
   });
 
-  it('throws when a cancel fails', async () => {
+  it('cancel is idempotent: a `not_found` result resolves (the job is already gone)', async () => {
     const sandbox = new FakeCommandSandbox(() => ({
       output: JSON.stringify({ category: 'not_found', message: 'no job with that id' }),
       exitCode: 5,
       timedOut: false,
       truncated: false,
     }));
-    await expect(createSchedulerCliScheduler({ sandbox }).cancel('nope')).rejects.toThrow(
-      /no job with that id/,
+    await expect(createSchedulerCliScheduler({ sandbox }).cancel('gone')).resolves.toBeUndefined();
+  });
+
+  it('throws when a cancel fails for any reason other than not_found', async () => {
+    const sandbox = new FakeCommandSandbox(() => ({
+      output: JSON.stringify({ category: 'unavailable', message: 'scheduler is down' }),
+      exitCode: 3,
+      timedOut: false,
+      truncated: false,
+    }));
+    await expect(createSchedulerCliScheduler({ sandbox }).cancel('job_abc')).rejects.toThrow(
+      /scheduler is down/,
     );
   });
 });
