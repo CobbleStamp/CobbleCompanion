@@ -289,7 +289,7 @@ the wake event. Inspect & stop (§5.3) are plain request/response management cal
 
 The owner states the goal **in ordinary chat** (`messages.send`) — there is no separate create
 method. That turn is the planning turn: the model decomposes the goal
-into a `plan` + `validation_criteria` + the scheduler job(s) + the report target, then calls the
+into a `plan` + `validation_criteria` + the scheduler job(s), then calls the
 effectful **`start_mission`** tool. Because that tool is `effectful`, the shipped propose→approve
 gate (`architecture.md` §4.4) holds it as a **proposal** and exits the loop — the plan surfaces to
 the user as the standard approval card (in Discord: an embed with Confirm/Reject; no bespoke

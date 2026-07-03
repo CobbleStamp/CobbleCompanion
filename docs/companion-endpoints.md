@@ -314,9 +314,12 @@ gate decides to stay quiet.
 
 ### 4.13 Missions
 
-Registered only when the server has **both** a mission service and a mission scheduler wired
-(`companion-missions.md` §9); absent otherwise (calls return `unknown_method`) — a deployment
-without the scheduler-cli host doesn't expose missions rather than exposing broken ones.
+The four `mission.*` methods are registered only when the server has **both** a mission service
+and a mission scheduler wired (`companion-missions.md` §9); absent otherwise (calls return
+`unknown_method`) — a deployment without the scheduler-cli host doesn't expose missions rather
+than exposing broken ones. `discord.config.setMissionWake` (the last row) is **not** in that
+group: it is a `discord.config.*` write, always registered, and returns `conflict` (not
+`unknown_method`) when Discord is unconfigured — it is listed here only for locality.
 `mission.advance` produces a turn, so it
 streams and runs through the serial chain (§7) like `messages.send`. Mission *creation* has no
 method: the owner states the goal in an ordinary chat turn and the model proposes the effectful
