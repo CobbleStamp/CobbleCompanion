@@ -595,6 +595,116 @@ describe('CompanionBridge — embodiment races', () => {
     expect(h.notices).toHaveLength(0);
   });
 
+  it('does not retract when the stale wake opened the connection a live wake reused', async () => {
+    // The reverse ordering of the test above: the STALE wake wins the connect and OPENS the
+    // connection; the LIVE wake queues behind it and reuses that same connection. The stale
+    // wake's skip must not close a connection the live wake is still advancing over — the
+    // retract has to wait for the last concurrent wake and stand down because one was live.
+    // Both advances are gated so the two wakes are provably in flight together (both holding
+    // the connection) at the moment the stale one is released and would, on the bug, tear down.
+    const connectGates: Array<() => void> = [];
+    const advanceGates = new Map<string, () => void>();
+    const gateFor = (event: string): Promise<void> =>
+      new Promise((resolve) => advanceGates.set(event, resolve));
+    const advanced: string[] = [];
+    const h = makeBridge({
+      onConnection: (connection) => {
+        connection.connectGate = new Promise((resolve) => connectGates.push(resolve));
+      },
+      overrides: {
+        onMissionAdvance: async (_connection, _post, _missionId, event) => {
+          advanced.push(event);
+          await gateFor(event);
+          return { skipped: event === 'stale' };
+        },
+      },
+    });
+
+    const stale = h.bridge.handleTrigger('u1', MISSION_ID, 'stale');
+    const active = h.bridge.handleTrigger('u1', MISSION_ID, 'active');
+    await tick(); // both past their dormant checks; the stale wake parked in connect()
+    expect(connectGates).toHaveLength(1); // serialized: only the first (stale) dialed
+    connectGates[0]!();
+    await tick(); // stale registers; both wakes now parked in advance over the one connection
+    expect(advanced).toEqual(['stale', 'active']);
+    expect(h.bridge.isSummoned('u1')).toBe(true);
+
+    // Release the STALE advance first: its skip must NOT retract — the live wake still holds.
+    advanceGates.get('stale')!();
+    await tick();
+    expect(h.bridge.isSummoned('u1')).toBe(true); // the live wake's embodiment survives
+    expect(h.connections[0]?.closed).toBe(false);
+
+    advanceGates.get('active')!();
+    await Promise.all([stale, active]);
+    expect(h.connections).toHaveLength(1); // the live wake reused, it did not dial
+    expect(h.bridge.isSummoned('u1')).toBe(true);
+    expect(h.notices).toHaveLength(0); // no teardown, no spurious DM
+  });
+
+  it('retracts a stale-only trigger race once the last concurrent wake finishes', async () => {
+    // Both wakes are stale (a recurring wake firing twice after the mission is gone). Neither
+    // justifies the embodiment, so it must be retracted exactly once — by the last wake out,
+    // not left squatting (the leak a naive "only the opener tears down" guard would allow).
+    const connectGates: Array<() => void> = [];
+    const advanceGates = new Map<string, () => void>();
+    const gateFor = (event: string): Promise<void> =>
+      new Promise((resolve) => advanceGates.set(event, resolve));
+    const h = makeBridge({
+      onConnection: (connection) => {
+        connection.connectGate = new Promise((resolve) => connectGates.push(resolve));
+      },
+      overrides: {
+        onMissionAdvance: async (_connection, _post, _missionId, event) => {
+          await gateFor(event);
+          return { skipped: true };
+        },
+      },
+    });
+
+    const first = h.bridge.handleTrigger('u1', MISSION_ID, 'stale-a');
+    const second = h.bridge.handleTrigger('u1', MISSION_ID, 'stale-b');
+    await tick();
+    connectGates[0]!();
+    await tick(); // both parked in advance over the one connection (holders = 2)
+
+    // First wake out: it is NOT the last holder, so it must not retract yet.
+    advanceGates.get('stale-a')!();
+    await tick();
+    expect(h.bridge.isSummoned('u1')).toBe(true);
+    expect(h.connections[0]?.closed).toBe(false);
+
+    // Last wake out: no advance was ever live, so it retracts the embodiment silently.
+    advanceGates.get('stale-b')!();
+    await Promise.all([first, second]);
+    expect(h.bridge.isSummoned('u1')).toBe(false);
+    expect(h.connections[0]?.closed).toBe(true);
+    expect(h.notices).toHaveLength(0);
+  });
+
+  it('does not silently retract when a trigger advance throws (left to close handlers)', async () => {
+    // A mid-turn connection drop / server error surfaces as a thrown advance, not a skip.
+    // The retract must fire only on a genuine skip — a throw is left to the connection's own
+    // close/supersede handlers (which carry a notice), not raced by a silent teardown here.
+    const h = makeBridge({
+      overrides: {
+        onMissionAdvance: async () => {
+          throw new Error('mid-turn connection drop');
+        },
+      },
+    });
+
+    await expect(h.bridge.handleTrigger('u1', MISSION_ID, 'boom')).rejects.toThrow(
+      'mid-turn connection drop',
+    );
+
+    // The embodiment is NOT torn down by the retract path: holders balanced back to 0 but the
+    // advance never skipped, so the connection stays for the close handler to reap.
+    expect(h.bridge.isSummoned('u1')).toBe(true);
+    expect(h.connections[0]?.closed).toBe(false);
+    expect(h.notices).toHaveLength(0);
+  });
+
   it('a /summon racing a trigger reuses the in-flight embodiment (no second dial)', async () => {
     const gates: Array<() => void> = [];
     const h = makeBridge({

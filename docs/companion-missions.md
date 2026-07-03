@@ -234,10 +234,13 @@ validity before claiming (the mission methods are companion-scoped — the claim
 so the server's `mission.advance` is the authoritative check: the named mission (§3.2) not
 `active` → the turn is **skipped** and that mission's stray wake jobs are **reconciled** (§5.2
 step 1). The skip flag rides the method's terminal result back to the bridge, which then
-**silently tears down an embodiment this trigger opened** (an embodiment the owner summoned
-stays — it is theirs). Net effect: a stale trigger — e.g. a wake job whose cancel failed at
-`mission.stop` — disrupts at most once, posts nothing into the owner DM, and cancels itself
-instead of firing every interval forever.
+**silently retracts a trigger-summoned embodiment once no concurrent wake still needs it**: the
+retract waits for the last overlapping wake to finish and stands down if any of them advanced a
+live mission, so a stale wake never closes a connection a live wake is reusing over the same
+embodiment. An embodiment the owner summoned (`/summon`, `/mission`) stays — it is theirs. Net
+effect: a stale trigger — e.g. a wake job whose cancel failed at `mission.stop` — disrupts at
+most once, posts nothing into the owner DM, and cancels itself instead of firing every interval
+forever.
 
 ## 4. State — `MissionService`, `missions`, `mission_journal`
 

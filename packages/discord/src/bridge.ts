@@ -125,6 +125,13 @@ interface EstablishEmbodimentInput {
   readonly encryptedBotToken: string;
   readonly channelId: string;
   readonly greet: boolean;
+  /**
+   * Whether this embodiment stands on its own — a user summon (`/summon`, `/mission`),
+   * independent of any mission advance. Seeds {@link ActiveEmbodiment.justified}: a
+   * persistent embodiment is never retracted when a stale trigger is skipped over it,
+   * whereas a trigger-opened one (`false`) is retracted once no live advance justified it.
+   */
+  readonly persist: boolean;
 }
 
 interface ActiveEmbodiment {
@@ -134,18 +141,19 @@ interface ActiveEmbodiment {
   readonly channelId: string;
   /** Aborts the proactive event loop on teardown (supersession / stop). */
   readonly abort: AbortController;
-}
-
-/**
- * Outcome of {@link CompanionBridge.establishEmbodiment}. `opened` distinguishes a
- * connection this call actually dialed (`true`) from one an already-registered
- * establish is serving that this call merely reused (`false`). Only the opener may
- * tear a connection down on a stale-mission skip — a reuser tearing it down would
- * kill an embodiment another live caller still depends on.
- */
-interface EstablishResult {
-  readonly embodiment: ActiveEmbodiment;
-  readonly opened: boolean;
+  /**
+   * In-flight mission wakes currently advancing over this connection. A stale trigger
+   * retracts its summon only when it is the last holder out (back to 0), so it never
+   * closes a connection a concurrent wake reused. Mutated on the live embodiment.
+   */
+  holders: number;
+  /**
+   * Sticky: this embodiment has a standing reason to persist — a user summon
+   * (`/summon`, `/mission`), or any mission advance that was NOT skipped. An unjustified
+   * embodiment (a trigger's summon whose every advance turned out stale) is retracted
+   * when the last holder leaves. Mutated on the live embodiment.
+   */
+  justified: boolean;
 }
 
 export const SUMMON_COMMAND = 'summon';
@@ -159,7 +167,7 @@ export class CompanionBridge {
   private readonly active = new Map<string, ActiveEmbodiment>();
   /** Per-user establish in flight — later establishes queue behind it (see
    *  {@link establishEmbodiment}). */
-  private readonly establishing = new Map<string, Promise<EstablishResult | null>>();
+  private readonly establishing = new Map<string, Promise<ActiveEmbodiment | null>>();
 
   constructor(private readonly opts: CompanionBridgeOptions) {}
 
@@ -218,12 +226,13 @@ export class CompanionBridge {
       encryptedBotToken: config.encryptedBotToken,
       channelId: ctx.command.channelId,
       greet: false,
+      persist: true,
     });
     if (!established) {
       await ctx.reply('I couldn’t come back to check — try `/summon`, then `/mission` again.');
       return null;
     }
-    return established.embodiment;
+    return established;
   }
 
   /**
@@ -253,15 +262,17 @@ export class CompanionBridge {
    * the connection can't be established.
    *
    * A trigger only carries weight while its mission is live: when the server skips the
-   * advance (no active mission — a stale job the reconciliation is cancelling), a summon
+   * advance (no active mission — a stale job the reconciliation is cancelling), the summon
    * this trigger caused is undone silently, so a stray firing never leaves the companion
-   * squatting on a room it superseded for nothing. An embodiment the USER opened (a prior
-   * `/summon`) is theirs and stays.
+   * squatting on a room it superseded for nothing. The retract waits for the last concurrent
+   * wake to finish (so a live wake reusing the same connection is never cut off) and stands
+   * down if any advance was live. An embodiment the USER opened (`/summon`, `/mission`) is
+   * theirs and stays — see {@link advanceForTrigger}.
    */
   async handleTrigger(userId: string, missionId: string, event: string): Promise<void> {
     const existing = this.active.get(userId);
     if (existing) {
-      await this.advance(userId, existing, missionId, event);
+      await this.advanceForTrigger(userId, existing, missionId, event);
       return;
     }
     const config = await this.opts.configStore.findByUserId(userId);
@@ -288,30 +299,53 @@ export class CompanionBridge {
       });
       return;
     }
-    const established = await this.establishEmbodiment({
+    const embodiment = await this.establishEmbodiment({
       userId,
       companionId: config.boundCompanionId,
       encryptedBotToken: config.encryptedBotToken,
       channelId,
       greet: false,
+      persist: false,
     });
-    if (!established) return; // establishEmbodiment logged the reason (fail / superseded).
-    const outcome = await this.advance(userId, established.embodiment, missionId, event);
-    if (outcome.skipped && established.opened) {
-      // The mission is gone — this trigger summoned the companion for nothing. Leave the
-      // room silently (no DM notice: the owner never asked for this embodiment). Only when
-      // THIS call opened the connection: a reused one belongs to another live caller (a
-      // concurrent active-mission wake, or a prior `/summon`) and is not ours to close.
-      this.opts.logger.info('discord trigger was stale; tearing down the embodiment it opened', {
-        operation: 'discord.bridge.trigger',
-        userId,
-      });
-      await this.teardown(
-        userId,
-        established.embodiment.connection,
-        null,
-        'discord.bridge.trigger',
-      );
+    if (!embodiment) return; // establishEmbodiment logged the reason (fail / superseded).
+    await this.advanceForTrigger(userId, embodiment, missionId, event);
+  }
+
+  /**
+   * Advance the named mission over the embodiment, then release this trigger's hold on it.
+   * A trigger's summon carries weight only while its mission does: a live advance (not
+   * skipped) marks the embodiment justified; a skipped one (the mission is gone) does not.
+   * When the last concurrent wake releases and no advance ever justified the embodiment, the
+   * summon this trigger caused is retracted silently (no DM — the owner never asked for it).
+   *
+   * The `holders` guard is what stops a stale wake from closing a connection a concurrent
+   * live wake reused: the retract fires only when this is the last wake out. `justified`
+   * stops it from closing a connection the user summoned or a live mission still needs. The
+   * retract fires only on a genuine skip: a thrown advance (a mid-turn connection drop or
+   * server error) is left to the connection's own close/supersede handlers — retracting here
+   * would race a silent teardown against their notice-bearing one.
+   */
+  private async advanceForTrigger(
+    userId: string,
+    embodiment: ActiveEmbodiment,
+    missionId: string,
+    event: string,
+  ): Promise<void> {
+    embodiment.holders += 1;
+    let skipped = false;
+    try {
+      const outcome = await this.advance(userId, embodiment, missionId, event);
+      skipped = outcome.skipped;
+      if (!skipped) embodiment.justified = true;
+    } finally {
+      embodiment.holders -= 1;
+      if (skipped && embodiment.holders === 0 && !embodiment.justified) {
+        this.opts.logger.info('discord trigger left no live mission; retracting its embodiment', {
+          operation: 'discord.bridge.trigger',
+          userId,
+        });
+        await this.teardown(userId, embodiment.connection, null, 'discord.bridge.trigger');
+      }
     }
   }
 
@@ -348,6 +382,7 @@ export class CompanionBridge {
       encryptedBotToken: config.encryptedBotToken,
       channelId: ctx.command.channelId,
       greet: true,
+      persist: true,
     });
     if (!established) {
       await ctx.reply(
@@ -369,16 +404,18 @@ export class CompanionBridge {
    */
   private async establishEmbodiment(
     input: EstablishEmbodimentInput,
-  ): Promise<EstablishResult | null> {
+  ): Promise<ActiveEmbodiment | null> {
     const prior = this.establishing.get(input.userId);
-    const attempt = (async (): Promise<EstablishResult | null> => {
+    const attempt = (async (): Promise<ActiveEmbodiment | null> => {
       // Wait for the in-flight establish to settle; its outcome is read from `active`
       // (registered → reuse it; failed → this caller retries with its own connection).
       await prior?.catch(() => undefined);
-      const reused = this.active.get(input.userId);
-      if (reused) return { embodiment: reused, opened: false };
-      const opened = await this.openEmbodiment(input);
-      return opened ? { embodiment: opened, opened: true } : null;
+      const embodiment = this.active.get(input.userId) ?? (await this.openEmbodiment(input));
+      // A user summon justifies the embodiment on its own — record it even when reusing a
+      // connection a trigger opened, so a stale trigger skipped over it never retracts an
+      // embodiment the user is now relying on.
+      if (embodiment && input.persist) embodiment.justified = true;
+      return embodiment;
     })();
     this.establishing.set(input.userId, attempt);
     try {
@@ -450,6 +487,8 @@ export class CompanionBridge {
       connection,
       channelId,
       abort: new AbortController(),
+      holders: 0,
+      justified: false,
     };
     this.active.set(userId, embodiment);
     // Run the background loop until torn down. Fire-and-forget: a rejection here would
