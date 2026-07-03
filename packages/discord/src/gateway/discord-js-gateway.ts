@@ -93,12 +93,31 @@ class DiscordJsGateway implements DiscordGateway {
         content: message.content,
       });
     });
-    this.client.on(Events.InteractionCreate, (interaction) => {
+    this.client.on(Events.InteractionCreate, async (interaction) => {
       if (interaction.isButton()) {
         this.handleButton(interaction);
         return;
       }
       if (!interaction.isChatInputCommand()) return;
+      // Acknowledge within Discord's 3-second interaction window BEFORE dispatching:
+      // the handler may mint a token, open the `/ws` connection, and claim embodiment
+      // (the dormant `/mission` kill switch, companion-missions.md §5.3) before it can
+      // reply, which routinely exceeds 3s. A bare `interaction.reply` would then throw
+      // "Unknown interaction" and the owner sees "The application did not respond" —
+      // the kill switch looking broken exactly when it matters. deferReply buys 15
+      // minutes; the handler's reply becomes an editReply of this acknowledgement.
+      try {
+        await interaction.deferReply({ ephemeral: true });
+      } catch (error) {
+        // The window already closed (or Discord rejected the ack); nothing we can send
+        // will land, so log and drop rather than dispatch a handler that can't reply.
+        this.logger.error('discord deferReply failed', {
+          operation: 'discord.command',
+          command: interaction.commandName,
+          error,
+        });
+        return;
+      }
       const options: Record<string, string> = {};
       for (const option of interaction.options.data) {
         if (typeof option.value === 'string') options[option.name] = option.value;
@@ -108,8 +127,14 @@ class DiscordJsGateway implements DiscordGateway {
         userId: interaction.user.id,
         channelId: interaction.channelId,
         options,
+        // The interaction is already deferred, so the first reply edits the pending
+        // acknowledgement; any later post is a follow-up (commands reply once today).
         reply: async (content) => {
-          await interaction.reply({ content, ephemeral: true });
+          if (interaction.deferred || interaction.replied) {
+            await interaction.editReply({ content });
+          } else {
+            await interaction.reply({ content, ephemeral: true });
+          }
         },
       });
     });
