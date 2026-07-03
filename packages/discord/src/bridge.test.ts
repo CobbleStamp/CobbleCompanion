@@ -178,8 +178,12 @@ function makeBridge(
   opts: {
     outcome?: 'ok' | 'superseded';
     supersedeOnConnect?: boolean;
-    /** What the mission-advance hook reports back (default: the mission ran). */
-    advanceSkipped?: boolean;
+    /**
+     * What the mission-advance hook reports back (default: the mission ran). A
+     * predicate decides per-event, so a single race can mix a live mission (not
+     * skipped) with a stale one (skipped) over the same user.
+     */
+    advanceSkipped?: boolean | ((event: string) => boolean);
     /** Configure each connection as the factory mints it (e.g. arm a connect gate). */
     onConnection?: (connection: FakeConnection) => void;
     overrides?: Partial<CompanionBridgeOptions>;
@@ -221,7 +225,11 @@ function makeBridge(
     },
     onMissionAdvance: async (connection, _post, missionId, event, userId) => {
       advances.push({ connection, missionId, event, userId });
-      return { skipped: opts.advanceSkipped ?? false };
+      const skipped =
+        typeof opts.advanceSkipped === 'function'
+          ? opts.advanceSkipped(event)
+          : (opts.advanceSkipped ?? false);
+      return { skipped };
     },
     logger: silent,
     ...opts.overrides,
@@ -557,6 +565,34 @@ describe('CompanionBridge — embodiment races', () => {
     expect(h.advances).toHaveLength(2);
     expect(h.advances.every((a) => a.connection === h.connections[0])).toBe(true);
     expect(h.notices).toHaveLength(0); // no teardown thrash, no spurious DM
+  });
+
+  it('does not tear down a live active-mission embodiment when a concurrent stale trigger is skipped over it', async () => {
+    const gates: Array<() => void> = [];
+    const h = makeBridge({
+      // The first wake's mission is live (not skipped); the second is stale (skipped).
+      advanceSkipped: (event) => event === 'stale',
+      onConnection: (connection) => {
+        connection.connectGate = new Promise((resolve) => gates.push(resolve));
+      },
+    });
+
+    // Two mission wakes race from dormant: 'active' opens the embodiment first, and
+    // 'stale' queues behind it — reusing the same connection rather than dialing its own.
+    const active = h.bridge.handleTrigger('u1', MISSION_ID, 'active');
+    const stale = h.bridge.handleTrigger('u1', MISSION_ID, 'stale');
+    await tick(); // both past their dormant checks; the first parked in connect()
+    expect(gates).toHaveLength(1); // serialized: only the first dialed
+    for (const release of gates) release();
+    await Promise.all([active, stale]);
+
+    expect(h.connections).toHaveLength(1); // the stale wake reused, it did not dial
+    expect(h.advances).toHaveLength(2); // both missions were advanced over the one connection
+    // The stale wake merely reused a connection the active wake opened — it must not tear
+    // it down. The active mission's embodiment has to stay live.
+    expect(h.bridge.isSummoned('u1')).toBe(true);
+    expect(h.connections[0]?.closed).toBe(false);
+    expect(h.notices).toHaveLength(0);
   });
 
   it('a /summon racing a trigger reuses the in-flight embodiment (no second dial)', async () => {

@@ -136,6 +136,18 @@ interface ActiveEmbodiment {
   readonly abort: AbortController;
 }
 
+/**
+ * Outcome of {@link CompanionBridge.establishEmbodiment}. `opened` distinguishes a
+ * connection this call actually dialed (`true`) from one an already-registered
+ * establish is serving that this call merely reused (`false`). Only the opener may
+ * tear a connection down on a stale-mission skip — a reuser tearing it down would
+ * kill an embodiment another live caller still depends on.
+ */
+interface EstablishResult {
+  readonly embodiment: ActiveEmbodiment;
+  readonly opened: boolean;
+}
+
 export const SUMMON_COMMAND = 'summon';
 export const STATUS_COMMAND = 'status';
 export const MISSION_COMMAND = 'mission';
@@ -147,7 +159,7 @@ export class CompanionBridge {
   private readonly active = new Map<string, ActiveEmbodiment>();
   /** Per-user establish in flight — later establishes queue behind it (see
    *  {@link establishEmbodiment}). */
-  private readonly establishing = new Map<string, Promise<ActiveEmbodiment | null>>();
+  private readonly establishing = new Map<string, Promise<EstablishResult | null>>();
 
   constructor(private readonly opts: CompanionBridgeOptions) {}
 
@@ -200,17 +212,18 @@ export class CompanionBridge {
       );
       return null;
     }
-    const embodiment = await this.establishEmbodiment({
+    const established = await this.establishEmbodiment({
       userId: ctx.userId,
       companionId: config.boundCompanionId,
       encryptedBotToken: config.encryptedBotToken,
       channelId: ctx.command.channelId,
       greet: false,
     });
-    if (!embodiment) {
+    if (!established) {
       await ctx.reply('I couldn’t come back to check — try `/summon`, then `/mission` again.');
+      return null;
     }
-    return embodiment;
+    return established.embodiment;
   }
 
   /**
@@ -275,23 +288,30 @@ export class CompanionBridge {
       });
       return;
     }
-    const embodiment = await this.establishEmbodiment({
+    const established = await this.establishEmbodiment({
       userId,
       companionId: config.boundCompanionId,
       encryptedBotToken: config.encryptedBotToken,
       channelId,
       greet: false,
     });
-    if (!embodiment) return; // establishEmbodiment logged the reason (fail / superseded).
-    const outcome = await this.advance(userId, embodiment, missionId, event);
-    if (outcome.skipped) {
+    if (!established) return; // establishEmbodiment logged the reason (fail / superseded).
+    const outcome = await this.advance(userId, established.embodiment, missionId, event);
+    if (outcome.skipped && established.opened) {
       // The mission is gone — this trigger summoned the companion for nothing. Leave the
-      // room silently (no DM notice: the owner never asked for this embodiment).
+      // room silently (no DM notice: the owner never asked for this embodiment). Only when
+      // THIS call opened the connection: a reused one belongs to another live caller (a
+      // concurrent active-mission wake, or a prior `/summon`) and is not ours to close.
       this.opts.logger.info('discord trigger was stale; tearing down the embodiment it opened', {
         operation: 'discord.bridge.trigger',
         userId,
       });
-      await this.teardown(userId, embodiment.connection, null, 'discord.bridge.trigger');
+      await this.teardown(
+        userId,
+        established.embodiment.connection,
+        null,
+        'discord.bridge.trigger',
+      );
     }
   }
 
@@ -322,14 +342,14 @@ export class CompanionBridge {
       );
       return;
     }
-    const embodiment = await this.establishEmbodiment({
+    const established = await this.establishEmbodiment({
       userId: ctx.userId,
       companionId: config.boundCompanionId,
       encryptedBotToken: config.encryptedBotToken,
       channelId: ctx.command.channelId,
       greet: true,
     });
-    if (!embodiment) {
+    if (!established) {
       await ctx.reply(
         'I couldn’t come here — I seem to be active somewhere else. Try `/summon` again.',
       );
@@ -349,13 +369,16 @@ export class CompanionBridge {
    */
   private async establishEmbodiment(
     input: EstablishEmbodimentInput,
-  ): Promise<ActiveEmbodiment | null> {
+  ): Promise<EstablishResult | null> {
     const prior = this.establishing.get(input.userId);
-    const attempt = (async (): Promise<ActiveEmbodiment | null> => {
+    const attempt = (async (): Promise<EstablishResult | null> => {
       // Wait for the in-flight establish to settle; its outcome is read from `active`
       // (registered → reuse it; failed → this caller retries with its own connection).
       await prior?.catch(() => undefined);
-      return this.active.get(input.userId) ?? (await this.openEmbodiment(input));
+      const reused = this.active.get(input.userId);
+      if (reused) return { embodiment: reused, opened: false };
+      const opened = await this.openEmbodiment(input);
+      return opened ? { embodiment: opened, opened: true } : null;
     })();
     this.establishing.set(input.userId, attempt);
     try {
