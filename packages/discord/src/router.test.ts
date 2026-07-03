@@ -310,7 +310,11 @@ describe('BotRouter — mission trigger (guild) trust gate', () => {
     authorId: string;
     channelId: string;
     content: string;
+    triggerBotId?: string | null;
+    missionChannelId?: string | null;
   }) {
+    // The trust snapshot rides the context (the manager holds it per-bot); it defaults to
+    // the configured mission wake, and a test passes null to model "not configured".
     return {
       userId: input.userId ?? 'u1',
       message: {
@@ -319,6 +323,9 @@ describe('BotRouter — mission trigger (guild) trust gate', () => {
         messageId: 'msg-1',
         content: input.content,
       },
+      triggerBotId: input.triggerBotId === undefined ? TRIGGER_BOT : input.triggerBotId,
+      missionChannelId:
+        input.missionChannelId === undefined ? MISSION_CHANNEL : input.missionChannelId,
     };
   }
 
@@ -356,7 +363,13 @@ describe('BotRouter — mission trigger (guild) trust gate', () => {
   it('drops when the mission wake is not configured', async () => {
     const { router, triggers } = makeRouter(new OneUserStore(record()));
     await router.handleGuildTrigger(
-      guildCtx({ authorId: TRIGGER_BOT, channelId: MISSION_CHANNEL, content: '<@bot> event' }),
+      guildCtx({
+        authorId: TRIGGER_BOT,
+        channelId: MISSION_CHANNEL,
+        content: '<@bot> event',
+        triggerBotId: null,
+        missionChannelId: null,
+      }),
     );
     expect(triggers).toHaveLength(0);
   });

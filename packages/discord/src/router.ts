@@ -81,9 +81,10 @@ export class BotRouter {
    * fails the gate is dropped (logged), never answered.
    */
   async handleGuildTrigger(ctx: GuildMessageContext): Promise<void> {
-    const config = await this.opts.configStore.findByUserId(ctx.userId);
-    const triggerBotId = config?.triggerBotId ?? null;
-    const missionChannelId = config?.missionChannelId ?? null;
+    // The trust snapshot rides the context (the manager holds it per-bot), NOT a per-message
+    // config read — a guild message fires for every message the bot can see, so a DB read
+    // here would be an un-rate-limited amplification surface (companion-missions.md §3.2).
+    const { triggerBotId, missionChannelId } = ctx;
     if (triggerBotId === null || missionChannelId === null) {
       // Mission wake not configured for this user — nothing to trust; drop silently.
       return;

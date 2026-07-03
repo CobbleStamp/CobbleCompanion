@@ -421,8 +421,11 @@ weakening it:
   chat, `/summon`, or `/stop`.
 - **Trust is the (author, channel) pair, never content** (§3.3). A message is accepted as a trigger
   only from `trigger_bot_id` **and** in `mission_channel_id`; both are stored on the per-user
-  `discord_config` row and read on demand. Everything else in the channel is dropped. The DM
-  owner-lock path is untouched.
+  `discord_config` row. To avoid a DB read per guild message (a guild message fires for every message
+  the bot can see), the connection manager **caches this pair on the running-bot record** and hands it
+  to the trust gate — refreshed on the config-reconcile trigger, never read per message (see
+  companion-discord.md §2.1). Everything else in the channel is dropped. The DM owner-lock path is
+  untouched.
 - **Intent scope.** The gateway (`discord-js-gateway.ts`) enables `DirectMessages`, `GuildMessages`
   (without it Discord delivers no channel messages), and the privileged `MessageContent` intent.
   `MessageContent` is **not required for the guild wake path** — the @-mention (§3.2) already unlocks

@@ -40,10 +40,20 @@ export interface DirectMessageContext {
  * mission wake (companion-missions.md §3.2). The router applies the trust gate; the manager
  * only tags it. No reply/typing surface: a trigger is not answered in-channel; the mission
  * turn's output rides the owner's DM (§4).
+ *
+ * Unlike the DM/command paths, the guild-trigger path carries the mission-wake trust
+ * snapshot (`triggerBotId`, `missionChannelId`) rather than having the router read it on
+ * demand. A guild message fires for EVERY message the bot can see, so a per-message
+ * `findByUserId` would be an unbounded, un-rate-limited DB amplification surface. These two
+ * fields are immutable from the router's view: the manager holds them per-bot and refreshes
+ * them only on the reconcile trigger that follows a `discord_config` write (both null until
+ * the mission wake is configured).
  */
 export interface GuildMessageContext {
   readonly userId: string;
   readonly message: InboundGuildMessage;
+  readonly triggerBotId: string | null;
+  readonly missionChannelId: string | null;
 }
 
 /** An inbound proposal button click, tagged with the owning user. */
@@ -92,9 +102,17 @@ export interface GatewayManagerOptions {
 interface RunningBot {
   readonly userId: string;
   /** The encrypted token the live connection runs on — diffed on reconcile to decide
-   *  restart-vs-no-op. The only `discord_config` field the manager holds; everything
-   *  else is read on demand (companion-discord.md §2.1). */
+   *  restart-vs-no-op. */
   readonly encryptedBotToken: string;
+  /**
+   * The mission-wake trust snapshot (companion-missions.md §3.2), carried so the
+   * guild-trigger gate needn't read `discord_config` per inbound guild message. Refreshed
+   * by {@link GatewayManager.reconcileUser} on the reconcile trigger after a config write —
+   * an immutable record-swap that keeps the live connection. Everything else the router/
+   * bridge needs off the config row is still read on demand (companion-discord.md §2.1).
+   */
+  readonly triggerBotId: string | null;
+  readonly missionChannelId: string | null;
   readonly gateway: DiscordGateway;
 }
 
@@ -192,8 +210,11 @@ export class GatewayManager {
         await this.safeStop(existing);
         this.bots.delete(config.userId);
         starts.push(this.startBot(config));
+      } else {
+        // Same token, already running — keep the connection, but refresh the mission-wake
+        // trust snapshot in case only (triggerBotId, missionChannelId) changed.
+        this.refreshMissionWake(existing, config);
       }
-      // else: same token, already running — nothing to do (no cached config to refresh).
     }
     await Promise.allSettled(starts);
 
@@ -242,7 +263,30 @@ export class GatewayManager {
       await this.safeStop(existing);
       this.bots.delete(userId);
       await this.startBot(config);
+      return;
     }
+    // Same token → keep the live connection. Refresh the mission-wake trust snapshot so the
+    // guild-trigger gate reads the new (triggerBotId, missionChannelId) without restarting.
+    this.refreshMissionWake(existing, config);
+  }
+
+  /**
+   * Replace a running bot's record with a fresh mission-wake trust snapshot when
+   * (triggerBotId, missionChannelId) changed, reusing the live gateway (companion-missions.md
+   * §3.2). Immutable swap — no in-place mutation — and a no-op when nothing changed.
+   */
+  private refreshMissionWake(existing: RunningBot, config: DiscordConfigRecord): void {
+    if (
+      existing.triggerBotId === config.triggerBotId &&
+      existing.missionChannelId === config.missionChannelId
+    ) {
+      return;
+    }
+    this.bots.set(existing.userId, {
+      ...existing,
+      triggerBotId: config.triggerBotId,
+      missionChannelId: config.missionChannelId,
+    });
   }
 
   private async startBot(config: DiscordConfigRecord): Promise<void> {
@@ -255,8 +299,10 @@ export class GatewayManager {
       return;
     }
     const gateway = this.opts.gatewayFactory(token);
-    // Events are tagged with the owning userId only; the router/bridge read whatever
-    // config they need on demand (companion-discord.md §2.1) — no snapshot is carried.
+    // DM/command/proposal events are tagged with the owning userId only; their handlers
+    // read whatever config they need on demand (companion-discord.md §2.1). The exception
+    // is the guild-trigger path below, which carries the mission-wake trust snapshot to
+    // avoid a per-message DB read.
     gateway.onDirectMessage((message) => {
       this.opts.onDirectMessage({
         userId: config.userId,
@@ -267,7 +313,16 @@ export class GatewayManager {
       });
     });
     gateway.onGuildMessage((message) => {
-      this.opts.onGuildMessage({ userId: config.userId, message });
+      // Read the live record so a reconfig-refreshed snapshot (reconcileUser) is picked up
+      // without restarting the connection; the record is set before start (below), so it is
+      // present for any inbound event.
+      const current = this.bots.get(config.userId);
+      this.opts.onGuildMessage({
+        userId: config.userId,
+        message,
+        triggerBotId: current?.triggerBotId ?? null,
+        missionChannelId: current?.missionChannelId ?? null,
+      });
     });
     gateway.onSlashCommand((command) => {
       this.opts.onSlashCommand({
@@ -292,6 +347,8 @@ export class GatewayManager {
     const bot: RunningBot = {
       userId: config.userId,
       encryptedBotToken: config.encryptedBotToken,
+      triggerBotId: config.triggerBotId,
+      missionChannelId: config.missionChannelId,
       gateway,
     };
     this.bots.set(config.userId, bot);
