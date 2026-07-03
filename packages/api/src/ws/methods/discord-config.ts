@@ -4,7 +4,11 @@ import {
   keyFromBase64,
   type DiscordConfigRecord,
 } from '@cobble/db';
-import { discordConfigSetSchema, type DiscordConfigViewDto } from '@cobble/shared';
+import {
+  discordConfigSetSchema,
+  discordMissionWakeSchema,
+  type DiscordConfigViewDto,
+} from '@cobble/shared';
 import type { AppDeps } from '../../app.js';
 import type { WsMethods } from '../dispatch.js';
 import { ConflictError, NotFoundError, parseParams } from './helpers.js';
@@ -34,6 +38,11 @@ function toView(record: DiscordConfigRecord | null): DiscordConfigViewDto {
     ownerLinked,
     // Show the code only while it's still actionable (owner not yet linked).
     linkCode: ownerLinked ? null : record.linkCode,
+    missionWake: {
+      triggerBotId: record.triggerBotId,
+      missionChannelId: record.missionChannelId,
+      botUserIdCaptured: record.botUserId !== null,
+    },
   };
 }
 
@@ -88,6 +97,30 @@ export function discordConfigMethods(deps: AppDeps): WsMethods {
         new Date(),
       );
       if (!record) throw new NotFoundError('no Discord config to relink');
+      return { discord: toView(record) };
+    },
+
+    'discord.config.setMissionWake': async (ctx, params) => {
+      if (!encryptionKey()) throw new ConflictError(NOT_CONFIGURED);
+      const { triggerBotId, missionChannelId } = parseParams(
+        discordMissionWakeSchema,
+        params,
+        'a trigger bot id and a mission channel id are required',
+      );
+      // Independent of the token/owner-lock path — configuring the wake never re-links the bot
+      // (companion-missions.md §3.2).
+      const record = await discordConfig.configureMissionWake(
+        ctx.userId,
+        triggerBotId,
+        missionChannelId,
+      );
+      if (!record) throw new NotFoundError('no Discord config to configure');
+      // The live bot carries the (triggerBotId, missionChannelId) trust snapshot per-bot —
+      // it does NOT read config per message (gateway/manager.ts §guild-trigger). Reconcile so
+      // reconcileUser refreshes that snapshot in place; without this the running bot keeps its
+      // stale null pair and drops every trigger until an unrelated reconcile/restart. No bot
+      // restart — refreshMissionWake swaps only the two fields. Fire-and-forget: retries + logs.
+      void discordReconcile?.(ctx.userId);
       return { discord: toView(record) };
     },
 

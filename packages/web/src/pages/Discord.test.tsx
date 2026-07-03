@@ -13,6 +13,7 @@ import {
   listCompanions,
   regenerateDiscordLink,
   saveDiscordConfig,
+  saveDiscordMissionWake,
 } from '../api/client.js';
 import { Discord } from './Discord.js';
 
@@ -32,6 +33,7 @@ vi.mock('../api/client.js', () => ({
   saveDiscordConfig: vi.fn(),
   regenerateDiscordLink: vi.fn(),
   deleteDiscordConfig: vi.fn(() => Promise.resolve()),
+  saveDiscordMissionWake: vi.fn(),
   listCompanions: vi.fn(() => Promise.resolve([companion])),
 }));
 
@@ -99,6 +101,45 @@ describe('Discord settings panel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Regenerate code' }));
     await waitFor(() => expect(regenerateDiscordLink).toHaveBeenCalled());
     expect(await screen.findByText(/NEWCODE9/)).toBeTruthy();
+  });
+
+  it('saves the mission wake ids and prefills them from config', async () => {
+    // Discord snowflakes are 17–20 digit strings (matches discordMissionWakeSchema).
+    const triggerId = '111111111111111111';
+    const channelId = '222222222222222222';
+    vi.mocked(getDiscordConfig).mockResolvedValue({
+      configured: true,
+      boundCompanionId: 'companion-1',
+      ownerLinked: true,
+      linkCode: null,
+      missionWake: { triggerBotId: triggerId, missionChannelId: null, botUserIdCaptured: false },
+    });
+    vi.mocked(saveDiscordMissionWake).mockResolvedValue({
+      configured: true,
+      boundCompanionId: 'companion-1',
+      ownerLinked: true,
+      linkCode: null,
+      missionWake: {
+        triggerBotId: triggerId,
+        missionChannelId: channelId,
+        botUserIdCaptured: false,
+      },
+    });
+    renderPanel();
+
+    // The existing trigger bot id is prefilled from config.
+    const trigger = (await screen.findByLabelText('Trigger bot user id')) as HTMLInputElement;
+    expect(trigger.value).toBe(triggerId);
+    // Save is disabled until both ids are valid snowflakes.
+    const save = screen.getByRole('button', { name: 'Save mission wake' });
+    expect((save as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.change(screen.getByLabelText('Mission channel id'), {
+      target: { value: channelId },
+    });
+    fireEvent.click(save);
+
+    await waitFor(() => expect(saveDiscordMissionWake).toHaveBeenCalledWith(triggerId, channelId));
   });
 
   it('disconnects the bot', async () => {

@@ -36,6 +36,7 @@ read docs/product-overview.md
 | Realtime delivery (permanent WebSocket / embodiment + durable event log)                              | `docs/architecture.md` §6, `docs/implementation.md` §2.4                             |
 | WebSocket endpoint contract (client integration: methods, envelopes, errors, events)                  | `docs/companion-endpoints.md`                                                        |
 | Discord surface (bring-your-own-bot, summon-to-embody)                                                | `docs/companion-discord.md` (build history: `docs/plans/discord-surface.md`)         |
+| Missions (goal-driven long-running tasks — design + status; Tools spine + companion build shipped; live dry-run pending, reconnect-replay + autonomous-completion backstops deferred to §11) | `docs/companion-missions.md` |
 | Background-job lease & abort (single-writer drain, heartbeat)                                         | `docs/companion-background-job-lease.md`                                             |
 | Prompt management & iteration                                                                         | `docs/guide-prompts.md`                                                              |
 | Running evals (offline harness)                                                                       | `docs/howto-run-evals.md`                                                            |

@@ -150,6 +150,7 @@ export const testConfig: AppConfig = {
   maxEquippedTools: 8,
   cliToolsPath: '',
   cliScratchDir: '',
+  schedulerUrl: 'http://127.0.0.1:8787',
   appUrl: 'http://localhost:3001',
   googleClientId: 'test-google-client-id',
   jwtSigningSecret: 'test-jwt-signing-secret-at-least-32-bytes!!',

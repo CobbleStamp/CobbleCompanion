@@ -18,6 +18,8 @@ import {
   type GrowthDto,
   type LeadDto,
   type MemorySnapshotDto,
+  type MissionDto,
+  type MissionJournalEntryDto,
   type ProactiveActivityDto,
   type SemanticSearchResultDto,
   type StaminaEnergyDto,
@@ -222,4 +224,65 @@ export function renderReading(leads: readonly LeadDto[]): string {
     lines.push(`…and ${leads.length - READING_LIMIT} more.`);
   }
   return lines.join('\n');
+}
+
+/** How many recent journal turns `/mission` shows (the full reports were already spoken). */
+const MISSION_JOURNAL_LIMIT = 3;
+
+/** `/mission` with no missions at all — how to start one. */
+export const NO_MISSIONS =
+  '🎯 **Missions**\nNo missions yet — tell me a goal in chat and I’ll plan one for your approval.';
+
+/**
+ * `/mission` — the plan + progress view (companion-missions.md §5.3): what the mission was
+ * told to do, how it is being pursued, when it counts as done, and what each recent wake
+ * concluded. Shows the active mission, or the most recent one as a review of a finished run.
+ */
+export function renderMission(
+  mission: MissionDto,
+  entries: readonly MissionJournalEntryDto[],
+): string {
+  const heading =
+    mission.status === 'active'
+      ? `🎯 **Mission — active since ${mission.createdAt.slice(0, 10)}**`
+      : `🎯 **Mission — ${mission.status} ${mission.updatedAt.slice(0, 10)}** (most recent)`;
+  const lines = [heading, `**Goal:** ${truncate(mission.goal, 200)}`];
+  if (mission.plan) lines.push(`**Plan:** ${truncate(mission.plan, 400)}`);
+  if (mission.validationCriteria) {
+    lines.push(`**Done when:** ${truncate(mission.validationCriteria, 200)}`);
+  }
+  if (entries.length === 0) {
+    lines.push(
+      mission.status === 'active'
+        ? '**Progress:** no turns yet — the watch is armed, waiting for the first wake.'
+        : '**Progress:** no turns were recorded.',
+    );
+  } else {
+    const shown = entries.slice(0, MISSION_JOURNAL_LIMIT);
+    lines.push(`**Progress — ${shown.length} recent turn${shown.length === 1 ? '' : 's'}:**`);
+    for (const entry of shown) {
+      const when = entry.turnAt.slice(0, 16).replace('T', ' ');
+      const event = entry.event ? truncate(entry.event, 100) : 'chat turn';
+      lines.push(`**${when}** — ${event}`);
+      const concluded = [entry.findings, entry.prediction, entry.decision].filter(
+        (part): part is string => part !== null && part.length > 0,
+      );
+      lines.push(
+        `> ${concluded.length > 0 ? truncate(concluded.join(' · '), 300) : '(no conclusion recorded)'}`,
+      );
+    }
+  }
+  if (mission.status === 'active') {
+    lines.push('`/mission action:stop` to end it.');
+  }
+  return lines.join('\n');
+}
+
+/** `/mission action:stop` — confirmation that the mission and its wake jobs are gone. */
+export function renderMissionStopped(mission: MissionDto): string {
+  const jobs = mission.jobIds.length;
+  return [
+    `🛑 **Mission stopped** — "${truncate(mission.goal, 120)}"`,
+    `Watch cancelled (${jobs} wake job${jobs === 1 ? '' : 's'}). I’m back to my usual self.`,
+  ].join('\n');
 }

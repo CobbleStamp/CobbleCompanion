@@ -14,6 +14,7 @@ import {
   listCompanions,
   regenerateDiscordLink,
   saveDiscordConfig,
+  saveDiscordMissionWake,
 } from '../api/client.js';
 
 interface DiscordPageProps {
@@ -135,6 +136,8 @@ export function Discord({ companionName, companionId, onBack }: DiscordPageProps
             </button>
           </section>
 
+          {config.configured && <MissionWakeSection config={config} busy={busy} run={run} />}
+
           {config.configured && (
             <LinkSection config={config} busy={busy} run={run} onDisconnect={onDisconnect} />
           )}
@@ -162,6 +165,85 @@ function StatusSection({ config }: { config: DiscordConfigViewDto }): JSX.Elemen
           ? '✓ Bot connected and linked to your Discord account. DM it and run /summon.'
           : '⚠ Bot connected, but not yet linked — run the /link command below in a DM with your bot.'}
       </p>
+    </section>
+  );
+}
+
+/**
+ * The mission wake (companion-missions.md §3.2): the owner sets the allowlisted trigger-sender
+ * bot id (the scheduler's discord-notify bot) and the shared mission channel id. Both, plus the
+ * companion bot's own id (captured automatically on connect), must be set before a mission can
+ * be armed. Trust is the (author, channel) pair, never message content.
+ */
+function MissionWakeSection({
+  config,
+  busy,
+  run,
+}: {
+  config: DiscordConfigViewDto;
+  busy: boolean;
+  run: (action: () => Promise<DiscordConfigViewDto | null>) => Promise<void>;
+}): JSX.Element {
+  const wake = config.missionWake;
+  const [triggerBotId, setTriggerBotId] = useState<string>(wake?.triggerBotId ?? '');
+  const [missionChannelId, setMissionChannelId] = useState<string>(wake?.missionChannelId ?? '');
+
+  // Reflect a saved config (or a refresh) back into the inputs.
+  useEffect(() => {
+    setTriggerBotId(wake?.triggerBotId ?? '');
+    setMissionChannelId(wake?.missionChannelId ?? '');
+  }, [wake?.triggerBotId, wake?.missionChannelId]);
+
+  // A Discord snowflake is a 17–20 digit string; matches discordMissionWakeSchema so the
+  // Save button never submits an id the server will reject.
+  const snowflake = /^\d{17,20}$/u;
+  const valid = snowflake.test(triggerBotId.trim()) && snowflake.test(missionChannelId.trim());
+  const configured =
+    (wake?.triggerBotId ?? null) !== null && (wake?.missionChannelId ?? null) !== null;
+
+  return (
+    <section className="memory-section">
+      <h2>Missions</h2>
+      <p className="who">
+        Let a scheduler wake your companion for long-running missions. Enter the Discord user id of
+        the bot that posts triggers and the id of the shared mission channel both bots are in.
+        {configured
+          ? wake?.botUserIdCaptured
+            ? ' ✓ Ready to run missions.'
+            : ' ⚠ Waiting for your bot to connect once so its own id can be captured.'
+          : ' Not configured yet.'}
+      </p>
+      <label htmlFor="trigger-bot-id">Trigger bot user id</label>
+      <input
+        id="trigger-bot-id"
+        type="text"
+        inputMode="numeric"
+        autoComplete="off"
+        value={triggerBotId}
+        disabled={busy}
+        placeholder="e.g. 1473000000000000000"
+        onChange={(e) => setTriggerBotId(e.target.value)}
+      />
+      <label htmlFor="mission-channel-id">Mission channel id</label>
+      <input
+        id="mission-channel-id"
+        type="text"
+        inputMode="numeric"
+        autoComplete="off"
+        value={missionChannelId}
+        disabled={busy}
+        placeholder="e.g. 1472000000000000000"
+        onChange={(e) => setMissionChannelId(e.target.value)}
+      />
+      <button
+        type="button"
+        disabled={busy || !valid}
+        onClick={() =>
+          void run(() => saveDiscordMissionWake(triggerBotId.trim(), missionChannelId.trim()))
+        }
+      >
+        Save mission wake
+      </button>
     </section>
   );
 }

@@ -72,16 +72,28 @@ export function createCompanionConnectionFactory(
       }
     };
 
+    // Drives the transport stream by hand (not `for await`) so the method's terminal
+    // result — the transport generator's return value — survives to this generator's
+    // own return (mission.advance's skip flag rides there). The inner finally forwards
+    // an early consumer abort into the transport, matching `for await`'s cleanup.
     async function* recordingStream(
       method: string,
       params?: unknown,
-    ): AsyncIterable<ChatStreamEvent> {
+    ): AsyncGenerator<ChatStreamEvent, unknown> {
       turnDepth += 1;
       try {
-        for await (const chunk of transport.callStream(method, params)) {
-          const event = chunk as ChatStreamEvent;
-          recordProduced(event);
-          yield event;
+        const inner = transport.callStream(method, params);
+        try {
+          let next = await inner.next();
+          while (!next.done) {
+            const event = next.value as ChatStreamEvent;
+            recordProduced(event);
+            yield event;
+            next = await inner.next();
+          }
+          return next.value;
+        } finally {
+          await inner.return(undefined).catch(() => undefined);
         }
       } finally {
         turnDepth -= 1;
@@ -113,7 +125,7 @@ export function createCompanionConnectionFactory(
       chat(content: string): AsyncIterable<ChatStreamEvent> {
         return recordingStream('messages.send', { content });
       },
-      callStream(method: string, params?: unknown): AsyncIterable<ChatStreamEvent> {
+      callStream(method: string, params?: unknown): AsyncGenerator<ChatStreamEvent, unknown> {
         return recordingStream(method, params);
       },
       greeting(): AsyncIterable<ChatStreamEvent> {

@@ -132,6 +132,71 @@ describe('createApprovalGate', () => {
     expect(isBlock(await gate(aCall('mystery'), ctx))).toBe(false);
   });
 
+  it('lets an effectful call run UNGATED in a mission turn with an active mission', async () => {
+    // companion-missions.md §6: the active mission is the standing authorization, but ONLY
+    // for the turns the mission wake drives (origin=mission) — the call passes ungated.
+    const proposals = fakeProposals();
+    const gate = createApprovalGate(
+      proposals,
+      new ToolRegistry([tool('ibkr_query', true, 'Query IBKR')]),
+      silentLogger,
+      { isActive: async (id) => id === 'm1' },
+    );
+    const missionCtx: TurnCtx = { ...ctx, origin: 'mission', missionId: 'm1' };
+    const result = await gate(aCall('ibkr_query', { symbol: 'LITE' }), missionCtx);
+    expect(isBlock(result)).toBe(false);
+    expect(proposals.created).toEqual([]);
+  });
+
+  it('still gates an ordinary chat turn while a mission is active (bypass is turn-scoped)', async () => {
+    // The bypass never widens to the whole companion: chatting mid-mission keeps the full
+    // propose→approve flow for effectful calls (e.g. ingest_source memory writes).
+    const proposals = fakeProposals();
+    const gate = createApprovalGate(
+      proposals,
+      new ToolRegistry([tool('ingest_source', true, 'Read it into memory')]),
+      silentLogger,
+      { isActive: async () => true },
+    );
+    const result = await gate(aCall('ingest_source', { url: 'https://x.dev' }), ctx);
+    expect(isBlock(result)).toBe(true);
+    expect(proposals.created).toHaveLength(1);
+  });
+
+  it('re-gates a mission turn once the mission is no longer active (stop mid-turn)', async () => {
+    // /mission action:stop racing an in-flight advance turn: the standing authorization is
+    // gone, so the very next effectful call in that turn goes back through the gate.
+    const proposals = fakeProposals();
+    const gate = createApprovalGate(
+      proposals,
+      new ToolRegistry([tool('ingest_source', true, 'Read it into memory')]),
+      silentLogger,
+      { isActive: async () => false },
+    );
+    const missionCtx: TurnCtx = { ...ctx, origin: 'mission', missionId: 'm1' };
+    const result = await gate(aCall('ingest_source', { url: 'https://x.dev' }), missionCtx);
+    expect(isBlock(result)).toBe(true);
+    expect(proposals.created).toHaveLength(1);
+  });
+
+  it('re-gates the stopped mission even while ANOTHER mission is active (no borrowing)', async () => {
+    // The stop-mid-turn race with a concurrent start: mission m1 drives this turn but was
+    // stopped; a different mission m2 for the same companion is active. Keying on the turn's
+    // OWN mission (m1), not "any active mission", the call re-gates — it can't borrow m2's
+    // grant. This is the failure the per-mission check (companion-missions.md §6) closes.
+    const proposals = fakeProposals();
+    const gate = createApprovalGate(
+      proposals,
+      new ToolRegistry([tool('ingest_source', true, 'Read it into memory')]),
+      silentLogger,
+      { isActive: async (id) => id === 'm2' },
+    );
+    const missionCtx: TurnCtx = { ...ctx, origin: 'mission', missionId: 'm1' };
+    const result = await gate(aCall('ingest_source', { url: 'https://x.dev' }), missionCtx);
+    expect(isBlock(result)).toBe(true);
+    expect(proposals.created).toHaveLength(1);
+  });
+
   it('passes an MCP-adapted tool through without proposing (whitelist is the gate)', async () => {
     // Contract lock (companion-tools.md §6): MCP tools are `effectful: false`, so
     // the developer whitelist — not propose→approve — gates them. A future change

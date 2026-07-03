@@ -5,7 +5,9 @@ import type { SlashCommandSpec } from './gateway/types.js';
  * DM-context enabled. `/summon` + `/status` + `/link` drive the lifecycle; the rest
  * are read-only views (T10) that run over the summoned connection — each maps to one
  * existing `/ws` method. `/recall` requires a query; `/episodes` and `/feed` take an
- * optional argument (a search query, a food to apply).
+ * optional argument (a search query, a food to apply). `/mission` additionally
+ * summons-if-dormant (the mission kill switch, companion-missions.md §5.3) and takes
+ * an optional `action` (`stop`).
  */
 export const COMMAND_SPECS: readonly SlashCommandSpec[] = [
   { name: 'summon', description: 'Bring the companion into this chat' },
@@ -50,4 +52,15 @@ export const COMMAND_SPECS: readonly SlashCommandSpec[] = [
     ],
   },
   { name: 'reading', description: 'Show the companion’s reading list' },
+  {
+    name: 'mission',
+    description: 'Show the mission’s plan and progress, or stop it',
+    options: [
+      {
+        name: 'action',
+        description: 'Optional: `stop` to end the active mission',
+        required: false,
+      },
+    ],
+  },
 ];

@@ -18,7 +18,7 @@ class RecordingConnection implements CompanionConnection {
   onSuperseded(): void {}
   onClosed(): void {}
   async *chat(): AsyncIterable<never> {}
-  async *callStream(): AsyncIterable<never> {}
+  async *callStream(): AsyncGenerator<never, undefined> {}
   async *greeting(): AsyncIterable<never> {}
   async *events(): AsyncIterable<never> {}
   close(): void {}
@@ -221,5 +221,92 @@ describe('handleReadOnlyCommand — errors', () => {
 
     expect(conn.calls).toHaveLength(0);
     expect(replies[0]).toContain('don’t know that one');
+  });
+});
+
+describe('handleReadOnlyCommand — /mission', () => {
+  const active = {
+    id: 'm-active',
+    goal: 'monitor LITE',
+    plan: 'poll and report',
+    validationCriteria: 'told to stop',
+    status: 'active',
+    jobIds: ['job-1'],
+    createdAt: '2026-06-28T09:00:00.000Z',
+    updatedAt: '2026-07-01T14:02:00.000Z',
+  };
+  const stoppedNewer = { ...active, id: 'm-old', status: 'stopped' };
+
+  it('/mission shows the active mission with its recent journal', async () => {
+    const conn = new RecordingConnection({
+      'mission.list': { missions: [stoppedNewer, active] },
+      'mission.journal': { entries: [] },
+    });
+    const { ctx, replies } = cmdCtx('mission');
+
+    await handleReadOnlyCommand(ctx, conn, silent);
+
+    // The ACTIVE mission is shown even when a non-active one is newer in the list.
+    expect(conn.calls[1]).toEqual({
+      method: 'mission.journal',
+      params: { missionId: 'm-active', limit: 3 },
+    });
+    expect(replies[0]).toContain('Mission — active');
+    expect(replies[0]).toContain('monitor LITE');
+  });
+
+  it('/mission falls back to the most recent mission when none is active', async () => {
+    const conn = new RecordingConnection({
+      'mission.list': { missions: [stoppedNewer] },
+      'mission.journal': { entries: [] },
+    });
+    const { ctx, replies } = cmdCtx('mission');
+
+    await handleReadOnlyCommand(ctx, conn, silent);
+
+    expect(conn.calls[1]?.params).toEqual({ missionId: 'm-old', limit: 3 });
+    expect(replies[0]).toContain('most recent');
+  });
+
+  it('/mission with no missions says so without touching the journal', async () => {
+    const conn = new RecordingConnection({ 'mission.list': { missions: [] } });
+    const { ctx, replies } = cmdCtx('mission');
+
+    await handleReadOnlyCommand(ctx, conn, silent);
+
+    expect(conn.calls).toHaveLength(1);
+    expect(replies[0]).toContain('No missions yet');
+  });
+
+  it('/mission action:stop stops the active mission and confirms', async () => {
+    const conn = new RecordingConnection({
+      'mission.list': { missions: [active] },
+      'mission.stop': { mission: { ...active, status: 'stopped' } },
+    });
+    const { ctx, replies } = cmdCtx('mission', { action: 'stop' });
+
+    await handleReadOnlyCommand(ctx, conn, silent);
+
+    expect(conn.calls[1]).toEqual({ method: 'mission.stop', params: { missionId: 'm-active' } });
+    expect(replies[0]).toContain('Mission stopped');
+  });
+
+  it('/mission action:stop with no active mission refuses without calling stop', async () => {
+    const conn = new RecordingConnection({ 'mission.list': { missions: [stoppedNewer] } });
+    const { ctx, replies } = cmdCtx('mission', { action: 'stop' });
+
+    await handleReadOnlyCommand(ctx, conn, silent);
+
+    expect(conn.calls).toHaveLength(1);
+    expect(replies[0]).toContain('no active mission');
+  });
+
+  it('/mission with an unknown action explains the two forms', async () => {
+    const conn = new RecordingConnection({ 'mission.list': { missions: [active] } });
+    const { ctx, replies } = cmdCtx('mission', { action: 'pause' });
+
+    await handleReadOnlyCommand(ctx, conn, silent);
+
+    expect(replies[0]).toContain('`/mission action:stop`');
   });
 });

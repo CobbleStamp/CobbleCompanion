@@ -21,7 +21,7 @@ function connectionFrom(opts: {
     onClosed: () => {},
     close: () => {},
     async *chat(): AsyncIterable<ChatStreamEvent> {},
-    async *callStream(): AsyncIterable<ChatStreamEvent> {},
+    async *callStream(): AsyncGenerator<ChatStreamEvent, undefined> {},
     call: <T>(): Promise<T> => Promise.reject(new Error('call() not used here')),
     async *greeting(): AsyncIterable<ChatStreamEvent> {
       for (const event of opts.greeting ?? []) yield event;

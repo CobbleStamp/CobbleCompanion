@@ -18,6 +18,43 @@ export {
 export { createApprovalGate, createLoggingAfterToolCall } from './tools/gate.js';
 export { DrizzleLeadStore, type LeadRecord, type LeadStore } from './tools/lead-store.js';
 export {
+  DrizzleMissionStore,
+  DrizzleMissionJournalStore,
+  type MissionStore,
+  type MissionJournalStore,
+  type MissionRecord,
+  type MissionActivation,
+  type MissionJournalInput,
+  type MissionJournalRecord,
+} from './mission/mission-store.js';
+export {
+  MissionService,
+  DEFAULT_JOURNAL_RECALL,
+  isMissionTerminal,
+} from './mission/mission-service.js';
+export { type MissionJobSpec, type MissionScheduler } from './mission/mission-scheduler.js';
+export {
+  reconcileMissionJobs,
+  routeMissionAdvance,
+  type AdvanceRouting,
+  type MissionReconcileDeps,
+} from './mission/mission-reconcile.js';
+export {
+  createMissionRetrieveContext,
+  type MissionRetrieveOptions,
+} from './mission/mission-retrieve.js';
+export {
+  createStartMissionTool,
+  type StartMissionOptions,
+  type MissionWakeConfig,
+  type MissionWakeTarget,
+} from './mission/start-mission-tool.js';
+export {
+  createSchedulerCliScheduler,
+  serializeAction,
+  type SchedulerCliOptions,
+} from './mission/scheduler-cli-scheduler.js';
+export {
   DrizzleProceduralStore,
   type ProceduralStore,
   type ProcedureRecord,

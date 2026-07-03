@@ -14,6 +14,7 @@ import {
   keyFromBase64,
   type DiscordConfigStore,
 } from '@cobble/db';
+import { handleAdvance } from './advance.js';
 import { CompanionBridge, type CompanionConnectionFactory } from './bridge.js';
 import { handleChat } from './chat.js';
 import { COMMAND_SPECS } from './commands.js';
@@ -72,6 +73,29 @@ export function assembleService(parts: AssembleServiceParts): AssembledService {
           userId: ctx.userId,
           error,
         });
+        // The interaction was deferred before dispatch (discord-js-gateway.ts §InteractionCreate),
+        // so a rejected handler leaves the owner on a perpetual "thinking…" spinner unless we
+        // discharge that reply obligation. Edit the deferred interaction with an error notice
+        // (`ctx.reply` becomes an editReply). If that send itself fails there is nothing further
+        // we can do, so log it and drop.
+        ctx
+          .reply('Something went wrong handling that command. Please try again.')
+          .catch((replyError: unknown) => {
+            logger.error('discord service: failed to send command-error reply', {
+              operation: 'discord.service.command',
+              userId: ctx.userId,
+              error: replyError,
+            });
+          });
+      });
+    },
+    onGuildMessage: (ctx) => {
+      router.handleGuildTrigger(ctx).catch((error) => {
+        logger.error('discord service: guild-trigger handling failed', {
+          operation: 'discord.service.trigger',
+          userId: ctx.userId,
+          error,
+        });
       });
     },
     onProposalAction: (ctx) => {
@@ -91,9 +115,12 @@ export function assembleService(parts: AssembleServiceParts): AssembledService {
     connectionFactory: parts.connectionFactory,
     configStore: parts.configStore,
     notify: (userId, channelId, content) => manager.sendDirectMessage(userId, channelId, content),
+    openOwnerDm: (userId, discordUserId) => manager.openDmChannel(userId, discordUserId),
     onChat: (ctx, connection) => handleChat(ctx, connection, logger),
     onReadOnlyCommand: (ctx, connection) => handleReadOnlyCommand(ctx, connection, logger),
     onProposalAction: (ctx, connection) => handleProposalAction(ctx, connection, logger),
+    onMissionAdvance: (connection, post, missionId, event, userId) =>
+      handleAdvance(connection, post, missionId, event, logger, userId),
     logger,
   });
 
@@ -101,6 +128,7 @@ export function assembleService(parts: AssembleServiceParts): AssembledService {
     configStore: parts.configStore,
     onOwnerMessage: (ctx) => bridge.handleOwnerMessage(ctx),
     onOwnerCommand: (ctx) => bridge.handleOwnerCommand(ctx),
+    onTrigger: (userId, missionId, event) => bridge.handleTrigger(userId, missionId, event),
     logger,
   });
 

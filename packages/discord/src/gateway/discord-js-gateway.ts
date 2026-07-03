@@ -29,6 +29,7 @@ import type {
   DiscordGateway,
   DiscordGatewayFactory,
   InboundDirectMessage,
+  InboundGuildMessage,
   InboundProposalAction,
   InboundSlashCommand,
   Logger,
@@ -49,6 +50,7 @@ export function createDiscordJsGatewayFactory(logger: Logger): DiscordGatewayFac
 class DiscordJsGateway implements DiscordGateway {
   private readonly client: Client;
   private dmHandler: ((message: InboundDirectMessage) => void) | null = null;
+  private guildHandler: ((message: InboundGuildMessage) => void) | null = null;
   private commandHandler: ((command: InboundSlashCommand) => void) | null = null;
   private proposalHandler: ((action: InboundProposalAction) => void) | null = null;
 
@@ -56,25 +58,66 @@ class DiscordJsGateway implements DiscordGateway {
     private readonly botToken: string,
     private readonly logger: Logger,
   ) {
+    // `GuildMessages` is required to receive channel-message events at all (the mission
+    // wake, companion-missions.md §3.2); without it Discord delivers none. `MessageContent`
+    // stays for DMs — and it also lets the guild path read `.content` for a message that
+    // @-mentions the bot (which the trigger always does), so no extra privileged intent.
     this.client = new Client({
-      intents: [GatewayIntentBits.DirectMessages, GatewayIntentBits.MessageContent],
+      intents: [
+        GatewayIntentBits.DirectMessages,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent,
+      ],
       partials: [Partials.Channel, Partials.Message],
     });
     this.client.on(Events.MessageCreate, (message: Message) => {
-      // DMs only, never the bot's own messages.
-      if (message.author.bot || message.guildId) return;
+      // Never react to the bot's own messages (in a DM or the mission channel).
+      if (message.author.id === this.client.user?.id) return;
+      if (message.guildId) {
+        // A guild (channel) message — the mission wake. The author MAY be a bot (the
+        // trigger sender is one), so we do NOT filter bot authors here; the router applies
+        // the trust gate (allowlisted sender + configured mission channel).
+        this.guildHandler?.({
+          authorId: message.author.id,
+          channelId: message.channelId,
+          messageId: message.id,
+          content: message.content,
+        });
+        return;
+      }
+      // A DM: never from another bot (the owner lock + bots-can't-DM-bots).
+      if (message.author.bot) return;
       this.dmHandler?.({
         authorId: message.author.id,
         channelId: message.channelId,
         content: message.content,
       });
     });
-    this.client.on(Events.InteractionCreate, (interaction) => {
+    this.client.on(Events.InteractionCreate, async (interaction) => {
       if (interaction.isButton()) {
         this.handleButton(interaction);
         return;
       }
       if (!interaction.isChatInputCommand()) return;
+      // Acknowledge within Discord's 3-second interaction window BEFORE dispatching:
+      // the handler may mint a token, open the `/ws` connection, and claim embodiment
+      // (the dormant `/mission` kill switch, companion-missions.md §5.3) before it can
+      // reply, which routinely exceeds 3s. A bare `interaction.reply` would then throw
+      // "Unknown interaction" and the owner sees "The application did not respond" —
+      // the kill switch looking broken exactly when it matters. deferReply buys 15
+      // minutes; the handler's reply becomes an editReply of this acknowledgement.
+      try {
+        await interaction.deferReply({ ephemeral: true });
+      } catch (error) {
+        // The window already closed (or Discord rejected the ack); nothing we can send
+        // will land, so log and drop rather than dispatch a handler that can't reply.
+        this.logger.error('discord deferReply failed', {
+          operation: 'discord.command',
+          command: interaction.commandName,
+          error,
+        });
+        return;
+      }
       const options: Record<string, string> = {};
       for (const option of interaction.options.data) {
         if (typeof option.value === 'string') options[option.name] = option.value;
@@ -84,8 +127,14 @@ class DiscordJsGateway implements DiscordGateway {
         userId: interaction.user.id,
         channelId: interaction.channelId,
         options,
+        // The interaction is already deferred, so the first reply edits the pending
+        // acknowledgement; any later post is a follow-up (commands reply once today).
         reply: async (content) => {
-          await interaction.reply({ content, ephemeral: true });
+          if (interaction.deferred || interaction.replied) {
+            await interaction.editReply({ content });
+          } else {
+            await interaction.reply({ content, ephemeral: true });
+          }
         },
       });
     });
@@ -121,8 +170,16 @@ class DiscordJsGateway implements DiscordGateway {
     await this.client.destroy();
   }
 
+  botUserId(): string | null {
+    return this.client.user?.id ?? null;
+  }
+
   onDirectMessage(handler: (message: InboundDirectMessage) => void): void {
     this.dmHandler = handler;
+  }
+
+  onGuildMessage(handler: (message: InboundGuildMessage) => void): void {
+    this.guildHandler = handler;
   }
 
   onSlashCommand(handler: (command: InboundSlashCommand) => void): void {
@@ -165,6 +222,21 @@ class DiscordJsGateway implements DiscordGateway {
         operation: 'discord.send',
         channelId,
       });
+    }
+  }
+
+  async openDmChannel(discordUserId: string): Promise<string | null> {
+    try {
+      const user = await this.client.users.fetch(discordUserId);
+      const dm = await user.createDM();
+      return dm.id;
+    } catch (error) {
+      this.logger.error('discord openDmChannel: could not open a DM to the user', {
+        operation: 'discord.openDmChannel',
+        discordUserId,
+        error,
+      });
+      return null;
     }
   }
 

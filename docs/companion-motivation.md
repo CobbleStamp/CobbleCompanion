@@ -361,6 +361,13 @@ Out of scope for this release; the roadmap is owned by `development-plan.md`. (T
   (mid-burst preemption), and the tick is single-shot over the one `explore` behaviour today.
 
 **Out of scope / future.**
+- **Missions (goal-driven long-running tasks)** — a *second kind of motivation* distinct from the
+  drives here: an externally **assigned, terminating** objective, not an intrinsic homeostatic need.
+  It is realized as an **exclusive mode** — while a mission is active this drive engine is
+  **suspended** (the tick idles) so proactive wandering never competes with the assigned goal — and it
+  is **input-driven** (a scheduled trigger or the user), not a new `Initiator`. Design owned by
+  `companion-missions.md`; noted here because it is the concrete realization of the "purpose/agenda"
+  deferral below.
 - **Unprompted conversation** beyond the report note (tips, questions, check-ins) + a stronger sense
   of **purpose/agenda** (goals the companion pursues and raises on its own). This is where the
   **bond** and **understanding-the-user** drives begin to fire and learn. *Illustrative:* a present &

@@ -1,0 +1,474 @@
+/**
+ * The mission WS methods (companion-missions.md §5.2, §5.3). Covers the request/response methods
+ * (`mission.list` / `mission.journal` / `mission.stop`) over a real MissionService on an
+ * in-memory DB + fakes, the
+ * registration guard (missions register only when both the service and scheduler are wired), and
+ * the `withMissionJournal` wrapper that appends the wake turn's report to the journal.
+ */
+
+import {
+  DrizzleMissionJournalStore,
+  DrizzleMissionStore,
+  MissionService,
+  type Logger,
+  type MissionScheduler,
+} from '@cobble/core';
+import { companions, users, type Database } from '@cobble/db';
+import { createTestDatabase } from '@cobble/db/testing';
+import type { ChatStreamEvent, MessageDto } from '@cobble/shared';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AppDeps } from '../../app.js';
+import type { WsCallContext } from '../dispatch.js';
+import { missionMethods, withMissionJournal } from './missions.js';
+
+const silent: Logger = { error: () => undefined, warn: () => undefined, info: () => undefined };
+
+/** A scheduler fake that records cancellations; ids in `failOn` refuse to cancel. */
+function fakeScheduler(): MissionScheduler & { cancelled: string[]; failOn: Set<string> } {
+  const cancelled: string[] = [];
+  const failOn = new Set<string>();
+  return {
+    cancelled,
+    failOn,
+    async arm() {
+      return 'job';
+    },
+    async cancel(jobId) {
+      if (failOn.has(jobId)) throw new Error(`cancel refused: ${jobId}`);
+      cancelled.push(jobId);
+    },
+  };
+}
+
+const doneEvent = (content: string): ChatStreamEvent => ({
+  type: 'done',
+  message: { content } as MessageDto,
+});
+
+/** An async generator over a fixed event list, returning `superseded`. */
+async function* streamOf(
+  events: readonly ChatStreamEvent[],
+  superseded = false,
+): AsyncGenerator<ChatStreamEvent, boolean> {
+  for (const event of events) {
+    yield event;
+  }
+  return superseded;
+}
+
+describe('missionMethods', () => {
+  let db: Database;
+  let close: () => Promise<void>;
+  let service: MissionService;
+  let companionId: string;
+  let scheduler: ReturnType<typeof fakeScheduler>;
+  let motivationRequest: ReturnType<typeof vi.fn>;
+  let ctx: WsCallContext;
+
+  beforeEach(async () => {
+    ({ db, close } = await createTestDatabase());
+    service = new MissionService(new DrizzleMissionStore(db), new DrizzleMissionJournalStore(db));
+    const [user] = await db.insert(users).values({ email: 'r@example.com' }).returning();
+    const [companion] = await db
+      .insert(companions)
+      .values({ ownerId: user!.id, name: 'Pip', form: 'fox', temperament: 'curious' })
+      .returning();
+    companionId = companion!.id;
+    scheduler = fakeScheduler();
+    motivationRequest = vi.fn();
+    ctx = {
+      userId: user!.id,
+      embodiment: { companionId, connectionId: 'conn-1', claimSeq: 1 },
+    } as unknown as WsCallContext;
+  });
+
+  afterEach(async () => {
+    await close();
+  });
+
+  function deps(): AppDeps {
+    return {
+      missions: service,
+      missionScheduler: scheduler,
+      identity: { getCompanion: async () => ({ id: companionId }) },
+      embodiment: { holds: async () => true },
+      motivation: { request: motivationRequest },
+      logger: silent,
+    } as unknown as AppDeps;
+  }
+
+  it('registers no methods when the mission service or scheduler is absent', () => {
+    expect(missionMethods({} as AppDeps)).toEqual({});
+    expect(missionMethods({ missions: service } as unknown as AppDeps)).toEqual({});
+    expect(missionMethods({ missionScheduler: scheduler } as unknown as AppDeps)).toEqual({});
+  });
+
+  it('registers the mission methods when both are wired', () => {
+    expect(Object.keys(missionMethods(deps())).sort()).toEqual([
+      'mission.advance',
+      'mission.journal',
+      'mission.list',
+      'mission.stop',
+    ]);
+  });
+
+  it('mission.list returns the embodied companion’s missions as DTOs (newest first)', async () => {
+    await service.createDraft(companionId, 'first');
+    const second = await service.createDraft(companionId, 'second');
+    const methods = missionMethods(deps());
+
+    const result = (await methods['mission.list']!(ctx, {})) as {
+      missions: { id: string; goal: string; status: string; createdAt: string }[];
+    };
+
+    expect(result.missions).toHaveLength(2);
+    expect(result.missions[0]!.id).toBe(second.id);
+    expect(result.missions[0]!.goal).toBe('second');
+    expect(result.missions[0]!.status).toBe('draft');
+    // Dates are projected as ISO strings.
+    expect(typeof result.missions[0]!.createdAt).toBe('string');
+  });
+
+  it('mission.stop cancels the wake jobs, stops the mission, and nudges drives', async () => {
+    const draft = await service.createDraft(companionId, 'monitor');
+    await service.activate(draft.id, {
+      plan: 'p',
+      validationCriteria: 'c',
+      jobIds: ['job-a', 'job-b'],
+    });
+    const methods = missionMethods(deps());
+
+    const result = (await methods['mission.stop']!(ctx, { missionId: draft.id })) as {
+      mission: { status: string; jobIds: string[] };
+    };
+
+    expect(scheduler.cancelled).toEqual(['job-a', 'job-b']);
+    expect(result.mission.status).toBe('stopped');
+    // Every cancel succeeded → no job stays recorded as armed.
+    expect(result.mission.jobIds).toEqual([]);
+    expect(await service.hasActive(companionId)).toBe(false);
+    expect(motivationRequest).toHaveBeenCalledWith(companionId);
+  });
+
+  it('mission.stop keeps a failed cancel recorded so a later reconciliation retries it', async () => {
+    const draft = await service.createDraft(companionId, 'monitor');
+    await service.activate(draft.id, {
+      plan: 'p',
+      validationCriteria: 'c',
+      jobIds: ['job-a', 'job-b'],
+    });
+    scheduler.failOn.add('job-a');
+    const methods = missionMethods(deps());
+
+    const result = (await methods['mission.stop']!(ctx, { missionId: draft.id })) as {
+      mission: { status: string; jobIds: string[] };
+    };
+
+    // The stop still lands (best-effort cancel never blocks it)…
+    expect(result.mission.status).toBe('stopped');
+    expect(scheduler.cancelled).toEqual(['job-b']);
+    // …but the job whose cancel failed stays recorded as armed.
+    expect(result.mission.jobIds).toEqual(['job-a']);
+  });
+
+  it('mission.stop still stops the mission when recording the surviving jobs fails', async () => {
+    // The reconcile write is bookkeeping between the cancels and the state transition —
+    // a transient DB failure there must not leave the mission active with dead jobs.
+    const draft = await service.createDraft(companionId, 'monitor');
+    await service.activate(draft.id, { plan: 'p', validationCriteria: 'c', jobIds: ['job-a'] });
+    vi.spyOn(service, 'reconcileJobs').mockRejectedValue(new Error('db write failed'));
+    const methods = missionMethods(deps());
+
+    const result = (await methods['mission.stop']!(ctx, { missionId: draft.id })) as {
+      mission: { status: string };
+    };
+
+    expect(scheduler.cancelled).toEqual(['job-a']);
+    expect(result.mission.status).toBe('stopped');
+    expect(await service.hasActive(companionId)).toBe(false);
+  });
+
+  it('mission.stop on a draft is a no-op (active-only) — no status flip, no cancel', async () => {
+    // A draft is a mission mid-start (arm→activate window): its armed job isn't in `jobIds`
+    // yet, so flipping it to `stopped` here would strand that job. Stop leaves it untouched.
+    const draft = await service.createDraft(companionId, 'monitor');
+    const methods = missionMethods(deps());
+
+    const result = (await methods['mission.stop']!(ctx, { missionId: draft.id })) as {
+      mission: { status: string };
+    };
+
+    expect(result.mission.status).toBe('draft');
+    expect(scheduler.cancelled).toEqual([]);
+    expect(motivationRequest).not.toHaveBeenCalled();
+    expect((await service.get(draft.id))?.status).toBe('draft');
+  });
+
+  it('mission.stop on an already-terminal mission reports its terminal status, not a stale active', async () => {
+    const draft = await service.createDraft(companionId, 'monitor');
+    await service.activate(draft.id, { plan: 'p', validationCriteria: 'c', jobIds: ['job-a'] });
+    await service.stop(draft.id); // already stopped by a prior call
+    const methods = missionMethods(deps());
+
+    const result = (await methods['mission.stop']!(ctx, { missionId: draft.id })) as {
+      mission: { status: string };
+    };
+
+    // The idempotent second stop must not re-run the cancel pass nor report `active`.
+    expect(result.mission.status).toBe('stopped');
+    expect(scheduler.cancelled).toEqual([]);
+  });
+
+  it('mission.advance for a stopped mission skips the turn and cancels its stale wake jobs', async () => {
+    // A stopped mission still holding wake jobs — a mission.stop whose scheduler cancel
+    // failed. Its recurring job keeps firing; the stale wake must reconcile, not spam.
+    const draft = await service.createDraft(companionId, 'monitor');
+    await service.activate(draft.id, {
+      plan: 'p',
+      validationCriteria: 'c',
+      jobIds: ['job-a', 'job-b'],
+    });
+    await service.stop(draft.id); // the service stop alone leaves both jobs recorded
+    scheduler.failOn.add('job-b');
+    const methods = missionMethods(deps());
+
+    const result = await methods['mission.advance']!(ctx, {
+      missionId: draft.id,
+      event: 'stale tick',
+    });
+
+    expect(result).toEqual({ done: true, skipped: 'mission not active' });
+    // The reconciliation cancelled what it could and kept the survivor for the next retry.
+    expect(scheduler.cancelled).toEqual(['job-a']);
+    const record = await service.get(draft.id);
+    expect(record?.jobIds).toEqual(['job-b']);
+  });
+
+  it('mission.advance reconciles only the NAMED mission, never a sibling’s jobs', async () => {
+    // Two stopped missions with armed jobs; the wake names the first — the second's
+    // jobs are not touched (reconciliation is by identity, not a companion-wide sweep).
+    const first = await service.createDraft(companionId, 'first');
+    await service.activate(first.id, { plan: 'p', validationCriteria: 'c', jobIds: ['job-1'] });
+    await service.stop(first.id);
+    const second = await service.createDraft(companionId, 'second');
+    await service.activate(second.id, { plan: 'p', validationCriteria: 'c', jobIds: ['job-2'] });
+    await service.stop(second.id);
+    const methods = missionMethods(deps());
+
+    await methods['mission.advance']!(ctx, { missionId: first.id, event: 'stale tick' });
+
+    expect(scheduler.cancelled).toEqual(['job-1']);
+    expect((await service.get(first.id))?.jobIds).toEqual([]);
+    expect((await service.get(second.id))?.jobIds).toEqual(['job-2']);
+  });
+
+  it('mission.advance for a draft mission skips WITHOUT cancelling (arm→activate window)', async () => {
+    // A wake racing start_mission between arm and activate finds the mission still
+    // `draft` — cancelling then would kill the mission mid-start.
+    const draft = await service.createDraft(companionId, 'starting up');
+    const methods = missionMethods(deps());
+
+    const result = await methods['mission.advance']!(ctx, {
+      missionId: draft.id,
+      event: 'early tick',
+    });
+
+    expect(result).toEqual({ done: true, skipped: 'mission not active' });
+    expect(scheduler.cancelled).toEqual([]);
+  });
+
+  it('mission.advance for an unknown mission id skips the turn', async () => {
+    const methods = missionMethods(deps());
+
+    const result = await methods['mission.advance']!(ctx, {
+      missionId: '00000000-0000-4000-8000-000000000000',
+      event: 'ghost tick',
+    });
+
+    expect(result).toEqual({ done: true, skipped: 'unknown mission' });
+    expect(scheduler.cancelled).toEqual([]);
+  });
+
+  it('mission.advance refuses to act on another companion’s mission (tenancy)', async () => {
+    const [other] = await db.insert(users).values({ email: 'x@example.com' }).returning();
+    const [otherCompanion] = await db
+      .insert(companions)
+      .values({ ownerId: other!.id, name: 'Fen', form: 'cat', temperament: 'aloof' })
+      .returning();
+    const foreign = await service.createDraft(otherCompanion!.id, 'not yours');
+    await service.activate(foreign.id, { plan: 'p', validationCriteria: 'c', jobIds: ['job-f'] });
+    await service.stop(foreign.id);
+    const methods = missionMethods(deps());
+
+    const result = await methods['mission.advance']!(ctx, {
+      missionId: foreign.id,
+      event: 'cross-tenant tick',
+    });
+
+    // Reported exactly like an unknown id (no leak), and the foreign jobs are untouched.
+    expect(result).toEqual({ done: true, skipped: 'unknown mission' });
+    expect(scheduler.cancelled).toEqual([]);
+    expect((await service.get(foreign.id))?.jobIds).toEqual(['job-f']);
+  });
+
+  it('mission.journal returns the recent entries as DTOs, newest first', async () => {
+    const draft = await service.createDraft(companionId, 'monitor');
+    await service.recordJournal(draft.id, { event: 'first wake', findings: 'baseline set' });
+    await service.recordJournal(draft.id, { event: 'second wake', findings: 'drifting down' });
+    const methods = missionMethods(deps());
+
+    const result = (await methods['mission.journal']!(ctx, { missionId: draft.id })) as {
+      entries: { event: string | null; findings: string | null; turnAt: string }[];
+    };
+
+    expect(result.entries).toHaveLength(2);
+    expect(result.entries[0]!.event).toBe('second wake');
+    expect(result.entries[0]!.findings).toBe('drifting down');
+    expect(result.entries[1]!.event).toBe('first wake');
+    // Dates are projected as ISO strings.
+    expect(typeof result.entries[0]!.turnAt).toBe('string');
+  });
+
+  it('mission.journal respects the limit param', async () => {
+    const draft = await service.createDraft(companionId, 'monitor');
+    await service.recordJournal(draft.id, { findings: 'one' });
+    await service.recordJournal(draft.id, { findings: 'two' });
+    await service.recordJournal(draft.id, { findings: 'three' });
+    const methods = missionMethods(deps());
+
+    const result = (await methods['mission.journal']!(ctx, {
+      missionId: draft.id,
+      limit: 2,
+    })) as { entries: { findings: string | null }[] };
+
+    expect(result.entries.map((entry) => entry.findings)).toEqual(['three', 'two']);
+  });
+
+  it('mission.journal refuses a mission that belongs to another companion (tenancy)', async () => {
+    const [other] = await db.insert(users).values({ email: 'j@example.com' }).returning();
+    const [otherCompanion] = await db
+      .insert(companions)
+      .values({ ownerId: other!.id, name: 'Fen', form: 'cat', temperament: 'aloof' })
+      .returning();
+    const foreign = await service.createDraft(otherCompanion!.id, 'not yours');
+    await service.recordJournal(foreign.id, { findings: 'secret' });
+    const methods = missionMethods(deps());
+
+    await expect(methods['mission.journal']!(ctx, { missionId: foreign.id })).rejects.toThrow(
+      /no such mission/,
+    );
+  });
+
+  it('mission.journal rejects an unknown mission id', async () => {
+    const methods = missionMethods(deps());
+    await expect(
+      methods['mission.journal']!(ctx, { missionId: '00000000-0000-4000-8000-000000000000' }),
+    ).rejects.toThrow(/no such mission/);
+  });
+
+  it('mission.stop refuses a mission that belongs to another companion (tenancy)', async () => {
+    // A second companion (other owner) with its own mission.
+    const [other] = await db.insert(users).values({ email: 'o@example.com' }).returning();
+    const [otherCompanion] = await db
+      .insert(companions)
+      .values({ ownerId: other!.id, name: 'Fen', form: 'cat', temperament: 'aloof' })
+      .returning();
+    const foreign = await service.createDraft(otherCompanion!.id, 'not yours');
+    const methods = missionMethods(deps());
+
+    await expect(methods['mission.stop']!(ctx, { missionId: foreign.id })).rejects.toThrow(
+      /no such mission/,
+    );
+    expect(scheduler.cancelled).toEqual([]);
+  });
+});
+
+describe('withMissionJournal', () => {
+  let db: Database;
+  let close: () => Promise<void>;
+  let service: MissionService;
+  let companionId: string;
+
+  beforeEach(async () => {
+    ({ db, close } = await createTestDatabase());
+    service = new MissionService(new DrizzleMissionStore(db), new DrizzleMissionJournalStore(db));
+    const [user] = await db.insert(users).values({ email: 'r@example.com' }).returning();
+    const [companion] = await db
+      .insert(companions)
+      .values({ ownerId: user!.id, name: 'Pip', form: 'fox', temperament: 'curious' })
+      .returning();
+    companionId = companion!.id;
+  });
+
+  afterEach(async () => {
+    await close();
+  });
+
+  async function activeMission(): Promise<string> {
+    const draft = await service.createDraft(companionId, 'monitor LITE');
+    const active = await service.activate(draft.id, {
+      plan: 'p',
+      validationCriteria: 'c',
+      jobIds: ['j'],
+    });
+    return active!.id;
+  }
+
+  it('forwards every event and appends the done report to the journal as findings', async () => {
+    const missionId = await activeMission();
+    const events = [{ type: 'token', value: 'LITE ' } as ChatStreamEvent, doneEvent('LITE at 808')];
+
+    const forwarded: ChatStreamEvent[] = [];
+    const gen = withMissionJournal(streamOf(events), service, missionId, 'LITE is 808', silent);
+    let next = await gen.next();
+    while (!next.done) {
+      forwarded.push(next.value);
+      next = await gen.next();
+    }
+
+    expect(next.value).toBe(false);
+    expect(forwarded).toEqual(events);
+    const journal = await service.recentJournal(missionId, 10);
+    expect(journal).toHaveLength(1);
+    expect(journal[0]!.event).toBe('LITE is 808');
+    expect(journal[0]!.findings).toBe('LITE at 808');
+  });
+
+  it('journals nothing when the turn was superseded', async () => {
+    const missionId = await activeMission();
+    const gen = withMissionJournal(
+      streamOf([doneEvent('x')], true),
+      service,
+      missionId,
+      'e',
+      silent,
+    );
+    let next = await gen.next();
+    while (!next.done) next = await gen.next();
+
+    expect(next.value).toBe(true);
+    expect(await service.recentJournal(missionId, 10)).toHaveLength(0);
+  });
+
+  it('forwards an early return() into the inner generator (harness finally always runs)', async () => {
+    const missionId = await activeMission();
+    let innerFinalized = false;
+    async function* inner(): AsyncGenerator<ChatStreamEvent, boolean> {
+      try {
+        yield { type: 'token', value: 'LITE ' } as ChatStreamEvent;
+        yield doneEvent('unreached');
+        return false;
+      } finally {
+        // Stands in for the harness generator's finally (trace end, token debit, teardown).
+        innerFinalized = true;
+      }
+    }
+    const gen = withMissionJournal(inner(), service, missionId, 'e', silent);
+    await gen.next(); // consume the first token — the inner generator is suspended mid-stream
+    await gen.return(false); // the consumer (emitAll) aborts on a client disconnect/throw
+
+    expect(innerFinalized).toBe(true);
+    // Aborted before a `done` → nothing journaled.
+    expect(await service.recentJournal(missionId, 10)).toHaveLength(0);
+  });
+});

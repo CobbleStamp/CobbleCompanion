@@ -989,6 +989,21 @@ export const discordConfigSetSchema = z.object({
 export type DiscordConfigSetBody = z.infer<typeof discordConfigSetSchema>;
 
 /**
+ * `discord.config.setMissionWake` params (companion-missions.md §3.2): the allowlisted
+ * trigger-sender bot id (the scheduler's discord-notify bot) and the shared mission channel.
+ * Both are Discord snowflakes — 17–20 digit strings; trust is this (author, channel) pair.
+ * The length bound rejects a typo'd/truncated id up front: an id that can't be a real
+ * snowflake would silently never match the wake's (author, channel) check and disable it.
+ */
+export const discordMissionWakeSchema = z.object({
+  triggerBotId: z.string().regex(/^\d{17,20}$/u, 'a Discord user id (17–20 digits) is required'),
+  missionChannelId: z
+    .string()
+    .regex(/^\d{17,20}$/u, 'a Discord channel id (17–20 digits) is required'),
+});
+export type DiscordMissionWakeBody = z.infer<typeof discordMissionWakeSchema>;
+
+/**
  * The Discord config as shown in settings (`discord.config.get`). Never carries the
  * bot token. `linkCode` is present only while a code is outstanding (the owner hasn't
  * linked yet); it's null once the owner is bound.
@@ -998,6 +1013,17 @@ export interface DiscordConfigViewDto {
   readonly boundCompanionId: string | null;
   readonly ownerLinked: boolean;
   readonly linkCode: string | null;
+  /**
+   * The mission wake settings (companion-missions.md §3.2), present once a bot is configured.
+   * `triggerBotId` + `missionChannelId` are set by the owner; `botUserIdCaptured` reflects
+   * whether the companion bot's own id has been captured yet (it is, once the bot connects) —
+   * all three must be set before a mission can be armed.
+   */
+  readonly missionWake?: {
+    readonly triggerBotId: string | null;
+    readonly missionChannelId: string | null;
+    readonly botUserIdCaptured: boolean;
+  };
 }
 
 // --- Provenance (Phase 1 grounded recall, docs/companion-memory.md) ---
@@ -1205,6 +1231,107 @@ export const addReactionSchema = z.object({
   emoji: z.string().trim().max(32).regex(singleEmojiPattern, 'a single emoji is required'),
 });
 export type AddReactionBody = z.infer<typeof addReactionSchema>;
+
+// --- Missions (goal-driven long-running tasks — docs/companion-missions.md) ---
+
+/**
+ * Lifecycle of a mission (companion-missions.md §4). `draft` — planned, awaiting the
+ * user's start-approval; `active` — running, with the drive engine suspended and at most
+ * one active per companion (enforced by a partial unique index); `paused` — scheduler jobs
+ * paused, resumable; terminal: `complete` (validation criteria met), `stopped` (user ended),
+ * `failed`.
+ */
+export const missionStatusSchema = z.enum([
+  'draft',
+  'active',
+  'paused',
+  'complete',
+  'stopped',
+  'failed',
+]);
+export type MissionStatus = z.infer<typeof missionStatusSchema>;
+
+/**
+ * A scoped outward-action grant minted at mission creation (companion-missions.md §4).
+ * Nothing populates it yet — missions are read-only end to end, so the column exists for
+ * the type only (the deferred standing outward-grant, companion-missions.md §11). Defined
+ * here so `@cobble/db` can type the column.
+ */
+export interface MissionOutwardGrant {
+  readonly tool: string;
+  readonly target: string;
+  readonly rateLimitPerHour?: number;
+}
+
+/** A mission as projected to a surface (the settings/status view + the `mission.*` calls). */
+export interface MissionDto {
+  readonly id: string;
+  readonly goal: string;
+  /** The decomposed plan; null while still `draft`, before the planner fills it. */
+  readonly plan: string | null;
+  /** The success test the advance loop checks against; null until planned. */
+  readonly validationCriteria: string | null;
+  readonly status: MissionStatus;
+  /** Scheduler job ids registered for this mission (for cancel on stop). */
+  readonly jobIds: readonly string[];
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+/**
+ * One append-only journal row — a single mission turn's outcome (companion-missions.md
+ * §4), giving cross-day continuity without rescanning the transcript. Content fields
+ * are nullable: a turn may reason without reaching a finding, prediction, or decision.
+ */
+export interface MissionJournalEntryDto {
+  readonly id: string;
+  readonly missionId: string;
+  /** The trigger event that woke this turn; null for a chat-initiated advance. */
+  readonly event: string | null;
+  readonly findings: string | null;
+  readonly prediction: string | null;
+  readonly decision: string | null;
+  readonly turnAt: string;
+}
+
+/** `mission.stop` params validator — which mission to act on. */
+export const missionLifecycleSchema = z.object({
+  missionId: z.string().uuid(),
+});
+
+/**
+ * `mission.advance` params validator — which mission the wake is for, plus the event
+ * text that woke it. Every wake names its mission (the id is stamped into the scheduler
+ * action at arm time, companion-missions.md §3.2), so the server routes and validates
+ * by identity — never by guessing at "the" active mission.
+ */
+export const missionAdvanceSchema = z.object({
+  missionId: z.string().uuid(),
+  event: z.string().trim().min(1).max(8_000),
+});
+
+/**
+ * `mission.advance` terminal-result validator — what the streaming call resolves with.
+ * `skipped` is set (with the reason) when the wake found no active mission — a stale
+ * trigger — so the surface can stay silent instead of rendering an empty turn
+ * (companion-missions.md §3.2).
+ */
+export const missionAdvanceResultSchema = z.object({
+  done: z.literal(true),
+  skipped: z.string().optional(),
+});
+
+/** The parsed `mission.advance` terminal result (see {@link missionAdvanceResultSchema}). */
+export type MissionAdvanceResult = z.infer<typeof missionAdvanceResultSchema>;
+
+/**
+ * `mission.journal` params validator — the progress view (companion-missions.md §4):
+ * the most-recent journal rows for one of the companion's missions, newest first.
+ */
+export const missionJournalSchema = z.object({
+  missionId: z.string().uuid(),
+  limit: z.number().int().min(1).max(50).optional(),
+});
 
 // --- Generic API envelope (patterns.md "API Response Format") ---
 

@@ -38,6 +38,18 @@ class OneUserStore implements DiscordConfigStore {
     this.record = { ...this.record, ownerDiscordUserId, linkCode: null, linkCodeIssuedAt: null };
     return true;
   }
+  async configureMissionWake(
+    _userId: string,
+    triggerBotId: string | null,
+    missionChannelId: string | null,
+  ): Promise<DiscordConfigRecord | null> {
+    this.record = { ...this.record, triggerBotId, missionChannelId };
+    return this.record;
+  }
+  async setBotUserId(_userId: string, botUserId: string): Promise<DiscordConfigRecord | null> {
+    this.record = { ...this.record, botUserId };
+    return this.record;
+  }
   async delete(): Promise<void> {}
 }
 
@@ -49,6 +61,9 @@ function record(overrides: Partial<DiscordConfigRecord> = {}): DiscordConfigReco
     ownerDiscordUserId: null,
     linkCode: null,
     linkCodeIssuedAt: null,
+    triggerBotId: null,
+    missionChannelId: null,
+    botUserId: null,
     createdAt: new Date(0),
     updatedAt: new Date(0),
     ...overrides,
@@ -98,6 +113,7 @@ function cmdCtx(
 function makeRouter(store: DiscordConfigStore) {
   const ownerMessages: DirectMessageContext[] = [];
   const ownerCommands: SlashCommandContext[] = [];
+  const triggers: { userId: string; missionId: string; event: string }[] = [];
   const router = new BotRouter({
     configStore: store,
     onOwnerMessage: (ctx) => {
@@ -106,10 +122,13 @@ function makeRouter(store: DiscordConfigStore) {
     onOwnerCommand: (ctx) => {
       ownerCommands.push(ctx);
     },
+    onTrigger: (userId, missionId, event) => {
+      triggers.push({ userId, missionId, event });
+    },
     now: () => NOW,
     logger: silent,
   });
-  return { router, ownerMessages, ownerCommands };
+  return { router, ownerMessages, ownerCommands, triggers };
 }
 
 describe('BotRouter — owner lock (DMs)', () => {
@@ -278,5 +297,112 @@ describe('BotRouter — owner lock (commands)', () => {
     expect(replies).toHaveLength(0);
     expect(ownerCommands).toHaveLength(1);
     expect(ownerCommands[0]?.command.name).toBe('summon');
+  });
+});
+
+describe('BotRouter — mission trigger (guild) trust gate', () => {
+  const TRIGGER_BOT = 'scheduler-bot-1';
+  const MISSION_CHANNEL = 'mission-chan-1';
+  const MISSION_ID = '0f4c10ac-9a3e-4b21-8c53-2f6f14be7a90';
+
+  function guildCtx(input: {
+    userId?: string;
+    authorId: string;
+    channelId: string;
+    content: string;
+    triggerBotId?: string | null;
+    missionChannelId?: string | null;
+  }) {
+    // The trust snapshot rides the context (the manager holds it per-bot); it defaults to
+    // the configured mission wake, and a test passes null to model "not configured".
+    return {
+      userId: input.userId ?? 'u1',
+      message: {
+        authorId: input.authorId,
+        channelId: input.channelId,
+        messageId: 'msg-1',
+        content: input.content,
+      },
+      triggerBotId: input.triggerBotId === undefined ? TRIGGER_BOT : input.triggerBotId,
+      missionChannelId:
+        input.missionChannelId === undefined ? MISSION_CHANNEL : input.missionChannelId,
+    };
+  }
+
+  const configured = (): OneUserStore =>
+    new OneUserStore(record({ triggerBotId: TRIGGER_BOT, missionChannelId: MISSION_CHANNEL }));
+
+  it('fires onTrigger with the mission id for an allowlisted sender in the mission channel', async () => {
+    const { router, triggers } = makeRouter(configured());
+    await router.handleGuildTrigger(
+      guildCtx({
+        authorId: TRIGGER_BOT,
+        channelId: MISSION_CHANNEL,
+        content: `<@111> mission:${MISSION_ID} LITE is 808`,
+      }),
+    );
+    expect(triggers).toEqual([{ userId: 'u1', missionId: MISSION_ID, event: 'LITE is 808' }]);
+  });
+
+  it('drops a message from a non-allowlisted author', async () => {
+    const { router, triggers } = makeRouter(configured());
+    await router.handleGuildTrigger(
+      guildCtx({ authorId: 'someone-else', channelId: MISSION_CHANNEL, content: '<@bot> spoof' }),
+    );
+    expect(triggers).toHaveLength(0);
+  });
+
+  it('drops a message in the wrong channel even from the trigger bot', async () => {
+    const { router, triggers } = makeRouter(configured());
+    await router.handleGuildTrigger(
+      guildCtx({ authorId: TRIGGER_BOT, channelId: 'other-chan', content: '<@bot> wrong room' }),
+    );
+    expect(triggers).toHaveLength(0);
+  });
+
+  it('drops when the mission wake is not configured', async () => {
+    const { router, triggers } = makeRouter(new OneUserStore(record()));
+    await router.handleGuildTrigger(
+      guildCtx({
+        authorId: TRIGGER_BOT,
+        channelId: MISSION_CHANNEL,
+        content: '<@bot> event',
+        triggerBotId: null,
+        missionChannelId: null,
+      }),
+    );
+    expect(triggers).toHaveLength(0);
+  });
+
+  it('drops a mention-only trigger with no event text', async () => {
+    const { router, triggers } = makeRouter(configured());
+    await router.handleGuildTrigger(
+      guildCtx({ authorId: TRIGGER_BOT, channelId: MISSION_CHANNEL, content: '<@111>' }),
+    );
+    expect(triggers).toHaveLength(0);
+  });
+
+  it('drops a trusted trigger without a mission tag (every wake must name its mission)', async () => {
+    const { router, triggers } = makeRouter(configured());
+    await router.handleGuildTrigger(
+      guildCtx({
+        authorId: TRIGGER_BOT,
+        channelId: MISSION_CHANNEL,
+        content: '<@111> LITE is 808',
+      }),
+    );
+    expect(triggers).toHaveLength(0);
+  });
+
+  it('drops a trusted trigger whose mission tag has no event text after it', async () => {
+    const { router, triggers } = makeRouter(configured());
+    await router.handleGuildTrigger(
+      guildCtx({
+        authorId: TRIGGER_BOT,
+        channelId: MISSION_CHANNEL,
+        content: `<@111> mission:${MISSION_ID}`,
+      }),
+    );
+    expect(triggers).toHaveLength(0);
   });
 });

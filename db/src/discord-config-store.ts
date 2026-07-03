@@ -42,6 +42,19 @@ export interface DiscordConfigRecord {
   /** The single-use `/link` code, or null once consumed / never issued. */
   readonly linkCode: string | null;
   readonly linkCodeIssuedAt: Date | null;
+  /**
+   * Mission wake (companion-missions.md §3.2): the allowlisted trigger-sender bot id and
+   * the shared mission channel. A guild message is a valid mission trigger ONLY from
+   * `triggerBotId` in `missionChannelId`. Both null until the mission wake is configured.
+   */
+  readonly triggerBotId: string | null;
+  readonly missionChannelId: string | null;
+  /**
+   * The companion bot's OWN Discord user id (companion-missions.md §3.2), captured by the
+   * gateway at ClientReady. Core reads it to build the mission scheduler action
+   * (`<@botUserId> {{message}}`). Null until the bot first connects.
+   */
+  readonly botUserId: string | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -62,6 +75,9 @@ interface DiscordConfigRow {
   readonly ownerDiscordUserId: string | null;
   readonly linkCode: string | null;
   readonly linkCodeIssuedAt: Date | null;
+  readonly triggerBotId: string | null;
+  readonly missionChannelId: string | null;
+  readonly botUserId: string | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -74,6 +90,9 @@ function toRecord(row: DiscordConfigRow): DiscordConfigRecord {
     ownerDiscordUserId: row.ownerDiscordUserId,
     linkCode: row.linkCode,
     linkCodeIssuedAt: row.linkCodeIssuedAt,
+    triggerBotId: row.triggerBotId,
+    missionChannelId: row.missionChannelId,
+    botUserId: row.botUserId,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -89,6 +108,23 @@ export interface DiscordConfigStore {
     issuedAt: Date,
   ): Promise<DiscordConfigRecord | null>;
   bindOwner(userId: string, ownerDiscordUserId: string, expectedLinkCode: string): Promise<boolean>;
+  /**
+   * Set (or clear, with nulls) the mission-wake pair — the allowlisted trigger-sender bot
+   * id and the shared mission channel (companion-missions.md §3.2). Independent of the
+   * token/owner-lock upsert path, so configuring the mission wake never re-links the bot.
+   * Returns null if there's no config row for the user.
+   */
+  configureMissionWake(
+    userId: string,
+    triggerBotId: string | null,
+    missionChannelId: string | null,
+  ): Promise<DiscordConfigRecord | null>;
+  /**
+   * Record the companion bot's own Discord user id, captured at ClientReady
+   * (companion-missions.md §3.2). Idempotent — the gateway writes it on every connect.
+   * Returns null if there's no config row for the user.
+   */
+  setBotUserId(userId: string, botUserId: string): Promise<DiscordConfigRecord | null>;
   delete(userId: string): Promise<void>;
 }
 
@@ -191,6 +227,28 @@ export class DrizzleDiscordConfigStore implements DiscordConfigStore {
       )
       .returning();
     return rows.length > 0;
+  }
+
+  async configureMissionWake(
+    userId: string,
+    triggerBotId: string | null,
+    missionChannelId: string | null,
+  ): Promise<DiscordConfigRecord | null> {
+    const [row] = await this.db
+      .update(discordConfig)
+      .set({ triggerBotId, missionChannelId, updatedAt: new Date() })
+      .where(eq(discordConfig.userId, userId))
+      .returning();
+    return row ? toRecord(row as DiscordConfigRow) : null;
+  }
+
+  async setBotUserId(userId: string, botUserId: string): Promise<DiscordConfigRecord | null> {
+    const [row] = await this.db
+      .update(discordConfig)
+      .set({ botUserId, updatedAt: new Date() })
+      .where(eq(discordConfig.userId, userId))
+      .returning();
+    return row ? toRecord(row as DiscordConfigRow) : null;
   }
 
   async delete(userId: string): Promise<void> {

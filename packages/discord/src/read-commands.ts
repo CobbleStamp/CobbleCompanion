@@ -12,6 +12,8 @@
 
 import type {
   EpisodeDto,
+  MissionDto,
+  MissionJournalEntryDto,
   EpisodeSearchResultDto,
   FeedResultDto,
   FoodInventoryDto,
@@ -32,6 +34,9 @@ import {
   renderFed,
   renderGrowth,
   renderMemory,
+  renderMission,
+  renderMissionStopped,
+  NO_MISSIONS,
   renderPantry,
   renderReading,
   renderRecall,
@@ -119,6 +124,8 @@ async function runView(ctx: SlashCommandContext, connection: CompanionConnection
     }
     case 'feed':
       return feedView(ctx, connection);
+    case 'mission':
+      return missionView(ctx, connection);
     case 'reading': {
       const { leads } = await connection.call<{ leads: LeadDto[] }>('leads.list');
       return renderReading(leads);
@@ -126,6 +133,40 @@ async function runView(ctx: SlashCommandContext, connection: CompanionConnection
     default:
       return UNKNOWN_COMMAND;
   }
+}
+
+/** How many journal turns the `/mission` view recalls. */
+const MISSION_VIEW_JOURNAL_LIMIT = 3;
+
+/**
+ * `/mission` — inspect the active mission (goal, plan, criteria, recent journal), falling
+ * back to the most recent one; `/mission action:stop` cancels the active mission's wake jobs
+ * and ends it. Stop targets ONLY the `active` mission — never a draft or a finished one.
+ */
+async function missionView(
+  ctx: SlashCommandContext,
+  connection: CompanionConnection,
+): Promise<string> {
+  const action = (ctx.command.options['action'] ?? '').trim().toLowerCase();
+  if (action.length > 0 && action !== 'stop') {
+    return 'I know `/mission` (show the mission) and `/mission action:stop` (end it).';
+  }
+  const { missions } = await connection.call<{ missions: MissionDto[] }>('mission.list');
+  const active = missions.find((mission) => mission.status === 'active') ?? null;
+  if (action === 'stop') {
+    if (!active) return 'There’s no active mission to stop.';
+    const { mission } = await connection.call<{ mission: MissionDto }>('mission.stop', {
+      missionId: active.id,
+    });
+    return renderMissionStopped(mission);
+  }
+  const shown = active ?? missions[0] ?? null; // the list is newest first
+  if (!shown) return NO_MISSIONS;
+  const { entries } = await connection.call<{ entries: MissionJournalEntryDto[] }>(
+    'mission.journal',
+    { missionId: shown.id, limit: MISSION_VIEW_JOURNAL_LIMIT },
+  );
+  return renderMission(shown, entries);
 }
 
 /** `/feed` — with no food, show the pantry; with a food, apply it and confirm. */

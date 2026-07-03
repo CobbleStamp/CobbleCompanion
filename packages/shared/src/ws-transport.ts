@@ -116,14 +116,16 @@ interface Pending {
 
 /**
  * A single-consumer async queue backing a streaming response: chunks pushed by the
- * socket are yielded by one `iterate()` generator in order; `end()` completes it,
- * `fail()` makes it throw.
+ * socket are yielded by one `iterate()` generator in order; `end()` completes it
+ * (carrying the terminal result as the generator's return value), `fail()` makes it
+ * throw.
  */
 export class StreamQueue {
   private readonly buffer: unknown[] = [];
   private waiter: ((result: IteratorResult<unknown>) => void) | null = null;
   private failure: Error | null = null;
   private finished = false;
+  private terminal: unknown;
 
   push(chunk: unknown): void {
     if (this.finished || this.failure) return;
@@ -136,9 +138,10 @@ export class StreamQueue {
     }
   }
 
-  end(): void {
+  end(result?: unknown): void {
     if (this.finished || this.failure) return;
     this.finished = true;
+    this.terminal = result;
     this.wake();
   }
 
@@ -156,19 +159,19 @@ export class StreamQueue {
     }
   }
 
-  async *iterate(): AsyncGenerator<unknown> {
+  async *iterate(): AsyncGenerator<unknown, unknown> {
     for (;;) {
       if (this.buffer.length > 0) {
         yield this.buffer.shift();
         continue;
       }
       if (this.failure) throw this.failure;
-      if (this.finished) return;
+      if (this.finished) return this.terminal;
       const result = await new Promise<IteratorResult<unknown>>((resolve) => {
         this.waiter = resolve;
       });
       if (this.failure) throw this.failure;
-      if (result.done) return;
+      if (result.done) return this.terminal;
       yield result.value;
     }
   }
@@ -266,14 +269,19 @@ export class WsTransport {
     return (await result) as T;
   }
 
-  /** A streaming call: yield each chunk, ending on the terminal result (throwing on error). */
-  async *callStream(method: string, params?: unknown): AsyncGenerator<unknown> {
+  /**
+   * A streaming call: yield each chunk, ending on the terminal result (throwing on
+   * error). The terminal `result` payload is the generator's RETURN value — invisible
+   * to a plain `for await`, but capturable with `yield*` — so a caller that needs the
+   * method's outcome beyond the chunks (e.g. `mission.advance`'s skip flag) can read it.
+   */
+  async *callStream(method: string, params?: unknown): AsyncGenerator<unknown, unknown> {
     const id = this.nextId();
     const queue = new StreamQueue();
     this.streams.set(id, queue);
     this.send({ id, method, params });
     try {
-      yield* queue.iterate();
+      return yield* queue.iterate();
     } finally {
       this.streams.delete(id);
     }
@@ -344,7 +352,7 @@ export class WsTransport {
       return;
     }
     if ('result' in message) {
-      this.streams.get(message.id)?.end();
+      this.streams.get(message.id)?.end(message.result);
       this.pending.get(message.id)?.resolve(message.result);
       this.pending.delete(message.id);
       return;

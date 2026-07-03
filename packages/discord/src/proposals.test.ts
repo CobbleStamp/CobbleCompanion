@@ -26,7 +26,7 @@ function connectionFrom(opts: {
     onClosed: () => {},
     close: () => {},
     async *chat(): AsyncIterable<ChatStreamEvent> {},
-    async *callStream(method, params): AsyncIterable<ChatStreamEvent> {
+    async *callStream(method, params): AsyncGenerator<ChatStreamEvent, undefined> {
       calls.push({ method, params });
       if (opts.streamThrows) throw opts.streamThrows;
       for (const event of opts.stream ?? []) yield event;

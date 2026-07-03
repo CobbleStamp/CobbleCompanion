@@ -146,6 +146,12 @@ export interface AppConfig {
    * (separate from `cliToolsPath`). Empty → the OS temp dir.
    */
   readonly cliScratchDir: string;
+  /**
+   * Base URL of the loopback scheduler service (Tools/scheduler) that drives mission wakes
+   * (companion-missions.md §3.1). `start_mission` shells `scheduler-cli` against this; default
+   * is the scheduler's own loopback default.
+   */
+  readonly schedulerUrl: string;
   readonly appUrl: string;
   readonly googleClientId: string;
   /** HS256 secret the API signs its own session access/refresh tokens with
@@ -285,6 +291,8 @@ const envSchema = z
     CLI_TOOLS_PATH: z.string().default(''),
     // Root for per-tenant ephemeral CLI working dirs; empty → the OS temp dir.
     CLI_SCRATCH_DIR: z.string().default(''),
+    // Loopback scheduler service base URL (mission wakes); the scheduler's own default.
+    SCHEDULER_URL: z.string().url().default('http://127.0.0.1:8787'),
     APP_URL: z.string().url().default('http://localhost:3001'),
     // Public OAuth Web client ID — shipped to the browser, not a secret. Required:
     // Google Sign-In is the browser scheme (validated below).
@@ -556,6 +564,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     maxEquippedTools: parsed.MAX_EQUIPPED_TOOLS,
     cliToolsPath: parsed.CLI_TOOLS_PATH,
     cliScratchDir: parsed.CLI_SCRATCH_DIR,
+    schedulerUrl: parsed.SCHEDULER_URL,
     appUrl: parsed.APP_URL,
     googleClientId: parsed.GOOGLE_CLIENT_ID,
     jwtSigningSecret: parsed.JWT_SIGNING_SECRET,

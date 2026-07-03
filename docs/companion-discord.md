@@ -94,12 +94,22 @@ contract types are infrastructure, not core intelligence.)
 
 ### 2.1 Config discovery & reads — on-demand, trigger-reconciled (no poll, no cache)
 
-The adapter holds **no cached snapshot** of `discord_config` and runs **no poll**. Two distinct
+The adapter holds **almost no cached snapshot** of `discord_config` and runs **no poll**. Two distinct
 needs are served two different ways:
 
 - **Reading a config field** (the owner lock per inbound event, the bound companion at `/summon`,
   the proactivity dial when forwarding) — read **on demand** at the point of use via
   `findByUserId(userId)`, scoped to the one row needed. Nothing is held, so nothing goes stale.
+  - **One exception — the mission-wake trust pair.** The guild-trigger gate (§4 below,
+    companion-missions.md §3.2) needs `trigger_bot_id` and `mission_channel_id` to decide trust,
+    and a guild message fires for **every** message the bot can see in **any** channel. An on-demand
+    `findByUserId` there would be an un-rate-limited DB amplification surface (one uncached read per
+    guild message from anyone). So the connection manager **carries these two fields on the running-bot
+    record** and hands them to the trigger gate on the context — no per-message read. They stay fresh
+    the same way the connection set does: the reconcile trigger below **refreshes the record** (an
+    immutable swap, keeping the live connection) whenever they change. This is the only `discord_config`
+    state the adapter caches, and it is refreshed on the same push that maintains the connection set — so
+    it does not reintroduce polling or silent staleness.
 - **Maintaining the gateway-connection set** — a Discord gateway connection must exist _before_ any
   event can arrive, so it cannot be established "on demand" (the demand it would answer is produced
   _by_ the connection). It needs a trigger. The API owns the only external write path (the web
@@ -109,8 +119,11 @@ needs are served two different ways:
   below). The adapter reads that one row on demand and reconciles just that user's connection:
   **start** it when a token first
   appears, **restart** it when the bot **token** changes, **stop** it when the row is gone. Only the
-  bot token drives the connection lifecycle — owner, bound companion, and proactivity never restart
-  it; they are read on demand when used.
+  bot token drives the connection **lifecycle** — owner, bound companion, and proactivity never restart
+  it; they are read on demand when used. A change to only the **mission-wake pair** (`trigger_bot_id` /
+  `mission_channel_id`) does **not** restart the connection: the same reconcile call **refreshes the
+  cached trust pair** on the running-bot record (an immutable record swap) and leaves the gateway
+  connection untouched.
 - **Startup** — on boot the adapter has no connections in memory, so it reads every config row
   **once** (`list()`) and reconnects each bot. This is one-shot state recovery, **not a poll**; it
   never repeats.
@@ -142,7 +155,7 @@ next restart.
 | **Reply style**            | Typing cue + single final message                                                                                                                                                | Discord is rate-limited and not built for token-by-token streaming; the bridge consumes the stream server-side and posts once.                                                                                                                                                                   |
 | **Runtime**                | Single always-on **sibling service process**, encrypted token at rest, decoupled module                                                                                           | Discord allows one gateway connection per bot, so the manager is singleton; it lives in its own package consuming only the public contract, surviving API multi-node / scale-to-zero.                                                                                                            |
 | **Config ownership**       | Adapter owns `discord_config` (schema in `@cobble/db`); adapter reads, API writes                                                                                                | Keeps the adapter free of `@cobble/core` while letting the web settings panel persist the token through the API; the API then triggers the adapter to reconcile that bot (§2.1).                                                                                                                 |
-| **Config discovery**       | API-triggered reconcile + on-demand reads — **no poll, no cached snapshot** (§2.1)                                                                                               | A gateway connection must exist before any event, so the connection set needs a trigger, not a lazy read; the API (the only external writer) calls the adapter's internal reconcile endpoint, and every config field is read on demand at use. No DB-specific push; the adapter stays internal.   |
+| **Config discovery**       | API-triggered reconcile + on-demand reads — **no poll**; the only cached field is the mission-wake trust pair, refreshed on reconcile (§2.1)                                     | A gateway connection must exist before any event, so the connection set needs a trigger, not a lazy read; the API (the only external writer) calls the adapter's internal reconcile endpoint, and every config field is read on demand at use — except the mission-wake pair, cached on the bot record to avoid a DB read per guild message. No DB-specific push; the adapter stays internal.   |
 | **Command registration**   | Global commands, auto-registered on `ready`, DM context enabled                                                                                                                  | Guild commands don't appear in DMs (our only surface); global auto-registration needs zero per-user setup. Bot must be DM-reachable (shares a server or user-installable).                                                                                                                       |
 | **Backend auth**           | Bridge connects as the **real user** via a short-lived app access token, minted by an **internal API endpoint** (gated by a Discord service credential + a `discord_config` row) | Service-token auth would namespace the bridge as a _separate_ user that doesn't own the companion (handshake 404). Connecting as the real user reuses the existing app-access-token verifier with **no `@cobble/core` change**; the `ACCESS_TOKEN_SECRET` stays in the API, never in the service. |
 
@@ -201,15 +214,20 @@ Read-only views map directly onto existing WS methods (no new endpoints):
 | `/budget`           | `budget.get`                                                         | stamina/energy wallets                                                |
 | `/feed`             | `food.get` → `feed`                                                  | pantry, then apply a food                                             |
 | `/reading`          | `leads.list`                                                         | reading list (harvested leads)                                        |
+| `/mission [stop]`   | `mission.list` + `mission.journal` / `mission.stop`                  | mission plan + progress; `action:stop` ends it (`companion-missions.md` §5.3) |
 
 The read-only views (`/memory`…`/reading`) call **companion-scoped** methods, which
 require the connection to hold the live embodiment claim (`requireEmbodiment`,
 `deliver-scalability.md` §5.2). They therefore run over the **summoned** connection —
 a view run while **Dormant** is refused with the same _"summon first"_ prompt as chat
 (§4), since opening a side connection just to answer a view would itself claim the
-room and supersede the active surface. `/recall` and `/episodes <query>` spend on the
-search embedding, so an empty stamina wallet surfaces as the `/feed` nudge; `/feed`
-with no argument shows the pantry and with `ration`/`spark`/`treat` applies a food.
+room and supersede the active surface. The **one exception is `/mission`**: it
+**summons-if-dormant** exactly like a trigger wake (greet-less, force-claims —
+disruptive by design), because the mission kill switch must work even after a worker
+restart with wake jobs still armed (`companion-missions.md` §5.3). `/recall` and
+`/episodes <query>` spend on the search embedding, so an empty stamina wallet surfaces
+as the `/feed` nudge; `/feed` with no argument shows the pantry and with
+`ration`/`spark`/`treat` applies a food.
 
 Views render as **Discord Markdown** (headings, bullets, code spans), not embeds: the
 adapter's gateway seam sends string content, which keeps it decoupled from
@@ -294,6 +312,14 @@ external_id)` user (`packages/core/src/identity/store.ts`, `ensureUserByClaim`),
   connection.
 - **No secrets in logs.** Errors are logged with operation + `userId`/`companionId` context, never the
   token or service secret (per the repo logging rule).
+
+> **Now shipped: mission trigger intake (goal-driven tasks).** The surface is the **wake path**
+> for missions — the `GuildMessages` intent + a **guild-message trigger path** that accepts a
+> message **only** from an allowlisted trigger sender (a scheduler bot) in a configured **mission
+> channel**, routed as a **trigger-only authority** (distinct from the owner lock, which is
+> untouched), then **summons programmatically** to process it. This is the one place the surface
+> takes a non-owner input, deliberately narrow. See §6 (the `/mission` command) and
+> `companion-missions.md` §3, §8.
 
 ## 10. Beyond the PoC
 

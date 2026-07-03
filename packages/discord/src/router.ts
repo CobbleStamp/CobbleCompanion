@@ -11,8 +11,13 @@
  */
 
 import { secretsEqual, type DiscordConfigStore } from '@cobble/db';
-import type { DirectMessageContext, SlashCommandContext } from './gateway/manager.js';
+import type {
+  DirectMessageContext,
+  GuildMessageContext,
+  SlashCommandContext,
+} from './gateway/manager.js';
 import type { Logger } from './gateway/types.js';
+import { parseTriggerEvent } from './parse-trigger.js';
 
 /** `/link` codes expire 15 minutes after they're issued (companion-discord.md §9). */
 export const LINK_CODE_TTL_MS = 15 * 60 * 1000;
@@ -25,6 +30,13 @@ export interface RouterOptions {
   readonly onOwnerMessage: (ctx: DirectMessageContext) => void | Promise<void>;
   /** Handle a non-`/link` owner command that passed the lock (summon/status — T8+). */
   readonly onOwnerCommand: (ctx: SlashCommandContext) => void | Promise<void>;
+  /**
+   * Handle a mission trigger that passed the trust gate (companion-missions.md §3.2) — a
+   * SEPARATE authority from the owner: a trigger sender may only fire a mission advance,
+   * never chat/summon/commands. The bridge summons-if-dormant and advances the NAMED
+   * mission (every wake carries its mission id).
+   */
+  readonly onTrigger: (userId: string, missionId: string, event: string) => void | Promise<void>;
   /** Injectable clock (ms) for deterministic TTL tests; defaults to wall clock. */
   readonly now?: () => number;
   readonly logger: Logger;
@@ -58,6 +70,48 @@ export class BotRouter {
       return;
     }
     await this.opts.onOwnerMessage(ctx);
+  }
+
+  /**
+   * Route an inbound guild (channel) message as a possible mission trigger
+   * (companion-missions.md §3.2). Trust is the (author, channel) PAIR — the author id
+   * equals the allowlisted `trigger_bot_id` AND the channel equals `mission_channel_id` —
+   * never the message content (anyone in-channel could type a mention). This is a distinct
+   * authority from the owner lock: a trigger sender can ONLY fire an advance. Anything that
+   * fails the gate is dropped (logged), never answered.
+   */
+  async handleGuildTrigger(ctx: GuildMessageContext): Promise<void> {
+    // The trust snapshot rides the context (the manager holds it per-bot), NOT a per-message
+    // config read — a guild message fires for every message the bot can see, so a DB read
+    // here would be an un-rate-limited amplification surface (companion-missions.md §3.2).
+    const { triggerBotId, missionChannelId } = ctx;
+    if (triggerBotId === null || missionChannelId === null) {
+      // Mission wake not configured for this user — nothing to trust; drop silently.
+      return;
+    }
+    if (ctx.message.authorId !== triggerBotId || ctx.message.channelId !== missionChannelId) {
+      // Not the allowlisted sender, or not the mission channel — not a trusted trigger.
+      this.opts.logger.info('discord: ignoring untrusted guild message on the trigger path', {
+        operation: 'discord.router.trigger',
+        userId: ctx.userId,
+      });
+      return;
+    }
+    const trigger = parseTriggerEvent(ctx.message.content);
+    if (trigger === null) {
+      // Not a well-formed mission wake: no `mission:<id>` tag, or no event text after it.
+      // Every wake names its mission (the tag is stamped at arm time) — a message that
+      // doesn't cannot be routed, so it is dropped loudly, never advanced on a guess.
+      this.opts.logger.error(
+        'discord: dropping mission trigger without a valid mission tag or event',
+        {
+          operation: 'discord.router.trigger',
+          userId: ctx.userId,
+        },
+      );
+      return;
+    }
+    await this.opts.onTrigger(ctx.userId, trigger.missionId, trigger.event);
   }
 
   /** Route an inbound slash command: `/link` is handled here; the rest pass the lock. */

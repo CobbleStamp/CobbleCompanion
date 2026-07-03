@@ -5,6 +5,7 @@ import {
   GatewayManager,
   type DirectMessageContext,
   type GatewayManagerOptions,
+  type GuildMessageContext,
   type ProposalActionContext,
   type SlashCommandContext,
 } from './manager.js';
@@ -45,6 +46,24 @@ class InMemoryConfigStore implements DiscordConfigStore {
   async bindOwner(): Promise<boolean> {
     return true;
   }
+  async configureMissionWake(
+    userId: string,
+    triggerBotId: string | null,
+    missionChannelId: string | null,
+  ): Promise<DiscordConfigRecord | null> {
+    const row = this.rows.get(userId);
+    if (!row) return null;
+    const updated = { ...row, triggerBotId, missionChannelId };
+    this.rows.set(userId, updated);
+    return updated;
+  }
+  async setBotUserId(userId: string, botUserId: string): Promise<DiscordConfigRecord | null> {
+    const row = this.rows.get(userId);
+    if (!row) return null;
+    const updated = { ...row, botUserId };
+    this.rows.set(userId, updated);
+    return updated;
+  }
   async delete(userId: string): Promise<void> {
     this.rows.delete(userId);
   }
@@ -62,6 +81,9 @@ function makeRecord(
     ownerDiscordUserId: null,
     linkCode: null,
     linkCodeIssuedAt: null,
+    triggerBotId: null,
+    missionChannelId: null,
+    botUserId: null,
     createdAt: new Date(0),
     updatedAt: new Date(0),
     ...overrides,
@@ -79,6 +101,7 @@ function makeManager(
 ) {
   const gateways = fakeGatewayFactory(onCreate);
   const received: DirectMessageContext[] = [];
+  const guildMessages: GuildMessageContext[] = [];
   const commands: SlashCommandContext[] = [];
   const proposalActions: ProposalActionContext[] = [];
   const manager = new GatewayManager({
@@ -86,13 +109,14 @@ function makeManager(
     gatewayFactory: gateways.factory,
     decryptToken,
     onDirectMessage: (ctx) => received.push(ctx),
+    onGuildMessage: (ctx) => guildMessages.push(ctx),
     onSlashCommand: (ctx) => commands.push(ctx),
     onProposalAction: (ctx) => proposalActions.push(ctx),
     commands: [{ name: 'summon', description: 'Bring the companion here' }],
     logger: silent,
     ...overrides,
   });
-  return { manager, gateways, received, commands, proposalActions };
+  return { manager, gateways, received, guildMessages, commands, proposalActions };
 }
 
 describe('GatewayManager', () => {
@@ -107,6 +131,33 @@ describe('GatewayManager', () => {
     expect(manager.size).toBe(2);
     expect(gateways.byToken('tokenA')?.started).toBe(true);
     expect(gateways.byToken('tokenB')?.started).toBe(true);
+  });
+
+  it('captures the bot user id into the config once a bot is ready', async () => {
+    const store = new InMemoryConfigStore();
+    store.set(makeRecord('u1', 'enc:tokenA'));
+    const { manager } = makeManager(store);
+
+    await manager.sync();
+
+    // The fake reports `bot-<token>` once started; the manager persists it.
+    expect((await store.findByUserId('u1'))?.botUserId).toBe('bot-tokenA');
+  });
+
+  it('does not tear down a bot when the bot user id is unavailable at start', async () => {
+    const store = new InMemoryConfigStore();
+    store.set(makeRecord('u1', 'enc:tokenA'));
+    // The gateway reports no id (as if the capture ran before the id was known).
+    const { manager, gateways } = makeManager(store, {}, (gateway) => {
+      gateway.forceNullBotId = true;
+    });
+
+    await manager.sync();
+
+    // Bot is up and serving; nothing was captured, but that never tears the bot down.
+    expect(manager.size).toBe(1);
+    expect(gateways.byToken('tokenA')?.started).toBe(true);
+    expect((await store.findByUserId('u1'))?.botUserId).toBeNull();
   });
 
   it('registers the global commands on each started bot', async () => {
@@ -136,6 +187,50 @@ describe('GatewayManager', () => {
     expect(received).toHaveLength(1);
     expect(received[0]?.userId).toBe('u1');
     expect(received[0]?.message.content).toBe('hello cobble');
+  });
+
+  it('routes an inbound guild message to onGuildMessage with the owning user and the mission-wake snapshot', async () => {
+    const store = new InMemoryConfigStore();
+    store.set(
+      makeRecord('u1', 'enc:tokenA', {
+        triggerBotId: 'scheduler-bot',
+        missionChannelId: 'mission-channel',
+      }),
+    );
+    const { manager, gateways, guildMessages } = makeManager(store);
+    await manager.sync();
+
+    gateways.byToken('tokenA')!.receiveGuildMessage({
+      authorId: 'scheduler-bot',
+      channelId: 'mission-channel',
+      messageId: 'm1',
+      content: '<@111> LITE is 808',
+    });
+
+    expect(guildMessages).toHaveLength(1);
+    expect(guildMessages[0]?.userId).toBe('u1');
+    expect(guildMessages[0]?.message.channelId).toBe('mission-channel');
+    expect(guildMessages[0]?.message.content).toBe('<@111> LITE is 808');
+    // The trust snapshot rides the context — no per-message config read (router gate).
+    expect(guildMessages[0]?.triggerBotId).toBe('scheduler-bot');
+    expect(guildMessages[0]?.missionChannelId).toBe('mission-channel');
+  });
+
+  it('carries a null mission-wake snapshot when the wake is unconfigured', async () => {
+    const store = new InMemoryConfigStore();
+    store.set(makeRecord('u1', 'enc:tokenA'));
+    const { manager, gateways, guildMessages } = makeManager(store);
+    await manager.sync();
+
+    gateways.byToken('tokenA')!.receiveGuildMessage({
+      authorId: 'anyone',
+      channelId: 'any-channel',
+      messageId: 'm1',
+      content: 'hello',
+    });
+
+    expect(guildMessages[0]?.triggerBotId).toBeNull();
+    expect(guildMessages[0]?.missionChannelId).toBeNull();
   });
 
   it('restarts a bot when its token changes', async () => {
@@ -311,6 +406,36 @@ describe('GatewayManager', () => {
       expect(gateways.byToken('tokenA')?.stopped).toBe(true);
       expect(gateways.byToken('tokenB')?.started).toBe(true);
       expect(manager.size).toBe(1);
+    });
+
+    it('refreshes the mission-wake snapshot on a config-only change without restarting', async () => {
+      const store = new InMemoryConfigStore();
+      store.set(makeRecord('u1', 'enc:tokenA'));
+      const { manager, gateways, guildMessages } = makeManager(store);
+      await manager.start();
+
+      // The API configures the mission wake (same token → no restart).
+      store.set(
+        makeRecord('u1', 'enc:tokenA', {
+          triggerBotId: 'scheduler-bot',
+          missionChannelId: 'mission-channel',
+        }),
+      );
+      await manager.reconcileUser('u1');
+
+      // Same live connection — not stopped, not recreated.
+      expect(gateways.created).toHaveLength(1);
+      expect(gateways.byToken('tokenA')?.stopped).toBe(false);
+
+      // A subsequent guild message now carries the refreshed snapshot.
+      gateways.byToken('tokenA')!.receiveGuildMessage({
+        authorId: 'scheduler-bot',
+        channelId: 'mission-channel',
+        messageId: 'm1',
+        content: '<@111> LITE is 808',
+      });
+      expect(guildMessages[0]?.triggerBotId).toBe('scheduler-bot');
+      expect(guildMessages[0]?.missionChannelId).toBe('mission-channel');
     });
 
     it('stops a bot whose row was removed', async () => {

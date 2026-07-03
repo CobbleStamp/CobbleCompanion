@@ -926,3 +926,8 @@ Owned here (single-source). Each is assigned a decision point:
   `implementation.md`.
 - The ontology contract for structured knowledge → `ontology.md`.
 - Native surfaces before the web PoC decision gate (Phase 5).
+- **Missions (goal-driven long-running tasks)** — a cross-repo workstream (the shipped
+  `Tools/scheduler` spine + the companion half: a Discord trigger intake + `MissionService`). Built
+  (Milestone 1); a live end-to-end dry-run and two durability/lifecycle backstops remain. It is a new
+  *mode* layered on the loop, not a web-PoC phase; design and status are owned by
+  `companion-missions.md`.

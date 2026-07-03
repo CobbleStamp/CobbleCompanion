@@ -14,6 +14,7 @@ import type {
   DiscordGateway,
   DiscordGatewayFactory,
   InboundDirectMessage,
+  InboundGuildMessage,
   InboundProposalAction,
   InboundSlashCommand,
   Logger,
@@ -32,6 +33,27 @@ export interface DirectMessageContext {
   typing(): Promise<void>;
   /** Post a proposal embed + Confirm/Reject buttons in the same DM channel. */
   sendProposal(card: ProposalCard): Promise<void>;
+}
+
+/**
+ * An inbound guild (channel) message, tagged with the user whose bot received it — the
+ * mission wake (companion-missions.md §3.2). The router applies the trust gate; the manager
+ * only tags it. No reply/typing surface: a trigger is not answered in-channel; the mission
+ * turn's output rides the owner's DM (§4).
+ *
+ * Unlike the DM/command paths, the guild-trigger path carries the mission-wake trust
+ * snapshot (`triggerBotId`, `missionChannelId`) rather than having the router read it on
+ * demand. A guild message fires for EVERY message the bot can see, so a per-message
+ * `findByUserId` would be an unbounded, un-rate-limited DB amplification surface. These two
+ * fields are immutable from the router's view: the manager holds them per-bot and refreshes
+ * them only on the reconcile trigger that follows a `discord_config` write (both null until
+ * the mission wake is configured).
+ */
+export interface GuildMessageContext {
+  readonly userId: string;
+  readonly message: InboundGuildMessage;
+  readonly triggerBotId: string | null;
+  readonly missionChannelId: string | null;
 }
 
 /** An inbound proposal button click, tagged with the owning user. */
@@ -66,6 +88,8 @@ export interface GatewayManagerOptions {
   readonly decryptToken: (encryptedBotToken: string) => string | null;
   /** Inbound-DM sink — the bridge/router owns lock/summon/chat handling. */
   readonly onDirectMessage: (ctx: DirectMessageContext) => void;
+  /** Inbound guild-message sink — the router owns the trigger trust gate + parse (mission wake). */
+  readonly onGuildMessage: (ctx: GuildMessageContext) => void;
   /** Inbound slash-command sink — the router owns lock + `/link`/summon/commands. */
   readonly onSlashCommand: (ctx: SlashCommandContext) => void;
   /** Inbound proposal-button sink — the bridge owns the owner lock + confirm/reject. */
@@ -78,9 +102,17 @@ export interface GatewayManagerOptions {
 interface RunningBot {
   readonly userId: string;
   /** The encrypted token the live connection runs on — diffed on reconcile to decide
-   *  restart-vs-no-op. The only `discord_config` field the manager holds; everything
-   *  else is read on demand (companion-discord.md §2.1). */
+   *  restart-vs-no-op. */
   readonly encryptedBotToken: string;
+  /**
+   * The mission-wake trust snapshot (companion-missions.md §3.2), carried so the
+   * guild-trigger gate needn't read `discord_config` per inbound guild message. Refreshed
+   * by {@link GatewayManager.reconcileUser} on the reconcile trigger after a config write —
+   * an immutable record-swap that keeps the live connection. Everything else the router/
+   * bridge needs off the config row is still read on demand (companion-discord.md §2.1).
+   */
+  readonly triggerBotId: string | null;
+  readonly missionChannelId: string | null;
   readonly gateway: DiscordGateway;
 }
 
@@ -127,6 +159,24 @@ export class GatewayManager {
   }
 
   /**
+   * Open (or fetch) the DM channel to a Discord user through a user's bot, for a
+   * trigger-summoned embodiment that has no interaction channel in hand
+   * (companion-missions.md §4). Returns null if that user's bot isn't running or the DM
+   * can't be opened (both logged).
+   */
+  async openDmChannel(userId: string, discordUserId: string): Promise<string | null> {
+    const bot = this.bots.get(userId);
+    if (!bot) {
+      this.opts.logger.error('discord openDmChannel: no running bot for user', {
+        operation: 'discord.gateway.openDm',
+        userId,
+      });
+      return null;
+    }
+    return bot.gateway.openDmChannel(discordUserId);
+  }
+
+  /**
    * Full reconcile (startup): start newly configured bots, restart any whose token
    * changed, and stop bots whose config row was removed. Reads every row once; the
    * steady-state path is the targeted {@link reconcileUser}, not a repeat of this.
@@ -160,8 +210,11 @@ export class GatewayManager {
         await this.safeStop(existing);
         this.bots.delete(config.userId);
         starts.push(this.startBot(config));
+      } else {
+        // Same token, already running — keep the connection, but refresh the mission-wake
+        // trust snapshot in case only (triggerBotId, missionChannelId) changed.
+        this.refreshMissionWake(existing, config);
       }
-      // else: same token, already running — nothing to do (no cached config to refresh).
     }
     await Promise.allSettled(starts);
 
@@ -210,7 +263,30 @@ export class GatewayManager {
       await this.safeStop(existing);
       this.bots.delete(userId);
       await this.startBot(config);
+      return;
     }
+    // Same token → keep the live connection. Refresh the mission-wake trust snapshot so the
+    // guild-trigger gate reads the new (triggerBotId, missionChannelId) without restarting.
+    this.refreshMissionWake(existing, config);
+  }
+
+  /**
+   * Replace a running bot's record with a fresh mission-wake trust snapshot when
+   * (triggerBotId, missionChannelId) changed, reusing the live gateway (companion-missions.md
+   * §3.2). Immutable swap — no in-place mutation — and a no-op when nothing changed.
+   */
+  private refreshMissionWake(existing: RunningBot, config: DiscordConfigRecord): void {
+    if (
+      existing.triggerBotId === config.triggerBotId &&
+      existing.missionChannelId === config.missionChannelId
+    ) {
+      return;
+    }
+    this.bots.set(existing.userId, {
+      ...existing,
+      triggerBotId: config.triggerBotId,
+      missionChannelId: config.missionChannelId,
+    });
   }
 
   private async startBot(config: DiscordConfigRecord): Promise<void> {
@@ -223,8 +299,10 @@ export class GatewayManager {
       return;
     }
     const gateway = this.opts.gatewayFactory(token);
-    // Events are tagged with the owning userId only; the router/bridge read whatever
-    // config they need on demand (companion-discord.md §2.1) — no snapshot is carried.
+    // DM/command/proposal events are tagged with the owning userId only; their handlers
+    // read whatever config they need on demand (companion-discord.md §2.1). The exception
+    // is the guild-trigger path below, which carries the mission-wake trust snapshot to
+    // avoid a per-message DB read.
     gateway.onDirectMessage((message) => {
       this.opts.onDirectMessage({
         userId: config.userId,
@@ -232,6 +310,18 @@ export class GatewayManager {
         reply: (content) => gateway.sendDirectMessage(message.channelId, content),
         typing: () => gateway.sendTyping(message.channelId),
         sendProposal: (card) => gateway.sendProposal(message.channelId, card),
+      });
+    });
+    gateway.onGuildMessage((message) => {
+      // Read the live record so a reconfig-refreshed snapshot (reconcileUser) is picked up
+      // without restarting the connection; the record is set before start (below), so it is
+      // present for any inbound event.
+      const current = this.bots.get(config.userId);
+      this.opts.onGuildMessage({
+        userId: config.userId,
+        message,
+        triggerBotId: current?.triggerBotId ?? null,
+        missionChannelId: current?.missionChannelId ?? null,
       });
     });
     gateway.onSlashCommand((command) => {
@@ -257,12 +347,15 @@ export class GatewayManager {
     const bot: RunningBot = {
       userId: config.userId,
       encryptedBotToken: config.encryptedBotToken,
+      triggerBotId: config.triggerBotId,
+      missionChannelId: config.missionChannelId,
       gateway,
     };
     this.bots.set(config.userId, bot);
     try {
       await gateway.start();
       await gateway.registerCommands(this.opts.commands);
+      await this.captureBotUserId(config.userId, gateway);
     } catch (error) {
       this.opts.logger.error('discord gateway failed to start bot', {
         operation: 'discord.gateway.start',
@@ -271,6 +364,33 @@ export class GatewayManager {
       });
       this.bots.delete(config.userId);
       await this.safeStop(bot);
+    }
+  }
+
+  /**
+   * Persist the bot's own Discord user id, known once the gateway is ready
+   * (companion-missions.md §3.2) — core reads it to build the mission scheduler action.
+   * Best-effort and self-catching: the bot is already up and serving, so a missing id
+   * (not yet ready) or a write failure is logged and left for the next connect, never a
+   * reason to tear the bot down.
+   */
+  private async captureBotUserId(userId: string, gateway: DiscordGateway): Promise<void> {
+    const botUserId = gateway.botUserId();
+    if (botUserId === null) {
+      this.opts.logger.warn('discord gateway: bot user id unavailable at start; skipping', {
+        operation: 'discord.gateway.botUserId',
+        userId,
+      });
+      return;
+    }
+    try {
+      await this.opts.configStore.setBotUserId(userId, botUserId);
+    } catch (error) {
+      this.opts.logger.error('discord gateway: failed to persist bot user id', {
+        operation: 'discord.gateway.botUserId',
+        userId,
+        error,
+      });
     }
   }
 

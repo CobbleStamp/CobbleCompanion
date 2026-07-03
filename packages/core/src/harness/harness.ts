@@ -118,6 +118,18 @@ export interface RunTurnParams {
   readonly signal?: AbortSignal;
   /** Mid-turn embodiment fence (see {@link HoldsLease}); omitted = no fence. */
   readonly holdsLease?: HoldsLease;
+  /**
+   * What kind of entry seeds this turn (see {@link TurnCtx.origin}): `mission` marks a
+   * `mission.advance` wake turn, the only origin the approval gate's mission-mode bypass
+   * honors. Omitted = `chat` (always gated).
+   */
+  readonly origin?: 'chat' | 'mission';
+  /**
+   * The mission whose wake drives this turn (see {@link TurnCtx.missionId}); set on a
+   * `mission` origin so the gate re-checks THAT mission's authorization, not the
+   * companion's. Omitted on chat turns.
+   */
+  readonly missionId?: string;
 }
 
 /** Resume after an approved action (continueAfterApproval). */
@@ -211,7 +223,7 @@ export class Harness {
    * transcript is the source of truth, §4.7).
    */
   async *runTurn(params: RunTurnParams): AsyncGenerator<ChatStreamEvent, boolean> {
-    const { companion, userContent, ownerId, signal, holdsLease } = params;
+    const { companion, userContent, ownerId, signal, holdsLease, origin, missionId } = params;
     const trace = this.traceSink.startTrace({
       traceId: randomUUID(),
       name: 'turn',
@@ -239,6 +251,8 @@ export class Harness {
         trace,
         holdsLease,
         userMessage.id,
+        origin,
+        missionId,
       );
       // Mid-turn handoff (deliver-scalability.md §5.2): a newer connection
       // force-claimed this companion while the loop ran, so the loop stood down
@@ -407,6 +421,8 @@ export class Harness {
     trace: TraceHandle,
     holdsLease: HoldsLease | undefined,
     currentUserMessageId?: string,
+    origin?: 'chat' | 'mission',
+    missionId?: string,
   ): AsyncGenerator<ChatStreamEvent, boolean> {
     const { messages, citations, retrievalUsage, coPromptRefs } = prep;
     // Citations are retrieval-time data: surface the grounding sources as soon
@@ -422,6 +438,8 @@ export class Harness {
     const ctx: TurnCtx = {
       companionId: companion.id,
       ownerId: ownerId ?? '',
+      ...(origin ? { origin } : {}),
+      ...(missionId ? { missionId } : {}),
       ...(currentUserMessageId ? { currentUserMessageId } : {}),
     };
 

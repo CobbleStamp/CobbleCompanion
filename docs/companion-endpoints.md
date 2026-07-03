@@ -312,6 +312,45 @@ The arrival-reaction decision stream (`companion-greeting.md`). It may stream a 
 cue then a `done` greeting, or close silently (`{ done: true }` with no chunks) when the
 gate decides to stay quiet.
 
+### 4.13 Missions
+
+The four `mission.*` methods are registered only when the server has **both** a mission service
+and a mission scheduler wired (both in `companion-missions.md` §9's component map); absent otherwise (calls return
+`unknown_method`) — a deployment without the scheduler-cli host doesn't expose missions rather
+than exposing broken ones. `discord.config.setMissionWake` (the last row) is **not** in that
+group: it is a `discord.config.*` write, always registered, and returns `conflict` (not
+`unknown_method`) when Discord is unconfigured — it is listed here only for locality.
+`mission.advance` produces a turn, so it
+streams and runs through the serial chain (§7) like `messages.send`. Mission *creation* has no
+method: the owner states the goal in an ordinary chat turn and the model proposes the effectful
+`start_mission` (the one up-front approval, surfaced as a normal proposal card).
+
+| Method | Scope | Params | Result | Errors |
+|--------|-------|--------|--------|--------|
+| `mission.advance` | companion · **stream** | `missionAdvanceSchema` `{ missionId, event }` | `{ done: true }` (or `{ done: true, skipped }` when the named mission is unknown or not active) | `bad_params`, `not_embodied`, `not_found`, `over_cap` |
+| `mission.list` | companion | — | `{ missions: MissionDto[] }` (newest first) | `not_embodied` |
+| `mission.journal` | companion | `missionJournalSchema` `{ missionId, limit? }` | `{ entries: MissionJournalEntryDto[] }` (newest first; default limit 10, max 50) | `bad_params`, `not_embodied`, `not_found` |
+| `mission.stop` | companion | `missionLifecycleSchema` `{ missionId }` | `{ mission: MissionDto }` | `bad_params`, `not_embodied`, `not_found` |
+| `discord.config.setMissionWake` | user | `discordMissionWakeSchema` `{ triggerBotId, missionChannelId }` | `{ discord: DiscordConfigViewDto }` | `bad_params`, `conflict`, `not_found` |
+
+`mission.advance` is the wake turn — the Discord bridge calls it on a trigger, passing the
+`missionId` the wake was tagged with at arm time (`companion-missions.md` §3.2); the server
+advances that mission only if it is the embodied companion's and still `active`, injecting its
+goal/plan/journal, running effectful tools ungated **within this turn only** (the mission is the
+standing authorization, keyed on the turn's `origin: 'mission'`; ordinary chat stays gated while
+a mission runs), and journaling the report. Its terminal result validates with
+`missionAdvanceResultSchema` (`contracts.ts`): `skipped` set means the named mission is unknown
+or no longer active (a stale trigger) — the turn emitted no stream frames, and for a terminal
+mission the server also re-attempted the cancel of its still-armed wake jobs
+(`companion-missions.md` §5.2 step 1). A consumer should render a skipped advance as silence.
+`mission.journal` is the progress view: the recent
+journal rows for one of the embodied companion's missions (tenancy-checked).
+`discord.config.setMissionWake` records the allowlisted trigger-sender bot id + the shared
+mission channel (`companion-missions.md` §3.2); it is user-scoped and carries no embodiment. Like
+every other `discord.config.*` write, it returns the refreshed `{ discord: DiscordConfigViewDto }`
+— including the mission-wake readiness (`missionWake`) the web panel reads back — not a bare
+`{ ok: true }` (only `discord.config.delete` returns that).
+
 ---
 
 ## 5. Error codes
@@ -368,9 +407,12 @@ companion itself shows up live.
 
 ## 7. Streaming method protocol (`ChatStreamEvent`)
 
-The **stream**-marked methods (`messages.send`, `proposals.confirm`, `greeting.stream`)
-emit zero or more `WsStreamMessage` frames — each `stream` field is a `ChatStreamEvent`
+The **stream**-marked methods (`messages.send`, `proposals.confirm`, `greeting.stream`,
+`mission.advance`) emit zero or more `WsStreamMessage` frames — each `stream` field is a `ChatStreamEvent`
 (discriminated on `type`, `contracts.ts`) — before the terminal `{ "result": { "done": true } }`.
+In the shared client transport (`WsTransport.callStream`) that terminal result is the stream
+generator's **return value**: invisible to a plain `for await`, capturable with `yield*` — how a
+consumer reads a method outcome that carries more than `done` (e.g. `mission.advance`'s skip flag).
 
 | `type` | Payload | Meaning |
 |--------|---------|---------|
@@ -389,7 +431,7 @@ Notes:
 - These per-turn `ChatStreamEvent`s (request-scoped, by `id`) are distinct from the durable
   `companion` push events (§6, no `id`): the same row may arrive both as a stream `done`
   and, to *other* connected rooms, as a `companion` `message` event. Dedupe by id.
-- All three streaming methods run through the connection's **serial chain** — a companion
+- All four streaming methods run through the connection's **serial chain** — a companion
   never runs two agent loops at once (D2′). A turn force-claimed mid-stream stops, the
   server pushes `embodiment.superseded` and closes `4002`, and the call still resolves
   `{ done: true }`.
