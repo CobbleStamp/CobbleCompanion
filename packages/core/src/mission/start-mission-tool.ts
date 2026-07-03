@@ -292,9 +292,14 @@ export function createStartMissionTool(options: StartMissionOptions): Tool {
     // One active mission per companion (companion-missions.md §3): refuse up front so the
     // common case never arms a job it can't activate. This is best-effort (the DB unique
     // index is the real backstop, caught in `activateMission` with full compensation).
-    // Residual gap: a crash in the window between arm and activate leaves the armed job
-    // with no owning record — accepted (no durable outbox, companion-missions.md §5.1);
-    // `mission.stop` + the scheduler's own job listing are the manual reconciliation path.
+    // Residual gap: a HARD kill (OOM / SIGKILL / host loss) between arm and activate skips
+    // that in-process compensation, leaving an armed job whose id was never written to
+    // `job_ids` — only `activate` writes it, and it never ran. There is NO self-recovery:
+    // the wake keeps firing every `every` forever, skipping at `mission.advance` (`draft`
+    // ≠ `active`, `job_ids` empty) without cancelling, and `mission.stop` can't reach it
+    // (no recorded job id to cancel). Recovery is out-of-band — cancel the stray job via
+    // the scheduler service's own job listing. Accepted for Milestone 1 (rare; a lingering
+    // `draft` is `≠ active`, so it never blocks a new mission) — companion-missions.md §5.1.
     if (await missions.hasActive(ctx.companionId)) {
       return error('Error: this companion is already on an active mission — stop it first.');
     }

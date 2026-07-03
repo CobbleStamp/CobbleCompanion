@@ -310,10 +310,19 @@ cancels the armed job AND stops the draft — and if that cancel itself fails, t
 recorded on the draft's `job_ids` before the stop, so the stale wake's reconciliation (§5.2
 step 1) retries exactly that cancel (on the happy path `activate` is the only writer of
 `job_ids`, and it never ran here — so without this compensating write the armed job's id would
-exist nowhere). There is a narrow accepted crash window between arm and
-activate (a crash there could leave an armed job with a `draft` mission); it is documented in the
-tool and accepted for Milestone 1 — such a wake skips at `mission.advance` (`draft` ≠ `active`) without
-cancelling, since a draft's job may be a mission mid-start.
+exist nowhere).
+
+There is a narrow crash window between arm and activate: a **hard** kill (OOM / SIGKILL / host
+loss) there skips the in-process compensation, leaving an armed job whose id was never written to
+`job_ids` (only `activate` writes it). Such a wake keeps firing every `every` **forever** — it
+skips at `mission.advance` (`draft` ≠ `active`, and `job_ids` is empty) without cancelling, because
+a draft's job may legitimately be a mission mid-start (§5.2 step 1), and `mission.stop` cannot
+reach it (there is no recorded job id to cancel). **Decision (Milestone 1): accepted, not fixed.**
+It requires a hard kill inside a millisecond-wide window; a lingering `draft` is `≠ active`, so it
+never blocks a new mission and corrupts no data. There is no in-app self-recovery and no reaper —
+recovery is out-of-band: cancel the stray job via the scheduler service's own job listing. A
+draft-reaper is deliberately deferred (not worth the machinery for a rare, non-blocking,
+non-corrupting event).
 
 ### 5.2 `mission.advance` — one iteration of the loop
 
