@@ -108,13 +108,19 @@ export function discordConfigMethods(deps: AppDeps): WsMethods {
         'a trigger bot id and a mission channel id are required',
       );
       // Independent of the token/owner-lock path — configuring the wake never re-links the bot
-      // (companion-missions.md §3.2). The router reads these on demand, so no gateway restart.
+      // (companion-missions.md §3.2).
       const record = await discordConfig.configureMissionWake(
         ctx.userId,
         triggerBotId,
         missionChannelId,
       );
       if (!record) throw new NotFoundError('no Discord config to configure');
+      // The live bot carries the (triggerBotId, missionChannelId) trust snapshot per-bot —
+      // it does NOT read config per message (gateway/manager.ts §guild-trigger). Reconcile so
+      // reconcileUser refreshes that snapshot in place; without this the running bot keeps its
+      // stale null pair and drops every trigger until an unrelated reconcile/restart. No bot
+      // restart — refreshMissionWake swaps only the two fields. Fire-and-forget: retries + logs.
+      void discordReconcile?.(ctx.userId);
       return { discord: toView(record) };
     },
 

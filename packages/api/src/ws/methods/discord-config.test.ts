@@ -84,6 +84,7 @@ describe('discordConfigMethods — mission wake', () => {
       missionChannelId: string | null,
     ) => Promise<DiscordConfigRecord | null>,
     discordTokenKey = Buffer.alloc(32, 7).toString('base64'),
+    discordReconcile: (userId: string) => Promise<void> = async () => {},
   ): AppDeps {
     return {
       discordConfig: {
@@ -96,20 +97,50 @@ describe('discordConfigMethods — mission wake', () => {
         delete: async () => {},
       },
       config: { discordTokenKey },
+      discordReconcile,
     } as unknown as AppDeps;
   }
+
+  // Valid Discord snowflakes (17–20 digits, per discordMissionWakeSchema).
+  const TRIGGER_BOT_ID = '111111111111111111';
+  const MISSION_CHANNEL_ID = '222222222222222222';
 
   it('persists the trigger bot id + mission channel id', async () => {
     const spy = vi.fn(async () => record());
     const methods = discordConfigMethods(makeWakeDeps(spy));
 
     const result = await methods['discord.config.setMissionWake']!(ctx, {
-      triggerBotId: '111',
-      missionChannelId: '222',
+      triggerBotId: TRIGGER_BOT_ID,
+      missionChannelId: MISSION_CHANNEL_ID,
     });
 
-    expect(spy).toHaveBeenCalledWith('user-1', '111', '222');
+    expect(spy).toHaveBeenCalledWith('user-1', TRIGGER_BOT_ID, MISSION_CHANNEL_ID);
     expect(result).toHaveProperty('discord.configured', true);
+  });
+
+  it('fires discordReconcile so the running bot refreshes its trust snapshot', async () => {
+    const reconcile = vi.fn(async () => {});
+    const methods = discordConfigMethods(makeWakeDeps(async () => record(), undefined, reconcile));
+
+    await methods['discord.config.setMissionWake']!(ctx, {
+      triggerBotId: TRIGGER_BOT_ID,
+      missionChannelId: MISSION_CHANNEL_ID,
+    });
+
+    expect(reconcile).toHaveBeenCalledWith('user-1');
+  });
+
+  it('does NOT fire discordReconcile when persistence returns no config row', async () => {
+    const reconcile = vi.fn(async () => {});
+    const methods = discordConfigMethods(makeWakeDeps(async () => null, undefined, reconcile));
+
+    await expect(
+      methods['discord.config.setMissionWake']!(ctx, {
+        triggerBotId: TRIGGER_BOT_ID,
+        missionChannelId: MISSION_CHANNEL_ID,
+      }),
+    ).rejects.toThrow(/no Discord config/);
+    expect(reconcile).not.toHaveBeenCalled();
   });
 
   it('rejects non-numeric ids (bad_params before touching the store)', async () => {
@@ -139,7 +170,10 @@ describe('discordConfigMethods — mission wake', () => {
     const methods = discordConfigMethods(makeWakeDeps(async () => null));
 
     await expect(
-      methods['discord.config.setMissionWake']!(ctx, { triggerBotId: '1', missionChannelId: '2' }),
+      methods['discord.config.setMissionWake']!(ctx, {
+        triggerBotId: TRIGGER_BOT_ID,
+        missionChannelId: MISSION_CHANNEL_ID,
+      }),
     ).rejects.toThrow(/no Discord config/);
   });
 });
