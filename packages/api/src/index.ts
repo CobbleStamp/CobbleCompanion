@@ -296,7 +296,7 @@ async function main(): Promise<void> {
   // to self-initiate.
   const presence = new EmbodimentPresenceStore(db, config.wsClaimTtlMs, consoleLogger);
 
-  // Missions (companion-missions.md §3.4): the lifecycle/journal service, the scheduler-cli
+  // Missions (companion-missions.md §4): the lifecycle/journal service, the scheduler-cli
   // wake driver, and the wake-config adapter that reads the mission channel + the companion
   // bot's own id from `discord_config`. Built before the tool list so `start_mission` (the
   // one up-front approval) can join it, and before the gate/motivation/retrieve wiring below.
@@ -407,7 +407,7 @@ async function main(): Promise<void> {
       embeddingDimensions: config.embeddingDimensions,
       logger: consoleLogger,
     }),
-    // Missions (companion-missions.md §3.4): when the companion has an active mission, inject
+    // Missions (companion-missions.md §5.2): when the companion has an active mission, inject
     // its goal/plan/criteria + recent journal so every turn is mission-aware with cross-day
     // continuity. Grounding-only, zero tokens (pure DB reads); contributes nothing otherwise.
     createMissionRetrieveContext(missionStore, missionJournalStore),

@@ -51,7 +51,7 @@ export interface MotivationEngineDeps {
   /** Cheap model for the report note (reuse the ingestion model). */
   readonly model: string;
   /**
-   * Mission gate (companion-missions.md §1, §3.4). When present and the companion has an
+   * Mission gate (companion-missions.md §1, §6). When present and the companion has an
    * `active` mission, the drive engine is SUSPENDED — a paid mission is never preempted by
    * curiosity and never pollutes the learned drive weights. Omitted = no mission gating
    * (the pre-missions behaviour). A narrow interface (not the full store) keeps the coupling

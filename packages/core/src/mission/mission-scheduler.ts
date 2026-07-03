@@ -14,7 +14,7 @@ export interface MissionJobSpec {
   /**
    * The action argv the scheduler runs when the predicate holds — carried as a pre-split
    * argv (not a shell string) so there is no quoting/`{{message}}`-escaping hazard. The
-   * scheduler substitutes `{{message}}` per element (companion-missions.md §1.2).
+   * scheduler substitutes `{{message}}` per element (companion-missions.md §3.2).
    */
   readonly action: readonly string[];
 }

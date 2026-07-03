@@ -143,7 +143,7 @@ export interface AppDeps {
    *  poll. Absent/no-op when no reconcile URL is configured. */
   readonly discordReconcile?: (userId: string) => Promise<void>;
   /**
-   * Mission lifecycle + journal orchestration (companion-missions.md §3.4). Optional: the
+   * Mission lifecycle + journal orchestration (companion-missions.md §4). Optional: the
    * `mission.*` WS methods register only when BOTH this and {@link missionScheduler} are
    * present (the mission wake requires the scheduler-cli host), so a deployment without the
    * scheduler simply doesn't expose missions rather than exposing broken ones.

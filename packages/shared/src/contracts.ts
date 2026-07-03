@@ -1231,7 +1231,7 @@ export type AddReactionBody = z.infer<typeof addReactionSchema>;
 // --- Missions (goal-driven long-running tasks — docs/companion-missions.md) ---
 
 /**
- * Lifecycle of a mission (companion-missions.md §3.4). `draft` — planned, awaiting the
+ * Lifecycle of a mission (companion-missions.md §4). `draft` — planned, awaiting the
  * user's start-approval; `active` — running, with the drive engine suspended and at most
  * one active per companion (enforced by a partial unique index); `paused` — scheduler jobs
  * paused, resumable; terminal: `complete` (validation criteria met), `stopped` (user ended),

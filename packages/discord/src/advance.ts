@@ -1,5 +1,5 @@
 /**
- * The mission advance turn (companion-missions.md §3.4): a trigger (or a chat message)
+ * The mission advance turn (companion-missions.md §5.2): a trigger (or a chat message)
  * wakes the companion, which runs `mission.advance` over the embodiment connection and
  * speaks its report into the embodied room. Like {@link handleChat}, the stream is consumed
  * server-side into Discord output by the shared {@link renderTurnStream} — but as a

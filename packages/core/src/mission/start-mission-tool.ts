@@ -21,7 +21,7 @@ import { reconcileMissionJobs } from './mission-reconcile.js';
 import type { MissionService } from './mission-service.js';
 import { readStringArg, type Tool, toolErrorMessage } from '../tools/tool.js';
 
-/** The mission-channel + companion-bot ids needed to build the wake action (§1.2). */
+/** The mission-channel + companion-bot ids needed to build the wake action (§3.2). */
 export interface MissionWakeTarget {
   readonly missionChannelId: string;
   readonly botUserId: string;

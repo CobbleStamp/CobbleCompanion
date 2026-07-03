@@ -3,7 +3,7 @@ import { missionJournal, missions, type Database } from '@cobble/db';
 import type { MissionStatus } from '@cobble/shared';
 
 /**
- * Data access for `missions` + `mission_journal` (companion-missions.md §3.4). Lives in
+ * Data access for `missions` + `mission_journal` (companion-missions.md §4). Lives in
  * `@cobble/core` alongside the other domain stores (leads, proposals, memory), importing the
  * table definitions from `@cobble/db`. The mission concept, planner, and advance loop live in
  * core; this module owns only durable persistence and the atomic lifecycle transitions.
@@ -108,7 +108,7 @@ export interface MissionStore {
   findById(id: string): Promise<MissionRecord | null>;
   /** The companion's single `active` mission (the trigger-routing target), or null. */
   findActive(companionId: string): Promise<MissionRecord | null>;
-  /** Cheap existence check for the drive-suspension gate (companion-missions.md §3.4). */
+  /** Cheap existence check for the drive-suspension gate (companion-missions.md §6). */
   hasActive(companionId: string): Promise<boolean>;
   /**
    * Whether THIS specific mission is currently `active` — the approval gate's mission-mode

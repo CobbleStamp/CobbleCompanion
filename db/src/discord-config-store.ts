@@ -50,7 +50,7 @@ export interface DiscordConfigRecord {
   readonly triggerBotId: string | null;
   readonly missionChannelId: string | null;
   /**
-   * The companion bot's OWN Discord user id (companion-missions.md §1.2), captured by the
+   * The companion bot's OWN Discord user id (companion-missions.md §3.2), captured by the
    * gateway at ClientReady. Core reads it to build the mission scheduler action
    * (`<@botUserId> {{message}}`). Null until the bot first connects.
    */
@@ -121,7 +121,7 @@ export interface DiscordConfigStore {
   ): Promise<DiscordConfigRecord | null>;
   /**
    * Record the companion bot's own Discord user id, captured at ClientReady
-   * (companion-missions.md §1.2). Idempotent — the gateway writes it on every connect.
+   * (companion-missions.md §3.2). Idempotent — the gateway writes it on every connect.
    * Returns null if there's no config row for the user.
    */
   setBotUserId(userId: string, botUserId: string): Promise<DiscordConfigRecord | null>;

@@ -103,7 +103,7 @@ export interface DiscordGateway {
   /**
    * The bot's OWN Discord user id, known once {@link start} has resolved (ClientReady).
    * The manager persists it to `discord_config` so core can build the mission scheduler
-   * action that @-mentions this bot (companion-missions.md §1.2). Null before ready.
+   * action that @-mentions this bot (companion-missions.md §3.2). Null before ready.
    */
   botUserId(): string | null;
   /** Register the inbound-DM handler. Set before {@link start}. */

@@ -312,7 +312,7 @@ export class GatewayManager {
 
   /**
    * Persist the bot's own Discord user id, known once the gateway is ready
-   * (companion-missions.md §1.2) — core reads it to build the mission scheduler action.
+   * (companion-missions.md §3.2) — core reads it to build the mission scheduler action.
    * Best-effort and self-catching: the bot is already up and serving, so a missing id
    * (not yet ready) or a write failure is logged and left for the next connect, never a
    * reason to tear the bot down.

@@ -1077,7 +1077,7 @@ export const discordConfig = pgTable('discord_config', {
   triggerBotId: text('trigger_bot_id'),
   missionChannelId: text('mission_channel_id'),
   // The companion bot's OWN Discord user id, captured by the gateway at ClientReady
-  // (companion-missions.md §1.2). The mission scheduler action mentions this bot
+  // (companion-missions.md §3.2). The mission scheduler action mentions this bot
   // (`<@bot_user_id> {{message}}`) so Discord delivers the trigger's `.content`; core
   // reads it to build that action when arming a mission. Null until the bot first connects.
   botUserId: text('bot_user_id'),
@@ -1132,7 +1132,7 @@ export const missions = pgTable(
 );
 
 /**
- * Append-only mission journal (companion-missions.md §3.4) — one row per mission turn
+ * Append-only mission journal (companion-missions.md §4) — one row per mission turn
  * (findings, prediction, decision), so each trigger the companion recalls "what I
  * concluded last time" without rescanning the whole transcript (cross-day continuity).
  * Content fields are nullable: a turn may reason without concluding. `seq` gives a stable

@@ -73,7 +73,7 @@ export interface CompanionBridgeOptions {
    */
   readonly openOwnerDm: (userId: string, discordUserId: string) => Promise<string | null>;
   /**
-   * Run one mission advance turn over the live connection (companion-missions.md §3.4),
+   * Run one mission advance turn over the live connection (companion-missions.md §5.2),
    * forwarding the turn's spoken output to `post` (the embodied room's DM). Injected —
    * mirrors {@link onChat} — so the bridge stays decoupled from the WS method wiring.
    * Reports whether the server SKIPPED the turn (the named mission is gone — a stale trigger),

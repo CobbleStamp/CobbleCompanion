@@ -1,5 +1,5 @@
 /**
- * The mission-context retrieve arm (companion-missions.md §3.4). When the companion has an
+ * The mission-context retrieve arm (companion-missions.md §5.2). When the companion has an
  * `active` mission, this injects the goal + plan + success criteria + recent journal into the
  * turn's context, so every turn while the mission runs — a trigger-driven advance or the owner
  * chatting — is mission-aware and has cross-day continuity ("what I concluded last time")
