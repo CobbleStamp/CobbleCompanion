@@ -233,7 +233,7 @@ export class CompanionBridge {
   }
 
   /**
-   * Trigger hook (mission wake, companion-missions.md §3.2–§3.3): summon-if-dormant, then
+   * Trigger hook (mission wake, companion-missions.md §3.2, §3.4): summon-if-dormant, then
    * advance the named mission. Disruptive by design — establishing embodiment supersedes whatever
    * surface the companion was on. If already embodied, advance over the live connection with
    * no re-summon. Drops (logged) when the user is unlinked (no owner DM to report into) or
@@ -370,7 +370,7 @@ export class CompanionBridge {
   /**
    * Open an embodiment connection, claim the room, register it, and start the background
    * loop — the shared core of `/summon` (with the arrival greeting) and a mission trigger
-   * (`greet: false`, companion-missions.md §3.3). Returns the registered embodiment, or null
+   * (`greet: false`, companion-missions.md §3.4). Returns the registered embodiment, or null
    * if the claim failed or the room was superseded before registration (both logged; the
    * caller decides how to surface it). Never streams a user-facing reply itself. Callers
    * go through {@link establishEmbodiment} — one connect per user at a time.

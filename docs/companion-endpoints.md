@@ -328,7 +328,7 @@ method: the owner states the goal in an ordinary chat turn and the model propose
 | `mission.list` | companion | — | `{ missions: MissionDto[] }` (newest first) | `not_embodied` |
 | `mission.journal` | companion | `missionJournalSchema` `{ missionId, limit? }` | `{ entries: MissionJournalEntryDto[] }` (newest first; default limit 10, max 50) | `bad_params`, `not_embodied`, `not_found` |
 | `mission.stop` | companion | `missionLifecycleSchema` `{ missionId }` | `{ mission: MissionDto }` | `bad_params`, `not_embodied`, `not_found` |
-| `discord.config.setMissionWake` | user | `discordMissionWakeSchema` `{ triggerBotId, missionChannelId }` | `{ ok: true }` | `bad_params`, `conflict`, `not_found` |
+| `discord.config.setMissionWake` | user | `discordMissionWakeSchema` `{ triggerBotId, missionChannelId }` | `{ discord: DiscordConfigViewDto }` | `bad_params`, `conflict`, `not_found` |
 
 `mission.advance` is the wake turn — the Discord bridge calls it on a trigger, passing the
 `missionId` the wake was tagged with at arm time (`companion-missions.md` §3.2); the server
@@ -343,7 +343,10 @@ mission the server also re-attempted the cancel of its still-armed wake jobs
 `mission.journal` is the progress view: the recent
 journal rows for one of the embodied companion's missions (tenancy-checked).
 `discord.config.setMissionWake` records the allowlisted trigger-sender bot id + the shared
-mission channel (`companion-missions.md` §3.2); it is user-scoped and carries no embodiment.
+mission channel (`companion-missions.md` §3.2); it is user-scoped and carries no embodiment. Like
+every other `discord.config.*` write, it returns the refreshed `{ discord: DiscordConfigViewDto }`
+— including the mission-wake readiness (`missionWake`) the web panel reads back — not a bare
+`{ ok: true }` (only `discord.config.delete` returns that).
 
 ---
 

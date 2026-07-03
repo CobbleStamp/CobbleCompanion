@@ -1280,7 +1280,7 @@ export interface MissionDto {
 
 /**
  * One append-only journal row — a single mission turn's outcome (companion-missions.md
- * §3.4), giving cross-day continuity without rescanning the transcript. Content fields
+ * §4), giving cross-day continuity without rescanning the transcript. Content fields
  * are nullable: a turn may reason without reaching a finding, prediction, or decision.
  */
 export interface MissionJournalEntryDto {

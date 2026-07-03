@@ -308,8 +308,9 @@ On confirm, the `start_mission` tool body:
 Compensation on failure: a failed **arm** stops the draft (no phantom); a failed **activate**
 cancels the armed job AND stops the draft — and if that cancel itself fails, the job id is
 recorded on the draft's `job_ids` before the stop, so the stale wake's reconciliation (§5.2
-step 1) retries exactly that cancel (only `activate` writes `job_ids`; without this the armed
-job's id would exist nowhere). There is a narrow accepted crash window between arm and
+step 1) retries exactly that cancel (on the happy path `activate` is the only writer of
+`job_ids`, and it never ran here — so without this compensating write the armed job's id would
+exist nowhere). There is a narrow accepted crash window between arm and
 activate (a crash there could leave an armed job with a `draft` mission); it is documented in the
 tool and accepted for Milestone 1 — such a wake skips at `mission.advance` (`draft` ≠ `active`) without
 cancelling, since a draft's job may be a mission mid-start.
@@ -501,7 +502,8 @@ weakening it:
 ## 12. References
 
 - Discord surface (owner lock, embodiment, summon, intents) — `companion-discord.md`;
-  mission-trigger intake is `companion-discord.md` §10
+  mission-trigger intake is `companion-discord.md` §9 (the guild-message trigger path; §10 is
+  "Beyond the PoC")
 - Mission WS method contracts (`mission.*`, `discord.config.setMissionWake`) —
   `companion-endpoints.md` §4.13
 - Agent loop, propose→approve gate, vitality wallets — `architecture.md` §4.1, §4.4, §4.8
