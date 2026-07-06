@@ -1,0 +1,45 @@
+{
+  "binary": "/Users/keren/.local/bin/scheduler-cli",
+  "description": "Register a job with the scheduler service: poll a predicate command on an interval and run an action command when it reports a message; terminates on success.",
+  "parameters": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "predicate": {
+        "type": "string",
+        "description": "The predicate command string to poll each tick, e.g. \"ibkr-cli query LITE le 810\". By contract it prints one JSON object {\"status\":\"true|false|error\",\"message\":\"...\"} to stdout; set noContract for a plain command judged by exit code instead."
+      },
+      "action": {
+        "type": "string",
+        "description": "The action command string run when the predicate emits a non-empty message. MUST contain the literal token {{message}}, which the scheduler replaces with the message as a single argv element. e.g. \"discord-notify --text {{message}} --channel 123456789012345678\"."
+      },
+      "every": {
+        "type": "string",
+        "description": "Poll interval as a Go duration, e.g. 1s, 30s, 15m, 1h."
+      },
+      "maxRuns": {
+        "type": "integer",
+        "description": "Max predicate runs before the job expires. Omit for unlimited (-1)."
+      },
+      "maxDuration": {
+        "type": "string",
+        "description": "Max wall-clock window before expiry, as a duration (e.g. 24h). Omit for unlimited."
+      },
+      "noContract": {
+        "type": "boolean",
+        "description": "Treat the predicate as contract-free: exit 0 -> true, non-zero -> error, stdout -> message. Use for plain commands that do not emit the JSON envelope."
+      }
+    },
+    "required": ["predicate", "action", "every"]
+  },
+  "argv": [
+    "run",
+    "--predicate={predicate}",
+    "--action={action}",
+    "--every={every}",
+    "--max-runs={maxRuns}",
+    "--max-duration={maxDuration}",
+    "--no-contract={noContract}"
+  ],
+  "limits": { "timeoutMs": 150000, "maxOutputBytes": 262144 }
+}

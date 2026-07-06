@@ -1,0 +1,17 @@
+{
+  "binary": "/Users/keren/.local/bin/scheduler-cli",
+  "description": "Cancel and forget one scheduler job by id — stops its polling and deletes its definition.",
+  "parameters": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "The job id to cancel (e.g. job_3f9c1a)."
+      }
+    },
+    "required": ["id"]
+  },
+  "argv": ["cancel", "--", "{id}"],
+  "limits": { "timeoutMs": 30000, "maxOutputBytes": 65536 }
+}

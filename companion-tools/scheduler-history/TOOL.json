@@ -1,0 +1,25 @@
+{
+  "binary": "/Users/keren/.local/bin/scheduler-cli",
+  "description": "Show the evaluation history of one scheduler job — each tick's status, message, and timing.",
+  "parameters": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "The job id whose history to fetch (e.g. job_3f9c1a)."
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Max records to return. Omit (or 0) for the server default."
+      },
+      "since": {
+        "type": "string",
+        "description": "Only records at or after this RFC3339 timestamp (e.g. 2026-07-06T00:00:00Z)."
+      }
+    },
+    "required": ["id"]
+  },
+  "argv": ["history", "--limit={limit}", "--since={since}", "--", "{id}"],
+  "limits": { "timeoutMs": 30000, "maxOutputBytes": 1048576 }
+}

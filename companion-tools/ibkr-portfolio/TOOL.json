@@ -1,0 +1,36 @@
+{
+  "binary": "/Users/keren/.local/bin/ibkr-cli",
+  "description": "Read the IBKR account's live positions, cash ledger, summary, or P&L (read-only, via the local Client Portal Gateway).",
+  "parameters": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "view": {
+        "type": "string",
+        "enum": ["positions", "ledger", "summary", "pnl", "accounts"],
+        "description": "Which account view to return. Defaults to positions."
+      },
+      "account": {
+        "type": "string",
+        "description": "Account id. Omit to use the resolved primary account."
+      },
+      "where": {
+        "type": "string",
+        "description": "Row filter on an output column, e.g. \"position != 0\" (ops: lt le gt ge eq ne between outside)."
+      },
+      "output": {
+        "type": "string",
+        "enum": ["json", "ndjson", "table"],
+        "description": "Output framing. Defaults to json."
+      }
+    }
+  },
+  "argv": [
+    "portfolio",
+    "--view={view}",
+    "--account={account}",
+    "--where={where}",
+    "--output={output}"
+  ],
+  "limits": { "timeoutMs": 30000, "maxOutputBytes": 1048576 }
+}

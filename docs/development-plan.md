@@ -917,7 +917,7 @@ Owned here (single-source). Each is assigned a decision point:
 | Monetization model (subscription, ability packs) | Phase 8 |
 | Push-notification cadence & away-proactivity rules | Phase 6 |
 | ~~Tool whitelist governance — where the CLI/MCP whitelist lives (config vs DB) and the operator flow to admit a tool~~ | **Decided (Phases 9–10):** both whitelists live in deployment config (not the DB), admit-by-deploy, no per-call approval. Trust model + the exact config surface → `companion-tools.md` §6 |
-| User-addable tools (vs developer-whitelisted only) | Deferred — after the tool-acquisition workstream (`companion-tools.md` §9) |
+| User-addable tools (vs developer-whitelisted only) | Deferred — after the tool-acquisition workstream (`companion-tools.md` §10) |
 | External-tool cost metering (the monetary cost of CLI/MCP calls, beyond LLM tokens) | Deferred — revisit with the workstream / Phase 8 |
 | ~~User-model ownership: `user_facts` keyed by `companion_id` vs `user_id`~~ | **Decided (§4c): `user_id` (per-user).** Facts are objective truths about the person, shared across the user's companions; learned *by* a companion (`learned_by_companion_id`, nulls on delete). Only the Tier-3 synthesized persona is per-companion. The name is one such per-user fact (no `display_name` column) |
 

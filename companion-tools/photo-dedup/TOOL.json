@@ -1,0 +1,32 @@
+{
+  "binary": "/Users/keren/.local/bin/photo-cli",
+  "description": "Report images in a folder that are byte-identical duplicates of images in a trusted source library (read-only, offline).",
+  "parameters": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "dedupDir": {
+        "type": "string",
+        "description": "Absolute path to the directory to scan for duplicates."
+      },
+      "sourceDir": {
+        "type": "string",
+        "description": "Absolute path to the trusted, read-only photo library to compare against."
+      },
+      "format": {
+        "type": "string",
+        "enum": ["json", "text"],
+        "description": "Output format. Defaults to json when omitted."
+      }
+    },
+    "required": ["dedupDir", "sourceDir"]
+  },
+  "argv": [
+    "dedup",
+    "--dedup-dir={dedupDir}",
+    "--source-dir={sourceDir}",
+    "--dry-run",
+    "--format={format}"
+  ],
+  "limits": { "timeoutMs": 120000, "maxOutputBytes": 1048576 }
+}

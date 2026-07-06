@@ -1,0 +1,11 @@
+{
+  "binary": "/Users/keren/.local/bin/ibkr-cli",
+  "description": "Report the IBKR Client Portal Gateway session status as JSON (is the gateway running and logged in?).",
+  "parameters": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  },
+  "argv": ["session", "status"],
+  "limits": { "timeoutMs": 15000, "maxOutputBytes": 65536 }
+}

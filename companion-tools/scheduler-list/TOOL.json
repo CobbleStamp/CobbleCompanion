@@ -1,0 +1,11 @@
+{
+  "binary": "/Users/keren/.local/bin/scheduler-cli",
+  "description": "List all jobs currently registered with the scheduler service.",
+  "parameters": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  },
+  "argv": ["list"],
+  "limits": { "timeoutMs": 30000, "maxOutputBytes": 1048576 }
+}

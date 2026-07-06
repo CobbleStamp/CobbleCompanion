@@ -1,0 +1,36 @@
+{
+  "binary": "/Users/keren/.local/bin/ibkr-cli",
+  "description": "Run an IBKR market scanner and return the ranked results (read-only, via the local Client Portal Gateway).",
+  "parameters": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "scan": {
+        "type": "string",
+        "description": "Scan type to run, e.g. TOP_PERC_GAIN."
+      },
+      "instrument": {
+        "type": "string",
+        "description": "Scan instrument. Defaults to STK."
+      },
+      "location": {
+        "type": "string",
+        "description": "Scan location. Defaults to STK.US.MAJOR."
+      },
+      "output": {
+        "type": "string",
+        "enum": ["json", "ndjson", "table"],
+        "description": "Output framing. Defaults to json."
+      }
+    },
+    "required": ["scan"]
+  },
+  "argv": [
+    "scanner",
+    "--scan={scan}",
+    "--instrument={instrument}",
+    "--location={location}",
+    "--output={output}"
+  ],
+  "limits": { "timeoutMs": 30000, "maxOutputBytes": 524288 }
+}
