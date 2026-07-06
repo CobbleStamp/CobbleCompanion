@@ -30,9 +30,12 @@ import type { CommandRequest, CommandResult, CommandSandbox, Logger } from '@cob
 import { consoleLogger } from '@cobble/core';
 
 /** Env passed to every child — deliberately minimal; no secrets, no ambient config. */
-function scrubbedEnv(): Record<string, string> {
-  // PATH is needed to resolve a bare binary name; nothing else is forwarded.
-  return { PATH: process.env['PATH'] ?? '/usr/bin:/bin', LANG: 'C.UTF-8' };
+function scrubbedEnv(home: string): Record<string, string> {
+  // PATH is needed to resolve a bare binary name. HOME points at the run's own
+  // ephemeral working dir (under the scratch root — the OS temp dir by default),
+  // so a tool can resolve a cache/config location without reaching, or exposing,
+  // the real home; the dir is created per run and removed afterward. No secrets.
+  return { PATH: process.env['PATH'] ?? '/usr/bin:/bin', LANG: 'C.UTF-8', HOME: home };
 }
 
 export interface SubprocessSandboxOptions {
@@ -71,7 +74,7 @@ function spawnCapped(request: CommandRequest, cwd: string, logger: Logger): Prom
   return new Promise<CommandResult>((resolve) => {
     const child = spawn(request.binary, [...request.argv], {
       cwd,
-      env: scrubbedEnv(),
+      env: scrubbedEnv(cwd),
       shell: false, // never interpret a shell line — argv is passed verbatim
       // Own process group (pgid === pid) so a ceiling kill reaps the whole tree,
       // not just the immediate child — see `killTree` below.
