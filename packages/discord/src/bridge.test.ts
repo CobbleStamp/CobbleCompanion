@@ -164,6 +164,7 @@ interface Harness {
   notices: Array<{ userId: string; channelId: string; content: string }>;
   chats: DirectMessageContext[];
   readOnly: Array<{ ctx: SlashCommandContext; connection: CompanionConnection }>;
+  configured: SlashCommandContext[];
   proposalActions: Array<{ ctx: ProposalActionContext; connection: CompanionConnection }>;
   advances: Array<{
     connection: CompanionConnection;
@@ -194,6 +195,7 @@ function makeBridge(
   const notices: Harness['notices'] = [];
   const chats: DirectMessageContext[] = [];
   const readOnly: Harness['readOnly'] = [];
+  const configured: Harness['configured'] = [];
   const proposalActions: Harness['proposalActions'] = [];
   const advances: Harness['advances'] = [];
   const openedDms: Harness['openedDms'] = [];
@@ -220,6 +222,9 @@ function makeBridge(
     onReadOnlyCommand: (ctx, connection) => {
       readOnly.push({ ctx, connection });
     },
+    onConfigureNotifyBot: (ctx) => {
+      configured.push(ctx);
+    },
     onProposalAction: (ctx, connection) => {
       proposalActions.push({ ctx, connection });
     },
@@ -234,7 +239,17 @@ function makeBridge(
     logger: silent,
     ...opts.overrides,
   });
-  return { bridge, connections, notices, chats, readOnly, proposalActions, advances, openedDms };
+  return {
+    bridge,
+    connections,
+    notices,
+    chats,
+    readOnly,
+    configured,
+    proposalActions,
+    advances,
+    openedDms,
+  };
 }
 
 describe('CompanionBridge — summon', () => {
@@ -295,6 +310,20 @@ describe('CompanionBridge — status', () => {
     const active = cmdCtx('status');
     await h.bridge.handleOwnerCommand(active.ctx);
     expect(active.replies[0]).toContain('here in this chat');
+  });
+});
+
+describe('CompanionBridge — /notifybot', () => {
+  it('routes to the config hook without requiring embodiment', async () => {
+    const h = makeBridge();
+    const { ctx } = cmdCtx('notifybot');
+
+    await h.bridge.handleOwnerCommand(ctx);
+
+    expect(h.configured).toHaveLength(1);
+    expect(h.configured[0]).toBe(ctx);
+    expect(h.bridge.isSummoned('u1')).toBe(false); // config-only: no connection opened
+    expect(h.connections).toHaveLength(0);
   });
 });
 

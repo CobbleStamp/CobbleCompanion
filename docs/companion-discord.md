@@ -214,6 +214,7 @@ Read-only views map directly onto existing WS methods (no new endpoints):
 | `/budget`           | `budget.get`                                                         | stamina/energy wallets                                                |
 | `/feed`             | `food.get` → `feed`                                                  | pantry, then apply a food                                             |
 | `/reading`          | `leads.list`                                                         | reading list (harvested leads)                                        |
+| `/notifybot <bot> <channel>` | `configureMissionWake` + `reconcileUser` (service-local, no WS)   | sets the mission-wake trigger `(bot, channel)`; owner-only, no embodiment (§6.1) |
 | `/mission [stop]`   | `mission.list` + `mission.journal` / `mission.stop`                  | mission plan + progress; `action:stop` ends it (`companion-missions.md` §5.3) |
 
 The read-only views (`/memory`…`/reading`) call **companion-scoped** methods, which
@@ -233,6 +234,24 @@ Views render as **Discord Markdown** (headings, bullets, code spans), not embeds
 adapter's gateway seam sends string content, which keeps it decoupled from
 `discord.js` types and the renderers pure. Richer embeds (for views, chat citations,
 and proposal cards) are a Beyond-the-PoC nicety (§10).
+
+### 6.1 `/notifybot` — configure the mission-wake trigger
+
+`/notifybot bot:<id> channel:<id>` sets the `(trigger_bot_id, mission_channel_id)` pair
+the guild-trigger gate trusts to fire mission wakes (`companion-missions.md` §3.2). It
+writes the **same** two fields as the web settings panel's `discord.config.setMissionWake`
+WS method — offered as a slash command so a **Discord-only deployment (no web client)** can
+set them too. Unlike the read-only views it needs **no embodiment**: it is pure config, so
+the bridge routes it alongside `/summon`/`/status` (before the summon check) and it runs
+even while Dormant. It is **owner-only** (the router's owner lock runs first). Both
+arguments accept a bare snowflake **or** a Discord mention (`<@bot>`, `<#channel>`), which
+`normalizeSnowflake` (`notify-command.ts`) unwraps. On success the handler writes via
+`configureMissionWake` and calls the gateway manager's `reconcileUser` **directly** — no API
+round-trip — so the running bot's in-memory trust snapshot refreshes in place without a
+restart (`gateway/manager.ts` `refreshMissionWake`). The refresh is best-effort: the pair is
+already persisted and the startup reconcile is the floor, so a refresh hiccup only delays
+pickup. The **notification bot's token** is still operator-set (`SCHEDULER_DISCORD_BOT_TOKEN`,
+`companion-tools.md` §9) — this command sets only the non-secret routing pair.
 
 ## 7. Approvals
 

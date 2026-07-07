@@ -101,6 +101,13 @@ export interface CompanionBridgeOptions {
     connection: CompanionConnection,
   ) => void | Promise<void>;
   /**
+   * Handle `/notifybot` (companion-missions.md §3.2): set the mission-wake trigger's
+   * `(bot, channel)`. Config-only and owner-gated upstream, so — unlike the read-only
+   * views — it needs NO embodiment; the bridge routes it before the summon check and
+   * passes no connection.
+   */
+  readonly onConfigureNotifyBot: (ctx: SlashCommandContext) => void | Promise<void>;
+  /**
    * Handle a proposal Confirm/Reject click (approvals — T11). Only invoked while
    * embodied: `proposals.confirm`/`reject` are companion-scoped, so the bridge passes
    * the active connection.
@@ -159,6 +166,7 @@ interface ActiveEmbodiment {
 export const SUMMON_COMMAND = 'summon';
 export const STATUS_COMMAND = 'status';
 export const MISSION_COMMAND = 'mission';
+export const NOTIFY_BOT_COMMAND = 'notifybot';
 
 /** Shown when the owner chats or runs a view while the companion is dormant. */
 const DORMANT_NOTICE = 'I’m not here right now — `/summon` to bring me into this chat.';
@@ -182,16 +190,17 @@ export class CompanionBridge {
   }
 
   /**
-   * Router hook (owner command): `/summon` + `/status` here; the rest are read-only
-   * views. The views are companion-scoped (they need the live claim), so a read-only
-   * command while dormant is refused with the same "summon first" prompt as chat —
-   * EXCEPT `/mission` (companion-missions.md §5.3): the mission kill switch must work
-   * even when the companion is dormant (e.g. after a worker restart with jobs still
-   * armed), so it summons first, exactly like a trigger.
+   * Router hook (owner command): `/summon` + `/status` + `/notifybot` here (none needs
+   * the live claim); the rest are read-only views. The views are companion-scoped (they
+   * need the live claim), so a read-only command while dormant is refused with the same
+   * "summon first" prompt as chat — EXCEPT `/mission` (companion-missions.md §5.3): the
+   * mission kill switch must work even when the companion is dormant (e.g. after a worker
+   * restart with jobs still armed), so it summons first, exactly like a trigger.
    */
   async handleOwnerCommand(ctx: SlashCommandContext): Promise<void> {
     if (ctx.command.name === SUMMON_COMMAND) return this.summon(ctx);
     if (ctx.command.name === STATUS_COMMAND) return this.status(ctx);
+    if (ctx.command.name === NOTIFY_BOT_COMMAND) return this.opts.onConfigureNotifyBot(ctx);
     let embodiment = this.active.get(ctx.userId) ?? null;
     if (!embodiment && ctx.command.name === MISSION_COMMAND) {
       embodiment = await this.summonForMissionCommand(ctx);

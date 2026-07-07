@@ -212,9 +212,11 @@ The message `content` posted to the mission channel is **exactly**:
 Three concerns are kept strictly separate — the crux of the security design (§8):
 
 - **Trust** = the message `author.id` is the allowlisted `trigger_bot_id` **and** the message is in
-  `mission_channel_id`. Both are stored on the per-user `discord_config` row. Trust is the
-  **(author, channel) pair — never the message content** (anyone in the channel could type the same
-  words).
+  `mission_channel_id`. Both are stored on the per-user `discord_config` row, set by the web
+  settings panel (`discord.config.setMissionWake`) **or** the `/notifybot` Discord command
+  (`companion-discord.md` §6.1) — the latter for Discord-only deployments with no web client. Trust
+  is the **(author, channel) pair — never the message content** (anyone in the channel could type
+  the same words).
 - **Routing** = the accepted event is routed to the mission the wake **names** (the `mission:<id>`
   tag, §3.2), and advances it only if that mission is still `active`.
 - **Content-readability** = the @-mention delivers the full `.content` without *requiring* the

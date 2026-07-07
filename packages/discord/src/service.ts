@@ -24,6 +24,7 @@ import { createDiscordJsGatewayFactory } from './gateway/discord-js-gateway.js';
 import { GatewayManager } from './gateway/manager.js';
 import type { DiscordGatewayFactory, Logger } from './gateway/types.js';
 import { consoleLogger } from './logger.js';
+import { handleNotifyBotCommand } from './notify-command.js';
 import { handleProposalAction } from './proposals.js';
 import { handleReadOnlyCommand } from './read-commands.js';
 import { BotRouter } from './router.js';
@@ -118,6 +119,15 @@ export function assembleService(parts: AssembleServiceParts): AssembledService {
     openOwnerDm: (userId, discordUserId) => manager.openDmChannel(userId, discordUserId),
     onChat: (ctx, connection) => handleChat(ctx, connection, logger),
     onReadOnlyCommand: (ctx, connection) => handleReadOnlyCommand(ctx, connection, logger),
+    // `/notifybot` writes config + refreshes the live bot's mission-wake trust snapshot
+    // via the manager's reconcile — no API round-trip, no summon needed.
+    onConfigureNotifyBot: (ctx) =>
+      handleNotifyBotCommand(
+        ctx,
+        parts.configStore,
+        (userId) => manager.reconcileUser(userId),
+        logger,
+      ),
     onProposalAction: (ctx, connection) => handleProposalAction(ctx, connection, logger),
     onMissionAdvance: (connection, post, missionId, event, userId) =>
       handleAdvance(connection, post, missionId, event, logger, userId),
