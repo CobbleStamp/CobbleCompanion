@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install dev test test-integration typecheck lint coverage ci \
+.PHONY: help install dev dev-host test test-integration typecheck lint coverage ci \
         run-docker build-docker stop-docker clean-docker logs-docker \
         pulumi-preview pulumi push-image-dev deploy-dev \
         pulumi-preview-gcp pulumi-gcp push-image-gcp deploy-gcp
@@ -15,6 +15,9 @@ install: ## Install workspace dependencies (pnpm)
 
 dev: ## Run Postgres + migrate + API + web on the host (scripts/dev.sh)
 	./scripts/dev.sh
+
+dev-host: ## Postgres in Docker; API + Discord on the host (for host CLI tools). No web. (scripts/dev-host.sh)
+	./scripts/dev-host.sh
 
 test: ## Run the full test suite
 	pnpm test

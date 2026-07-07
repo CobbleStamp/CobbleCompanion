@@ -88,6 +88,25 @@ that hosts each user's bot and bridges DMs to `/ws`. To run it locally:
 2. Run the service alongside `pnpm dev`: `pnpm --filter @cobble/discord dev` (or `docker compose up` — it now includes a `discord` service).
 3. In the web app's **Discord** settings panel, paste your bot token, pick a companion, and run the shown `/link <code>` then `/summon` in a DM with your bot.
 
+### Companion CLI tools (API + Discord on the host)
+
+The companion can grow host CLIs into callable tools at runtime (`docs/companion-tools.md`) — the
+folders under `companion-tools/` (`CLI_TOOLS_PATH`) and each tool's `binary` (e.g.
+`~/.local/bin/ibkr-cli`). Those are **host paths**, so they don't resolve inside the `api`
+container. To use them, run the API (and Discord) **on this machine** while keeping Postgres in
+Docker — and skip the web client:
+
+```bash
+make stop-docker              # free ports 3000/3001/8080 if the full stack is up
+make dev-host                 # Postgres in Docker; API + Discord on the host; no web
+```
+
+`make dev-host` (`scripts/dev-host.sh`) starts only the Postgres container, loads `.env`, repoints
+`DISCORD_RECONCILE_URL` at `localhost` (the one `.env` value baked for the compose network), migrates,
+and runs `@cobble/api` + `@cobble/discord` in parallel (Ctrl-C stops both; Postgres keeps running).
+The CLI catalog is enumerated once at API boot, so restart the API after adding or editing a tool
+folder. The whitelisted `ibkr-*` tools also need the IBKR Client Portal Gateway running locally.
+
 ## Deployment
 
 The same container (Fastify API + built SPA, one origin) deploys to **either** of two clouds, both via
