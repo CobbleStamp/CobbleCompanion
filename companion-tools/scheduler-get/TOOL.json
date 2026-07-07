@@ -1,0 +1,17 @@
+{
+  "binary": "/Users/keren/.local/bin/scheduler-cli",
+  "description": "Show the full definition and current state of one scheduler job by id.",
+  "parameters": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "The job id returned by scheduler-run (e.g. job_3f9c1a)."
+      }
+    },
+    "required": ["id"]
+  },
+  "argv": ["get", "--", "{id}"],
+  "limits": { "timeoutMs": 30000, "maxOutputBytes": 262144 }
+}

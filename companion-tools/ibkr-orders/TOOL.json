@@ -1,0 +1,21 @@
+{
+  "binary": "/Users/keren/.local/bin/ibkr-cli",
+  "description": "List the account's open and completed orders for the day (read-only, via the local Client Portal Gateway).",
+  "parameters": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "account": {
+        "type": "string",
+        "description": "Account id. Omit to use the resolved primary account."
+      },
+      "output": {
+        "type": "string",
+        "enum": ["json", "ndjson", "table"],
+        "description": "Output framing. Defaults to json."
+      }
+    }
+  },
+  "argv": ["orders", "--account={account}", "--output={output}"],
+  "limits": { "timeoutMs": 30000, "maxOutputBytes": 524288 }
+}

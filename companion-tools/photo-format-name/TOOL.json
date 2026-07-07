@@ -1,0 +1,26 @@
+{
+  "binary": "/Users/keren/.local/bin/photo-cli",
+  "description": "Rename geotagged photos in a folder to a capture-time + place name derived from EXIF/GPS (offline, in place).",
+  "parameters": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "folder": {
+        "type": "string",
+        "description": "Absolute path to the directory whose geotagged photos are renamed in place."
+      },
+      "dryRun": {
+        "type": "boolean",
+        "description": "When true, preview the renames without changing any files. Omit (or false) to perform the real rename."
+      },
+      "format": {
+        "type": "string",
+        "enum": ["json", "text"],
+        "description": "Output format. Defaults to json when omitted."
+      }
+    },
+    "required": ["folder"]
+  },
+  "argv": ["format-name", "--folder={folder}", "--dry-run={dryRun}", "--format={format}"],
+  "limits": { "timeoutMs": 120000, "maxOutputBytes": 1048576 }
+}

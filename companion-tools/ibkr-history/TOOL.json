@@ -1,0 +1,52 @@
+{
+  "binary": "/Users/keren/.local/bin/ibkr-cli",
+  "description": "Historical OHLCV price bars for a stock over a period (read-only, via the local Client Portal Gateway).",
+  "parameters": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "symbol": {
+        "type": "string",
+        "description": "Stock symbol, e.g. AAPL."
+      },
+      "bar": {
+        "type": "string",
+        "description": "Bar size: 1min, 5min, 1h, 1d, 1w, 1m. Defaults to 1d."
+      },
+      "period": {
+        "type": "string",
+        "description": "Lookback span in IBKR period syntax, e.g. 1d, 1w, 1m, 1y. Defaults to 1m. Alternative to from/to."
+      },
+      "from": {
+        "type": "string",
+        "description": "Explicit range start YYYY-MM-DD (alternative to period)."
+      },
+      "to": {
+        "type": "string",
+        "description": "Explicit range end YYYY-MM-DD (alternative to period)."
+      },
+      "asOf": {
+        "type": "string",
+        "description": "Point-in-time date YYYY-MM-DD (filters bars to t <= as-of)."
+      },
+      "output": {
+        "type": "string",
+        "enum": ["json", "ndjson", "table"],
+        "description": "Output framing. Defaults to json."
+      }
+    },
+    "required": ["symbol"]
+  },
+  "argv": [
+    "history",
+    "--bar={bar}",
+    "--period={period}",
+    "--from={from}",
+    "--to={to}",
+    "--as-of={asOf}",
+    "--output={output}",
+    "--",
+    "{symbol}"
+  ],
+  "limits": { "timeoutMs": 30000, "maxOutputBytes": 1048576 }
+}

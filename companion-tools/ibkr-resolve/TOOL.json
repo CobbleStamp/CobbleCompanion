@@ -1,0 +1,37 @@
+{
+  "binary": "/Users/keren/.local/bin/ibkr-cli",
+  "description": "Resolve a stock symbol to an IBKR contract id (conid); ambiguous symbols surface candidates (read-only).",
+  "parameters": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "symbol": {
+        "type": "string",
+        "description": "Stock symbol to resolve, e.g. AAPL."
+      },
+      "currency": {
+        "type": "string",
+        "description": "Contract currency. Defaults to USD."
+      },
+      "exchange": {
+        "type": "string",
+        "description": "Routing/listing exchange. Defaults to SMART."
+      },
+      "output": {
+        "type": "string",
+        "enum": ["json", "ndjson", "table"],
+        "description": "Output framing. Defaults to json."
+      }
+    },
+    "required": ["symbol"]
+  },
+  "argv": [
+    "resolve",
+    "--currency={currency}",
+    "--exchange={exchange}",
+    "--output={output}",
+    "--",
+    "{symbol}"
+  ],
+  "limits": { "timeoutMs": 30000, "maxOutputBytes": 262144 }
+}

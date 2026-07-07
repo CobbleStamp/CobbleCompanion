@@ -25,7 +25,7 @@
 > `TOOL.md` usage prompt, §6) that flow through the same spine as MCP tools; the model fills each
 > tool's argument schema and an argv template renders it, so there is no free-form command or
 > per-argument regex policy. Present tense throughout describes **live** behaviour. **Deferred**
-> (Beyond the PoC, §9): ingesting tool docs into semantic memory, a dedicated experimentation/probe
+> (Beyond the PoC, §10): ingesting tool docs into semantic memory, a dedicated experimentation/probe
 > harness, and OS-level sandbox + network isolation (the portable subprocess tier ships now, §7).
 > Beyond the three hand-written PoC tools (`web_fetch`, `memory_search`, `ingest_source`), the
 > companion's toolset now grows at runtime via whitelisted MCP servers **and** host CLIs — no code
@@ -48,7 +48,7 @@ self-extension story the product promises as the companion's "growing repertoire
 (`product-overview.md` §2.1, §5.5).
 
 **Scope.** The **companion server host** only. Mobile/desktop OS-as-tools is a separate, later
-product surface (§9, `development-plan.md` Phases 6–7).
+product surface (§10, `development-plan.md` Phases 6–7).
 
 ## 2. The model — carry what you need, look up the rest
 
@@ -144,7 +144,7 @@ crucially, **discovery is separated from the model's context**:
   *why*. Reasoning over descriptions beats vector similarity at intent→capability leaps ("schedule
   a reminder" → the calendar tool), and the catalog prefix is cache-stable, so repeat lookups are
   cheap. No embeddings are on the critical path; an embedding **prefilter** is a later
-  scale optimization for very large catalogs (§9).
+  scale optimization for very large catalogs (§10).
 - **Promotion = proactive loading from procedural memory.** Rather than waiting to hit a wall and
   then `search→load`, the companion **picks up the tools a job needs before it starts** — and it
   knows which tools from procedural memory, the *combining* half of the story
@@ -218,7 +218,7 @@ Two consequences are load-bearing:
 - **Both tracks are developer-whitelisted, identically.** A user cannot point the companion at a
   brand-new CLI or MCP server on their own on the server host; admitting a tool is an operator
   action (data/policy, no code change, no redeploy). Discovering and learning to *use* a whitelisted
-  tool is then fully autonomous, no developer in the loop. User-addable servers are deferred (§9).
+  tool is then fully autonomous, no developer in the loop. User-addable servers are deferred (§10).
 
 ## 7. Security
 
@@ -227,7 +227,8 @@ The whitelist is the admissibility floor; these boundaries harden what runs with
 
 - **CLI execution is sandboxed.** The CLI sandbox spawns the binary with **no shell** (argv elements
   pass verbatim, so a value like `; rm -rf /` is one inert argument, never a command), a **scrubbed
-  environment** (no secrets),
+  environment** (only `PATH`, `LANG`, and a `HOME` pointing at the run's ephemeral working dir so a
+  tool can resolve a cache/config location — **no secrets, and no access to the real home**),
   and a **per-tenant ephemeral working directory** under a scratch root (never `CLI_TOOLS_PATH`),
   under wall-clock + output-byte ceilings (mirroring the `web_fetch` byte-cap posture). This is the
   **portable subprocess tier**: it runs identically on every host but does **not** enforce network
@@ -235,7 +236,7 @@ The whitelist is the admissibility floor; these boundaries harden what runs with
   scrubbed env keeps secrets out of the *environment* but not secrets a whitelisted binary could read
   from *disk* (config files, key material the process user can open). OS-level isolation
   (namespaces/containers, filesystem confinement, network egress control) is deferred to hardening
-  (§9 / `development-plan.md` Phase 8), behind the same sandbox seam. The narrow per-tool whitelist + fixed binary are the mitigation
+  (§10 / `development-plan.md` Phase 8), behind the same sandbox seam. The narrow per-tool whitelist + fixed binary are the mitigation
   meanwhile. `CLI_TOOLS_PATH` must be **read-only + deployment-controlled** and must not overlap any
   path the app writes to (it is the CLI trust boundary, §6). Config load **rejects at startup** a
   `CLI_TOOLS_PATH` that is equal to or nested with the CLI scratch dir (`CLI_SCRATCH_DIR`, or the OS
@@ -254,7 +255,7 @@ The whitelist is the admissibility floor; these boundaries harden what runs with
 - **MCP is HTTP/SSE-only** on the server host, behind the same **SSRF** guard as link ingestion
   (`architecture.md` §8): scheme + blocked-host checks with connection-layer DNS re-validation. No
   **stdio** transport — the host never spawns a user-specified process (that rides with the future
-  desktop surface, §9).
+  desktop surface, §10).
 - **Discovery touches no secrets and no live calls.** The catalog stores only public tool metadata
   (names, descriptions); `search_tools` reasons over that metadata in an isolated sub-context and
   can take no action — it only *names* candidates. Effect happens only when an equipped tool is
@@ -266,6 +267,11 @@ The whitelist is the admissibility floor; these boundaries harden what runs with
 - **Credentials are references, never values.** MCP server auth uses the secret-management posture
   (`architecture.md` §8, `implementation.md` §5); a secret is never stored in the catalog or the
   equipped set, in source, or sent to the model — it is resolved at call time.
+- **CLI tools receive no secrets from the companion.** The scrubbed env (first bullet) means a
+  whitelisted CLI never inherits a credential, and the companion must never pass one as an argv
+  value — argv is exposed in process listings and persisted by any downstream store or log. A CLI
+  that reaches a service needing a credential relies on that **service's own environment** for it,
+  never on a value the companion supplies (the scheduler pattern, §9).
 
 ## 8. The two tracks & sequencing
 
@@ -285,10 +291,66 @@ where a tool comes from. Scope and acceptance are owned by `development-plan.md`
   commands — and the "remember" half reuses the shared procedural-memory + proactive-loading spine,
   no CLI-specific learning machinery.
 
-## 9. Beyond the PoC
+## 9. Reaching an external service that holds its own secrets (the scheduler pattern)
+
+The CLI sandbox runs every tool with a **scrubbed environment** (§7): a whitelisted CLI inherits
+*no* secrets from the companion, and the companion must **never put a secret in an argv value** —
+argv is rendered onto the command line, so a secret there is exposed in host process listings
+(`ps`, `/proc/<pid>/cmdline`) and persisted by any downstream store or log that records the
+invocation. The principle that follows: when a CLI-reachable capability needs a credential, that
+credential belongs to the **downstream service's own environment**, provisioned once by the
+operator; the companion supplies only **non-secret routing arguments**.
+
+Scheduled Discord notifications are the canonical example, composed from two external, loopback
+CLIs — a domain-agnostic **scheduler service** (poll a predicate until it succeeds, then notify
+once, durably) and **`discord-notify`** (deliver one message):
+
+- The companion runs a whitelisted **`scheduler-cli`** tool to register a job over the scheduler's
+  loopback REST API. The job names a **predicate** CLI (e.g. `ibkr-cli query …`) and an **action**
+  CLI (`discord-notify --text {{message}} --channel <id>`). Neither carries a secret — only the
+  predicate query and the non-secret destination id.
+- Each tick the scheduler runs the predicate and, on a non-empty message, spawns the action CLI
+  **inheriting the scheduler's own environment**. `discord-notify` reads its bot token from
+  `SCHEDULER_DISCORD_BOT_TOKEN` in that environment — set once by the operator on the scheduler
+  service. The companion never sees, stores, or forwards it.
+
+**Isolation is per-destination, not per-sender.** One scheduler and one bot serve every user and
+companion, so all notifications share a single **sender identity**; they are kept apart by **where
+they land** — the companion registers each job with a different non-secret `--channel <id>` (a
+configured notification channel) or `--user <id>` (the owner's `owner_discord_user_id`, learned by
+the `/link` handshake, `companion-discord.md` §9). Trade-offs to weigh: the shared bot must be a
+member of every target channel/server; its single token is a shared blast radius; and correct
+targeting is by-convention (each job must carry the right id), not an enforced boundary.
+
+**Why the companion does not route its own bot token.** Each user already holds an AES-256-GCM
+encrypted bot token in `discord_config.encrypted_bot_token` (`companion-discord.md` §9). Delivering
+through *that* bot would require passing it to `discord-notify` via the `--token` flag — the secret
+in the action argv — which the scheduler then persists in its job store and logs and which shows in
+`ps`, regressing the encryption-at-rest posture. Per-**sender** isolation (each companion notifying
+through its *own* bot, via the companion's existing Discord surface, with the scheduler's action
+calling back into the companion instead of Discord directly) keeps the token inside the companion
+but needs a companion-side delivery endpoint; it is recorded as a Beyond-the-PoC alternative (§10).
+
+```mermaid
+flowchart LR
+    C["Companion (agent loop)"] -->|"runs whitelisted CLI: sandboxed, scrubbed env, no secrets"| SC["scheduler-cli"]
+    SC -->|"register job (loopback REST): predicate + action argv + non-secret channel/user id"| SV["scheduler service (always-on, loopback)"]
+    SV -->|"each tick"| P["predicate CLI (e.g. ibkr-cli query)"]
+    P -->|"status + optional message"| SV
+    SV -->|"on message: run action, inherits scheduler env"| A["discord-notify (action CLI)"]
+    A -->|"Bot token from SCHEDULER_DISCORD_BOT_TOKEN (operator-set, shared)"| D["Discord (user's channel or DM)"]
+```
+
+## 10. Beyond the PoC
 
 Deferred from this workstream, recorded here so the boundary is explicit:
 
+- **Per-sender notification isolation** — routing scheduled/external notifications through each
+  companion's *own* bot (the encrypted `discord_config.encrypted_bot_token`, delivered via the
+  companion's existing Discord surface) instead of a single shared `discord-notify` bot. The
+  scheduler's action would call back into the companion rather than reaching Discord directly,
+  keeping the token inside the companion and out of any action argv. The PoC uses the shared-bot,
+  per-destination model (§9).
 - **Embedding-prefiltered search** — for catalogs too large to pass to a single `search_tools` call,
   an embedding **prefilter** (reusing the embedding gateway + `pgvector` the semantic store already
   uses) narrows the catalog to top candidates, then the LLM ranks among them. A scale optimization,

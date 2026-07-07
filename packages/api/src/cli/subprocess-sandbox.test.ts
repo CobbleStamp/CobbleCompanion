@@ -146,6 +146,22 @@ describe.skipIf(!NODE)('createSubprocessSandbox', () => {
     }
   });
 
+  it("provides HOME as the run's ephemeral working dir — never the real home", async () => {
+    const realHome = process.env['HOME'];
+    const result = await run.run({
+      ...base,
+      binary: NODE,
+      argv: ['-e', 'process.stdout.write(process.env.HOME ?? "")'],
+    });
+    // HOME is set so a tool can resolve a cache/config location (some CLIs error
+    // outright without it) ...
+    expect(result.output).toBeTruthy();
+    // ... and it is the per-run working dir (prefixed by the tenant id), so the
+    // child can never read the real home's config or secrets.
+    expect(result.output).toContain('cli-c1-');
+    expect(result.output).not.toBe(realHome);
+  });
+
   it('runs in an ephemeral per-tenant working dir that is removed after the run', async () => {
     const result = await run.run({
       ...base,
