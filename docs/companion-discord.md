@@ -192,8 +192,12 @@ server-side (`companion-endpoints.md` §streaming):
 
 - `composing` → trigger the Discord **typing indicator** in the DM channel.
 - `token` / `citations` / `tool_step` → buffered, not rendered live.
-- `done` → post **one** message with the full reply, as plain Discord Markdown. Folding citations
-  and notable tool steps into a rich embed is a Beyond-the-PoC nicety (§6, §10).
+- `done` → post **one** message with the full reply, as plain Discord Markdown. A reply longer than
+  Discord's 2,000-character per-message limit (a mission's pre-market report, a detailed answer) is
+  delivered whole: the gateway posts a short lead-in and attaches the full text as a `.md` file
+  (`message-payload.ts`, applied at the `sendDirectMessage` transport boundary so every long DM —
+  chat, mission report, proactive — is covered, not truncated or split). Folding citations and
+  notable tool steps into a rich embed is a Beyond-the-PoC nicety (§6, §10).
 - `error` → post a friendly error. If the cause is stamina exhaustion (`over_cap`), nudge
   _"I'm tired — `/feed` me to continue."_
 - `reflection` → optional secondary line (growth reflection).
