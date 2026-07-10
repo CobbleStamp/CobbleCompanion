@@ -1221,8 +1221,11 @@ Out of scope for this release; the roadmap is owned by `development-plan.md`.
   **CLI** (Phase 10, PR #11): tools are **developer-described folders** under `CLI_TOOLS_PATH` (the
   CLI trust boundary), each a `TOOL.json` (binary + model-facing `parameters` JSON Schema + argv
   template + mandatory limits) + `TOOL.md` (usage prompt); `parseCliToolDef` validates them and
-  `cliToolToTool` validates the model's args against the schema, renders each `{param}` into a
-  **discrete argv element** (no shell), and fences output as untrusted. No-shell kills _command_
+  `cliToolToTool` validates the model's args against the schema (primitives, `enum`, and `array`
+  with primitive `items`), renders each `{param}` into a **discrete argv element** (no shell) — an
+  element referencing an **array** param renders once per item, the repeatable-flag shape
+  (`--indicator={indicator}` + `["sma20","rsi14"]` → two elements; empty array drops it) — and
+  fences output as untrusted. No-shell kills _command_
   injection but not _option_ injection (a value like `-rf`/`--config=/x` that the binary parses as a
   flag); `unsafeArgvPlaceholders` flags any bare leading-placeholder argv element and
   `FileSystemCliToolStore` logs an operator warning at load (not a skip — the curator anchors it as

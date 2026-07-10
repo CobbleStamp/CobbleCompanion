@@ -1,13 +1,13 @@
 {
   "binary": "/Users/keren/.local/bin/scheduler-cli",
-  "description": "Register a job with the scheduler service: poll a predicate command on an interval and run an action command when it reports a message; terminates on success.",
+  "description": "Register a job with the scheduler service: run a predicate command on an interval or a cron schedule and run an action command when it reports a message; terminates on success.",
   "parameters": {
     "type": "object",
     "additionalProperties": false,
     "properties": {
       "predicate": {
         "type": "string",
-        "description": "The predicate command string to poll each tick, e.g. \"ibkr-cli query LITE le 810\". By contract it prints one JSON object {\"status\":\"true|false|error\",\"message\":\"...\"} to stdout; set noContract for a plain command judged by exit code instead."
+        "description": "The predicate command string to run each tick, e.g. \"ibkr-cli query LITE le 810\". By contract it prints one JSON object {\"status\":\"true|false|error\",\"message\":\"...\"} to stdout; set noContract for a plain command judged by exit code instead."
       },
       "action": {
         "type": "string",
@@ -15,7 +15,15 @@
       },
       "every": {
         "type": "string",
-        "description": "Poll interval as a Go duration, e.g. 1s, 30s, 15m, 1h."
+        "description": "Poll interval as a Go duration, e.g. 1s, 30s, 15m, 1h. Exactly one cadence: supply every OR cron+tz, never both."
+      },
+      "cron": {
+        "type": "string",
+        "description": "A standard 5-field cron expression for a time-of-day cadence, e.g. \"30 7 * * 1-5\" (weekdays 07:30). Requires tz; mutually exclusive with every."
+      },
+      "tz": {
+        "type": "string",
+        "description": "IANA time zone the cron expression is evaluated in, e.g. \"Europe/London\" or \"America/New_York\". Required with cron."
       },
       "maxRuns": {
         "type": "integer",
@@ -23,20 +31,22 @@
       },
       "maxDuration": {
         "type": "string",
-        "description": "Max wall-clock window before expiry, as a duration (e.g. 24h). Omit for unlimited."
+        "description": "Max wall-clock window before expiry, as a duration (e.g. 24h). A cron job expires at the boundary without a final fire. Omit for unlimited."
       },
       "noContract": {
         "type": "boolean",
         "description": "Treat the predicate as contract-free: exit 0 -> true, non-zero -> error, stdout -> message. Use for plain commands that do not emit the JSON envelope."
       }
     },
-    "required": ["predicate", "action", "every"]
+    "required": ["predicate", "action"]
   },
   "argv": [
     "run",
     "--predicate={predicate}",
     "--action={action}",
     "--every={every}",
+    "--cron={cron}",
+    "--tz={tz}",
     "--max-runs={maxRuns}",
     "--max-duration={maxDuration}",
     "--no-contract={noContract}"

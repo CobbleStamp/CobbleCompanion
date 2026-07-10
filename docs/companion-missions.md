@@ -160,7 +160,9 @@ edge-trigger/cooldown problem. Canonical docs: `Tools/scheduler/docs/`. **The To
 complete — the mission wake reuses the shipped `discord-notify` with no change.**
 
 - **`scheduler`** — single-instance loopback REST service; API + poll loop + embedded SQLite in one
-  process. A **job** = predicate CLI + interval + action CLI + recurrence bounds. Durable
+  process. A **job** = predicate CLI + cadence + action CLI + recurrence bounds, where the cadence
+  is exactly one of a poll **interval** (`--every`) or a **cron expression + IANA time zone**
+  (`--cron`/`--tz` — a time-of-day wake, e.g. weekday mornings). Durable
   (persist-before-deliver, at-least-once, retry → `failed`). Trust = loopback + a binary allowlist;
   no shell; `{{message}}` is substituted as **one argv element** (no re-parse, no escaping hazard).
 - **`scheduler-cli`** (binary `schedule`) — the companion equips it as a CLI tool:
@@ -306,7 +308,8 @@ On confirm, the `start_mission` tool body:
 1. reads the mission wake config (`trigger_bot_id`, `mission_channel_id`, the captured `bot_user_id`);
 2. **creates** the mission draft — first, because the wake action must carry the mission's id (§3.2)
    and the id doesn't exist until the row does;
-3. **arms the scheduler job** via the `scheduler-cli`-backed `MissionScheduler`, with the action set
+3. **arms the scheduler job** via the `scheduler-cli`-backed `MissionScheduler` — cadence exactly
+   one of `every` (poll interval) or `cron`+`tz` (a time-of-day wake, §3.1), with the action set
    to `discord-notify --channel <missionCh> --text "<@botUserId> mission:<missionId> {{message}}"`;
 4. **activates** the draft (records `job_ids`, `status=active`), which **suspends the drive engine**.
 
@@ -504,14 +507,17 @@ weakening it:
 - **Multiple concurrent missions** — routing is already solved (every wake names its mission via
   the `mission:` tag, §3.2); the blocker is the **one-active-per-companion** invariant that drive
   suspension and mission-mode exclusivity (§6) are built on.
-- **Richer scheduler payload** (`{{status}}` / `{{job_id}}` tokens) and **richer cron schedules**.
+- **Richer scheduler payload** (`{{status}}` / `{{job_id}}` tokens). _(Cron schedules — formerly
+  deferred here — shipped: the scheduler takes `--cron`/`--tz`, and `start_mission` accepts the
+  `cron`+`tz` cadence, §3.1/§5.1.)_
 - **Deeper reasoning half** — continuous news-ingest (CPI/PCE/Fed/earnings) and swing-prediction
   depth for the worked example.
 
 > **Self-paced cadence needs no new mechanism.** A mission that should wake on its _own_ clock (e.g.
 > "review the news every 6 h") just registers a **recurring scheduler job** whose predicate always
-> emits a message — firing the same trigger on that cadence. The scheduler _is_ the companion's
-> external clock.
+> emits a message — firing the same trigger on that cadence; a **time-of-day** clock (e.g. "every
+> weekday at 7:30am") is the same pattern on a `cron`+`tz` cadence (§3.1). The scheduler _is_ the
+> companion's external clock.
 
 ## 12. References
 

@@ -122,9 +122,10 @@ export async function runCliTool(
 /**
  * Minimal validation of model-supplied args against the tool's `parameters` JSON
  * Schema — the subset developer-authored CLI schemas use: required keys, primitive
- * `type` (string/number/integer/boolean), `enum`, and `additionalProperties`
- * (rejected by default, so an undeclared key never reaches argv). Values become
- * argv elements, so this is a security boundary, not just UX.
+ * `type` (string/number/integer/boolean), `array` (with primitive `items`), `enum`,
+ * and `additionalProperties` (rejected by default, so an undeclared key never
+ * reaches argv). Values become argv elements, so this is a security boundary, not
+ * just UX.
  */
 function validateArgs(args: Record<string, unknown>, schema: Record<string, unknown>): string[] {
   const errors: string[] = [];
@@ -152,6 +153,18 @@ function validateArgs(args: Record<string, unknown>, schema: Record<string, unkn
       continue;
     }
     const type = prop['type'];
+    if (type === 'array') {
+      const itemType = (prop['items'] as Record<string, unknown> | undefined)?.['type'];
+      if (!Array.isArray(value)) {
+        errors.push(`"${key}" must be an array`);
+      } else if (
+        typeof itemType === 'string' &&
+        value.some((item) => !matchesType(item, itemType))
+      ) {
+        errors.push(`"${key}" items must be ${itemType}s`);
+      }
+      continue;
+    }
     if (typeof type === 'string' && !matchesType(value, type)) {
       errors.push(`"${key}" must be a ${type}`);
     }
@@ -178,7 +191,11 @@ function matchesType(value: unknown, type: string): boolean {
  * Render the argv template against validated args. Each `{param}` is substituted
  * as a single piece of data within its element (never split into multiple argv
  * members); an element that references a param the caller omitted (an optional
- * flag) is dropped entirely. Required params are guaranteed present by validation.
+ * flag) is dropped entirely. An element referencing an **array** param renders once
+ * per item — the repeatable-flag shape (`--indicator={indicator}` with
+ * `["sma20","rsi14"]` → `--indicator=sma20 --indicator=rsi14`); an empty array
+ * drops the element like an omitted optional. Required params are guaranteed
+ * present by validation.
  */
 function renderArgv(template: readonly string[], args: Record<string, unknown>): string[] {
   const out: string[] = [];
@@ -186,6 +203,17 @@ function renderArgv(template: readonly string[], args: Record<string, unknown>):
     const refs = [...element.matchAll(PLACEHOLDER)].map((match) => match[1] ?? '');
     if (refs.some((ref) => args[ref] === undefined)) {
       continue; // an optional param this element needs was not provided → drop it
+    }
+    const arrayRef = refs.find((ref) => Array.isArray(args[ref]));
+    if (arrayRef !== undefined) {
+      for (const item of args[arrayRef] as readonly unknown[]) {
+        out.push(
+          element.replace(PLACEHOLDER, (_full, ref: string) =>
+            ref === arrayRef ? String(item) : String(args[ref]),
+          ),
+        );
+      }
+      continue;
     }
     out.push(element.replace(PLACEHOLDER, (_full, ref: string) => String(args[ref])));
   }

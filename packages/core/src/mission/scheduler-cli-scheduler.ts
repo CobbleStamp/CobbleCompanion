@@ -6,8 +6,11 @@
  * URL is passed explicitly as `--base-url` rather than via `$SCHEDULER_URL`.
  *
  * Contract (verified against Tools/scheduler-cli):
- *  - `schedule run --every <dur> --predicate <str> --action <str>` prints `{ id, first_evaluation }`
- *    JSON on success (exit 0); on failure it prints `{ category, message }` and exits 2–5.
+ *  - `schedule run <cadence> --predicate <str> --action <str>` — where `<cadence>` is
+ *    `--every <dur>` or `--cron <expr> --tz <zone>` (exactly one) — prints
+ *    `{ id, first_evaluation, … }` JSON on success (exit 0; a cron registration defers its
+ *    first evaluation, so `first_evaluation` is `null` there — only `id` is read here); on
+ *    failure it prints `{ category, message }` and exits 2–5.
  *  - `--predicate` / `--action` are shell-tokenized (quotes group), and the runner substitutes
  *    `{{message}}` inside each resulting argv element — so the action's `--text` value is kept as
  *    one quoted element (`"<@bot> {{message}}"`) and the mention rides in front of the message.
@@ -17,7 +20,7 @@
  */
 
 import type { CommandSandbox } from '../cli/sandbox.js';
-import type { MissionJobSpec, MissionScheduler } from './mission-scheduler.js';
+import type { MissionCadence, MissionJobSpec, MissionScheduler } from './mission-scheduler.js';
 
 /** The scheduler is a stateless loopback client — one shared sandbox working dir is fine. */
 const SCHEDULER_TENANT = 'mission-scheduler';
@@ -83,8 +86,7 @@ export function createSchedulerCliScheduler(options: SchedulerCliOptions): Missi
     async arm(spec: MissionJobSpec): Promise<string> {
       const { output, ok } = await run([
         'run',
-        '--every',
-        spec.every,
+        ...cadenceArgv(spec.cadence),
         '--predicate',
         spec.predicate,
         '--action',
@@ -116,6 +118,13 @@ export function createSchedulerCliScheduler(options: SchedulerCliOptions): Missi
       throw new Error(`scheduler cancel failed: ${schedulerMessage(output)}`);
     },
   };
+}
+
+/** Render a cadence as its `schedule run` flags: `--every`, or `--cron` + `--tz`. */
+function cadenceArgv(cadence: MissionCadence): readonly string[] {
+  return 'every' in cadence
+    ? ['--every', cadence.every]
+    : ['--cron', cadence.cron, '--tz', cadence.tz];
 }
 
 /** Pull the `id` from `schedule run`'s `{ id, first_evaluation }` JSON, or null if absent. */

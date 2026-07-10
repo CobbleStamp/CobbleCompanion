@@ -1,6 +1,6 @@
 {
   "binary": "/Users/keren/.local/bin/ibkr-cli",
-  "description": "Historical OHLCV price bars for a stock over a period (read-only, via the local Client Portal Gateway).",
+  "description": "Historical OHLCV price bars for a stock over a period, with optional computed technical indicators (SMA/EMA/RSI/ATR/Bollinger) and a tail projection (read-only, via the local Client Portal Gateway).",
   "parameters": {
     "type": "object",
     "additionalProperties": false,
@@ -33,6 +33,15 @@
         "type": "string",
         "enum": ["json", "ndjson", "table"],
         "description": "Output framing. Defaults to json."
+      },
+      "indicator": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Technical indicator columns computed over the bars, one metric per entry: sma<N>, ema<N>, rsi<N>, atr<N>, high<N>d, low<N>d, pct_change<N>d, bbupper<N>/bbmid<N>/bblower<N>, or bb<N> (all three bands; optional kM std-dev multiplier). E.g. [\"sma20\",\"sma50\",\"sma200\",\"rsi14\"]. Fetch enough bars for the longest window (sma200 needs a ~1y daily period); early bars show null until the window fills."
+      },
+      "tail": {
+        "type": "integer",
+        "description": "Emit only the last N bars (>= 1). Applied AFTER indicator computation over the full fetched series, so values are identical to the untailed run — combine with indicator and a long period to get just the latest values, e.g. tail 2."
       }
     },
     "required": ["symbol"]
@@ -45,6 +54,8 @@
     "--to={to}",
     "--as-of={asOf}",
     "--output={output}",
+    "--indicator={indicator}",
+    "--tail={tail}",
     "--",
     "{symbol}"
   ],

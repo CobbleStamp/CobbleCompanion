@@ -225,4 +225,62 @@ describe('cliToolToTool', () => {
     // {loud} was omitted → that element is dropped, not rendered as "undefined".
     expect(calls[0]?.argv).toEqual(['hello', 'Pip']);
   });
+
+  const arrayDef = parseCliToolDef(
+    'history',
+    JSON.stringify({
+      binary: 'ibkr-cli',
+      description: 'Bars with indicators.',
+      parameters: {
+        type: 'object',
+        properties: {
+          symbol: { type: 'string' },
+          indicator: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['symbol'],
+        additionalProperties: false,
+      },
+      argv: ['history', '--indicator={indicator}', '--', '{symbol}'],
+      limits: { timeoutMs: 10_000, maxOutputBytes: 65_536 },
+    }),
+    'Fetch bars.',
+  );
+
+  it('renders an array param as a repeated flag, one element per item', async () => {
+    const calls: CommandRequest[] = [];
+    const sandbox = new FakeCommandSandbox((req) => {
+      calls.push(req);
+      return ok('bars');
+    });
+    const tool = cliToolToTool({ def: arrayDef, sandbox, logger: silentLogger });
+
+    await tool.run({ symbol: 'NVDA', indicator: ['sma20', 'rsi14'] }, ctx);
+    // The repeatable-flag shape: the templated element repeats per array item.
+    expect(calls[0]?.argv).toEqual([
+      'history',
+      '--indicator=sma20',
+      '--indicator=rsi14',
+      '--',
+      'NVDA',
+    ]);
+
+    await tool.run({ symbol: 'NVDA', indicator: [] }, ctx);
+    // An empty array drops the element entirely, like an omitted optional.
+    expect(calls[1]?.argv).toEqual(['history', '--', 'NVDA']);
+  });
+
+  it('rejects a non-array value and wrong-typed items for an array param', async () => {
+    const sandbox = new FakeCommandSandbox(() => ok('should not run'));
+    const tool = cliToolToTool({ def: arrayDef, sandbox, logger: silentLogger });
+
+    const notArray = await tool.run({ symbol: 'NVDA', indicator: 'sma20' }, ctx);
+    expect(notArray.isError).toBe(true);
+    expect(notArray.content).toContain('must be an array');
+
+    const badItems = await tool.run({ symbol: 'NVDA', indicator: ['sma20', 7] }, ctx);
+    expect(badItems.isError).toBe(true);
+    expect(badItems.content).toContain('items must be strings');
+
+    expect(sandbox.calls).toHaveLength(0);
+  });
 });

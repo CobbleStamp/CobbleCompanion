@@ -36,6 +36,7 @@ import type {
   ProposalCard,
   SlashCommandSpec,
 } from './types.js';
+import { buildDmPayload } from '../message-payload.js';
 
 /** customId prefix for proposal buttons; `proposal:<action>:<proposalId>`. */
 const PROPOSAL_PREFIX = 'proposal';
@@ -216,7 +217,12 @@ class DiscordJsGateway implements DiscordGateway {
   async sendDirectMessage(channelId: string, content: string): Promise<void> {
     const channel = await this.client.channels.fetch(channelId);
     if (channel?.isSendable()) {
-      await channel.send(content);
+      // A body over Discord's per-message limit rides as an attachment instead of
+      // throwing (message-payload.ts); short messages send inline as a bare string.
+      const payload = buildDmPayload(content);
+      await channel.send(
+        payload.files ? { content: payload.content, files: [...payload.files] } : payload.content,
+      );
     } else {
       this.logger.error('discord sendDirectMessage: channel not sendable', {
         operation: 'discord.send',
