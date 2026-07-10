@@ -24,7 +24,7 @@ describe('serializeAction', () => {
 describe('createSchedulerCliScheduler', () => {
   const spec = {
     predicate: 'ibkr-cli query LITE le 810',
-    every: '1s',
+    cadence: { every: '1s' },
     action: ['discord-notify', '--channel', 'ch', '--text', '<@bot> {{message}}'],
   };
 
@@ -51,6 +51,36 @@ describe('createSchedulerCliScheduler', () => {
       '--base-url',
       'http://127.0.0.1:9999',
     ]);
+  });
+
+  it('arms a cron-cadence job with --cron/--tz instead of --every (first_evaluation null)', async () => {
+    let seen: CommandRequest | undefined;
+    const sandbox = new FakeCommandSandbox((req) => {
+      seen = req;
+      return ok(
+        JSON.stringify({
+          id: 'job_cron',
+          first_evaluation: null,
+          next_run_at: '2026-07-08T06:30:00Z',
+        }),
+      );
+    });
+    const scheduler = createSchedulerCliScheduler({ sandbox });
+
+    const id = await scheduler.arm({
+      ...spec,
+      cadence: { cron: '30 7 * * 1-5', tz: 'Europe/London' },
+    });
+
+    expect(id).toBe('job_cron');
+    expect(seen?.argv.slice(0, 5)).toEqual([
+      'run',
+      '--cron',
+      '30 7 * * 1-5',
+      '--tz',
+      'Europe/London',
+    ]);
+    expect(seen?.argv).not.toContain('--every');
   });
 
   it('defaults to the loopback base url', async () => {

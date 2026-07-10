@@ -173,7 +173,7 @@ describe('createStartMissionTool', () => {
     expect(scheduler.armed).toHaveLength(1);
     const spec = scheduler.armed[0]!;
     expect(spec.predicate).toBe('ibkr-cli query LITE le 810');
-    expect(spec.every).toBe('1s');
+    expect(spec.cadence).toEqual({ every: '1s' });
     expect(spec.action).toEqual([
       'discord-notify',
       '--channel',
@@ -234,6 +234,50 @@ describe('createStartMissionTool', () => {
     const result = await tool.run({ ...args, predicate: '   ' }, ctx);
 
     expect(result.isError).toBe(true);
+    expect(scheduler.armed).toEqual([]);
+  });
+
+  it('arms a cron-cadence mission (--cron/--tz) and renders the schedule in the summary', async () => {
+    const scheduler = fakeScheduler();
+    const tool = createStartMissionTool({
+      missions: service,
+      scheduler,
+      wakeConfig: wakeConfigWith({ missionChannelId: 'ch', botUserId: 'bot' }),
+      logger: silent,
+    });
+    const cronArgs = {
+      ...args,
+      every: undefined,
+      cron: '30 7 * * 1-5',
+      tz: 'Europe/London',
+    };
+
+    expect(tool.proposalSummary!(cronArgs)).toContain('on schedule `30 7 * * 1-5` (Europe/London)');
+
+    const result = await tool.run(cronArgs, ctx);
+
+    expect(result.isError).toBeUndefined();
+    expect(scheduler.armed[0]!.cadence).toEqual({ cron: '30 7 * * 1-5', tz: 'Europe/London' });
+  });
+
+  it('rejects an invalid cadence combination before touching the scheduler', async () => {
+    const scheduler = fakeScheduler();
+    const tool = createStartMissionTool({
+      missions: service,
+      scheduler,
+      wakeConfig: wakeConfigWith({ missionChannelId: 'ch', botUserId: 'bot' }),
+      logger: silent,
+    });
+
+    // Both cadences; cron without tz; neither.
+    const both = await tool.run({ ...args, cron: '30 7 * * 1-5', tz: 'UTC' }, ctx);
+    const cronNoTz = await tool.run({ ...args, every: undefined, cron: '30 7 * * 1-5' }, ctx);
+    const neither = await tool.run({ ...args, every: undefined }, ctx);
+
+    for (const result of [both, cronNoTz, neither]) {
+      expect(result.isError).toBe(true);
+      expect(result.content).toContain('exactly one cadence');
+    }
     expect(scheduler.armed).toEqual([]);
   });
 

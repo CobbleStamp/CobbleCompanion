@@ -16,7 +16,7 @@
 
 import type { ToolResult, TurnCtx } from '../harness/hooks.js';
 import { consoleLogger, type Logger } from '../logging.js';
-import type { MissionScheduler } from './mission-scheduler.js';
+import type { MissionCadence, MissionScheduler } from './mission-scheduler.js';
 import { reconcileMissionJobs } from './mission-reconcile.js';
 import type { MissionService } from './mission-service.js';
 import { readStringArg, type Tool, toolErrorMessage } from '../tools/tool.js';
@@ -64,20 +64,34 @@ const TOOL_PARAMETERS: Record<string, unknown> = {
     },
     every: {
       type: 'string',
-      description: 'How often to poll the predicate, e.g. "1s", "30s", "5m".',
+      description:
+        'How often to poll the predicate, e.g. "1s", "30s", "5m". Exactly one cadence: ' +
+        'use every OR cron+tz, never both.',
+    },
+    cron: {
+      type: 'string',
+      description:
+        'A 5-field cron expression for a time-of-day wake, e.g. "30 7 * * 1-5" (weekdays ' +
+        '7:30am). Requires tz; mutually exclusive with every.',
+    },
+    tz: {
+      type: 'string',
+      description:
+        'IANA time zone the cron expression is evaluated in, e.g. "Europe/London". ' +
+        'Required with cron.',
     },
   },
-  required: ['goal', 'plan', 'validationCriteria', 'predicate', 'every'],
+  required: ['goal', 'plan', 'validationCriteria', 'predicate'],
   additionalProperties: false,
 };
 
-/** The tool's five arguments, present and non-blank (see {@link readArgs}). */
+/** The tool's arguments, present and non-blank, cadence resolved (see {@link readArgs}). */
 interface StartMissionArgs {
   readonly goal: string;
   readonly plan: string;
   readonly validationCriteria: string;
   readonly predicate: string;
-  readonly every: string;
+  readonly cadence: MissionCadence;
 }
 
 /**
@@ -109,15 +123,36 @@ function codeField(text: string): string {
   return summaryField(text.replace(/`/gu, ''));
 }
 
-/** Read the five required string args, or null when any is absent/blank. */
+/**
+ * Read the cadence args as exactly one of `every` XOR `cron`+`tz`, or null when the
+ * combination is invalid (both, neither, or cron without tz — the scheduler's one-of
+ * rule, enforced here so a bad combination fails before a draft is created).
+ */
+function readCadence(rawArgs: Record<string, unknown>): MissionCadence | null {
+  const every = readStringArg(rawArgs, 'every');
+  const cron = readStringArg(rawArgs, 'cron');
+  const tz = readStringArg(rawArgs, 'tz');
+  if (every && !cron && !tz) return { every };
+  if (!every && cron && tz) return { cron, tz };
+  return null;
+}
+
+/** Read the required string args + a valid cadence, or null when any is absent/invalid. */
 function readArgs(rawArgs: Record<string, unknown>): StartMissionArgs | null {
   const goal = readStringArg(rawArgs, 'goal');
   const plan = readStringArg(rawArgs, 'plan');
   const validationCriteria = readStringArg(rawArgs, 'validationCriteria');
   const predicate = readStringArg(rawArgs, 'predicate');
-  const every = readStringArg(rawArgs, 'every');
-  if (!goal || !plan || !validationCriteria || !predicate || !every) return null;
-  return { goal, plan, validationCriteria, predicate, every };
+  const cadence = readCadence(rawArgs);
+  if (!goal || !plan || !validationCriteria || !predicate || !cadence) return null;
+  return { goal, plan, validationCriteria, predicate, cadence };
+}
+
+/** Human-readable cadence for the proposal card and the started confirmation. */
+function describeCadence(cadence: MissionCadence): string {
+  return 'every' in cadence
+    ? `every ${summaryField(cadence.every)}`
+    : `on schedule \`${codeField(cadence.cron)}\` (${summaryField(cadence.tz)})`;
 }
 
 /**
@@ -129,11 +164,11 @@ function buildProposalSummary(args: Record<string, unknown>): string {
   const plan = readStringArg(args, 'plan');
   const validationCriteria = readStringArg(args, 'validationCriteria');
   const predicate = readStringArg(args, 'predicate');
-  const every = readStringArg(args, 'every');
+  const cadence = readCadence(args);
   const head = goal ? `Start mission: ${summaryField(goal)}` : 'Start a mission';
   const lines = [
-    predicate && every
-      ? `${head} — monitor \`${codeField(predicate)}\` every ${summaryField(every)}`
+    predicate && cadence
+      ? `${head} — monitor \`${codeField(predicate)}\` ${describeCadence(cadence)}`
       : head,
   ];
   if (plan) lines.push(`Plan: ${summaryField(plan)}`);
@@ -224,7 +259,7 @@ export function createStartMissionTool(options: StartMissionOptions): Tool {
     try {
       const jobId = await scheduler.arm({
         predicate: args.predicate,
-        every: args.every,
+        cadence: args.cadence,
         action: wakeAction(target, draftId),
       });
       return { ok: true, value: jobId };
@@ -285,7 +320,8 @@ export function createStartMissionTool(options: StartMissionOptions): Tool {
     const args = readArgs(rawArgs);
     if (!args) {
       return error(
-        'Error: start_mission needs non-empty goal, plan, validationCriteria, predicate, and every.',
+        'Error: start_mission needs non-empty goal, plan, validationCriteria, predicate, and ' +
+          'exactly one cadence — every, or cron with tz.',
       );
     }
 
@@ -326,8 +362,8 @@ export function createStartMissionTool(options: StartMissionOptions): Tool {
     return {
       name: RESULT_NAME,
       content:
-        `Mission started: "${args.goal}". I’ll watch \`${args.predicate}\` every ${args.every} ` +
-        `and act until ${args.validationCriteria}.`,
+        `Mission started: "${args.goal}". I’ll watch \`${args.predicate}\` ` +
+        `${describeCadence(args.cadence)} and act until ${args.validationCriteria}.`,
     };
   }
 
